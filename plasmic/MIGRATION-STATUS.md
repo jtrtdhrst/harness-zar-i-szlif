@@ -1,7 +1,13 @@
-# Self-hosted Plasmic — source snapshot status
+# Plasmic self-host source — migration status
 
-This folder contains the self-host service's top-level files imported from `miloszspyrka-code/zar-i-szlif` at source commit `e3dd9cbb419a39aa6934546a1aa9a310058d6573`, including Compose, Docker setup, and the locally modified WAB file.
+Source: product `main` @ `e3dd9cbb419a39aa6934546a1aa9a310058d6573`. Upstream: `plasmicapp/plasmic` @ `85b861115687fde8e7970a9f270660aecb62b38e`.
 
-**Important: partial source migration, not yet buildable.** The source repository also contains 7,750 files (approximately 221 MB) in its vendored `plasmic/` workspace. Only the top-level files and selected service-specific files have been transferred; the vendored code under `platform/`, `packages/`, `plasmicpkgs/` and similar directories is NOT yet fully present here. Do not switch Coolify build source to this folder before complete synchronization and E2E validation.
+A complete recursive Git SHA comparison found exactly **6 added, 2 modified, 16 omitted** files relative to this pinned upstream (7,750 source blobs vs 7,760 upstream blobs). The 8 local additions/overrides are stored in this directory, including Compose, WAB devflags and Studio configuration. The complete public upstream is a Git submodule at `plasmic/upstream/`.
 
-The original `plasmic/SELFHOST.md` identifies `https://github.com/plasmicapp/plasmic` commit `85b861115687fde8e7970a9f270660aecb62b38e` as upstream for `platform/` and describes one local change in `platform/wab/src/wab/shared/devflags.ts`. Preserve upstream licensing and verify the full vendored diff before concluding that the source is reproducible. No deployment routes or data volumes were changed during this code copy.
+From a clean clone of this repository, run:
+
+```bash
+bash plasmic/bootstrap-source.sh
+```
+
+This generates `.build/plasmic/`, matching the recorded full source snapshot while avoiding duplication of 221 MB of upstream source. **Do not directly point Coolify at `plasmic/`**: the live build needs a generated complete context, a validated release process, E2E and rollback. This change only migrates source definitions, not deployments or persistent databases. Preserve upstream AGPL-3.0 license obligations.

@@ -1,3 +1,7 @@
 [submodule "opencode-mcp-upstream"]
 	path = opencode-mcp/upstream
 	url = https://github.com/AlaeddineMessadi/opencode-mcp.git
+
+[submodule "plasmic-upstream"]
+	path = plasmic/upstream
+	url = https://github.com/plasmicapp/plasmic.git
