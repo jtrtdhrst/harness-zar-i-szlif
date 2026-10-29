@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Identity gate diffs origin/main..HEAD; a shallow clone has no
+          # merge-base and would fail closed on every PR.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix app/cloudflare-worker
+      - name: Reject synthetic Git identities
+        run: |
+          git fetch --no-tags origin main
+          base="origin/main"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            case "${{ github.event.before }}" in
+              ""|0*) ;;
+              *) base="${{ github.event.before }}" ;;
+            esac
+          fi
+          node scripts/assert-git-identity.mjs --base="$base" --head=HEAD
+      - name: Enforce issue-owned branches and commit messages on new PRs
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/assert-branch-policy.mjs --mode=pr --branch="$PR_BRANCH" --created-at="$PR_CREATED_AT" --head-sha="$PR_HEAD_SHA"
+      - run: npm run validate:code
+      - run: npm run build
+      - name: Check target-aware candidate release gates
+        if: github.event_name == 'pull_request'
+        run: npm run validate:release
+      - name: Verify generated artifacts
+        run: |
+          test -s app/web/dist/index.html
+          test -s app/cloudflare-worker/worker.js
+          node --check app/cloudflare-worker/worker.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-build-${{ github.sha }}
+          retention-days: 7
+          path: |
+            app/web/dist/**
+            app/cloudflare-worker/worker.js

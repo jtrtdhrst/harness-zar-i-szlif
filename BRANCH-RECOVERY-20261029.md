@@ -14,3 +14,5 @@ Recovered independent MCP / infra branches:
 - `KOMAA-1174`: design-stack/Plasmic MCP changes (marketing content belongs to product archive)
 
 Original branch SHAs and remaining branch ownership must be audited before any branch deletion. The active service folders must be updated via an explicit diff, tests and production readback before replacing any of the versions recovered here. Do not enable recovered GitHub Actions or supervisor scripts implicitly.
+
+Additional independent infrastructure source recovered (not enabled): `KOMAA-411`, `KOMAA-841-fail-closed-execution-truth`, `KOMAA-879`, `KOMAA-1084`, `cutover/qdrant-mcp-upstream-edge-20261027`, `fix/plasmic-publish-checkout-20261022`, `ops/docker-to-coolify-20261028`. Service-specific files remain in their respective `_recovered/` folders; cross-service scripts/docs are in `recovered-branches/`.
