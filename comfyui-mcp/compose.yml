@@ -1,6 +1,6 @@
 services:
   comfyui:
-    build: { context: /opt/comfy, dockerfile: Dockerfile.comfyui }
+    build: { context: ., dockerfile: Dockerfile.comfyui }
     image: local/comfyui-cpu:0.42.1
     container_name: comfyui
     restart: unless-stopped
@@ -12,7 +12,7 @@ services:
       # on the container-layer /root/.codex (lost on rebuild).
       - CODEX_HOME=/app/user/.codex
   comfy-mcp:
-    build: { context: /opt/comfy, dockerfile: Dockerfile.mcp }
+    build: { context: ., dockerfile: Dockerfile }
     image: local/comfyui-mcp:0.52.206
     container_name: comfy-mcp
     restart: unless-stopped
