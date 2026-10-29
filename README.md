@@ -17,3 +17,7 @@ One-way source import from `miloszspyrka-code/zar-i-szlif` at `main` @ `e3dd9cbb
 Only source was copied; source repo was not changed. Existing Coolify, Cloudflare, service URLs, persistent volumes and secrets were not moved. Service docs and CI may still reference the old source paths; do not switch production or claim E2E without adjusting and validating them.
 
 Plasmic's complete vendored snapshot can be regenerated using `plasmic/bootstrap-source.sh` (see `plasmic/MIGRATION-STATUS.md`).
+
+## Branch recovery
+
+Read [BRANCH-RECOVERY-20261029.md](BRANCH-RECOVERY-20261029.md). Historic fixes remain isolated from active code until reviewed and tested. Product and website changes belong in `kompaszbiorek-archiwum`, not here.
