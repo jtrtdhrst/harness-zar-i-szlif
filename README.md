@@ -21,3 +21,9 @@ Plasmic's complete vendored snapshot can be regenerated using `plasmic/bootstrap
 ## Branch recovery
 
 Read [BRANCH-RECOVERY-20261029.md](BRANCH-RECOVERY-20261029.md). Historic fixes remain isolated from active code until reviewed and tested. Product and website changes belong in `kompaszbiorek-archiwum`, not here.
+
+## Full migration of historical infrastructure and tooling — 2026-10-29
+
+The non-product code from the former `zar-i-szlif` main is preserved here in `dev/`, `ops/`, `docs/`, `skills/`, `.paperclip-wiki/`, `scripts/`, `tests/`, `.githooks/` and `historical-root/`. Former `.github/` workflows were moved under `historical-actions/.github/` so they **cannot execute**. This snapshot also includes some legacy design-system reference files; it is an archive, not a production runtime. The complete item-by-item SHA inventory is in [`HISTORICAL-IMPORT-20261029.json`](HISTORICAL-IMPORT-20261029.json).
+
+Do not activate old integrations, auto-deploy, cron, or workflows from this copied material without tests and production readback.

@@ -1,0 +1,1857 @@
+{
+  "date": "2026-10-29",
+  "source_repo": "miloszspyrka-code/zar-i-szlif",
+  "source_main": "e3dd9cbb419a39aa6934546a1aa9a310058d6573",
+  "count": 264,
+  "description": "historical source copied to Harness without activating historical GitHub Actions; SHA of blob contents must match",
+  "files": [
+    {
+      "source_path": ".githooks/pre-commit",
+      "destination_path": ".githooks/pre-commit",
+      "sha": "3183af3dd87fdd88d40fcbe4a8aedc5f4c05cf3c",
+      "size": 204,
+      "mode": "100755"
+    },
+    {
+      "source_path": ".githooks/pre-push",
+      "destination_path": ".githooks/pre-push",
+      "sha": "bd020ccd087817340aa792a0c1ef0b710a127480",
+      "size": 1706,
+      "mode": "100755"
+    },
+    {
+      "source_path": ".paperclip-wiki/AGENTS.md",
+      "destination_path": ".paperclip-wiki/AGENTS.md",
+      "sha": "caa09e02ed0eee533b3054139b0cdb2e4fb8881a",
+      "size": 2374,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ceo/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/ceo/AGENTS.md",
+      "sha": "764bd3d6cb4b8d0f84b4c68f8dfdd2c1825335c1",
+      "size": 3683,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ceo/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/ceo/CONTEXT.md",
+      "sha": "ae2c34cf82d4ba1568559cb3678db85c3b264fa7",
+      "size": 777,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ceo/HEARTBEAT.md",
+      "destination_path": ".paperclip-wiki/agents/ceo/HEARTBEAT.md",
+      "sha": "5fc1ef477bc1836dc98065ac5e4ee19a0e7c8a06",
+      "size": 5206,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ceo/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/ceo/SOUL.md",
+      "sha": "c80cc407a98bb1cd144a781e65cade7589b4d684",
+      "size": 2623,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ceo/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/ceo/TOOLS.md",
+      "sha": "41eefa6af3e5716bddbeaf897da2571156349a33",
+      "size": 152,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cmo/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/cmo/AGENTS.md",
+      "sha": "073743f8f90d6e21b7ef5a9fd25d687d697e33f3",
+      "size": 3017,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cmo/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/cmo/CONTEXT.md",
+      "sha": "3df4223d321786af209624136807d0a07914d23d",
+      "size": 777,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cmo/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/cmo/SOUL.md",
+      "sha": "4fce4f62fe78652f9b9c90398689315dc039473b",
+      "size": 180,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cmo/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/cmo/TOOLS.md",
+      "sha": "1c8f639591ef8e9a6155e743c490b3b12a8dcba4",
+      "size": 275,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/coo/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/coo/AGENTS.md",
+      "sha": "968de583c23f54525d80bf84e7d12249e8226662",
+      "size": 7498,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/coo/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/coo/CONTEXT.md",
+      "sha": "a39dff51a17c1ffd303d994567602c7018960f03",
+      "size": 777,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/coo/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/coo/SOUL.md",
+      "sha": "4f993a490fe35abeba2d74dd376f9694be206ea6",
+      "size": 97,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/coo/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/coo/TOOLS.md",
+      "sha": "e102232defa0b393646c856acfc75daf4a4471e4",
+      "size": 130,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cto/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/cto/AGENTS.md",
+      "sha": "95862ba562066bec60cf1d25e76b2565509f7d3b",
+      "size": 5341,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cto/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/cto/CONTEXT.md",
+      "sha": "84d85c1bfaeaad6d782cf7fececc68d73e943ad8",
+      "size": 777,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cto/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/cto/SOUL.md",
+      "sha": "25bb950ac2e0eade0ab281fbccd9aa7fd97777ce",
+      "size": 250,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/cto/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/cto/TOOLS.md",
+      "sha": "cc626b90be3e0de8d8d870be7a066fd6d9c6c82c",
+      "size": 373,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/designer/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/designer/AGENTS.md",
+      "sha": "b204ebb8a3a4b4ee04f17193340aa6923d9159f7",
+      "size": 3015,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/designer/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/designer/CONTEXT.md",
+      "sha": "c89950b4a43a80885bbdf7f664d58a2843e92a00",
+      "size": 782,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/designer/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/designer/SOUL.md",
+      "sha": "df6f1e458c89a2cd6c001f4439b8e50312524b27",
+      "size": 199,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/designer/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/designer/TOOLS.md",
+      "sha": "547c8820bba5b18ce4a04bbe09f12cb0e5754f2c",
+      "size": 633,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/engineer/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/engineer/AGENTS.md",
+      "sha": "b5822c56f20072aff7b227e5e5471863c9290b30",
+      "size": 5031,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/engineer/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/engineer/CONTEXT.md",
+      "sha": "0a33329b66b46ab121f4f1998115d387c7dc67d1",
+      "size": 782,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/engineer/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/engineer/SOUL.md",
+      "sha": "f9e62b421d18842e342673702d30b27f87fad8ef",
+      "size": 268,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/engineer/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/engineer/TOOLS.md",
+      "sha": "e8fcae8ed66b125549696d01981835de52e7a6a4",
+      "size": 223,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ui-qa/AGENTS.md",
+      "destination_path": ".paperclip-wiki/agents/ui-qa/AGENTS.md",
+      "sha": "27ff776ecead837220809ed9d3c89db1ada1e514",
+      "size": 3287,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ui-qa/CONTEXT.md",
+      "destination_path": ".paperclip-wiki/agents/ui-qa/CONTEXT.md",
+      "sha": "b24c781074dd42b0ef56123cd854eb1698c951ba",
+      "size": 779,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ui-qa/SOUL.md",
+      "destination_path": ".paperclip-wiki/agents/ui-qa/SOUL.md",
+      "sha": "9128b6b1b1f8f92cf265b7fa811406712013e315",
+      "size": 231,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/agents/ui-qa/TOOLS.md",
+      "destination_path": ".paperclip-wiki/agents/ui-qa/TOOLS.md",
+      "sha": "7f112c1be2a71708f886f1b4c497ac7b67bb5b85",
+      "size": 274,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/context-README.md",
+      "destination_path": ".paperclip-wiki/context-README.md",
+      "sha": "e1585037575159d31db4b2045a429ff6b049458d",
+      "size": 2695,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/IDEA.md",
+      "destination_path": ".paperclip-wiki/IDEA.md",
+      "sha": "908aa0ab03a8807ed89b50e3547687776dab42c3",
+      "size": 586,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/00-ANALIZA-PROBLEMU.md",
+      "destination_path": ".paperclip-wiki/raw/00-ANALIZA-PROBLEMU.md",
+      "sha": "7fb316273de0d4ae3becb982b3e5cc77292cf0e7",
+      "size": 5184,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/01-PRAPRZYCZYNA.md",
+      "destination_path": ".paperclip-wiki/raw/01-PRAPRZYCZYNA.md",
+      "sha": "298c4db78a5cfa8e153e1f560cf43fe68c4937c2",
+      "size": 6306,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/02-HIPOTEZA-EKSPERYMENT.md",
+      "destination_path": ".paperclip-wiki/raw/02-HIPOTEZA-EKSPERYMENT.md",
+      "sha": "bd5f1caee462a25e3c9a4e3542a2af84d629bb2d",
+      "size": 5957,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/03-OCENA-EKSPERYMENTU.md",
+      "destination_path": ".paperclip-wiki/raw/03-OCENA-EKSPERYMENTU.md",
+      "sha": "5e630459bb45977d675a80d04400e8b84b4c1eb3",
+      "size": 6756,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/04-WNIOSKI-WIEDZA.md",
+      "destination_path": ".paperclip-wiki/raw/04-WNIOSKI-WIEDZA.md",
+      "sha": "4d44ea2ff542594f90d2ab8324dafec3bea5e3b0",
+      "size": 6447,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/05-PLANOWANIE-ZBIORKI.md",
+      "destination_path": ".paperclip-wiki/raw/05-PLANOWANIE-ZBIORKI.md",
+      "sha": "66c4c693b03011a41f6edaee9d4080e0c8ab7629",
+      "size": 7157,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/06-CYKL-DOSKONALENIA.md",
+      "destination_path": ".paperclip-wiki/raw/06-CYKL-DOSKONALENIA.md",
+      "sha": "7c4cf98d9eda8f4dd793b31d0298c9ec910ee0d6",
+      "size": 7853,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/AGENTS.md",
+      "destination_path": ".paperclip-wiki/raw/AGENTS.md",
+      "sha": "298e6ad3781c9dd27ec0c36e27faa93327903706",
+      "size": 10608,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/API-DATA-GODZINA.md",
+      "destination_path": ".paperclip-wiki/raw/API-DATA-GODZINA.md",
+      "sha": "e6217c0104737879c8672aa72c431f0484b32779",
+      "size": 2784,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/API-SPRAWNOSCI.md",
+      "destination_path": ".paperclip-wiki/raw/API-SPRAWNOSCI.md",
+      "sha": "01514f5612a44fe437a1ff7ef3072eae16e15456",
+      "size": 4412,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/documentation.md",
+      "destination_path": ".paperclip-wiki/raw/documentation.md",
+      "sha": "cfc7b52d1e84288d572a84d350bbffbfed24b8cc",
+      "size": 30016,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/DOKUMENTACJA-INTEGRACJI.md",
+      "destination_path": ".paperclip-wiki/raw/DOKUMENTACJA-INTEGRACJI.md",
+      "sha": "4ae3c34657db79a2e7e360ca08cca5319d19c5ba",
+      "size": 14591,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/MAPA-SYSTEMU.md",
+      "destination_path": ".paperclip-wiki/raw/MAPA-SYSTEMU.md",
+      "sha": "e96d5b9e4479ceb0ab635d8ce90b85c879e25f49",
+      "size": 3543,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/OPENCODE-GLOBAL-AGENTS.md",
+      "destination_path": ".paperclip-wiki/raw/OPENCODE-GLOBAL-AGENTS.md",
+      "sha": "7cf1425397c53eb20f8c9e7c9eae3b6bf35e69b9",
+      "size": 619,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/PRD-BAZA-AKTYWNOSCI-RR.md",
+      "destination_path": ".paperclip-wiki/raw/PRD-BAZA-AKTYWNOSCI-RR.md",
+      "sha": "ab571076558eb2bee104ec426de0b7621692393e",
+      "size": 8928,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/PRD-KOMPAS-ZBIOREK.md",
+      "destination_path": ".paperclip-wiki/raw/PRD-KOMPAS-ZBIOREK.md",
+      "sha": "d25646eec37acec0096d14fdb36f739b292b7ede",
+      "size": 14949,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/PROMPT-SYSTEMOWY.md",
+      "destination_path": ".paperclip-wiki/raw/PROMPT-SYSTEMOWY.md",
+      "sha": "6a40d508f2b5ad12d95338a8caa69e5f949bcda0",
+      "size": 8247,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/SNAPSHOT-ORGANIZACJI-PAPERCLIP.md",
+      "destination_path": ".paperclip-wiki/raw/SNAPSHOT-ORGANIZACJI-PAPERCLIP.md",
+      "sha": "0d48b520048f0025683c6a157ff4c51892342f54",
+      "size": 3032,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/SZABLON-GOOGLE-DOCS.md",
+      "destination_path": ".paperclip-wiki/raw/SZABLON-GOOGLE-DOCS.md",
+      "sha": "983ca0a75342e83da875102943a11126b648b9b4",
+      "size": 7021,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/raw/WSPOLNY_KONTEKST.md",
+      "destination_path": ".paperclip-wiki/raw/WSPOLNY_KONTEKST.md",
+      "sha": "973c473af12341dc827e3cc84f7d9a38451270e1",
+      "size": 15779,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/README-UNIFIED.md",
+      "destination_path": ".paperclip-wiki/README-UNIFIED.md",
+      "sha": "8c09f18b8ae63248731c9b78b007bbd3f406a9ed",
+      "size": 1778,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/README.md",
+      "destination_path": ".paperclip-wiki/README.md",
+      "sha": "85b4b5543c98960ba6f77093a9a60c728f39b584",
+      "size": 2510,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/shared/DELIVERY.md",
+      "destination_path": ".paperclip-wiki/shared/DELIVERY.md",
+      "sha": "aaa8e6f2534d5b5558021da9bdb7fd876e635230",
+      "size": 3320,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/shared/GOVERNANCE.md",
+      "destination_path": ".paperclip-wiki/shared/GOVERNANCE.md",
+      "sha": "1eac90308f38a6ef915810e05502b1edfd84f84e",
+      "size": 2200,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/shared/KONTRAKT-WIEDZY.md",
+      "destination_path": ".paperclip-wiki/shared/KONTRAKT-WIEDZY.md",
+      "sha": "9e54b30979e138415bdfc9afe7b8ef824af71b20",
+      "size": 458,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/shared/PRODUCT.md",
+      "destination_path": ".paperclip-wiki/shared/PRODUCT.md",
+      "sha": "8defe398c0efd3b8e0a47d2e7c2fd17b82bcb9b6",
+      "size": 2593,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/shared/STATE.md",
+      "destination_path": ".paperclip-wiki/shared/STATE.md",
+      "sha": "3cdfa6a55a4768d141e5e7d2a01874b1ddaf7741",
+      "size": 1933,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/shared/TEAM.md",
+      "destination_path": ".paperclip-wiki/shared/TEAM.md",
+      "sha": "c35f5dae7a1779e70e7e0caa3796001ad145cdf2",
+      "size": 2218,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/bramka-jakosci-ui.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/bramka-jakosci-ui.md",
+      "sha": "8facb2f90d9fdacf388ffb0d60d888d30896bfc8",
+      "size": 846,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/brand-dna.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/brand-dna.md",
+      "sha": "a5d221a2adb5fa90b29240830a0eaeb39d1012ab",
+      "size": 791,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/context-first-execution.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/context-first-execution.md",
+      "sha": "9cd30f330c7d6b39f9565464cf0c4862dfd0442a",
+      "size": 1091,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/cykl-doskonalenia.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/cykl-doskonalenia.md",
+      "sha": "beda6e5def42567ddd0d4f0e5ea90dd0b75ce33a",
+      "size": 1657,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/definition-of-done.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/definition-of-done.md",
+      "sha": "b500aff59c4a323c06a7c73e43f1014506f82096",
+      "size": 614,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/karta-zbiorki.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/karta-zbiorki.md",
+      "sha": "afe43bea3f833f245d5ed0c54670d42f97166289",
+      "size": 2658,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/paperclip-wiki-mcp.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/paperclip-wiki-mcp.md",
+      "sha": "40d304345801502ea50e22359701e443c8e75f87",
+      "size": 2634,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/concepts/stan-braku-danych.md",
+      "destination_path": ".paperclip-wiki/wiki/concepts/stan-braku-danych.md",
+      "sha": "70856f25519e34fdd6716f85b430b52211db9ae9",
+      "size": 665,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-ceo.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-ceo.md",
+      "sha": "88903983c6705a438722c975b6fee6578448a6fa",
+      "size": 1631,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-cmo.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-cmo.md",
+      "sha": "1c80889a32ce679c91832afee268bfd16f0b745d",
+      "size": 738,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-coo.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-coo.md",
+      "sha": "0323e863369cc9e5ada57296f2a5ed6fc6a86ccf",
+      "size": 1031,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-cto.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-cto.md",
+      "sha": "e171e0a1ee47b05e60009aa6ba32079113e0b115",
+      "size": 1293,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-designer.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-designer.md",
+      "sha": "a069c861bf6efccf3b209534f0fd738d79b51ddd",
+      "size": 1137,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-engineer.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-engineer.md",
+      "sha": "057b35a063b692ae2f6d83aed08b8bf4d9aab87e",
+      "size": 2078,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/agents-ui-qa.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/agents-ui-qa.md",
+      "sha": "f0e7a3d101c64cee99d0defb62424224f2f13f24",
+      "size": 1008,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/external-agent-knowledge.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/external-agent-knowledge.md",
+      "sha": "81ba6fcac3266506d3cc17405d8025fe97b97da1",
+      "size": 2032,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/integracje-api.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/integracje-api.md",
+      "sha": "8c327506c2c99013a2b204b6f4caca722de8b9d0",
+      "size": 934,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/panel-google-sheets.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/panel-google-sheets.md",
+      "sha": "944411bf3fd3b98542d291738ab282a1a2177e2f",
+      "size": 1762,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/paperclip-organizacja.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/paperclip-organizacja.md",
+      "sha": "130f390408168bf644800439a41b542cffce10e9",
+      "size": 911,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/repo-map.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/repo-map.md",
+      "sha": "16849bd87a5a18ae35fbf742502057befb396eaf",
+      "size": 3775,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/entities/worker-wtyczka-rr.md",
+      "destination_path": ".paperclip-wiki/wiki/entities/worker-wtyczka-rr.md",
+      "sha": "28db97f6f4ded3abe54145b0b9325261e8b2c46a",
+      "size": 946,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/index.md",
+      "destination_path": ".paperclip-wiki/wiki/index.md",
+      "sha": "04d0534ef17c7a73537d187555c4eb41580cb581",
+      "size": 3948,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/log.md",
+      "destination_path": ".paperclip-wiki/wiki/log.md",
+      "sha": "00eb4c78deb828160c0a26478722c539afbe034d",
+      "size": 4350,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/decisions.md",
+      "destination_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/decisions.md",
+      "sha": "560a99bd8c6981e805bd7892b5fa390257fcb965",
+      "size": 3673,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/history.md",
+      "destination_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/history.md",
+      "sha": "d26554ebadbe2e2dfc14275db972fd47bfbc28ae",
+      "size": 792,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/index.md",
+      "destination_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/index.md",
+      "sha": "74f4bddf83b1444939b0712caf3b29dd0a5f4b01",
+      "size": 8731,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/standup.md",
+      "destination_path": ".paperclip-wiki/wiki/projects/kompas-zbiorek/standup.md",
+      "sha": "3d321f02999bba790de7157bacb0bd6a0713fcd9",
+      "size": 1860,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/agents-operacyjny.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/agents-operacyjny.md",
+      "sha": "35d777a148558e3116ffe8cddcf5c1ac3c5faf2f",
+      "size": 2224,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/baza-aktywnosci.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/baza-aktywnosci.md",
+      "sha": "397be7060ff446cf9bff2f16dd3600bf9dfcc068",
+      "size": 2720,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/cykl-doskonalenia.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/cykl-doskonalenia.md",
+      "sha": "9f91a936fceddf82375d13d785be45e831ae6511",
+      "size": 2029,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/integracje-mcp.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/integracje-mcp.md",
+      "sha": "e47f1b5e90eac86feda5771bbeb1bdea3d4d3f58",
+      "size": 1910,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/organizacja-paperclip.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/organizacja-paperclip.md",
+      "sha": "30dd9890672ad5eed3903613257f0c331988790f",
+      "size": 920,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/prd-kompas.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/prd-kompas.md",
+      "sha": "f583047e5f4d67f45f4b772d10ae0c6d23ecc653",
+      "size": 4398,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/sources/wspolny-kontekst.md",
+      "destination_path": ".paperclip-wiki/wiki/sources/wspolny-kontekst.md",
+      "sha": "4f4de20d2f1f002d05292f4de5ce95e929a24d48",
+      "size": 8142,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/synthesis/invarianty-i-brand.md",
+      "destination_path": ".paperclip-wiki/wiki/synthesis/invarianty-i-brand.md",
+      "sha": "e535114414f75b2eb9456e6e95437c84706718d2",
+      "size": 6397,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".paperclip-wiki/wiki/synthesis/single-source-of-truth.md",
+      "destination_path": ".paperclip-wiki/wiki/synthesis/single-source-of-truth.md",
+      "sha": "2550e061611f2944a8708d403f3c1bfffe6ad50e",
+      "size": 1541,
+      "mode": "100644"
+    },
+    {
+      "source_path": "branding/.gitkeep",
+      "destination_path": "branding/.gitkeep",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/6.png",
+      "destination_path": "dev/design-system/6.png",
+      "sha": "1953b25a8e9e8aa3f44b076dc5a91b4536697be3",
+      "size": 3839,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/AGENTS.md",
+      "destination_path": "dev/design-system/AGENTS.md",
+      "sha": "404697c8c2490ef839cc2848c22ce30564f5a709",
+      "size": 531,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/BRAND-DESIGN-SYSTEM-COMPRESSED.md",
+      "destination_path": "dev/design-system/BRAND-DESIGN-SYSTEM-COMPRESSED.md",
+      "sha": "1fd2388ffcc0983468b60d23aeff4b625550612c",
+      "size": 20694,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/BRAND-DESIGN-SYSTEM.md",
+      "destination_path": "dev/design-system/BRAND-DESIGN-SYSTEM.md",
+      "sha": "cd5a1280026a8f6dca50d6e3a128d68b1eab54d6",
+      "size": 33358,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/.gitkeep",
+      "destination_path": "dev/design-system/opendesign/design-systems/.gitkeep",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-rrp/brand/style-notes.md",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-rrp/brand/style-notes.md",
+      "sha": "7fcad44dfa29ba0e88b220b46bc03219645d231f",
+      "size": 943,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-rrp/brand/voice-and-tone.md",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-rrp/brand/voice-and-tone.md",
+      "sha": "d6c4f817d7fd0cf92e392ee7b7c4286e1276efb5",
+      "size": 428,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-rrp/README.md",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-rrp/README.md",
+      "sha": "e67fdbc57bab07d4f142d843ddad38870889f07b",
+      "size": 1757,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-rrp/SKILL.md",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-rrp/SKILL.md",
+      "sha": "8f3d6768d51619ddc53c79a5f8b36883d94dc7a2",
+      "size": 691,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-rrp/tokens/colors_and_type.css",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-rrp/tokens/colors_and_type.css",
+      "sha": "a595fc73ce25918b62ca9dc2cdb1be37b2c5ebf1",
+      "size": 1349,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-zbiorek/DESIGN.md",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-zbiorek/DESIGN.md",
+      "sha": "895a49a439a750408da159b383b63dca5020bd63",
+      "size": 13937,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-zbiorek/manifest.json",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-zbiorek/manifest.json",
+      "sha": "767cff320034c85e3585f932fc698fc22ba16b53",
+      "size": 565,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/design-systems/kompas-zbiorek/tokens.css",
+      "destination_path": "dev/design-system/opendesign/design-systems/kompas-zbiorek/tokens.css",
+      "sha": "7e3de89c69e2c8476ca9473b6e9ddbb67481b981",
+      "size": 2334,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/index.html",
+      "destination_path": "dev/design-system/opendesign/index.html",
+      "sha": "49ed1fb523274333f4b094a929b1336dc27b6c74",
+      "size": 8690,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/manifest.json",
+      "destination_path": "dev/design-system/opendesign/manifest.json",
+      "sha": "260e6dfbe0c17622a789d9834102d68e574fdb4a",
+      "size": 1183,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/opendesign/mockups/.gitkeep",
+      "destination_path": "dev/design-system/opendesign/mockups/.gitkeep",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/strona-glowna-cloudflare/assets/logo.png",
+      "destination_path": "dev/design-system/strona-glowna-cloudflare/assets/logo.png",
+      "sha": "4ef0702206a8d37f9920a27aad98dc1c984d0bb0",
+      "size": 45754,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/strona-glowna-cloudflare/build-worker.mjs",
+      "destination_path": "dev/design-system/strona-glowna-cloudflare/build-worker.mjs",
+      "sha": "9bdd574b2d9c0c0ca8824bd0c70076fec912e35a",
+      "size": 1031,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/strona-glowna-cloudflare/index.html",
+      "destination_path": "dev/design-system/strona-glowna-cloudflare/index.html",
+      "sha": "7e0e0ced5fc44e83a5e209b70349363ffeb75836",
+      "size": 562384,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/strona-glowna-cloudflare/worker.js",
+      "destination_path": "dev/design-system/strona-glowna-cloudflare/worker.js",
+      "sha": "7d6eb56b663b4bb7849efde75b13a5f9b7de8180",
+      "size": 562914,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/design-system/strona-glowna-cloudflare/wrangler.jsonc",
+      "destination_path": "dev/design-system/strona-glowna-cloudflare/wrangler.jsonc",
+      "sha": "515f9f0f5376acd2d24730ce9cf59bf09278e8bd",
+      "size": 274,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/activate-native-agents.ps1",
+      "destination_path": "dev/integrations/opencode-mcp/activate-native-agents.ps1",
+      "sha": "261bcb7ed3ff63925ac45853611ac40f02289104",
+      "size": 2700,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/ctb-capability.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/ctb-capability.mjs",
+      "sha": "9804cedd747d852831b4a14db35ae10ebb937b2a",
+      "size": 5925,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/ctb-gateway.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/ctb-gateway.mjs",
+      "sha": "98ffcfdce4b9a5671d806ef0226a1479820f6b13",
+      "size": 169146,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/ctb-policy.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/ctb-policy.mjs",
+      "sha": "32220a11f8c5c702afd3c594c28be3f00aefb329",
+      "size": 18281,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/live-fallback-probe.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/live-fallback-probe.mjs",
+      "sha": "10f57c6a297dad1ba6997f98463e5436667e47d5",
+      "size": 6293,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/live-smoke.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/live-smoke.mjs",
+      "sha": "75ba74e8c7ec41c78968f4a5f892b08cb468b06a",
+      "size": 9377,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/mcp-role-profiles.json",
+      "destination_path": "dev/integrations/opencode-mcp/mcp-role-profiles.json",
+      "sha": "121828b2f18caa20fda4589a2534ac71b3022efa",
+      "size": 5469,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/mcp-role-profiles.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/mcp-role-profiles.mjs",
+      "sha": "ad4d33b8daefd24761cbf386eab160655fdc54fc",
+      "size": 6886,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/run-analytics.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/run-analytics.mjs",
+      "sha": "eb94c9537d24c858445ad8f2f9523bffd087e9cc",
+      "size": 27637,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/server.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/server.mjs",
+      "sha": "893f8a5e0b5cfb99901cde735a466f63125b8831",
+      "size": 106,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/skills/ctb-delivery/SKILL.md",
+      "destination_path": "dev/integrations/opencode-mcp/skills/ctb-delivery/SKILL.md",
+      "sha": "adfd55408a0efab1eddb51afaa18916dd2403751",
+      "size": 449,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/skills/ctb-implementation/SKILL.md",
+      "destination_path": "dev/integrations/opencode-mcp/skills/ctb-implementation/SKILL.md",
+      "sha": "62f86433d952cb4296a15993d57d9760cd944d4a",
+      "size": 721,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/skills/ctb-intake/SKILL.md",
+      "destination_path": "dev/integrations/opencode-mcp/skills/ctb-intake/SKILL.md",
+      "sha": "a4cb206a3cf95316c6081c0b5e35d52ff1cd32b1",
+      "size": 879,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/skills/ctb-preflight/SKILL.md",
+      "destination_path": "dev/integrations/opencode-mcp/skills/ctb-preflight/SKILL.md",
+      "sha": "dec3c38515b71c6005b98b3956f757404a04a0e6",
+      "size": 749,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/skills/ctb-validation/SKILL.md",
+      "destination_path": "dev/integrations/opencode-mcp/skills/ctb-validation/SKILL.md",
+      "sha": "9cd073d2c88e66ff85c9a74213f8c068f445830f",
+      "size": 513,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/skills/infra-root-cause/SKILL.md",
+      "destination_path": "dev/integrations/opencode-mcp/skills/infra-root-cause/SKILL.md",
+      "sha": "8fca68939439541a49bdd21fdb7fe4e80d7c8309",
+      "size": 641,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/start-opencode-mcp.ps1",
+      "destination_path": "dev/integrations/opencode-mcp/start-opencode-mcp.ps1",
+      "sha": "1db6c78ce198fa3cf9efe56a258083dd4fc2c1ff",
+      "size": 5523,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-acceptance.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-acceptance.mjs",
+      "sha": "b49116d17dfbefa17a11b4a9ec9ba2043af2d81c",
+      "size": 18337,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-ctb-mcp.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-ctb-mcp.mjs",
+      "sha": "1ae57f8d4f667688e1ec770f0636b3353377ba2d",
+      "size": 19653,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-ctb-policy.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-ctb-policy.mjs",
+      "sha": "dba10c7f3df9e5108cf2f34c0f109cc5d0953b86",
+      "size": 8045,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-hardening.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-hardening.mjs",
+      "sha": "31c2b7c4180aa299c02100952316b34ecf53bbf4",
+      "size": 18286,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-mcp.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-mcp.mjs",
+      "sha": "818eaeeb5d2ce060c050a8d730599a7e1fda18ce",
+      "size": 98,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-oauth-session.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-oauth-session.mjs",
+      "sha": "5bf4bc9d87859c0cd862fe44ee79a9b82c9a5e4c",
+      "size": 9289,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-run-analytics.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-run-analytics.mjs",
+      "sha": "be4631e3cd44e940684be71c02d90bd463ca87b3",
+      "size": 8557,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/test-run-identity-regression.mjs",
+      "destination_path": "dev/integrations/opencode-mcp/test-run-identity-regression.mjs",
+      "sha": "416f6e3aeaeb31549f6720910f228b69dabcf7ef",
+      "size": 3371,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/opencode-mcp/UPSTREAM.md",
+      "destination_path": "dev/integrations/opencode-mcp/UPSTREAM.md",
+      "sha": "e55ecb477b9d40897463fc5bd5556583c61cb338",
+      "size": 1191,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/paperclip-mcp/autostart-paperclip.cmd",
+      "destination_path": "dev/integrations/paperclip-mcp/autostart-paperclip.cmd",
+      "sha": "d356f90f5322c0285202776f4d875c40b22e19d5",
+      "size": 92,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/paperclip-mcp/autostart-paperclip.ps1",
+      "destination_path": "dev/integrations/paperclip-mcp/autostart-paperclip.ps1",
+      "sha": "a2fcddd3f47e2088ef1869b8b697e9d4a9805713",
+      "size": 1375,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/paperclip-mcp/public-mcp-proxy.mjs",
+      "destination_path": "dev/integrations/paperclip-mcp/public-mcp-proxy.mjs",
+      "sha": "3a4ae68900870f8b1565708268693d38f772ef28",
+      "size": 1879,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/paperclip-mcp/skills/status/SKILL.md",
+      "destination_path": "dev/integrations/paperclip-mcp/skills/status/SKILL.md",
+      "sha": "8985390ad62f0eac7aae7491ff652fc270567947",
+      "size": 2005,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/integrations/paperclip-mcp/start-paperclip-local-mcp.ps1",
+      "destination_path": "dev/integrations/paperclip-mcp/start-paperclip-local-mcp.ps1",
+      "sha": "7b86aba0af5d9a78a37e44048f154435a147a06f",
+      "size": 1812,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/quality/pipeline-e2e/e2e-a.txt",
+      "destination_path": "dev/quality/pipeline-e2e/e2e-a.txt",
+      "sha": "4472803ca3240ce46ff936faa1f910ad2e3cbd59",
+      "size": 48,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/quality/pipeline-e2e/e2e-b.txt",
+      "destination_path": "dev/quality/pipeline-e2e/e2e-b.txt",
+      "sha": "ab845a5138e0e8364a15552de27c27a0af17536b",
+      "size": 20,
+      "mode": "100644"
+    },
+    {
+      "source_path": "dev/quality/tests/native-subtask-regression.test.mjs",
+      "destination_path": "dev/quality/tests/native-subtask-regression.test.mjs",
+      "sha": "d0ad9e8a036ef5a90b237d05b2e70a6accb09286",
+      "size": 3266,
+      "mode": "100644"
+    },
+    {
+      "source_path": "docs/comfy-canvas-bridge.md",
+      "destination_path": "docs/comfy-canvas-bridge.md",
+      "sha": "db3ff551b0582ec90090aeb047796e31e31b9f59",
+      "size": 2852,
+      "mode": "100644"
+    },
+    {
+      "source_path": "docs/comfy-image-loop.md",
+      "destination_path": "docs/comfy-image-loop.md",
+      "sha": "752e46e0e7865733e06cd51c1267f4a2efadc635",
+      "size": 9387,
+      "mode": "100644"
+    },
+    {
+      "source_path": "docs/KOMAA-385-rag2.md",
+      "destination_path": "docs/KOMAA-385-rag2.md",
+      "sha": "5b5d9710aa9ae8004d16d80db10f640dc6388b0f",
+      "size": 9572,
+      "mode": "100644"
+    },
+    {
+      "source_path": "docs/mcp-services.md",
+      "destination_path": "docs/mcp-services.md",
+      "sha": "1b0c92a7a8e24e224274e6ed9a8e88364aa3b1e2",
+      "size": 6132,
+      "mode": "100644"
+    },
+    {
+      "source_path": "docs/production-release.md",
+      "destination_path": "docs/production-release.md",
+      "sha": "b62aa079e4abddf3298cc0845882b50a9551b100",
+      "size": 14983,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/actions/plasmic-action/action.yml",
+      "destination_path": "historical-actions/.github/actions/plasmic-action/action.yml",
+      "sha": "90215892f934a4687e9bfb9fdb4049ea8717d667",
+      "size": 1487,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/actions/plasmic-action/PATCHES.md",
+      "destination_path": "historical-actions/.github/actions/plasmic-action/PATCHES.md",
+      "sha": "f78ee7f473d162ebe9e9e84335a11892a458645d",
+      "size": 879,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/actions/plasmic-action/selfhost.cjs",
+      "destination_path": "historical-actions/.github/actions/plasmic-action/selfhost.cjs",
+      "sha": "7b1840f37da0fef3735a419e8eb1d7bbc5a7fc04",
+      "size": 5373,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/build-plasmic.yml",
+      "destination_path": "historical-actions/.github/workflows/build-plasmic.yml",
+      "sha": "761d7a15ba1587132722f99202d4e6d2a46ea4d6",
+      "size": 2893,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/ci.yml",
+      "destination_path": "historical-actions/.github/workflows/ci.yml",
+      "sha": "bc9afc3d15b9d136e4c9c5ba112296665d36ea4f",
+      "size": 1215,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/coolify-mcp-edge.yml",
+      "destination_path": "historical-actions/.github/workflows/coolify-mcp-edge.yml",
+      "sha": "b140da160badc14053832b9879b2e0e2843473f3",
+      "size": 6924,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/opendesign-brand-mcp.yml",
+      "destination_path": "historical-actions/.github/workflows/opendesign-brand-mcp.yml",
+      "sha": "445d418850b74ce2395c88d93ef18b4f2e07ce90",
+      "size": 4773,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/paperclip-execution-truth-ci.yml",
+      "destination_path": "historical-actions/.github/workflows/paperclip-execution-truth-ci.yml",
+      "sha": "c39d34711c1f55916fa78e47b800510c56497eea",
+      "size": 1610,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/paperclip-mcp-ci.yml",
+      "destination_path": "historical-actions/.github/workflows/paperclip-mcp-ci.yml",
+      "sha": "bfffac8024c72c5b8bed7dc6639dcd466f8cc9d9",
+      "size": 2441,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".github/workflows/plasmic.yml",
+      "destination_path": "historical-actions/.github/workflows/plasmic.yml",
+      "sha": "555c7f4bff1c9bf683a09bdc564aa52dbf7f563e",
+      "size": 3720,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".env.example",
+      "destination_path": "historical-root/.env.example",
+      "sha": "390d6af5f92d1d071d4773bf009b3b0833253a02",
+      "size": 977,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".gitignore",
+      "destination_path": "historical-root/.gitignore",
+      "sha": "e3bdd4313c831fbbe5824f7d47ef2a246d8532db",
+      "size": 1046,
+      "mode": "100644"
+    },
+    {
+      "source_path": ".gitmodules",
+      "destination_path": "historical-root/.gitmodules",
+      "sha": "6baf1c01582ce646e37a706649383fd7cf45fca3",
+      "size": 143,
+      "mode": "100644"
+    },
+    {
+      "source_path": "AGENTS.md",
+      "destination_path": "historical-root/AGENTS.md",
+      "sha": "0bc4215eb72b4722af5feb20d1be5ef583684b28",
+      "size": 2613,
+      "mode": "100644"
+    },
+    {
+      "source_path": "opencode.json",
+      "destination_path": "historical-root/opencode.json",
+      "sha": "9860f1bf6285e13dbf39397c9f045a4b1de9d1e9",
+      "size": 5938,
+      "mode": "100644"
+    },
+    {
+      "source_path": "package-lock.json",
+      "destination_path": "historical-root/package-lock.json",
+      "sha": "d52c0ac5793b49da2411aa9492e0b04860548e25",
+      "size": 110816,
+      "mode": "100644"
+    },
+    {
+      "source_path": "package.json",
+      "destination_path": "historical-root/package.json",
+      "sha": "1854ebae0bfad5d98fa70d45f76cace5b7c15dd0",
+      "size": 838,
+      "mode": "100644"
+    },
+    {
+      "source_path": "pnpm-lock.yaml",
+      "destination_path": "historical-root/pnpm-lock.yaml",
+      "sha": "26ff646d3a7a35ef354ae9b2fb5c851d3f8739e9",
+      "size": 208535,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/.env.example",
+      "destination_path": "ops/design-stack/.env.example",
+      "sha": "a9842a861314178e3703bdbc936005ad727bc797",
+      "size": 340,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/.github/workflows/ci.yml",
+      "destination_path": "ops/design-stack/.github/workflows/ci.yml",
+      "sha": "2d46a033347c76446210afbf7a12b85ba57bd895",
+      "size": 833,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/.gitignore",
+      "destination_path": "ops/design-stack/.gitignore",
+      "sha": "a3fb0021e02812f1d39a720ca84009d8d6a7f89c",
+      "size": 45,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/design-sync/cli.ts",
+      "destination_path": "ops/design-stack/design-sync/cli.ts",
+      "sha": "006e8b1df1d37c672c7f29de8caadaed822af7ba",
+      "size": 8302,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/design-sync/component-map.json",
+      "destination_path": "ops/design-stack/design-sync/component-map.json",
+      "sha": "c66e1a93366a2069fd79359390f7b956d7f223ce",
+      "size": 957,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/design-sync/package.json",
+      "destination_path": "ops/design-stack/design-sync/package.json",
+      "sha": "3f73df7f6ec18e8fb8646760c21e566c78ffd572",
+      "size": 396,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/design-sync/token-map.json",
+      "destination_path": "ops/design-stack/design-sync/token-map.json",
+      "sha": "bf825f2943edb117a98510cff208d7bdba9971c3",
+      "size": 360,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docker-compose.mcp.yml",
+      "destination_path": "ops/design-stack/docker-compose.mcp.yml",
+      "sha": "586193706eb2e9b59e87fa603c28ca89513a413d",
+      "size": 3029,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/Dockerfile.mcp",
+      "destination_path": "ops/design-stack/Dockerfile.mcp",
+      "sha": "13a3785353c0128c11aca33551d225bb467ba639",
+      "size": 825,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/architecture.md",
+      "destination_path": "ops/design-stack/docs/design-stack/architecture.md",
+      "sha": "daff4cb9150a2c654d181d5d94c42ec1e5199dd3",
+      "size": 1404,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/e2e.md",
+      "destination_path": "ops/design-stack/docs/design-stack/e2e.md",
+      "sha": "dfd3841cb93912364e64096991b0a069acb75637",
+      "size": 3020,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/opendesign.md",
+      "destination_path": "ops/design-stack/docs/design-stack/opendesign.md",
+      "sha": "afa1efed7e4e31282f68be09d228f6e8a33ae8a6",
+      "size": 871,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/operations.md",
+      "destination_path": "ops/design-stack/docs/design-stack/operations.md",
+      "sha": "bf92adc162a0944346878f63d0a35f815be4eb88",
+      "size": 1797,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/plasmic-mcp.md",
+      "destination_path": "ops/design-stack/docs/design-stack/plasmic-mcp.md",
+      "sha": "9e30ec7399965e7deaebf0a841bfaa460fd5ad81",
+      "size": 2008,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/security.md",
+      "destination_path": "ops/design-stack/docs/design-stack/security.md",
+      "sha": "313a4a5d209dd80edadbbf3fd6e333a83f7c38c2",
+      "size": 940,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/design-stack/tool-routing.md",
+      "destination_path": "ops/design-stack/docs/design-stack/tool-routing.md",
+      "sha": "04b594a136fe5920c0126493944ad0469167f2ef",
+      "size": 560,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/docs/integrations/design-stack-before.md",
+      "destination_path": "ops/design-stack/docs/integrations/design-stack-before.md",
+      "sha": "4e7b2975bf8023a312f043e7c200a6a49faafffa",
+      "size": 6833,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/contracts/audit.ts",
+      "destination_path": "ops/design-stack/libs/contracts/audit.ts",
+      "sha": "b11613ac8a52268c827b1fc4bbf4d008464cfc14",
+      "size": 678,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/contracts/design-context.ts",
+      "destination_path": "ops/design-stack/libs/contracts/design-context.ts",
+      "sha": "355dc4483cc41bf6b4ad165f39791e5ec23f3262",
+      "size": 642,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/contracts/idempotency.ts",
+      "destination_path": "ops/design-stack/libs/contracts/idempotency.ts",
+      "sha": "d8b80d16eb18c61a9c4a8117f563af1b062bc343",
+      "size": 1035,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/contracts/locks.ts",
+      "destination_path": "ops/design-stack/libs/contracts/locks.ts",
+      "sha": "dc8a9235bb9b199d5da5d7f12c7386cbbd9da663",
+      "size": 1827,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/contracts/package.json",
+      "destination_path": "ops/design-stack/libs/contracts/package.json",
+      "sha": "e1d7076848c863adbf28356294e41a231a737afc",
+      "size": 274,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/contracts/sync.ts",
+      "destination_path": "ops/design-stack/libs/contracts/sync.ts",
+      "sha": "43604d8172d7318d76b5717e82ebf13474b9fa83",
+      "size": 823,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/mcp-server/package.json",
+      "destination_path": "ops/design-stack/libs/mcp-server/package.json",
+      "sha": "483e87f3159b94178d010933211db5133735d3eb",
+      "size": 213,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/mcp-server/server.ts",
+      "destination_path": "ops/design-stack/libs/mcp-server/server.ts",
+      "sha": "311da3179d9d0a8e2207882225028aed17979c65",
+      "size": 6577,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/od-client/client.ts",
+      "destination_path": "ops/design-stack/libs/od-client/client.ts",
+      "sha": "ced71e35ab22ee70f9695840e741745a5e33c3cc",
+      "size": 15164,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/od-client/package.json",
+      "destination_path": "ops/design-stack/libs/od-client/package.json",
+      "sha": "e687cc4f786886689eb8258b7f8bacfc3a8ddf95",
+      "size": 125,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/plasmic-client/client.ts",
+      "destination_path": "ops/design-stack/libs/plasmic-client/client.ts",
+      "sha": "25ea8d1d9fb1a1e5881aa049ea0c0a48c5539220",
+      "size": 10911,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/libs/plasmic-client/package.json",
+      "destination_path": "ops/design-stack/libs/plasmic-client/package.json",
+      "sha": "f475a91d31a142ee89dc11988778896f0b8a77e8",
+      "size": 130,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/package-lock.json",
+      "destination_path": "ops/design-stack/package-lock.json",
+      "sha": "10ae20e54f10d2d0833e742deb23f3a445f40ebd",
+      "size": 57684,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/package.json",
+      "destination_path": "ops/design-stack/package.json",
+      "sha": "d20523501858b23f234851f6f9a6282f296eaff4",
+      "size": 609,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/opendesign-bridge-mcp/.env.example",
+      "destination_path": "ops/design-stack/services/opendesign-bridge-mcp/.env.example",
+      "sha": "2a4a06cd60ba53ddea7732db45ba697ee5b61fd6",
+      "size": 533,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/opendesign-bridge-mcp/BRAND_AGENT_PROMPT.md",
+      "destination_path": "ops/design-stack/services/opendesign-bridge-mcp/BRAND_AGENT_PROMPT.md",
+      "sha": "cdcaac6caf3e2a0adb01562ec705fa8da0357b45",
+      "size": 3529,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/opendesign-bridge-mcp/package.json",
+      "destination_path": "ops/design-stack/services/opendesign-bridge-mcp/package.json",
+      "sha": "1c2d67a8d8564778f6b804c0e3456c40bc7f0b2c",
+      "size": 430,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/opendesign-bridge-mcp/server.ts",
+      "destination_path": "ops/design-stack/services/opendesign-bridge-mcp/server.ts",
+      "sha": "56d7c96dd23b3e3ec72ac19c543bd4f24fff06c6",
+      "size": 7948,
+      "mode": "100755"
+    },
+    {
+      "source_path": "ops/design-stack/services/plasmic-mcp/.env.example",
+      "destination_path": "ops/design-stack/services/plasmic-mcp/.env.example",
+      "sha": "1a78790358ff307660f82e86a96efb0560644431",
+      "size": 809,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/plasmic-mcp/comp-template.json",
+      "destination_path": "ops/design-stack/services/plasmic-mcp/comp-template.json",
+      "sha": "f8aaa924ffacf25ea5bda847ea9be67e474e8d18",
+      "size": 2982,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/plasmic-mcp/package.json",
+      "destination_path": "ops/design-stack/services/plasmic-mcp/package.json",
+      "sha": "51eba45f45d4a6924712e1092a5b167cbe6a86c6",
+      "size": 455,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/plasmic-mcp/page-template.json",
+      "destination_path": "ops/design-stack/services/plasmic-mcp/page-template.json",
+      "sha": "f92824af84a9fab49065c4914806a2c3b7ecd0e8",
+      "size": 4173,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/services/plasmic-mcp/server.ts",
+      "destination_path": "ops/design-stack/services/plasmic-mcp/server.ts",
+      "sha": "93671e020f7e3eb85d789fb2eb038115645d05c3",
+      "size": 2022,
+      "mode": "100755"
+    },
+    {
+      "source_path": "ops/design-stack/services/plasmic-mcp/tools.ts",
+      "destination_path": "ops/design-stack/services/plasmic-mcp/tools.ts",
+      "sha": "890f625f3815f9671a062e6a14e3ef5f27199362",
+      "size": 29846,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/skills/design-stack/SKILL.md",
+      "destination_path": "ops/design-stack/skills/design-stack/SKILL.md",
+      "sha": "bf3ef77dacf8d7d337da64fdc4f50baa5421c9bb",
+      "size": 2285,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/clients.test.ts",
+      "destination_path": "ops/design-stack/tests/clients.test.ts",
+      "sha": "6a04d4a10ef85b75a5155ded0f89994f9be41e3f",
+      "size": 4090,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/contracts.test.ts",
+      "destination_path": "ops/design-stack/tests/contracts.test.ts",
+      "sha": "698306fbf2046df50a22c76b581d2cefefef76b3",
+      "size": 3083,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/integration.test.ts",
+      "destination_path": "ops/design-stack/tests/integration.test.ts",
+      "sha": "afb95fb4046e77ed2509cec4d32eb6c249c5fd87",
+      "size": 2703,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/mcp-compose-deploy-contract.test.ts",
+      "destination_path": "ops/design-stack/tests/mcp-compose-deploy-contract.test.ts",
+      "sha": "e65bd7c87861d157086c253885e06ca038ea9dee",
+      "size": 3987,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/opendesign-brand-mcp.test.ts",
+      "destination_path": "ops/design-stack/tests/opendesign-brand-mcp.test.ts",
+      "sha": "77f6a5c4e9248d85429574df86e02ad09af6ed14",
+      "size": 10286,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/plasmic-idempotency.test.ts",
+      "destination_path": "ops/design-stack/tests/plasmic-idempotency.test.ts",
+      "sha": "91c7b06524d9f12136b6e19358a246c3c64156bf",
+      "size": 5047,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/plasmic-mcp-catalog.test.ts",
+      "destination_path": "ops/design-stack/tests/plasmic-mcp-catalog.test.ts",
+      "sha": "77e1344ae79cb7af2e588e81a5c2dd70ba5d6429",
+      "size": 8402,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tests/smoke.test.ts",
+      "destination_path": "ops/design-stack/tests/smoke.test.ts",
+      "sha": "6081f72bc3c254f4fd57eea3ec3e9e0da96518cc",
+      "size": 2735,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/tsconfig.json",
+      "destination_path": "ops/design-stack/tsconfig.json",
+      "sha": "23101222e65068fb8ca490ea29f81631581f8c1c",
+      "size": 317,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/workflows/package.json",
+      "destination_path": "ops/design-stack/workflows/package.json",
+      "sha": "9cb26d9798c3cbaf872c57b82cdb9b4d3ce0e73d",
+      "size": 254,
+      "mode": "100644"
+    },
+    {
+      "source_path": "ops/design-stack/workflows/prepare_ui_task.ts",
+      "destination_path": "ops/design-stack/workflows/prepare_ui_task.ts",
+      "sha": "85ae18bc2257784878a8ddf079d58bf9f7e2aaec",
+      "size": 4990,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/assert-cloudflare-route-access.mjs",
+      "destination_path": "scripts/assert-cloudflare-route-access.mjs",
+      "sha": "f2a41850fb9fc1fc3ba6834b8fadaeabd56d472e",
+      "size": 2494,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/assert-git-identity.mjs",
+      "destination_path": "scripts/assert-git-identity.mjs",
+      "sha": "8b391dae64075ea78df055fe9244b640ffb0f457",
+      "size": 8749,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/assert-release-provenance.mjs",
+      "destination_path": "scripts/assert-release-provenance.mjs",
+      "sha": "c9585cf7b84f8565943e3c4ddbc5a37877f9ed48",
+      "size": 2981,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/check-canvas-bridge.py",
+      "destination_path": "scripts/check-canvas-bridge.py",
+      "sha": "d3c20567b8a5ac4c181c05f3bab5b7f1257728e4",
+      "size": 7122,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/check-mcp-endpoints.mjs",
+      "destination_path": "scripts/check-mcp-endpoints.mjs",
+      "sha": "2cd70804d223958b1d18e2a308abc8f1c913e84a",
+      "size": 2602,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/install-git-hooks.mjs",
+      "destination_path": "scripts/install-git-hooks.mjs",
+      "sha": "ef29a4ea2da4bc8d4439f9dd42d60f3eb5f7643b",
+      "size": 870,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/lint.mjs",
+      "destination_path": "scripts/lint.mjs",
+      "sha": "c8d7c828a79324782ebb394ede950969826249c3",
+      "size": 1100,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/mcp-oauth-smoke.mjs",
+      "destination_path": "scripts/mcp-oauth-smoke.mjs",
+      "sha": "3194f1afa6717844dd9e8541dcdb3fc31fed076e",
+      "size": 11469,
+      "mode": "100755"
+    },
+    {
+      "source_path": "scripts/mcp-qdrant-verify.mjs",
+      "destination_path": "scripts/mcp-qdrant-verify.mjs",
+      "sha": "00c47aa3e6783210b774058b3300c0d0a3cce4a6",
+      "size": 4658,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/rag-live-smoke.mjs",
+      "destination_path": "scripts/rag-live-smoke.mjs",
+      "sha": "2cc12e2f932fa06c2e05f6c05c8932eba1b87cd1",
+      "size": 1445,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/release-targets.mjs",
+      "destination_path": "scripts/release-targets.mjs",
+      "sha": "f8b18b45ea50b2e95faa0c1bccb6e345475cb509",
+      "size": 7058,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/test-mcp-tools.mjs",
+      "destination_path": "scripts/test-mcp-tools.mjs",
+      "sha": "c25506e034a89cdf7e91b419a7eeaa8227dcb111",
+      "size": 4870,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/ui-registry/adopt-runtime.mjs",
+      "destination_path": "scripts/ui-registry/adopt-runtime.mjs",
+      "sha": "ba3a28cf206f3e6f8db1114e51a9f6cee380279c",
+      "size": 1215,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/ui-registry/promote.mjs",
+      "destination_path": "scripts/ui-registry/promote.mjs",
+      "sha": "ac7d4603ad7489a76cc4c3349062840065bd3549",
+      "size": 8513,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/ui-registry/serve.mjs",
+      "destination_path": "scripts/ui-registry/serve.mjs",
+      "sha": "25d8c61fb7c9eb55c68462f7498b12459a1b5324",
+      "size": 1751,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/ui-registry/shadcn-mcp-server.mjs",
+      "destination_path": "scripts/ui-registry/shadcn-mcp-server.mjs",
+      "sha": "4cd14fa4f26ed0db509d3c9a2f775118798ed324",
+      "size": 1984,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/ui-registry/shadcn-mcp.mjs",
+      "destination_path": "scripts/ui-registry/shadcn-mcp.mjs",
+      "sha": "1c06396e43be3103fad26fad9ba44562ea7f9130",
+      "size": 536,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/ui-registry/shadcn-registry-server.mjs",
+      "destination_path": "scripts/ui-registry/shadcn-registry-server.mjs",
+      "sha": "597d56d9a3b0ca8302a25a7f06331d3e5293e2c1",
+      "size": 673,
+      "mode": "100644"
+    },
+    {
+      "source_path": "scripts/validate-frontend.mjs",
+      "destination_path": "scripts/validate-frontend.mjs",
+      "sha": "bfde434d1a63fe8c0cecaea1101ea7962bc2140c",
+      "size": 2237,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/advanced-ui/agents/openai.yaml",
+      "destination_path": "skills/advanced-ui/agents/openai.yaml",
+      "sha": "0575ed7150e440a466976721bde93483d7617e80",
+      "size": 234,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/advanced-ui/references/kompas-ui-context.md",
+      "destination_path": "skills/advanced-ui/references/kompas-ui-context.md",
+      "sha": "1ef8c49f71b1607d496310febf5795e3535d87b0",
+      "size": 1552,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/advanced-ui/SKILL.md",
+      "destination_path": "skills/advanced-ui/SKILL.md",
+      "sha": "ff17022a26f395cd16b0780d256b78942b2fc4b9",
+      "size": 3313,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/ceo-audit/SKILL.md",
+      "destination_path": "skills/ceo-audit/SKILL.md",
+      "sha": "0ef92c27ab7ede6f7616f56e112e3d4931f83ed2",
+      "size": 4604,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/ceo-retro/SKILL.md",
+      "destination_path": "skills/ceo-retro/SKILL.md",
+      "sha": "039176cc0f3505915929e705baffdced74b11795",
+      "size": 3379,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/kompas-brand-email/SKILL.md",
+      "destination_path": "skills/kompas-brand-email/SKILL.md",
+      "sha": "53bb445370216e096ccfb905b86597de8e5f5268",
+      "size": 2022,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/kompas-design-context/SKILL.md",
+      "destination_path": "skills/kompas-design-context/SKILL.md",
+      "sha": "2418b9a0045c601c980269739464823a92db5d54",
+      "size": 2389,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/kompas-governance/SKILL.md",
+      "destination_path": "skills/kompas-governance/SKILL.md",
+      "sha": "419c256b368a9f0e2d34160b1f7415995c5ab723",
+      "size": 4012,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/kompas-qa-context/SKILL.md",
+      "destination_path": "skills/kompas-qa-context/SKILL.md",
+      "sha": "cac555da39744b63ba6b9d4c4dd60ed7aba4476f",
+      "size": 2372,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/kompas-team-map/SKILL.md",
+      "destination_path": "skills/kompas-team-map/SKILL.md",
+      "sha": "190205b8a722755b186e0577753ad3f7cadeeb21",
+      "size": 1768,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/kompas-technical-context/SKILL.md",
+      "destination_path": "skills/kompas-technical-context/SKILL.md",
+      "sha": "78ea0f9787e752284f1b2174797cba58765e0470",
+      "size": 7472,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/skill-evolution-loop/CHANGELOG.md",
+      "destination_path": "skills/skill-evolution-loop/CHANGELOG.md",
+      "sha": "1284f29b51efaacd738ec6ff36d0826e5e619bca",
+      "size": 1246,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/skill-evolution-loop/SKILL.md",
+      "destination_path": "skills/skill-evolution-loop/SKILL.md",
+      "sha": "52541f48fdde1e32decf264d67b313eb22f6135e",
+      "size": 3347,
+      "mode": "100644"
+    },
+    {
+      "source_path": "skills/status/SKILL.md",
+      "destination_path": "skills/status/SKILL.md",
+      "sha": "b04bf4f506b68b587a7aff78519a84aa6b85e46a",
+      "size": 2698,
+      "mode": "100644"
+    },
+    {
+      "source_path": "tests/repo-identity-guard.test.mjs",
+      "destination_path": "tests/repo-identity-guard.test.mjs",
+      "sha": "be17cafade29ee45c8c602c8893048a86e883afe",
+      "size": 9710,
+      "mode": "100644"
+    }
+  ]
+}
