@@ -5,8 +5,8 @@ Production: ComfyUI 0.42.1 (CPU-only) + `comfyui-mcp` 0.52.206, plain Docker on 
 the durable deployable unit (mirrors `/opt/comfy` on the host).
 
 - `Dockerfile.comfyui` — python:3.12-slim, torch CPU, ComfyUI v0.42.1, `--cpu`.
-- `Dockerfile.mcp` — node:22, `comfyui-mcp@0.52.206`, applies `patch-v1.mjs` at build.
-- `compose.yml` — `comfyui` + `comfy-mcp` on external `coolify` network; sets
+- `Dockerfile` — canonical Coolify MCP-only image: node:22, `comfyui-mcp@0.52.206`, applies the pinned `patches/patch-*.mjs` chain at build. `Dockerfile.mcp` is a compatible legacy copy.
+- `compose.yml` — local `comfyui` + `comfy-mcp` on external `coolify` network, with relative build contexts; sets
   `COMFYUI_URL=http://comfyui:8188` (fixes Prompt Director 127.0.0.1 bug).
 - `patch-v1.mjs` — durable production patches (idempotent, applied at build + live):
   `upload_image data_base64` (remote clients, SHA-256, magic-byte check, 30MB cap),
