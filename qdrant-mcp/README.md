@@ -5,14 +5,14 @@ BM25 sparse) retrieval. Embeddings are computed locally by FastEmbed on CPU — 
 OpenAI key needed.
 
 - `server/server.py` — the MCP server (MCP SDK v2 `MCPServer`).
-- `server/Dockerfile` — bakes the FastEmbed models into the image, so the container
+- `Dockerfile` — canonical Coolify MCP-only image (build context: this folder); bakes the FastEmbed models, so the container
   starts without downloading models.
-- `docker-compose.yml` — Qdrant + the MCP server for a local/self-hosted setup.
+- `docker-compose.yml` — Qdrant + MCP for local development only; do not deploy this stack on top of an existing Qdrant service.
 
 ## Build
 
 ```bash
-docker build -t mcp-qdrant-hybrid:local server/
+docker build -t mcp-qdrant-hybrid:local .
 ```
 
 ## Run
