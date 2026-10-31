@@ -9,6 +9,7 @@ Persistent HTTP bridge for the Emailens stdio MCP server.
 - Data: stateless; no application data is stored in this project.
 
 ```bash
+cp .env.example .env   # set EMAILENS_BRIDGE_TOKEN
 docker build -t local/emailens-mcp:0.10.0 .
 docker compose up -d
 curl -fsS http://127.0.0.1:3100/healthz
