@@ -7,12 +7,19 @@ This repository is reserved for maintained application and MCP service source. E
 - `plasmic/` — Plasmic self-hosted application
 - `plasmic-mcp/` — Plasmic MCP
 - `paperclip-mcp/` — Paperclip MCP
-- `comfyui-mcp/` — ComfyUI MCP
+- `comfyui-mcp/` — ComfyUI engine + MCP (split pending)
 - `mantic-mcp/` — Mantic MCP
+- `emailens-mcp/` — Emailens MCP bridge
+- `playwright-mcp/` — Playwright MCP with idle HTTP proxy
 - `qdrant-mcp/` — Qdrant MCP
 - `supabase-mcp/` — Supabase MCP
 - `ubuntu-mcp/` — Ubuntu MCP
 - `mcp-edge/` — Edge gateway service (retain until deployment retirement is verified)
+
+Each service folder owns its `volumes/` directory. Runtime data stays in the
+same Coolify project; only `.gitkeep` and documentation are committed. See
+[`docs/COOLIFY-PROJECTS.md`](docs/COOLIFY-PROJECTS.md) for the project/service/
+volume map and pending structural cleanup.
 
 Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` under `harness-legacy-20261029/`, preserving each file's relative path. Verified archived source SHA matches were removed from this repository.
 
@@ -28,6 +35,8 @@ Do not point an MCP application at `zar-i-szlif` or the repo root.
 | Plasmic MCP | `/plasmic-mcp` | Dockerfile `/Dockerfile` | `plasmic-mcp/**` |
 | ComfyUI MCP | `/comfyui-mcp` | Dockerfile `/Dockerfile` | `comfyui-mcp/**` |
 | Mantic MCP (HTTP) | `/mantic-mcp` | Dockerfile `/Dockerfile.http` | `mantic-mcp/**` |
+| Emailens MCP | `/emailens-mcp` | Dockerfile `/Dockerfile` | `emailens-mcp/**` |
+| Playwright MCP | `/playwright-mcp` | Dockerfile `/Dockerfile` | `playwright-mcp/**` |
 | Qdrant MCP | `/qdrant-mcp` | Dockerfile `/Dockerfile` | `qdrant-mcp/**` |
 | Supabase MCP | `/supabase-mcp` | Dockerfile `/Dockerfile` | `supabase-mcp/**` |
 | Ubuntu MCP | `/ubuntu-mcp` | Dockerfile `/Dockerfile` | `ubuntu-mcp/**` |

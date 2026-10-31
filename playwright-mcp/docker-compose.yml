@@ -1,0 +1,21 @@
+services:
+  playwright-mcp:
+    build: .
+    image: local/playwright-mcp:0.0.83
+    restart: unless-stopped
+    environment:
+      IDLE_SECONDS: "600"
+      LISTEN_PORTS: "8932,8761"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      NODE_ENV: production
+      HOME: /home/node
+    expose:
+      - "8932"
+      - "8761"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "node -e \"require('net').connect(8932,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
