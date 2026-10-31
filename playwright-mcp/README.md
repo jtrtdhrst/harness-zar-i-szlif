@@ -12,7 +12,7 @@ Playwright MCP server with the idle HTTP proxy used by Paperclip.
 ```bash
 docker build -t local/playwright-mcp:0.0.83 .
 docker compose up -d
-curl -fsS http://127.0.0.1:8932/healthz 2>/dev/null || true
+timeout 2 bash -c '</dev/tcp/127.0.0.1/8932'
 ```
 
 The image is based on the official Microsoft Playwright image; Chromium and

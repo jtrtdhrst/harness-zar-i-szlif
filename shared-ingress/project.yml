@@ -1,0 +1,16 @@
+name: shared-ingress
+description: Production project for shared Cloudflare ingress
+environment: production
+services:
+  - name: opencode
+    image: local/opencode-standalone:2.0.32-custom
+    ports: ["127.0.0.1:4096"]
+  - name: oauth-callback-proxy
+    image: alpine/socat
+    ports: ["127.0.0.1:19876"]
+  - name: oauth-loopback-bridge
+    image: alpine/socat
+notes: >
+  OpenCode runtime and its OAuth callback bridges live here as shared
+  control-plane services. Runtime data stays on the host bind paths listed
+  in README.md; no application data is committed to Git.

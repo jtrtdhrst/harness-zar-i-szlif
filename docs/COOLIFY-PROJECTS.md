@@ -35,12 +35,12 @@ same project.
 | `plasmic-mcp` | `plasmic-mcp` | `plasmic_mcp_state` | `plasmic-mcp/` |
 | `qdrant-mcp` | `qdrant-mcp` | stateless (talks to `qdrant`) | `qdrant-mcp/` |
 | `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `supabase-mcp/` |
-| `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `comfyui-mcp/` (MCP Dockerfile) |
+| `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `comfy-mcp/` |
 | `coolify-mcp` | `coolify-mcp` | `*_coolify-mcp-oauth` state volume | `coolify-mcp/` (planned) |
 | `emailens-mcp` | `emailens-mcp` | stateless | `emailens-mcp/` |
 | `ubuntu-mcp` | `ubuntu-mcp` | `ubuntu-mcp-audit` | `ubuntu-mcp/` |
 | `Cloudflare Ingress i Edge` | `cloudflared-paperclip`, edge | no application data; tunnel token is a mounted secret | `cloudflare-ingress/` (planned) |
-| `shared-ingress` | — | merge into Cloudflare ingress | `_archive/shared-ingress/` |
+| `shared-ingress` | `opencode`, `oauth-callback-proxy`, `oauth-loopback-bridge` | host bind paths, no Docker data volumes | `shared-ingress/` |
 | `Kod Aplikacji` | `kod-aplikacji` (panel) | panel-owned only | `kod-aplikacji/` (planned) |
 | `Kod MCP` | `playwright-mcp` + dev | browser state ephemeral | `playwright-mcp/` |
 | `Hermes Gateway POC` | — | disposable, archive | `_archive/hermes-gateway-poc/` |
@@ -66,10 +66,10 @@ same project.
 
 These are tracked as migration work, not silently ignored:
 
-- split `comfyui-mcp` into `comfy` and `comfy-mcp` services (the folder is
-  already documented as the temporary combined build).
-- split `mcp-bridges` into `emailens-mcp`, `mantic-mcp` and `ubuntu-mcp`
-  services; `mantic-mcp` belongs to the `mautic` project.
+- ComfyUI is now split into `comfy` and `comfy-mcp`; the old combined
+  `comfyui-mcp/` folder remains only as historical build source.
+- `mcp-bridges` is split into `emailens-mcp`, `mantic-mcp` (in `mautic`) and
+  `ubuntu-mcp`; old app containers removed.
 - platform folders (`mautic`, `supabase`, `paperclip`, `qdrant`, `opik`,
   `comfy`) are metadata/build-contract folders; their upstream images/source
   remain external.
