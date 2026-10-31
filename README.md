@@ -16,7 +16,9 @@ This repository is reserved for maintained application and MCP service source. E
 - `ubuntu-mcp/` — Ubuntu MCP
 - `mcp-edge/` — Edge gateway service (retain until deployment retirement is verified)
 
-Each service folder owns its `volumes/` directory. Runtime data stays in the
+Project folders without vendored source are metadata-only; their runtime
+source/image is recorded in `docs/COOLIFY-PROJECTS.md`. Each service folder
+owns its `volumes/` directory. Runtime data stays in the
 same Coolify project; only `.gitkeep` and documentation are committed. See
 [`docs/COOLIFY-PROJECTS.md`](docs/COOLIFY-PROJECTS.md) for the project/service/
 volume map and pending structural cleanup.
