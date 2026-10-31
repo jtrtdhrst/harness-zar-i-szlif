@@ -1,0 +1,5 @@
+name: Kod MCP
+description: Serwery MCP i wdrożenia stagingowe
+environment: production
+service: kod-mcp-dev
+data: []

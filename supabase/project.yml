@@ -1,0 +1,5 @@
+name: supabase
+description: Production project for Supabase platform
+environment: production
+service: supabase
+data: [supabase-db-data, supabase-storage, supabase-deno-cache, supabase-functions, supabase-snippets]

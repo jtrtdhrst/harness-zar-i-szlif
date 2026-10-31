@@ -31,7 +31,7 @@ same project.
 | `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `comfyui-mcp/` (until split) |
 | `opik` | `opik` | `*_opik-staging-clickhouse-*`, `-mysql`, `-minio-data`, `-redis-data`, `-zookeeper` | `opik/` (planned) |
 | `opik-mcp` | `opik-mcp` | stateless (talks to `opik`) | `opik-mcp/` (planned) |
-| `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state`; currently also reads Paperclip home via bind — **must be copied into this project's state volume** | `paperclip-mcp/` |
+| `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | `paperclip-mcp/` |
 | `plasmic-mcp` | `plasmic-mcp` | `plasmic_mcp_state` | `plasmic-mcp/` |
 | `qdrant-mcp` | `qdrant-mcp` | stateless (talks to `qdrant`) | `qdrant-mcp/` |
 | `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `supabase-mcp/` |
@@ -66,11 +66,10 @@ same project.
 
 These are tracked as migration work, not silently ignored:
 
-- `paperclip-mcp`: replace cross-project binds with data copied into a
-  `paperclip-mcp`-owned volume.
-- split `comfyui-mcp` into `comfy` and `comfy-mcp` projects/folders.
+- split `comfyui-mcp` into `comfy` and `comfy-mcp` services (the folder is
+  already documented as the temporary combined build).
 - split `mcp-bridges` into `emailens-mcp`, `mantic-mcp` and `ubuntu-mcp`
   services; `mantic-mcp` belongs to the `mautic` project.
-- add root folders for `opik`, `opik-mcp`, `paperclip`, `mautic`, `supabase`,
-  `qdrant`, `coolify-mcp`, `cloudflare-ingress`, `kod-aplikacji` and archive
-  folders; their current source is external to this repository.
+- platform folders (`mautic`, `supabase`, `paperclip`, `qdrant`, `opik`,
+  `comfy`) are metadata/build-contract folders; their upstream images/source
+  remain external.

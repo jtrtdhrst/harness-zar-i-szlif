@@ -3,7 +3,6 @@ services:
     build: .
     image: local/emailens-mcp:0.10.0
     restart: unless-stopped
-    env_file: .env
     environment:
       EMAILENS_BRIDGE_TOKEN: ${EMAILENS_BRIDGE_TOKEN:?EMAILENS_BRIDGE_TOKEN is required}
       PORT: "3100"

@@ -1,0 +1,5 @@
+name: coolify-mcp
+description: Production project for Coolify MCP service
+environment: production
+service: coolify-mcp
+data: [coolify-mcp-oauth]

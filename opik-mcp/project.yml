@@ -1,0 +1,5 @@
+name: opik-mcp
+description: Production project for Opik MCP service
+environment: production
+service: opik-mcp
+data: []

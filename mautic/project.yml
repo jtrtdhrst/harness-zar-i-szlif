@@ -1,0 +1,5 @@
+name: mautic
+description: Production project for Mautic platform
+environment: production
+service: mautic
+data: [mautic-prod-db, mautic-prod-config, mautic-prod-logs, mautic-prod-media, mautic-prod-media-files, mautic-prod-media-images]
