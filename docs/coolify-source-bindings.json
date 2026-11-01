@@ -1,0 +1,263 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-01",
+  "intent": "Source-to-deployment binding inventory, not an applied Coolify configuration.",
+  "github_app": {
+    "name": "coolify-zar-i-szlif",
+    "coolify_id": 1,
+    "uuid": "67frmex1uindhksnq2felsep",
+    "source_repository_access": false,
+    "only_visible_repository": "miloszspyrka-code/zar-i-szlif"
+  },
+  "policy": {
+    "source_repo": "miloszspyrka-code/harness-zar-i-szlif",
+    "branch": "main",
+    "required_before_auto_deploy": [
+      "GitHub App grants private source repository",
+      "isolated source build works in Coolify",
+      "required runtime env and volumes mapped and read back",
+      "health endpoint and actual MCP tools/list pass",
+      "no duplicate stateful database created",
+      "production route cutover and rollback simulated or staged",
+      "precise git SHA maps to deployed image",
+      "approval in Paperclip and separate review"
+    ],
+    "never_automatically_migrate": [
+      "volumes",
+      "database state",
+      "secrets",
+      "DNS"
+    ]
+  },
+  "git_build_candidates": [
+    {
+      "name": "paperclip-mcp",
+      "resource_uuid": "gevr1m6rdj4t4fbhcjvqv8gg",
+      "resource_type": "compose_service",
+      "current_project": "paperclip-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/paperclip-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "paperclip-mcp/**"
+      },
+      "container_port": 3101,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "plasmic-mcp",
+      "resource_uuid": "a6ci2beifbinzckfnneiqnjd",
+      "resource_type": "compose_service",
+      "current_project": "plasmic-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/plasmic-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "plasmic-mcp/**"
+      },
+      "container_port": 8091,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "comfy-mcp",
+      "resource_uuid": "kkhfw0napmeaqewgdirwhc1h",
+      "resource_type": "compose_service",
+      "current_project": "comfy-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/comfyui-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "comfyui-mcp/**"
+      },
+      "container_port": 9100,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "mantic-mcp",
+      "resource_uuid": "bioufw4uxwuhmr51ueyahf0u",
+      "resource_type": "compose_service",
+      "current_project": "mautic",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/mantic-mcp",
+        "dockerfile_location": "/Dockerfile.http",
+        "watch_paths": "mantic-mcp/**"
+      },
+      "container_port": 8090,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "emailens-mcp",
+      "resource_uuid": "16qnapdkj0qqqmeokepdechk",
+      "resource_type": "compose_service",
+      "current_project": "emailens-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/emailens-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "emailens-mcp/**"
+      },
+      "container_port": 3100,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "playwright-mcp",
+      "resource_uuid": "9e4fzsodixl4qzzap4zg0ntp",
+      "resource_type": "compose_service",
+      "current_project": "Kod MCP Żar i Szlif",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/playwright-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "playwright-mcp/**"
+      },
+      "container_port": 8761,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "qdrant-mcp",
+      "resource_uuid": "a4zgmthjspz8hwvyu6llr8dh",
+      "resource_type": "compose_service",
+      "current_project": "qdrant-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/qdrant-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "qdrant-mcp/**"
+      },
+      "container_port": 8000,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "supabase-mcp",
+      "resource_uuid": "tjit4c8m0kjh8brkmdhyvkde",
+      "resource_type": "compose_service",
+      "current_project": "supabase-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/supabase-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "supabase-mcp/**"
+      },
+      "container_port": 3100,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "not_run",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    },
+    {
+      "name": "ubuntu-mcp",
+      "resource_uuid": "lcnjb3vreec7saihkhan6akh",
+      "resource_type": "compose_service",
+      "current_project": "ubuntu-mcp",
+      "source": {
+        "repository": "miloszspyrka-code/harness-zar-i-szlif",
+        "branch": "main",
+        "base_directory": "/ubuntu-mcp",
+        "dockerfile_location": "/Dockerfile",
+        "watch_paths": "ubuntu-mcp/**"
+      },
+      "container_port": 8765,
+      "build_validation": "docker_buildx_check_pass",
+      "runtime_validation": "image_built_package_3.8.6_offline",
+      "desired_delivery": "shadow_git_app_then_explicit_cutover",
+      "auto_deploy_ready": false
+    }
+  ],
+  "metadata_only_folders": [
+    "opik-mcp",
+    "coolify-mcp",
+    "paperclip",
+    "mautic",
+    "supabase",
+    "qdrant",
+    "opik",
+    "comfy",
+    "comfy-mcp",
+    "shared-ingress",
+    "cloudflare-ingress"
+  ],
+  "separate_stateful_compose": [
+    {
+      "resource": "paperclip",
+      "source_folder": "paperclip",
+      "mode": "external_image_pinned"
+    },
+    {
+      "resource": "opik",
+      "source_folder": "opik",
+      "mode": "external_images_pinned"
+    },
+    {
+      "resource": "supabase",
+      "source_folder": "supabase",
+      "mode": "external_images_pinned"
+    },
+    {
+      "resource": "qdrant",
+      "source_folder": "qdrant",
+      "mode": "external_image_pinned"
+    },
+    {
+      "resource": "mautic",
+      "source_folder": "mautic",
+      "mode": "external_images_pinned"
+    },
+    {
+      "resource": "plasmic",
+      "source_folder": "plasmic",
+      "mode": "git_compose_candidate_staging_only"
+    },
+    {
+      "resource": "comfy",
+      "source_folder": "comfyui-mcp",
+      "mode": "source_split_pending"
+    }
+  ],
+  "separate_unbound_resources": [
+    {
+      "resource": "hermes-gateway-poc-v2",
+      "issue": "inline Dockerfile with coollabsio/coolify metadata; harness repo has no Hermes Gateway source folder"
+    },
+    {
+      "resource": "hermes-paperclip-sync-checks",
+      "issue": "alpine image and host binds; no Git source; runtime files /opt/hermes-paperclip-sync; E2E gated in Paperclip"
+    }
+  ],
+  "known_exceptions": [
+    "mantic-mcp shares the mautic project",
+    "playwright-mcp is under Kod MCP Żar i Szlif project",
+    "comfy-mcp currently builds from legacy combined comfyui-mcp folder",
+    "GitHub Actions currently disabled",
+    "active production image-only Compose services have no Git branch webhook"
+  ]
+}
