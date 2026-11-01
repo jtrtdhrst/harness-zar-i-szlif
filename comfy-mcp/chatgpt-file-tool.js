@@ -7,6 +7,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { uploadImageAuto } from "../services/image-management.js";
+import { resolveToolSurfacePolicy, toolAllowed } from "./tool-surface-filter.js";
 
 const MAX_BYTES = 30 * 1024 * 1024;
 const FILE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]);
@@ -88,8 +89,8 @@ async function fetchChatFile(rawUrl) {
   });
 }
 export function registerChatGptFileTool(server) {
-  if (typeof server.registerTool !== "function") return; // compact ToolCatalog does not expose SDK metadata
-  if (typeof server.registerTool !== "function") return; // compact ToolCatalog does not expose SDK metadata
+  if (typeof server.registerTool !== "function" || !toolAllowed("upload_chatgpt_image", resolveToolSurfacePolicy())) return; // respect tool surface policy and compact ToolCatalog
+  if (typeof server.registerTool !== "function" || !toolAllowed("upload_chatgpt_image", resolveToolSurfacePolicy())) return; // respect tool surface policy and compact ToolCatalog
   server.registerTool("upload_chatgpt_image", {
     title: "Upload ChatGPT attachment to ComfyUI",
     description: "Save an image the user attached in ChatGPT into the connected ComfyUI input folder, retaining exact bytes and making it selectable in LoadImage. Prefer this tool for user attachments; upload_image remains available for filesystem paths and base64.",
