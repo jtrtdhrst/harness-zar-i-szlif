@@ -98,7 +98,7 @@
       },
       "container_port": 8090,
       "build_validation": "docker_buildx_check_pass",
-      "runtime_validation": "not_run",
+      "runtime_validation": "isolated_image_build_pass_entrypoint_present",
       "desired_delivery": "shadow_git_app_then_explicit_cutover",
       "auto_deploy_ready": false
     },
@@ -116,7 +116,7 @@
       },
       "container_port": 3100,
       "build_validation": "docker_buildx_check_pass",
-      "runtime_validation": "not_run",
+      "runtime_validation": "isolated_image_build_pass_entrypoint_present",
       "desired_delivery": "shadow_git_app_then_explicit_cutover",
       "auto_deploy_ready": false
     },
@@ -188,7 +188,7 @@
       },
       "container_port": 8765,
       "build_validation": "docker_buildx_check_pass",
-      "runtime_validation": "image_built_package_3.8.6_offline",
+      "runtime_validation": "isolated_image_build_pass_node_and_mcp_ssh_manager_3.8.6",
       "desired_delivery": "shadow_git_app_then_explicit_cutover",
       "auto_deploy_ready": false
     }
@@ -259,5 +259,18 @@
     "comfy-mcp currently builds from legacy combined comfyui-mcp folder",
     "GitHub Actions currently disabled",
     "active production image-only Compose services have no Git branch webhook"
-  ]
+  ],
+  "evidence": {
+    "source_commit": "06c83ec0bbc38a2a59a348c6856519f5ba41b0a7",
+    "dockerfile_buildkit_checks_passed": 9,
+    "full_image_builds_passed": 3,
+    "isolated_runtime_probes": [
+      "ubuntu-mcp mcp-ssh-manager 3.8.6",
+      "emailens-mcp bridge.mjs exists",
+      "mantic-mcp bridge/bridge.mjs exists"
+    ],
+    "real_mcp_tools_call_tests_passed": 0,
+    "production_cutovers": 0,
+    "github_app_source_authorized": false
+  }
 }
