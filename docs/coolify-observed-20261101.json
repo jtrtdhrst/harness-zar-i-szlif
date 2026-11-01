@@ -1,0 +1,11 @@
+{
+  "observed_at": "2026-11-01",
+  "source": "Coolify API readback, GitHub App list_repos, and Docker Compose inspection",
+  "github_app_can_read_harness": false,
+  "github_app_known_repositories": [
+    "miloszspyrka-code/zar-i-szlif"
+  ],
+  "git_backed_apps": {},
+  "existing_services_mode": "Docker Compose with pinned image/pull_policy, no Git source",
+  "note": "This snapshot intentionally FAILS live acceptance. Do not substitute structurally valid Dockerfiles for deployed webhook E2E."
+}
