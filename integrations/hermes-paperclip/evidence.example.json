@@ -1,0 +1,47 @@
+{
+  "paperclip_run_id": "",
+  "executing_agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
+  "named_profile": "hermes-test",
+  "secrets_exposed": false,
+  "profile_auth_test": {
+    "passed": false,
+    "wrong_profile_rejected": false,
+    "dedicated_key_stored_as_secret_ref": false
+  },
+  "wiki_tool_call": {
+    "passed": false,
+    "paperclip_agent_run_context": false,
+    "actual_content_read": false,
+    "http_status": 401,
+    "invocation_id": ""
+  },
+  "published_skill": {
+    "passed": false,
+    "version_verified": false,
+    "version_id": ""
+  },
+  "hindsight": {
+    "passed": true,
+    "later_session_recalled": true,
+    "cross_bank_isolation": true
+  },
+  "opik_trace": {
+    "passed": false,
+    "run_id_correlated": false,
+    "model_and_usage_spans": false,
+    "trace_id": "",
+    "paperclip_run_id": ""
+  },
+  "release": {
+    "passed": false,
+    "sha_verified": false,
+    "rollback_tested": false,
+    "immutable_digest_or_sha": ""
+  },
+  "review": {
+    "passed": false,
+    "independent_reviewer": false,
+    "approved": false,
+    "reviewer_agent_id": ""
+  }
+}
