@@ -25,7 +25,7 @@ Verified on 2026-11-01. The machine-readable source map is [coolify-source-bindi
 | supabase-mcp | `/supabase-mcp` | `/Dockerfile` | `supabase-mcp/**` | Preserve target Supabase URL/auth, no second Supabase instance |
 | ubuntu-mcp | `/ubuntu-mcp` | `/Dockerfile` | `ubuntu-mcp/**` | Privileged SSH bridge: ensure auth, no public anonymous entrypoint |
 
-All nine Dockerfiles passed `docker buildx build --check` against the exact `main` tree SHA `06c83ec0bbc38a2a59a348c6856519f5ba41b0a7`. An independent `ubuntu-mcp` canary image also built successfully and confirmed `mcp-ssh-manager=3.8.6` with `--network none`. **Neither check proves 9 successful full builds or runtime MCP E2E**.
+All nine Dockerfiles passed `docker buildx build --check` against the exact `main` tree SHA `06c83ec0bbc38a2a59a348c6856519f5ba41b0a7`. Three isolated canary images also built successfully: `ubuntu-mcp` (confirmed `mcp-ssh-manager=3.8.6`), `emailens-mcp` (`bridge.mjs` present) and `mantic-mcp` (`bridge/bridge.mjs` present). The probes used `--network none` and no production secrets. **These checks do not prove all 9 full builds or real authenticated MCP E2E**.
 
 ## Systematic migration / auto-deploy gate
 
