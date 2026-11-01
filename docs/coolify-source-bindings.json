@@ -14,6 +14,7 @@
     "branch": "main",
     "required_before_auto_deploy": [
       "GitHub App grants private source repository",
+      "Protect GitHub main against force push/deletion and require independent PR review",
       "isolated source build works in Coolify",
       "required runtime env and volumes mapped and read back",
       "health endpoint and actual MCP tools/list pass",
@@ -258,7 +259,8 @@
     "playwright-mcp is under Kod MCP Żar i Szlif project",
     "comfy-mcp currently builds from legacy combined comfyui-mcp folder",
     "GitHub Actions currently disabled",
-    "active production image-only Compose services have no Git branch webhook"
+    "active production image-only Compose services have no Git branch webhook",
+    "GitHub main is not currently branch-protected; enable required PR review and disallow force pushes before production auto-deploy"
   ],
   "evidence": {
     "source_commit": "06c83ec0bbc38a2a59a348c6856519f5ba41b0a7",
