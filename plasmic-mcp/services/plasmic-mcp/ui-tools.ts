@@ -149,7 +149,7 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
   const projectId = z.string().min(1);
   const branchId = z.string().optional();
   const dryRun = z.boolean().optional();
-  const key = z.string().min(8).max(120);
+  const key = z.string().min(8).max(120).optional();
   const write = async (
     tool: string, pid: string, target: string, idem: string, preview: boolean,
     perform: () => Promise<{ revision: number; dryRun: boolean; changed: string[]; created?: string[] }>,
@@ -196,6 +196,7 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
         const nodes = a.nodes as UiNode[];
         countNodes(nodes);
         const preview = a.dryRun !== false;
+        if (!preview && !a.idempotencyKey) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
         return write("plasmic_append_ui_tree", a.projectId as string,
           a.parentElementId as string, a.idempotencyKey as string, preview, async () => {
             let created: string[] = [];
@@ -227,6 +228,7 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
         }
         for (const e of edits) validateUiStyles(e.styles);
         const preview = a.dryRun !== false;
+        if (!preview && !a.idempotencyKey) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
         return write("plasmic_batch_set_styles", a.projectId as string,
           "multi:" + edits.length, a.idempotencyKey as string, preview, async () =>
             c.mutate(a.projectId as string, a.branchId as string | undefined,
@@ -245,7 +247,7 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
                   patch[rsId] = { ...rs, values: { ...(rs.values as object ?? {}), ...e.styles } };
                 }
                 return { map: patch };
-              }, { dryRun: preview })),
+              }, { dryRun: preview })
         );
       },
     },
