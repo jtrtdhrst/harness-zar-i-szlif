@@ -1,14 +1,41 @@
 # ComfyUI and its MCP — canonical source of truth
-**Current deployment (2026-11-02):** All ComfyUI MCP implementation changes are authored under `comfyui-mcp/` in this repo, built with `comfyui-mcp/Dockerfile` and deployed to the existing Coolify service (`kkhfw0napmeaqewgdirwhc1h`, app `y1ugra7qn0s7sygccgfbwrpe`) as `local/comfyui-mcp:0.52.206-chatfiles6`. `comfy-mcp/` is metadata for the Coolify project, **not** a separate source tree. Do not add patched ComfyUI MCP code there.
+**Current deployment (2026-11-02):** All ComfyUI MCP implementation changes are authored under `comfyui-mcp/` in this repo, built with `comfyui-mcp/Dockerfile` and deployed to the existing Coolify service (`kkhfw0napmeaqewgdirwhc1h`, app `y1ugra7qn0s7sygccgfbwrpe`) as `local/comfyui-mcp:0.52.206-chatfiles7`. `comfy-mcp/` is metadata for the Coolify project, **not** a separate source tree. Do not add patched ComfyUI MCP code there.
 
 - Upload implementation: `chatgpt-file-tool.js`, registered by `patches/patch-chatgpt-upload.mjs`, built **after** the retained validator/base64/color patch chain. Tool `upload_chatgpt_image` declares `_meta["openai/fileParams"]=["file"]` so ChatGPT attachments can be passed through MCP after connecting the client.
 - Exact image-byte preservation: downloads original HTTPS file (not ChatGPT preview), blocks private DNS/SSRF, enforces 30 MiB limit and image signatures, SHA-256, optional expected SHA-256/bytes, checks server-stored `/view` bytes and `LoadImage` selection. Returns `byte_identical:true` and hashes only after readback.
 - Backward-compatible `upload_image(data_base64,filename)` remains usable for direct raw bytes. A PNG RGBA 1254×1254 passed a byte-perfect roundtrip on the canonical built canary.
-- Build on Ubuntu from the actual `comfyui-mcp/` folder with `docker build --pull=false -f Dockerfile -t local/comfyui-mcp:0.52.206-chatfiles6 .`; production Coolify application image is set to that tag and deployed. Never build the release from the `comfy-mcp/` project metadata directory.
-- Validated after production redeploy: `tools/list` 42 tools; `upload_chatgpt_image` with original-public PNG → `byte_identical:true`, same SHA-256 from ComfyUI storage, `LoadImage` selectable. A forged/wrong SHA fails; invalid/expired JWT denied on OAuth bridge fixture.
+- Build on Ubuntu from the actual `comfyui-mcp/` folder with `docker build --pull=false -f Dockerfile -t local/comfyui-mcp:0.52.206-chatfiles7 .`; production Coolify application image is set to that tag and deployed. Never build the release from the `comfy-mcp/` project metadata directory.
+- Validated after production redeploy: `tools/list` 44 tools; `upload_chatgpt_image` with original-public PNG → `byte_identical:true`, same SHA-256 from ComfyUI storage, `LoadImage` selectable. A forged/wrong SHA fails; invalid/expired JWT denied on OAuth bridge fixture.
 - Cloudflare Access auth bridge source: `oauth-bridge.mjs` and `oauth-bridge.compose.yml`. Secret-bearing `.env` stays on the server and is excluded from Git. Internal origin MCP token is NOT the ChatGPT OAuth token. Keep upstream bearer auth active.
 - User-facing endpoint: `https://mcp-comfy.kompaszbiorek.pl/mcp`. Its OAuth connection needs a one-time ChatGPT-side login/reconnect to the correct Access application. `UNAUTHORIZED` in a pre-existing connector is not proof of a failed server-side build.
 - Production image is built from GitHub canonical source and not a hotpatch to app/Core. The legacy notes below describe the earlier pre-Coolify state and should not override this current deployment block.
+
+
+## Exact generated-image links and reusable references (2026-11-02, production v7)
+
+**These capabilities are native MCP tools registered from `comfyui-mcp/output-image-refs.js`. They do not require constructing URLs manually.**
+
+Workflow:
+
+1. Upload original ChatGPT attachment using `upload_chatgpt_image` (MCP `file` input), or upload base64 bytes with `upload_image`. Both return the ComfyUI `input_filename`/filename for a `LoadImage` node; attachment tool validates byte-level SHA-256.
+2. Build/use a ComfyUI API workflow containing `LoadImage` (`inputs.image = uploaded filename`), a generative/edit node or image pass-through, and `SaveImage`. Run via `enqueue_workflow` and obtain `prompt_id`.
+3. Call `get_output_image_ref({"prompt_id":"<uuid>"})`. The tool enumerates the **actual saved outputs**, including multiple nodes/images. Optional `node_id` and `image_index` choose an exact result. It returns `primary` and `images[]`, each with stable `image_id`, direct `view_url`, `filename`, `subfolder`, `type`, dimensions where available, `bytes`, `sha256`, `prompt_id`, and `node_id`.
+4. In a **different ChatGPT window**, `get_output_image_ref({"image_id":"comfy:v1:..."})` retrieves the exact image and link without relying on the chat transcript. The self-contained `image_id` encodes the precise output filename, subfolder, prompt ID, node ID and image index; resolving it checks that bytes are still present in ComfyUI storage.
+5. To reuse a saved output, call `stage_output_image_reference({"image_id":"comfy:v1:..."})`. The tool copies **original stored bytes** from `output/` to `input/`, validates SHA-256 and verifies `LoadImage` visibility, returning `input_filename` and a ready-to-paste `load_image` node. No resize, preview conversion or lossy recompression.
+6. The `view_url` is a directly openable URL at `https://comfy.kompaszbiorek.pl/view?filename=...&type=output[&subfolder=...]`. The page shows the exact output file. **A link is valid while the output file is retained on the server**; it is not an immutable external archival copy. The ComfyUI UI is publicly reachable, so treat output links as shareable, not as secret links.
+
+Verified live on production/canary:
+- `get_output_image_ref` by `prompt_id` and by `image_id` → same URL and SHA-256;
+- external HTTPS GET of returned URL → HTTP 200 and byte-perfect SHA-256;
+- `stage_output_image_reference` → `byte_identical: true`, `loader_selectable: true`;
+- staged reference `LoadImage → SaveImage` → completed workflow, new `prompt_id`, new exact image ID and working public URL;
+- invalid `image_id` rejected; in `readonly` policy, exact-link lookup is accessible while stage/upload tools are suppressed.
+
+Production original-result test `prompt_id`: `afad26b4-6600-4788-bbd2-dd3fbe739d28`.
+Production direct result: `https://comfy.kompaszbiorek.pl/view?filename=e2e_reuse_exact_image_ref_20261102_00001_.png&type=output`.
+
+**Remaining ChatGPT connector step:** if the existing ChatGPT app has a cached unauthenticated MCP session, reconnect using Cloudflare Access OAuth on `https://mcp-comfy.kompaszbiorek.pl/mcp`, then rescan tools. Server-side E2E is verified, but do not label an actual ChatGPT-app attachment E2E verified without invoking the newly authenticated app with an actual user upload.
+
 
 ---
 
