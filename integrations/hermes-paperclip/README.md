@@ -53,3 +53,15 @@ For local origin-only checks: `sudo /opt/hermes-paperclip-sync/check.sh`. Its gr
 - `verify_e2e.py`: strict evidence gate, standard Python only.
 - `evidence.example.json`: deliberately failing, redacted example.
 - `tests/`: unit tests for the verification gate.
+
+## Pilot E2E results — 2026-11-02 (actual connected services)
+
+**Scope:** Hermes Test is the only agent currently using `hermes_gateway`. This is a **temporary test configuration**, **not** a hard-coded platform policy or limit on future adoption. The accidental adapter-count guard was removed from this PR. Production migration of additional agents is a separate decision after pilot acceptance.
+
+The real Paperclip issue-scoped run is `aca4eae6-8426-4ea9-952c-98498bcb9681` on `KOMAA-1507`. The encrypted Hermes Test API key was re-enrolled through native Paperclip Vault rotation (existing secret, version 2); the prior 401 was eliminated without disabling authentication or touching Paperclip Core.
+
+In that real run: `gpt-6-luna` invoked the actual Paperclip Named MCP `papercliplistskills` and `paperclipgetskillfile`, confirmed published skill marker `KNOWLEDGE_SYNC_V2_20261031`, and called native `hindsight_recall` successfully. Opik trace `01a19c69-cbb1-7106-9088-1f56407e3ce0` has tool spans and references the exact Paperclip issue in `metadata.task_id`. A distinct read-only cross-bank test confirmed no results for the synthetic Hermes Test memory in the CEO bank.
+
+**Blocking failure:** `paperclipai.plugin-llm-wiki:wiki_list_pages` returns `Plugin tools require an agent run context` when invoked from the real Hermes Gateway session, despite an issue-bound Paperclip invocation. The Paperclip Named MCP transport currently lacks the trusted execution context that the native plugin requires. This is **not** fixed by model changes, MCP catalog discovery, or retrying prompts. The Opik trace metadata also contains the issue ID, not the exact Paperclip run ID; stronger structured correlation is still required for strict release evidence. The issue is blocked without automatic retries until runtime context is fixed.
+
+**Acceptance receipt:** `evidence/2026-11-02-canary-v2.json` contains factual partial passes and explicitly failing flags for Wiki, structured Opik run correlation, release, and independent CTO review. Run `verify_e2e.py` against this file; **BLOCKED is the expected honest result**, not a test-suite defect. Do not merge or perform production cutover on partial proof.
