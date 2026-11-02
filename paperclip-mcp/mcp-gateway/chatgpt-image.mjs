@@ -18,10 +18,32 @@ const ips=await lookup(u.hostname,{all:true});if(!ips.length||ips.some(x=>!publi
 return new Promise((resolve,reject)=>{const q=httpsRequest(u,{method:"GET",timeout:30000,headers:{Accept:"image/*,application/octet-stream"},lookup:(_h,o,cb)=>{if(o.all)return cb(null,ips);const x=ips.find(v=>v.family===(o.family||ips[0].family))||ips[0];cb(null,x.address,x.family);}},async r=>{if(r.statusCode!==200){r.resume();return reject(Error("DOWNLOAD_HTTP_"+r.statusCode))}if(Number(r.headers["content-length"]||0)>MAX){r.destroy();return reject(Error("TOO_LARGE"))}let n=0;const parts=[];try{for await(const p of r){n+=p.length;if(n>MAX)throw Error("TOO_LARGE");parts.push(p)}if(!n)throw Error("EMPTY_IMAGE");resolve(Buffer.concat(parts,n))}catch(e){r.destroy();reject(e)}});q.on("timeout",()=>q.destroy(Error("FETCH_TIMEOUT")));q.on("error",reject);q.end()});}
 async function issueAuthorized(issue,auth){if(!UUID.test(issue))throw Error("INVALID_ISSUE_ID");const r=await fetch(auth.apiUrl.replace(/\/+$/,"")+"/issues/"+encodeURIComponent(issue),{headers:{Authorization:"Bearer "+auth.apiKey},signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error("ISSUE_AUTH_HTTP_"+r.status);const x=await r.json();if(x.companyId!==auth.companyId)throw Error("ISSUE_COMPANY_MISMATCH");if(auth.principalKind==="agent"&&x.assigneeAgentId!==auth.agentId)throw Error("ISSUE_NOT_ASSIGNED");return x;}
 function persist(b,name,sha){mkdirSync(ROOT,{recursive:true,mode:0o700});const p=join(ROOT,sha+"--"+name);if(existsSync(p)){if(HASH(readFileSync(p))!==sha)throw Error("COLLISION");return p;}const tmp=join(ROOT,"."+randomUUID());try{writeFileSync(tmp,b,{flag:"wx",mode:0o600});renameSync(tmp,p)}catch(e){try{unlinkSync(tmp)}catch{}throw e}return p;}
-async function stage(b,name,sha){const base=(process.env.PAPERCLIP_MCP_COMFYUI_URL||"http://comfyui:8188").replace(/\/+$/,"");const u=new URL(base);if(u.protocol!=="http:"||!/^[a-z0-9-]+$/i.test(u.hostname)||u.port!=="8188")throw Error("COMFY_ORIGIN_NOT_INTERNAL");
-const form=new FormData();form.append("image",new Blob([b]),name);form.append("overwrite","false");const r=await fetch(base+"/upload/image",{method:"POST",body:form,signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error("UPLOAD_HTTP_"+r.status);const j=await r.json();if(j.name!==name||(j.subfolder||""))throw Error("COMFY_FILENAME_CHANGED");
-const view=new URL(base+"/view");view.searchParams.set("filename",name);view.searchParams.set("type","input");const v=await fetch(view,{signal:AbortSignal.timeout(30000)});if(!v.ok)throw Error("READBACK_HTTP_"+v.status);const rb=Buffer.from(await v.arrayBuffer());if(rb.length!==b.length||HASH(rb)!==sha)throw Error("COMFY_CHECKSUM_MISMATCH");
-const i=await fetch(base+"/object_info/LoadImage",{signal:AbortSignal.timeout(10000)});if(!i.ok)throw Error("LOADIMAGE_HTTP_"+i.status);const choices=(await i.json())?.LoadImage?.input?.required?.image?.[0];if(!Array.isArray(choices)||!choices.includes(name))throw Error("LOADIMAGE_NOT_SELECTABLE");return{input_filename:name,sha256:sha,loader_selectable:true};}
+async function stage(b,name,sha){
+ const base=(process.env.PAPERCLIP_MCP_COMFYUI_URL||"http://comfyui:8188").replace(/\/+$/,"");
+ const u=new URL(base);
+ if(u.protocol!=="http:"||!/^[a-z0-9-]+$/i.test(u.hostname)||u.port!=="8188")throw Error("COMFY_ORIGIN_NOT_INTERNAL");
+ // A content-addressed input filename makes retries idempotent and prevents
+ // accidental replacement of a different user's image with the same basename.
+ const dot=name.lastIndexOf("."),ext=name.slice(dot),stem=name.slice(0,dot);
+ const storedName=sha.slice(0,16)+"_"+stem.slice(0,100-ext.length)+ext;
+ const view=new URL(base+"/view");view.searchParams.set("filename",storedName);view.searchParams.set("type","input");
+ let check=await fetch(view,{signal:AbortSignal.timeout(30000)});
+ if(check.status===404){
+   const form=new FormData();form.append("image",new Blob([b]),storedName);form.append("overwrite","false");
+   const r=await fetch(base+"/upload/image",{method:"POST",body:form,signal:AbortSignal.timeout(30000)});
+   if(!r.ok)throw Error("UPLOAD_HTTP_"+r.status);
+   const j=await r.json();if(j.name!==storedName||(j.subfolder||""))throw Error("COMFY_FILENAME_CHANGED");
+   check=await fetch(view,{signal:AbortSignal.timeout(30000)});
+ }
+ if(!check.ok)throw Error("READBACK_HTTP_"+check.status);
+ const rb=Buffer.from(await check.arrayBuffer());
+ if(rb.length!==b.length||HASH(rb)!==sha)throw Error("COMFY_CHECKSUM_MISMATCH");
+ const i=await fetch(base+"/object_info/LoadImage",{signal:AbortSignal.timeout(10000)});
+ if(!i.ok)throw Error("LOADIMAGE_HTTP_"+i.status);
+ const choices=(await i.json())?.LoadImage?.input?.required?.image?.[0];
+ if(!Array.isArray(choices)||!choices.includes(storedName))throw Error("LOADIMAGE_NOT_SELECTABLE");
+ return{input_filename:storedName,sha256:sha,loader_selectable:true};
+}
 async function receipt(id,auth,result){const message="[ChatGPT→Paperclip image ingress] filename="+result.filename+" attachment_id="+result.attachment_id+" SHA256="+result.sha256+" bytes="+result.bytes+" ComfyUI_LoadImage="+(result.comfyui?.input_filename||"NOT_STAGED")+" verified="+!!result.comfyui?.loader_selectable+"; source_file_id="+(result.source_file_id||"none")+"; not artistic approval.";
 const r=await fetch(auth.apiUrl.replace(/\/+$/,"")+"/issues/"+encodeURIComponent(id)+"/comments",{method:"POST",headers:{Authorization:"Bearer "+auth.apiKey,"Content-Type":"application/json"},body:JSON.stringify({body:message}),signal:AbortSignal.timeout(10000)});return{recorded:r.ok,status:r.status};}
 export async function processChatGPTImage(x,auth){if(!["board","agent"].includes(auth.principalKind))throw Error("IDENTIFIED_PRINCIPAL_REQUIRED");await issueAuthorized(x.issue_id,auth);
