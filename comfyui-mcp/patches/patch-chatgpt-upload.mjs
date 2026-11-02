@@ -22,4 +22,20 @@ if (!policy.includes(after)) {
   policy=policy.replace(before,after+"\n"+before);
   writeFileSync(filter,policy);
 }
-console.log("ChatGPT file attachment tool registered and policy synchronized");
+// Register exact output links and stage-as-reference tools within the same canonical registrar.
+let image=readFileSync(tool,"utf8");
+const importLine='import { registerComfyImageReferences } from "./output-image-refs.js";';
+if (!image.includes(importLine)) {
+  image=importLine+"\n"+image;
+  if(!image.includes(call+";"))throw Error("ChatGPT tool registrar missing");
+  image=image.replace(call+";",call+";\n    registerComfyImageReferences(server);");
+  writeFileSync(tool,image);
+}
+let updatedPolicy=readFileSync(filter,"utf8");
+const safeMarker='    "upload_chatgpt_image",';
+const readMarker='    "get_history",';
+if (!updatedPolicy.includes(safeMarker) || !updatedPolicy.includes(readMarker)) throw Error("Tool classification anchors missing");
+if(!updatedPolicy.includes('    "stage_output_image_reference",'))updatedPolicy=updatedPolicy.replace(safeMarker,safeMarker+'\n    "stage_output_image_reference",');
+if(!updatedPolicy.includes('    "get_output_image_ref",'))updatedPolicy=updatedPolicy.replace(readMarker,readMarker+'\n    "get_output_image_ref",');
+writeFileSync(filter,updatedPolicy);
+console.log("ChatGPT upload, exact image URL, and reference tools registered with surface policy");
