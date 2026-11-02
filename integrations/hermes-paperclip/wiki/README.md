@@ -13,3 +13,21 @@ Under `/opt/data/profiles/hermes-test/config.yaml`, add an enabled `mcp_servers.
 This is an explicitly read-only alternative to Paperclip's native Wiki plugin. It does NOT fix the plugin's `Plugin tools require an agent run context` boundary. It does not automatically publish Wiki changes to approved skills or prompts. Proof must come from a real Hermes Test issue-bound Paperclip run, with actual Wiki content, Hindsight recall, Opik same-run ID and independent CTO review before considering the integration ready.
 
 Rollback: stop the timer; remove `wiki_fs` from Hermes Test only; restart the Gateway; preserve canonical Paperclip Wiki. Do not alter the OpenCode agents.
+
+## Hermes Test API Gateway toolset correction
+
+Profile configuration must include all three toolsets explicitly for the API server:
+
+```yaml
+platform_toolsets:
+  api_server:
+    - hermes-cli
+    - pc
+    - wiki_fs
+```
+
+The `pc` MCP connection should whitelist only the two verified published-skill read tools (`papercliplistskills`, `paperclipgetskillfile`) in this pilot. The legacy native Wiki plugin entries return `Plugin tools require an agent run context` with reusable named gateway credentials; remove them from the pilot's `pc.tools.include` to prevent model misrouting. Use the separate `wiki_fs` tools for canonical Wiki reads.
+
+The initial real Paperclip canary KOMAA-1518, run `36428ebb-3a14-45e2-b174-5c1ef8ec09b8`, succeeded in Wiki file read, published Skills, Hindsight recall and Opik correlation. Opik trace `01a19c9e-e5b3-7eac-80d5-22c407ff275e` has `metadata.task_id=paperclip:run:36428ebb-3a14-45e2-b174-5c1ef8ec09b8`. The issue's independent CTO review is stuck behind a stale cancelled-executor recovery marker, tracked separately; do not claim review approved.
+
+Runbooks and tests are intentionally scoped to Hermes Test; do not change or redeploy the 15 OpenCode agents.
