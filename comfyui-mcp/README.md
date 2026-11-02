@@ -105,3 +105,27 @@ the durable deployable unit (mirrors `/opt/comfy` on the host).
 - Verified after change: non-browser OAuth metadata `200` (previously `403`); unauthenticated MCP `401` (correct); OAuth dynamic client registration `201`; PKCE authorization begins with `302` to Cloudflare Access login; production MCP and bridge healthy.
 - Connection-level caveat: an existing ChatGPT app created before migration from static token/no auth to Cloudflare OAuth may still be bound to an older authentication configuration. Refreshing tools alone does not establish a new authenticated session. Reconnect the app with OAuth in ChatGPT UI; no server-side code change or Core edit can perform an interactive owner login.
 - Current full tool metadata: 44 tools, approximately 219 KB `tools/list`, including 110k characters of descriptions. This is **only a size observation**, not a demonstrated cause of any app refresh failure. Avoid changing the tool surface without an app-level error identifying a schema/size limit.
+
+## Browser 403 on a generated-image link — resolved 2026-11-02
+
+Direct links from ChatGPT to ComfyUI output files such as
+`https://comfy.kompaszbiorek.pl/view?filename=mcp_multi_output_B_20261102_00001_.png&type=output`
+previously returned **HTTP 403** because browsers send `Sec-Fetch-Site: cross-site` during cross-site navigation.
+ComfyUI rejects that header on all endpoints, including read-only image downloads. Plain server-side curl without the header misleadingly succeeded with HTTP 200.
+
+**Production fix:** Caddy 2.11.7 (existing container `coolify-caddy`), host-bound
+`/data/caddy/Caddyfile`, `comfy.kompaszbiorek.pl` vhost only:
+- **only** `GET/HEAD /view?type=output` strips the upstream `Sec-Fetch-Site` request header;
+- all other paths and `/view?type=input` remain forwarded unchanged, retaining the cross-site guard;
+- no Cloudflare Workers or MCP auth changes; the ComfyUI DNS A-record is DNS-only and therefore the fix belongs in Caddy, not Cloudflare;
+- config source snippet: [`caddy-cross-site-output-view.caddyfile`](caddy-cross-site-output-view.caddyfile);
+- host backup: `/data/caddy/Caddyfile.bak-comfy-view-cross-site-20261102`.
+
+E2E verification: identical URL + Chrome-like `Sec-Fetch-Site: cross-site` returns
+`HTTP 200` `image/png` with 197897 bytes and SHA-256
+`1433dbd6a0cad4e23e7feed82e25aacd5b4086ed875f5fd616acc165b80a7c6e`.
+Control requests using the same cross-site header to `/system_stats` and to
+`/view?type=input` continue to return `HTTP 403`.
+Caddy validated and hot-reloaded without a container restart.
+
+A link remains accessible while the exact output file exists on the ComfyUI volume. These are public sharable output image links — not private authenticated URLs.
