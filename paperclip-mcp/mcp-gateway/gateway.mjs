@@ -11,6 +11,7 @@ import { resolvePrincipal, describePrincipal, jwtRunId, isVerifiedOwnerBoardGran
 import { createOriginResolver } from "./public-origin.mjs";
 import { getReleaseIdentity } from "./release-identity.mjs";
 import { loadSkills } from "./skills.mjs";
+import { registerChatGPTImageTool } from "./chatgpt-image.mjs";
 
 const HOST = process.env.MCP_HOST || "0.0.0.0";
 const PORT = Number(process.env.MCP_PORT || 3101);
@@ -545,6 +546,7 @@ async function handleMcp(req, res, token, bodyOverride, agentContext = null, pri
     principalKind: session.principalKind ?? null,
     wikiBoardApiKey: session.agentId && WIKI_BOARD_AGENT_IDS.has(session.agentId) ? SERVER_BOARD_API_KEY : null,
   }, toolAllowlist ? { toolAllowlist } : undefined);
+  registerChatGPTImageTool(server, { z, allowlist: toolAllowlist, auth: { apiUrl: API_URL, apiKey: session.apiKey, companyId: COMPANY_ID, agentId: session.agentId, principalKind: session.principalKind } });
   console.log(
     `[paperclip-mcp] session principal kind=${session.principalKind || "legacy"} agentId=${session.agentId || "none"} `
     + `runId=${session.runId || "none"} boardAuthorized=${Boolean(session.boardApiKey)} mode=${PRINCIPAL_MODE}`,
