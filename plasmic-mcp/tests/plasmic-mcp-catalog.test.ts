@@ -188,6 +188,16 @@ describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
     assert.equal(tools.length, EXPECTED_TOOLS.length);
   });
 
+  it("reports WAB/tool failures through MCP isError=true (no false-positive success)", async () => {
+    const response = await withServer(client => client.request("tools/call", {
+      name: "plasmic_list_projects", arguments: {},
+    }));
+    assert.equal(response.result?.isError, true);
+    const content = JSON.stringify(response.result?.content ?? []);
+    assert.match(content, /"ok"/);
+    assert.match(content, /false/);
+  });
+
   it("negatyw na poziomie protokołu: serwer odrzuca plasmic_import_html", async () => {
     const res = await withServer(async (client) =>
       client.request("tools/call", { name: "plasmic_import_html", arguments: {} }),
