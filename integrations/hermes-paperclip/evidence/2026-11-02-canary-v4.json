@@ -1,0 +1,96 @@
+{
+  "snapshot_utc": "2026-11-02T14:29:00Z",
+  "scope": "Hermes Test pilot ONLY; no OpenCode agent migration",
+  "result": "TECHNICAL_E2E_PASS__INDEPENDENT_REVIEW_PENDING",
+  "paperclip": {
+    "issue_id": "KOMAA-1518",
+    "issue_uuid": "d868df24-0f2a-41b2-88dc-90315de15a35",
+    "run_id": "36428ebb-3a14-45e2-b174-5c1ef8ec09b8",
+    "agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
+    "adapter": "hermes_gateway",
+    "named_profile": "hermes-test",
+    "model": "gpt-6-luna",
+    "other_agents_on_opencode": 15,
+    "gateway_agents": 1,
+    "run_status": "succeeded"
+  },
+  "wiki": {
+    "provider": "Hermes-local read-only MCP server wiki_fs, mirrored from canonical Paperclip Markdown directory",
+    "native_paperclip_wiki_plugin_fixed": false,
+    "source_of_truth": "Paperclip persistent volume Wiki Markdown",
+    "mount": "Existing Hermes Gateway /opt/data persistent volume: /opt/data/wiki-paperclip-test",
+    "sync": "host systemd timer every ~60s, Markdown only, read-only mirror",
+    "service": "hermes-test-wiki-sync.service",
+    "timer": "hermes-test-wiki-sync.timer",
+    "mcp_tools": [
+      "wiki_list",
+      "wiki_read",
+      "wiki_search"
+    ],
+    "actual_real_paperclip_run_read": true,
+    "path": "wiki/concepts/karta-zbiorki.md",
+    "sha256": "27279ffd7450b58f2c0083958982232ca105e35d02f54c5b099057179850c0ba",
+    "path_traversal_tests_passed": true,
+    "read_only_tests_passed": 6,
+    "origin_and_mirror_sha_match": true,
+    "verified_after_gateway_restart": true
+  },
+  "skills": {
+    "mcp_alias": "pc",
+    "source": "Paperclip Named MCP Gateway",
+    "tool_calls": [
+      "mcp.paperclip-mcp-7551d8ac:papercliplistskills",
+      "mcp.paperclip-mcp-7551d8ac:paperclipgetskillfile"
+    ],
+    "published_slug": "hermes-paperclip-knowledge",
+    "version_marker": "KNOWLEDGE_SYNC_V2_20261031",
+    "same_paperclip_run_passed": true,
+    "stale_native_wiki_tools_removed_from_pilot_include": true,
+    "both_read_tools_retested_after_redeployment": true
+  },
+  "hindsight": {
+    "provider": "Vectorize AI Hindsight cloud (not Cloudflare Vectorize)",
+    "bank_id": "hermes-hermes-test",
+    "real_run_recall_passed": true,
+    "canary_fact": "synthetic blue lantern next to northern tent",
+    "negative_isolation_bank": "hermes-ceo",
+    "negative_isolation_matches": 0,
+    "latest_snapshot_documents": 52,
+    "pending_consolidation_at_20261102_1428Z": 173,
+    "full_consolidation_clearance_verified": false
+  },
+  "opik": {
+    "project": "hermes",
+    "trace_id": "01a19c9e-e5b3-7eac-80d5-22c407ff275e",
+    "metadata_task_id": "paperclip:run:36428ebb-3a14-45e2-b174-5c1ef8ec09b8",
+    "metadata_run_id_matches": true,
+    "span_count": 23,
+    "has_tool_spans": true,
+    "verified_by_independent_mcp_read": true
+  },
+  "deploy": {
+    "coolify_app_uuid": "2sganhxhhnioiqh4an9g2f4k",
+    "restarted_after_setting_api_server_toolsets": true,
+    "restarted_after_narrowing_named_pc_tool_include": true,
+    "app_status": "running:healthy",
+    "custom_mount_options_restored_to_null": true,
+    "paperclip_core_modified": false,
+    "other_agent_model_assignments_modified": false
+  },
+  "review": {
+    "issue_status": "in_review",
+    "reviewer_agent_id": "ff703eba-3c3d-46f0-b265-df0db1101a19",
+    "review_started": false,
+    "decision_persisted": false,
+    "blocked_by_stale_paperclip_recovery_id": "003311e7-910f-42ab-b0b8-3bf8f7ce76bf",
+    "blocker_cause": "Cancelled duplicate executor run left issueRecoveryActions.evidence.automaticRecovery.replay='blocked' even after native cancellation; Paperclip liveness awaiting_external_dependency; typed repair and route attempted but returned no valid resolution.",
+    "no_self_approval": true
+  },
+  "final": {
+    "technical_pilot_complete": true,
+    "full_paperclip_review_cycle_complete": false,
+    "production_cutover_of_other_agents": false,
+    "repo": "miloszspyrka-code/harness-zar-i-szlif",
+    "pull_request": 5
+  }
+}
