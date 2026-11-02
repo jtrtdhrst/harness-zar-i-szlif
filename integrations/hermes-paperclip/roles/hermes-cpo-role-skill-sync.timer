@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh CPO Hermes skill from Paperclip every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=60s
+Persistent=true
+Unit=hermes-cpo-role-skill-sync.service
+
+[Install]
+WantedBy=timers.target
