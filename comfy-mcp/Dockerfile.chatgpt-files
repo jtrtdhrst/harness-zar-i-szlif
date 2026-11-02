@@ -1,6 +1,0 @@
-FROM local/comfyui-mcp:0.52.206
-COPY chatgpt-file-tool.js /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js
-RUN node --input-type=module -e 'import{readFileSync,writeFileSync}from"node:fs";const p="/usr/local/lib/node_modules/comfyui-mcp/dist/tools/image-management.js";let t=readFileSync(p,"utf8");const a="export function registerImageManagementTools(server) {";if(!t.includes(a)||t.includes("registerChatGptFileTool(server)"))throw Error("Patch guard");t="import { registerChatGptFileTool } from \"./chatgpt-file-tool.js\";\n"+t.replace(a,a+"\n    registerChatGptFileTool(server);");writeFileSync(p,t);'
-
-
-RUN node --input-type=module -e 'import{readFileSync,writeFileSync}from"node:fs";const p="/usr/local/lib/node_modules/comfyui-mcp/dist/tools/tool-surface-filter.js";let t=readFileSync(p,"utf8");const a="    \"upload_image\",";if(!t.includes(a)||t.includes("    \"upload_chatgpt_image\","))throw Error("Filter guard");writeFileSync(p,t.replace(a,"    \"upload_chatgpt_image\",\n"+a));'
