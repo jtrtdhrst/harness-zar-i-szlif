@@ -7,7 +7,11 @@ RUN set -eux; \
     for patch in patch-v1 patch-validator-v2 patch-validator-v2b patch-validator-v3 patch-validator-v4 patch-validator-v5 patch-validator-v6 patch-validator-v6b patch-color; do \
       node "/tmp/${patch}.mjs"; \
     done; \
-    rm -f /tmp/patch-*.mjs\n# The attachment source and registration live in this SAME canonical MCP folder.\nCOPY chatgpt-file-tool.js /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js\nCOPY patches/patch-chatgpt-upload.mjs /tmp/patch-chatgpt-upload.mjs\nRUN node /tmp/patch-chatgpt-upload.mjs && node --check /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js && rm /tmp/patch-chatgpt-upload.mjs
+    rm -f /tmp/patch-*.mjs
+# The attachment source and registration live in this SAME canonical MCP folder.
+COPY chatgpt-file-tool.js /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js
+COPY patches/patch-chatgpt-upload.mjs /tmp/patch-chatgpt-upload.mjs
+RUN node /tmp/patch-chatgpt-upload.mjs && node --check /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js && rm /tmp/patch-chatgpt-upload.mjs
 ENV LOG_LEVEL=info COMFYUI_URL=http://comfyui:8188
 EXPOSE 9100
 CMD ["comfyui-mcp", "--http", "--host", "0.0.0.0", "--port", "9100", "--comfyui-url", "http://comfyui:8188", "--allow-unauthenticated-non-loopback"]
