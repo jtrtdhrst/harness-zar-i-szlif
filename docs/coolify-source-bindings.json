@@ -92,7 +92,7 @@
       "name": "mantic-mcp",
       "resource_uuid": "bioufw4uxwuhmr51ueyahf0u",
       "resource_type": "compose_service",
-      "current_project": "mautic",
+      "current_project": "mantic-mcp",
       "source": {
         "repository": "miloszspyrka-code/harness-zar-i-szlif",
         "branch": "main",
@@ -128,7 +128,7 @@
       "name": "playwright-mcp",
       "resource_uuid": "9e4fzsodixl4qzzap4zg0ntp",
       "resource_type": "compose_service",
-      "current_project": "Kod MCP Żar i Szlif",
+      "current_project": "playwright-mcp",
       "source": {
         "repository": "miloszspyrka-code/harness-zar-i-szlif",
         "branch": "main",
@@ -258,15 +258,13 @@
     }
   ],
   "known_exceptions": [
-    "mantic-mcp shares the mautic project",
-    "playwright-mcp is under Kod MCP Żar i Szlif project",
     "comfy-mcp currently builds from legacy combined comfyui-mcp folder",
     "GitHub Actions currently disabled",
     "active production image-only Compose services have no Git branch webhook",
     "GitHub App access resolved on 2026-11-02; Hermes canary verified without public ingress, secrets or volume."
   ],
   "evidence": {
-    "source_commit": "06c83ec0bbc38a2a59a348c6856519f5ba41b0a7",
+    "source_commit": "834055074e23e12ef8e5969b4ffc91512a0a93eb",
     "dockerfile_buildkit_checks_passed": 9,
     "full_image_builds_passed": 3,
     "isolated_runtime_probes": [
@@ -288,7 +286,37 @@
       "public_domain": null,
       "stopped_after_build": true,
       "watch_paths": "__canary_manual_only__/**",
-      "production_unchanged": true
-    }
+      "production_unchanged": true,
+      "webhook_positive": {
+        "commit": "77db7ad68ea733d41d3a2b896083feb42e229240",
+        "deployment_uuid": "it3rdtszamzr7trlcas9q38y",
+        "status": "finished",
+        "is_webhook": true
+      },
+      "webhook_negative": {
+        "commit": "52105faee4dcb44af8709b0c639ad7c725e50663",
+        "docs_only_no_new_deployments": true
+      },
+      "source_branch_restored": "infra/coolify-git-bindings-20261101",
+      "temp_test_branch_deleted": true,
+      "auto_deploy_enabled": false
+    },
+    "service_project_moves": {
+      "mantic_mcp": {
+        "project": "mantic-mcp",
+        "status": "running:healthy",
+        "uuid": "bioufw4uxwuhmr51ueyahf0u"
+      },
+      "playwright_mcp": {
+        "project": "playwright-mcp",
+        "status": "running:healthy",
+        "uuid": "9e4fzsodixl4qzzap4zg0ntp"
+      }
+    },
+    "historical_branches_deleted": [
+      "harness:docs/coolify-split-status",
+      "harness:feat/service-folders-volumes",
+      "product:feat/mcp-bridges"
+    ]
   }
 }
