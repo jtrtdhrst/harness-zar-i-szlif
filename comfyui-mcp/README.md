@@ -1,4 +1,25 @@
 # ComfyUI and its MCP — canonical source of truth
+
+## PUBLIC MCP RELEASE — 2026-11-02 (authoritative)
+
+**Canonical anonymous endpoint:** `https://mcp-comfy.kompaszbiorek.pl/mcp`
+
+Production configuration deliberately supports **NO interactive login, no Cloudflare Access JWT, no Bearer token, and no X-API-Key** on this endpoint. This is a user-approved public deployment. Do not re-enable OAuth/Access or `COMFYUI_MCP_HTTP_TOKEN` without an explicit new decision.
+
+- Cloudflare DNS CNAME `mcp-comfy.kompaszbiorek.pl` → `acc16c51-dd6b-44dc-ac58-06aa7218e76c.cfargotunnel.com` (proxied, unchanged).
+- Cloudflare Tunnel `coolify-mcp-20261027`: ONLY the ingress for `mcp-comfy.kompaszbiorek.pl` forwards to `http://comfy-mcp:9100`. Previous `http://comfy-mcp-access-bridge:9101` is retired from the live route; other ingress entries MUST remain unchanged.
+- Cloudflare Access application `c9e3c18f-5f46-4e3a-912c-e1fdf0d8f5bb`: policy `4b01d478-02be-4c16-a659-a5431ac15317` is **bypass / everyone**, not owner-email allow.
+- Coolify service `kkhfw0napmeaqewgdirwhc1h` → container `comfy-mcp`, image `local/comfyui-mcp:0.52.206-chatfiles7`; no `COMFYUI_MCP_HTTP_TOKEN` in effective Docker Compose OR Coolify service environment. Recreate container after any environment changes; plain restart alone may leave old env intact.
+- The Dockerfile already runs `comfyui-mcp --http --host 0.0.0.0 --port 9100 --allow-unauthenticated-non-loopback`. Do not require the old OAuth bridge as an upstream.
+- Verified on public HTTPS, without authorization headers/cookies: `initialize` HTTP 200, `tools/list` HTTP 200 (44 tools), `tools/call get_system_stats({action:"health"})` HTTP 200; `get_output_image_ref` → external image HTTP 200, SHA-256 match → `stage_output_image_reference` → `byte_identical:true`, `loader_selectable:true`.
+- Public exposure warning: ALL advertised tools are currently unauthenticated, including mutating/compute-consuming functions. This is intentional for current access requirements but leaves abuse/cost risk. Reassess rate limits, allowed tool set, quotas, and origin protection before offering this URL to untrusted third parties.
+- Deterministic anonymous smoke test: `python3 comfyui-mcp/anonymous-mcp-smoke.py`. Do not consider only HTTP GET or container health sufficient.
+
+**Rollback (targeted):** Restore the old Cloudflare Access policy (owner-email allow), restore the old tunnel rule for just this hostname to `http://comfy-mcp-access-bridge:9101`, restore origin token into Coolify service env+compose, and recreate the MCP container. No other tunnel routes or production Workers need modification.
+
+### Historical notes
+The prior 2026-11-02 OAuth bridge state below is superseded by this public release. Bridge source files are retained for rollback, **not** active traffic.
+
 **Current deployment (2026-11-02):** All ComfyUI MCP implementation changes are authored under `comfyui-mcp/` in this repo, built with `comfyui-mcp/Dockerfile` and deployed to the existing Coolify service (`kkhfw0napmeaqewgdirwhc1h`, app `y1ugra7qn0s7sygccgfbwrpe`) as `local/comfyui-mcp:0.52.206-chatfiles7`. `comfy-mcp/` is metadata for the Coolify project, **not** a separate source tree. Do not add patched ComfyUI MCP code there.
 
 - Upload implementation: `chatgpt-file-tool.js`, registered by `patches/patch-chatgpt-upload.mjs`, built **after** the retained validator/base64/color patch chain. Tool `upload_chatgpt_image` declares `_meta["openai/fileParams"]=["file"]` so ChatGPT attachments can be passed through MCP after connecting the client.
@@ -6,8 +27,8 @@
 - Backward-compatible `upload_image(data_base64,filename)` remains usable for direct raw bytes. A PNG RGBA 1254×1254 passed a byte-perfect roundtrip on the canonical built canary.
 - Build on Ubuntu from the actual `comfyui-mcp/` folder with `docker build --pull=false -f Dockerfile -t local/comfyui-mcp:0.52.206-chatfiles7 .`; production Coolify application image is set to that tag and deployed. Never build the release from the `comfy-mcp/` project metadata directory.
 - Validated after production redeploy: `tools/list` 44 tools; `upload_chatgpt_image` with original-public PNG → `byte_identical:true`, same SHA-256 from ComfyUI storage, `LoadImage` selectable. A forged/wrong SHA fails; invalid/expired JWT denied on OAuth bridge fixture.
-- Cloudflare Access auth bridge source: `oauth-bridge.mjs` and `oauth-bridge.compose.yml`. Secret-bearing `.env` stays on the server and is excluded from Git. Internal origin MCP token is NOT the ChatGPT OAuth token. Keep upstream bearer auth active.
-- User-facing endpoint: `https://mcp-comfy.kompaszbiorek.pl/mcp`. Its OAuth connection needs a one-time ChatGPT-side login/reconnect to the correct Access application. `UNAUTHORIZED` in a pre-existing connector is not proof of a failed server-side build.
+- Historical OAuth bridge source: `oauth-bridge.mjs` and `oauth-bridge.compose.yml` (rollback only; not the active public route). No upstream Bearer token is required for the current release.
+- User-facing endpoint: `https://mcp-comfy.kompaszbiorek.pl/mcp`; anonymous Streamable HTTP. ChatGPT may need a one-time connector refresh/rescan to clear stale OAuth metadata, **not a login**.
 - Production image is built from GitHub canonical source and not a hotpatch to app/Core. The legacy notes below describe the earlier pre-Coolify state and should not override this current deployment block.
 
 
@@ -34,7 +55,7 @@ Verified live on production/canary:
 Production original-result test `prompt_id`: `afad26b4-6600-4788-bbd2-dd3fbe739d28`.
 Production direct result: `https://comfy.kompaszbiorek.pl/view?filename=e2e_reuse_exact_image_ref_20261102_00001_.png&type=output`.
 
-**Remaining ChatGPT connector step:** if the existing ChatGPT app has a cached unauthenticated MCP session, reconnect using Cloudflare Access OAuth on `https://mcp-comfy.kompaszbiorek.pl/mcp`, then rescan tools. Server-side E2E is verified, but do not label an actual ChatGPT-app attachment E2E verified without invoking the newly authenticated app with an actual user upload.
+**ChatGPT connector step:** reconnect/refresh the existing custom MCP app if it cached the earlier Access OAuth discovery, then rescan tools. No login or credential should be required. Server-side MCP and image-reference E2E are verified; actual ChatGPT-app attachment integration still requires a real client-side upload test.
 
 
 ---
