@@ -1,0 +1,12 @@
+[Unit]
+Description=Check CPO Hermes profile every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+AccuracySec=20s
+Unit=hermes-cpo-readiness.service
+
+[Install]
+WantedBy=timers.target
