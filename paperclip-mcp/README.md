@@ -52,50 +52,23 @@ would otherwise shadow it).
 - `GET /health` — gateway health.
 - `GET /.well-known/oauth-authorization-server` — OAuth 2.1 metadata for custom connectors.
 
-## Coolify
+## Current Coolify production (2026-11-02)
 
-Build directory `/mcp/paperclip`, Dockerfile `Dockerfile`, port `3101`, and a volume
-on `/paperclip`. The Paperclip core API (`3100`) is a separate service (upstream
-image) — the gateway talks to it over `PAPERCLIP_API_URL`.
+The **actual running Paperclip MCP** is a Coolify **service** (`gevr1m6rdj4t4fbhcjvqv8gg`), with sub-application `yvtwulblrzpmuvi72xd9sey3`, internal port 3101 and existing `/paperclip` persistent volume. Its source belongs in this repository's **`paperclip-mcp/`** folder; do not put gateway source into the product's `zar-i-szlif` repository or modify Paperclip Core.
 
-## Branch validation and deployment (one path)
+The current production image is `paperclip-mcp:chatgpt-image-final-20261102` (digest `sha256:b5c9a29df706ac7cd5fde3cfe9ee68c9dc6dd793b57008e5593bc6cbf2d60762`). Previous working image tag for rollback: `fs9rik9axzl1ubbimekvqs03:eadd6814c29c23cd139958fa3705e197fc60b6c6`. Coolify uses local image `pull_policy: never`: **GitHub main changes do not auto-build or redeploy this service**. Any production release requires an explicit image build, named image switch through Coolify and post-deploy digest/MCP readback. Preserve OAuth and other data volumes. A future trusted GHCR publish/Git-based build could close this reproducibility gap, but do not invent it or move to another service.
 
-Use one branch per change. Create it from the current `main`, push it, open a
-pull request into `main` and require successful GitHub `Infrastructure CI`
-and `Paperclip MCP source and gateway tests` for that **exact head SHA**
-before review and merge. Keep the independent code review where required.
-A successful PR or a running agent is not production delivery.
+Canonical production public endpoint: `https://paperclip-mcp.zariszlif.pl/mcp`; verify its authenticated `initialize`, `tools/list`, `tools/call`, OAuth discovery, denied anonymous calls, and running image digest. Health 200 alone is not proof. Cloudflare remains DNS/TLS/tunnel transport; retain the existing `paperclip-mcp` Worker and other unrelated Workers, routes and tunnel settings.
 
-The only automatic deployment owner is the existing self-hosted Coolify GitHub
-App integration for `miloszspyrka-code/zar-i-szlif`, production application
-`paperclip-mcp` (UUID `fs9rik9axzl1ubbimekvqs03`), tracking **main only**,
-with automatic deployment enabled. Build from `/mcp/paperclip/Dockerfile`
-(base directory `/mcp/paperclip`, Dockerfile location `/Dockerfile`,
-HTTP port 3101). Keep the `/paperclip` persistent volume and reach Paperclip
-Core through `PAPERCLIP_API_URL`. Do not auto-deploy feature branches, copy
-production credentials to PR previews, or build another duplicate MCP stack.
+### ChatGPT image transfer
 
-Do **not** deploy via an additional GitHub Actions -> Coolify token workflow.
-Code CI runs in GitHub; build, container lifecycle, deployment history and
-rollback run directly in Coolify. After merging, verify the deployment record
-matches the merged `main` SHA, inspect the actual running container image,
-exercise live MCP `initialize` / `tools/list` (authenticated and denied cases)
-and OAuth clients/refresh flow. `GET /health` alone is not readiness evidence:
-the crypto import regression previously returned 200 health while MCP requests
-crashed. Validate `/__release/identity` and compare to the actual Coolify
-runtime identity; do not confuse the pinned upstream Paperclip Core SHA with
-the separate MCP overlay commit.
+The existing gateway now exposes `paperclipUploadChatgptImage` with an official OpenAI `file` object, `_meta["openai/fileParams"]=["file"]`, persistent byte-exact upload, ComfyUI `LoadImage` staging, independent SHA-256 verification and a Paperclip issue receipt attempt. See **[docs/chatgpt-image-ingress.md](docs/chatgpt-image-ingress.md)** for schema, security policy, production test results and the remaining external ChatGPT connector validation.
 
-Cloudflare is only DNS, TLS, edge protection and optionally a transport
-tunnel: **no Paperclip MCP OAuth, routing, health-response or proxy logic in a
-Worker** after the safe cutover. Preserve the public MCP hostname and OAuth
-issuer, migrate existing OAuth clients and refresh tokens into the Coolify
-persistent volume without logging secrets, verify tunnel reachability and
-authenticated traffic, and retain a tested rollback before disabling the old
-Worker/gateway/supervisor. Never delete a live Worker route, tunnel or
-persistent OAuth state ahead of the proven cutover. An exposed tunnel token
-must be rotated through a staged connector replacement to avoid collateral
-downtime on unrelated hostnames.
+Source patches are limited to `mcp-gateway/chatgpt-image.mjs`, `gateway.mjs`, `entrypoint.sh` and the MCP live registry `src/live-verify.ts`; no Paperclip Core edits, additional agents or new infrastructure.
+
+## Production safety and release
+
+Use source control, static validation, a canary where practical and existing Coolify service controls. Keep the previous exact image tag for rollback. The current production image is a minimal overlay on the prior deployed custom Paperclip MCP image, so **it is not independently reconstructible from the public base image alone**. Do not present a running container as proof of portable disaster recovery; preserve a trusted base image and automate image publishing separately after verification.
 
 ## Provenance
 
