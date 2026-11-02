@@ -1,0 +1,79 @@
+{
+  "snapshot_utc": "2026-11-02T13:05:04Z",
+  "paperclip_run_id": "ab5e85aa-262b-4209-a533-eae42bb3a4cf",
+  "issue_id": "KOMAA-1504",
+  "executing_agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
+  "named_profile": "hermes-test",
+  "secrets_exposed": false,
+  "profile_auth_test": {
+    "passed": false,
+    "wrong_profile_rejected": true,
+    "dedicated_key_stored_as_secret_ref": true,
+    "saved_secret_ref_id": "b060343b-5c34-4629-ba51-022fcaaa292d",
+    "paperclip_run_error_code": "hermes_gateway_auth_failed",
+    "paperclip_run_http_status": 401,
+    "environment_health_only_passed": true
+  },
+  "wiki_tool_call": {
+    "passed": false,
+    "paperclip_agent_run_context": false,
+    "actual_content_read": false,
+    "http_status": 0,
+    "invocation_id": "",
+    "native_plugin_cli_denial": "Plugin tools require an agent run context"
+  },
+  "published_skill": {
+    "passed": false,
+    "version_verified": false,
+    "version_id": "",
+    "independent_cli_read_verified": true,
+    "independent_skill_marker": "KNOWLEDGE_SYNC_V2_20261031"
+  },
+  "hindsight": {
+    "passed": false,
+    "later_session_recalled": true,
+    "cross_bank_isolation": true,
+    "bank_id": "hermes-hermes-test",
+    "control_bank_id": "hermes-ceo",
+    "positive_memory": "blue lantern next to northern tent",
+    "control_bank_hit_count": 0,
+    "documents": 36,
+    "completed_operations": 105,
+    "pending_consolidation": 0,
+    "native_post_mcp_retain_verified": true,
+    "same_paperclip_run_verified": false
+  },
+  "opik_trace": {
+    "passed": false,
+    "run_id_correlated": false,
+    "model_and_usage_spans": true,
+    "trace_id": "01a19c49-2d82-7c06-863f-0da55fb02ce3",
+    "paperclip_run_id": "",
+    "scope": "unrelated standalone CLI runtime canary",
+    "model": "gpt-6-luna"
+  },
+  "release": {
+    "passed": false,
+    "sha_verified": true,
+    "rollback_tested": false,
+    "immutable_digest_or_sha": "sha256:c6c4d84f0d15750bd191f660073b70245f186fcce8a1ec82b5c96cdab04bb7d8",
+    "mcp_image_sha": "sha256:9bbbb8a1283e24c3e14e529b36bcdeb1e5166d6c5763580d46f969ffd01f36f6"
+  },
+  "review": {
+    "passed": false,
+    "independent_reviewer": true,
+    "approved": false,
+    "reviewer_agent_id": "ff703eba-3c3d-46f0-b265-df0db1101a19",
+    "status": "blocked_before_review"
+  },
+  "governance": {
+    "paperclip_core_edited": false,
+    "shared_coo_wiki_board_grant": false,
+    "wiki_board_allowlist_empty": true,
+    "production_cutover_performed": false,
+    "hermes_test_max_concurrent_runs": 1,
+    "company_heartbeats_reenabled": false
+  },
+  "approval_request_id": "ed3a5b58-a614-45af-af27-4836fcc0f734",
+  "blocker": "Scoped Hermes profile key does not match the dedicated Paperclip secret_ref; real issue run returned HTTP 401. Approved Vault credential re-enrollment required. Do not substitute global/shared credentials."
+}
