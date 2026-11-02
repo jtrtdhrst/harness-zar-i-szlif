@@ -206,7 +206,7 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
                 const plan = planNativeTree(bundle.map as EntryMap, a.parentElementId as string, nodes);
                 created = plan.created;
                 return { map: plan.patch };
-              }, { dryRun: preview });
+              }, { dryRun: preview, saveMode: "full" });
             return { ...result, created, nodeCount: created.length };
           });
       },
