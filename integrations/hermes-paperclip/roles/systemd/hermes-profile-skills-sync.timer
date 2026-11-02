@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh approved Paperclip Hermes role skills every two minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=true
+Unit=hermes-profile-skills-sync.service
+
+[Install]
+WantedBy=timers.target
