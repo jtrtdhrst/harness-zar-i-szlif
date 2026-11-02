@@ -1,6 +1,6 @@
 services:
   bridge:
-    image: local/comfyui-mcp:0.52.206-chatfiles5
+    image: local/comfyui-mcp:0.52.206-chatfiles6
     pull_policy: never
     container_name: comfy-mcp-access-bridge
     command: ["node", "/srv/server.mjs"]
