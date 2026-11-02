@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { plasmicCommentTools } from "./comment-tools.ts";
+import { plasmicUiTools } from "./ui-tools.ts";
 
 export interface PlasmicCtx {
   client: PlasmicClient;
@@ -163,7 +164,7 @@ function summarize(bundle: BundleDoc, client: PlasmicClient) {
   };
 }
 
-async function writeOp<T extends Record<string, unknown>>(
+export async function writeOp<T extends Record<string, unknown>>(
   ctx: PlasmicCtx,
   tool: string,
   projectId: string,
@@ -220,6 +221,7 @@ export function plasmicTools(ctx: PlasmicCtx): ToolDef[] {
   const c = ctx.client;
   return [
     ...plasmicCommentTools(ctx),
+    ...plasmicUiTools(ctx),
 
     {
       name: "plasmic_list_projects",
