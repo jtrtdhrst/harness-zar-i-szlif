@@ -193,9 +193,9 @@ describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
       name: "plasmic_list_projects", arguments: {},
     }));
     assert.equal(response.result?.isError, true);
-    const content = JSON.stringify(response.result?.content ?? []);
-    assert.match(content, /"ok"/);
-    assert.match(content, /false/);
+    const content = JSON.parse(response.result?.content?.[0]?.text ?? "{}");
+    assert.equal(content.ok, false);
+    assert.equal(typeof content.error, "string");
   });
 
   it("negatyw na poziomie protokołu: serwer odrzuca plasmic_import_html", async () => {
