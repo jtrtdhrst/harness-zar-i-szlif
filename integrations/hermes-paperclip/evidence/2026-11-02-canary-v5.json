@@ -1,0 +1,105 @@
+{
+  "timestamp_utc": "2026-11-02T15:01:00Z",
+  "scope": "Hermes Test pilot only. No OpenCode agents migrated. Paperclip Core unchanged.",
+  "gateway": {
+    "coolify_app_uuid": "2sganhxhhnioiqh4an9g2f4k",
+    "status": "running:healthy",
+    "profile": "hermes-test",
+    "model": "gpt-6-luna",
+    "sessionKeyStrategy": "run"
+  },
+  "wiki": {
+    "sync": "Canonical Paperclip Wiki Markdown -> Hermes Test persistent volume via systemd timer, 60s cadence",
+    "mutations_tested": [
+      "created",
+      "updated",
+      "deleted"
+    ],
+    "sync_test": "PASS",
+    "origin_and_copy_sha256": "27279ffd7450b58f2c0083958982232ca105e35d02f54c5b099057179850c0ba",
+    "local_mcp": "wiki_fs, read-only",
+    "unit_tests": {
+      "passed": 6,
+      "total": 6
+    },
+    "gateway_runtime_test": "PASS after restart",
+    "native_paperclip_wiki_plugin_fixed": false,
+    "write_back_sync": false
+  },
+  "skills": {
+    "source": "Paperclip Named MCP gateway, live lookup not a separately copied skill directory",
+    "connection_id": "7551d8ac-ce4b-4af9-a2af-eefe3cfd63c5",
+    "previous_public_url": "https://paperclip-mcp.zariszlif.pl/mcp",
+    "effective_internal_url": "http://paperclip-mcp:3101/mcp",
+    "same_docker_network": "coolify",
+    "credentials_unchanged": true,
+    "grants_unchanged": true,
+    "internal_health": "ok",
+    "serial_governed_calls": {
+      "passed": 7,
+      "total": 7,
+      "invocation_ids": [
+        "d40cab6d-c096-4b0f-bc3b-c2d658ffaffa",
+        "2298e169-6657-4b3e-934d-30a3796976bb",
+        "3123663e-a503-4b83-81a8-d6717c88eb0f",
+        "1e4078c7-1571-4f66-957c-f1a577f89d4e",
+        "ca49ffcb-4e1e-48aa-99aa-3dd759877fd5",
+        "347b13fe-01ee-4b0a-b44c-d6501c620622",
+        "a4ed8c54-ef86-43e4-ab16-28e31a20199f"
+      ]
+    },
+    "same_run_skill_lookup_and_getskillfile": "PASS with first 500 retried in first accepted run",
+    "version_marker": "KNOWLEDGE_SYNC_V2_20261031"
+  },
+  "paperclip": {
+    "issue": "KOMAA-1521",
+    "actual_runs": [
+      "5aed258b-a409-4121-b4c7-5366800d0efa",
+      "7d5f71cb-671c-4521-9a3a-907f215d2dfd"
+    ],
+    "opik_traces": [
+      {
+        "id": "01a19cc0-0c94-7f75-b71d-29c6117f19cd",
+        "run": "5aed258b-a409-4121-b4c7-5366800d0efa",
+        "spans": 19
+      },
+      {
+        "id": "01a19cc0-e3e2-7e00-83ab-bb3878bd0fb1",
+        "run": "7d5f71cb-671c-4521-9a3a-907f215d2dfd",
+        "spans": 15
+      }
+    ],
+    "independent_cto_decisions_history": [
+      "changes_requested",
+      "changes_requested"
+    ],
+    "current_review": "in_review, reviewer_running; new evidence attached",
+    "review_stage_protected": true,
+    "issue_document_id": "28e0f43e-370f-424a-a8c6-96780f188630",
+    "work_product_id": "c511cf68-5366-4839-a451-1e8d56936802",
+    "independent_approval_completed": false
+  },
+  "hindsight": {
+    "native_hermes_retain_verified": true,
+    "bank_id": "hermes-hermes-test",
+    "synthetic_new_fact": "HERMES_SYNC_CANARY_20261102_EAST_RIDGE: copper compass under east ridge stone",
+    "vectorize_fact_browsed": true,
+    "independent_session_recall_after_processing": true,
+    "immediate_recall_before_processing": false,
+    "ceo_bank_negative_control_results": 0,
+    "async_processing_expected": true,
+    "auto_publish_to_wiki_or_skills": false
+  },
+  "ongoing_checks": {
+    "systemd_wiki_sync_timer": "active",
+    "systemd_readiness_timer": "active",
+    "readiness_probe_interval": "5m",
+    "first_probe": "PASS at 2026-11-02T14:57:35Z"
+  },
+  "no_go": [
+    "CTO independent approval not yet persisted",
+    "Transient single upstream 500 recovered on retry; repeatability beyond seven native governed calls not statistically proven",
+    "Automatic promotion of Hindsight experiences to reviewed canonical skills/prompts not implemented"
+  ],
+  "production_rollout_status": "Pilot deployed, full autonomous review-to-DONE and wider rollout NOT APPROVED"
+}

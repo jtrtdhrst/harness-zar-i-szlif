@@ -1,0 +1,61 @@
+{
+  "snapshot_utc": "2026-11-02T13:46:00Z",
+  "phase": "preproduction_Hermes_Test_only",
+  "production_cutover": false,
+  "agent": {
+    "id": "456e000b-6574-4c84-8cab-76af49522afc",
+    "adapter": "hermes_gateway",
+    "named_profile": "hermes-test",
+    "adapter_url": "https://hermes-poc.zariszlif.pl/p/hermes-test",
+    "sessionKeyStrategy": "run",
+    "apiKey_secret_ref": "b060343b-5c34-4629-ba51-022fcaaa292d",
+    "secret_version": 2
+  },
+  "paperclip_issue": "KOMAA-1511",
+  "paperclip_run_id": "108d5a0b-8642-44d5-8e11-77fc4f9ebd20",
+  "opik": {
+    "trace_id": "01a19c80-937a-74de-b56a-b6a3755df5c4",
+    "metadata_task_id": "paperclip:run:108d5a0b-8642-44d5-8e11-77fc4f9ebd20",
+    "run_id_correlated": true,
+    "model": "gpt-6-luna",
+    "tool_spans": 16
+  },
+  "hindsight": {
+    "bank": "hermes-hermes-test",
+    "recall_result": "synthetic blue lantern next to northern tent",
+    "recalled_in_run": true,
+    "cross_bank_negative_control_previously_verified": true
+  },
+  "named_mcp": {
+    "invocation_in_this_run": "MCPError: Tool mcp.paperclip-mcp-7551d8ac:papercliplistskills not found",
+    "connection_health_at_time": {
+      "health": "error",
+      "message": "Remote app returned HTTP 403"
+    },
+    "native_health_check_recovery": true,
+    "three_fresh_native_tool_calls": [
+      {
+        "invocation_id": "b920ef6e-ae49-4a7c-8fb4-d4a14cdf8c6a",
+        "passed": true
+      },
+      {
+        "invocation_id": "a8aad5fa-7635-4169-9376-4a7bd9edef85",
+        "passed": true
+      },
+      {
+        "invocation_id": "7c2546b8-1347-4d84-b9d8-c401eb13760d",
+        "passed": true
+      }
+    ]
+  },
+  "wiki_mcp": {
+    "passed": false,
+    "prior_real_issue_run": "aca4eae6-8426-4ea9-952c-98498bcb9681",
+    "error": "Plugin tools require an agent run context",
+    "root_cause": "Static client-scoped named MCP token cannot prove active Paperclip run to native plugin; native heartbeat-run gateway token exists but current Hermes Gateway adapter does not deliver it to Hermes per-request."
+  },
+  "paperclip_core_modified": false,
+  "delivery_status": "BLOCKED",
+  "release_review_status": "NOT_APPROVED",
+  "note": "This pilot corrects structured Opik correlation but still fails Wiki and intermittent MCP discovery; no production migration of other agents."
+}

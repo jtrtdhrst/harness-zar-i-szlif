@@ -1,0 +1,87 @@
+{
+  "snapshot_utc": "2026-11-02T13:23:00Z",
+  "issue_id": "KOMAA-1507",
+  "paperclip_run_id": "aca4eae6-8426-4ea9-952c-98498bcb9681",
+  "executing_agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
+  "named_profile": "hermes-test",
+  "secrets_exposed": false,
+  "stage": "pilot_canary_only_no_production_cutover",
+  "profile_auth_test": {
+    "passed": true,
+    "wrong_profile_rejected": true,
+    "dedicated_key_stored_as_secret_ref": true,
+    "secret_version": 2,
+    "api_base_url": "https://hermes-poc.zariszlif.pl/p/hermes-test",
+    "prior_auth_failure_run_id": "ab5e85aa-262b-4209-a533-eae42bb3a4cf",
+    "prior_auth_error": "hermes_gateway_auth_failed",
+    "real_run_http_401_cleared": true
+  },
+  "wiki_tool_call": {
+    "passed": false,
+    "paperclip_agent_run_context": false,
+    "actual_content_read": false,
+    "http_status": 0,
+    "invocation_id": "",
+    "tool_name": "mcp__pc__paperclipai_plugin_llm_wiki_wiki_list_pages",
+    "error": "MCPError: Plugin tools require an agent run context",
+    "source": "same real Hermes Test Paperclip issue-bound run"
+  },
+  "published_skill": {
+    "passed": true,
+    "version_verified": true,
+    "version_id": "4dfdb571-ff2f-4ba4-95c5-8896fb011e27",
+    "slug": "hermes-paperclip-knowledge",
+    "version_marker": "KNOWLEDGE_SYNC_V2_20261031",
+    "tools": [
+      "mcp__pc__mcp_paperclip_mcp_7551d8ac_papercliplistskills",
+      "mcp__pc__mcp_paperclip_mcp_7551d8ac_paperclipgetskillfile"
+    ],
+    "same_issue_run_tool_result": true
+  },
+  "hindsight": {
+    "passed": true,
+    "later_session_recalled": true,
+    "cross_bank_isolation": true,
+    "bank_id": "hermes-hermes-test",
+    "negative_control_bank_id": "hermes-ceo",
+    "negative_control_results": 0,
+    "marker": "synthetic blue lantern next to northern tent",
+    "same_paperclip_run_recall_verified": true,
+    "same_run_new_retain_verified": false
+  },
+  "opik_trace": {
+    "passed": false,
+    "run_id_correlated": false,
+    "model_and_usage_spans": true,
+    "trace_id": "01a19c69-cbb1-7106-9088-1f56407e3ce0",
+    "paperclip_run_id": "",
+    "issue_id_correlated": "42c413f9-e4f3-44df-8630-b2cd2a3b5d6e",
+    "model": "gpt-6-luna",
+    "platform": "api_server",
+    "span_count": 19,
+    "has_tool_spans": true,
+    "total_tokens": 23256,
+    "note": "Opik metadata.task_id correlates to issue ID; Paperclip run ID is in trace text, not a structured run-id field."
+  },
+  "release": {
+    "passed": false,
+    "sha_verified": true,
+    "rollback_tested": false,
+    "immutable_digest_or_sha": "sha256:c6c4d84f0d15750bd191f660073b70245f186fcce8a1ec82b5c96cdab04bb7d8",
+    "production_cutover": false
+  },
+  "review": {
+    "passed": false,
+    "independent_reviewer": true,
+    "approved": false,
+    "reviewer_agent_id": "ff703eba-3c3d-46f0-b265-df0db1101a19",
+    "status": "awaiting_wiki_fix"
+  },
+  "followup": {
+    "issue_status": "blocked",
+    "outstanding": "Native Wiki plugin lacks real Paperclip run context forwarded by Hermes Gateway / Named MCP, then require structured Opik run ID and independent CTO review.",
+    "safety": "No credential sharing, no hard limit on future Hermes users; only Hermes Test is currently configured.",
+    "unnecessary_agent_count_guard_removed": true
+  },
+  "historical_first_failure_issue": "KOMAA-1504"
+}

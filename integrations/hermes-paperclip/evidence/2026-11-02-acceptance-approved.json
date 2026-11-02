@@ -1,0 +1,108 @@
+{
+  "snapshot_utc": "2026-11-02T15:07:00Z",
+  "scope": "Hermes Test only, other 15 Paperclip agents remain opencode_local",
+  "release": "Hermes Test self-hosted production-pilot integration LIVE; NO mass cutover",
+  "paperclip": {
+    "issue": "KOMAA-1521",
+    "status": "done",
+    "execution_state": "completed",
+    "independent_cto_review_outcome": "approved",
+    "review_decision_id": "0b4c58e0-5114-40dd-a541-a53d609d2c09",
+    "reviewer_agent_id": "ff703eba-3c3d-46f0-b265-df0db1101a19",
+    "rework_cycle_verified": true,
+    "linked_evidence_document_id": "28e0f43e-370f-424a-a8c6-96780f188630",
+    "linked_work_product_id": "c511cf68-5366-4839-a451-1e8d56936802",
+    "lineage_projection_gaps": [
+      "no_approvals",
+      "no_acceptance_evidence"
+    ],
+    "note": "Formal approval and external acceptance evidence are distinct from the actual CTO review stage; do not invent them."
+  },
+  "hermes": {
+    "coolify_uuid": "2sganhxhhnioiqh4an9g2f4k",
+    "status": "running:healthy",
+    "profile": "hermes-test",
+    "model": "gpt-6-luna",
+    "session_key_strategy": "run",
+    "paperclip_core_modified": false
+  },
+  "sync": {
+    "wiki_source": "canonical Paperclip persistent Markdown",
+    "wiki_mirror": "Hermes /opt/data/wiki-paperclip-test",
+    "cadence_seconds": 60,
+    "create_update_delete_test": "PASS",
+    "canonical_sha256": "27279ffd7450b58f2c0083958982232ca105e35d02f54c5b099057179850c0ba",
+    "wiki_fs_mcp_tools": [
+      "wiki_list",
+      "wiki_read",
+      "wiki_search"
+    ],
+    "wiki_mcp_unit_tests_passed": 6,
+    "wiki_mcp_unit_tests_total": 6,
+    "skills": "live Paperclip MCP reads, no separate local copy",
+    "hindsight": "Hermes native Hindsight cloud Vectorize AI, per-profile bank hermes-hermes-test"
+  },
+  "mcp": {
+    "connection_id": "7551d8ac-ce4b-4af9-a2af-eefe3cfd63c5",
+    "original_transport_url": "https://paperclip-mcp.zariszlif.pl/mcp",
+    "internal_transport_url": "http://paperclip-mcp:3101/mcp",
+    "same_docker_network": "coolify",
+    "credentials_preserved": true,
+    "grants_preserved": true,
+    "health": "ok",
+    "list_skills_calls_passed": 7,
+    "get_skill_file_calls_passed": 5,
+    "one_original_issue_run_first_attempt_500_then_success": true,
+    "version_marker": "KNOWLEDGE_SYNC_V2_20261031",
+    "live_hermes_tool_results_verified": true
+  },
+  "hindsight": {
+    "fact_retained": "HERMES_SYNC_CANARY_20261102_EAST_RIDGE: copper compass under east ridge stone",
+    "bank": "hermes-hermes-test",
+    "vectorize_direct_memory_browse": true,
+    "subsequent_recall_confirmed": true,
+    "immediate_recall_failed_before_async_completion": true,
+    "ceo_isolation_negative_zero_results": true,
+    "automatic_skills_or_wiki_promotion": false
+  },
+  "opik": {
+    "run_traces": [
+      {
+        "run": "5aed258b-a409-4121-b4c7-5366800d0efa",
+        "trace": "01a19cc0-0c94-7f75-b71d-29c6117f19cd",
+        "spans": 19
+      },
+      {
+        "run": "7d5f71cb-671c-4521-9a3a-907f215d2dfd",
+        "trace": "01a19cc0-e3e2-7e00-83ab-bb3878bd0fb1",
+        "spans": 15
+      }
+    ],
+    "metadata_run_id_verified": true
+  },
+  "readiness": {
+    "timer": "hermes-test-readiness.timer",
+    "frequency": "5min",
+    "first_run": "2026-11-02T14:57:35Z",
+    "first_result": "PASS",
+    "checks": [
+      "Hermes healthy",
+      "Paperclip MCP healthy",
+      "internal MCP endpoint reachable",
+      "Wiki source/mirror checksum",
+      "Wiki sync timer active",
+      "Hermes Test profile configured"
+    ],
+    "unit_tests": {
+      "verifier": 7,
+      "wiki_mcp": 6
+    },
+    "shell_syntax": "PASS"
+  },
+  "limitations": [
+    "Only read-only Wiki sync tested; native Paperclip Wiki plugin still requires agent-run context and is not repaired",
+    "No automatic promotion of Hindsight memories into reviewed Wiki/Skills",
+    "Async Hindsight retain may require completed indexing before recall",
+    "Older obsolete issue KOMAA-1518 remains in_review with legacy execution blocker; new KOMAA-1521 completed independently"
+  ]
+}
