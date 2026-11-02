@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Hermes Test Paperclip E2E infrastructure readiness
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/hermes-test-readiness.sh
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
