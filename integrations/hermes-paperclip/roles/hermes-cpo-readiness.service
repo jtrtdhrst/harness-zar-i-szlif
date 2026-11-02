@@ -1,0 +1,11 @@
+[Unit]
+Description=CPO Hermes profile infrastructure readiness
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/hermes-cpo-readiness.sh
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
