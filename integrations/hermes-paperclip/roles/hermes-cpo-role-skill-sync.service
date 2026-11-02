@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync CPO approved Paperclip skill into its Hermes profile
+ConditionPathExists=/var/lib/docker/volumes/phime3w5l50scx9q4tjoelcx_paperclip-home/_data/instances/default/skills/9894e3c2-3317-46ca-8c72-7a442a76a78e/comfyui-arkcodex-runner/SKILL.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/hermes-cpo-role-skill-sync.sh
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
