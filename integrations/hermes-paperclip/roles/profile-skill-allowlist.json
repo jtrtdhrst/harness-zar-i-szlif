@@ -99,5 +99,27 @@
       "delivery-dag-orchestration",
       "durable-work-products-cases"
     ]
+  },
+  "approved_sha256": {
+    "paperclip-strategic-owner": "c1f7a363ac2eaa9c0e54cd3338ff8aca1383c102738ddd2b108ec345d85992b3",
+    "skill-lifecycle-loop": "9ccadd7ae5f99805fa5e5b28c4ddab893fd829ad45e7cc0e4e23b0afa8afffb7",
+    "context-compression-loop": "6fd6821658c28cc72e195e610c0995a25f5f6abaa397f17bc0fcbf95a49dac93",
+    "agent-improvement-loop": "de265fa2ab6e1a1aa4a01c5c25875b95d6b613cb9ec099791204d970335c9ab6",
+    "delivery-dag-orchestration": "1d693f64a0b4b2f6dcad61aad4325b04cef734af39b7bb5549c0046be6715d85",
+    "issue-dag-governance": "1af77532732c4a099461f9d1622d43ab5a6af2b3a1b26c891dd72c81f20c988d",
+    "agent-git-delivery": "30b537fbdf24ef82e153349e9d309a69347ad464e8a8ad346cb2094f6708e1c5",
+    "bounded-delivery-execution": "349917ee1e1f4526ca86b9580053659504c32b4ab154ba1c1dba9ceb4f1cdad0",
+    "kompas-growth-domain-lead": "0bea4dff145589ae25580a80aacb13063f95e03bd2c71f245b33b56330229578",
+    "durable-work-products-cases": "4fd87062cd068a277a81700572cc79b3d309f691a61d1a5f8728c166363cdd71",
+    "mascot-style-2-pipeline": "2de8ae25636c9819ddf754413683686312bf09ec3b2f55d4d03391083d7c851b",
+    "paperclip-langfuse-observability": "c4fbdd710dd06e965ca3e039a11ece5395ce56b851d6606bd7b16a3bd2adb9b5",
+    "comfyui-arkcodex-runner": "cb40b222349faa0adf30115d3245ca19caa9f1bb7aa653ef184be039e55d65d2",
+    "kompas-technical-domain-lead": "fb344e80716ed9b601c0da626d1a7ba5707aef332a75cd830a9671009153542d",
+    "kompas-harness-environment-specialist": "ecede9f6f8422136315f2b88b43a557a838fb0414ded0196b17aed8f2c410e47",
+    "mascot-reference-director": "02b79a2c3a9032e5fb268bcb3cda2dbf92fa1d2cb25c27c9c54cf9ee6d0e5e3f",
+    "mascot-anatomy-qa": "3ee6a3aea301649bbd2a0c389854ef8e4a7ca5d8cf3d402c80ff1ef5fbbc7f99",
+    "mascot-alpha-export": "918d619fc001b44d43b4878c86c88439d957ae67ddff9a3a4ed2b6975dec6cb8",
+    "mascot-e2e-recovery": "f1dc27989695bdb3039c64815c17735d486375307595370678ac951adbab4e94",
+    "kompas-mcp-specialist": "b7f4c9425cc23358b60af3ffcdd1b0c89c19cc370caf23bf0796c37a9f682592"
   }
 }
