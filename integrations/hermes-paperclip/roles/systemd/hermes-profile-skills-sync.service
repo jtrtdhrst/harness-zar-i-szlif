@@ -1,0 +1,19 @@
+[Unit]
+Description=Synchronize approved Paperclip skills into isolated Hermes profiles
+After=docker.service
+RequiresMountsFor=/var/lib/docker/volumes
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/hermes-gateway-ops/sync_profile_skills.py --apply
+WorkingDirectory=/opt/hermes-gateway-ops
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/docker/volumes/2sganhxhhnioiqh4an9g2f4k-hermes-gateway-poc-v2-data/_data/profiles
+RestrictSUIDSGID=true
+LockPersonality=true
+TimeoutStartSec=45
