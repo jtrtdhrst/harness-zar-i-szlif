@@ -1,4 +1,17 @@
-# `mcp/comfyui/` — ComfyUI + comfyui-mcp deployment (CPU)
+# ComfyUI and its MCP — canonical source of truth
+**Current deployment (2026-11-02):** All ComfyUI MCP implementation changes are authored under `comfyui-mcp/` in this repo, built with `comfyui-mcp/Dockerfile` and deployed to the existing Coolify service (`kkhfw0napmeaqewgdirwhc1h`, app `y1ugra7qn0s7sygccgfbwrpe`) as `local/comfyui-mcp:0.52.206-chatfiles6`. `comfy-mcp/` is metadata for the Coolify project, **not** a separate source tree. Do not add patched ComfyUI MCP code there.
+
+- Upload implementation: `chatgpt-file-tool.js`, registered by `patches/patch-chatgpt-upload.mjs`, built **after** the retained validator/base64/color patch chain. Tool `upload_chatgpt_image` declares `_meta["openai/fileParams"]=["file"]` so ChatGPT attachments can be passed through MCP after connecting the client.
+- Exact image-byte preservation: downloads original HTTPS file (not ChatGPT preview), blocks private DNS/SSRF, enforces 30 MiB limit and image signatures, SHA-256, optional expected SHA-256/bytes, checks server-stored `/view` bytes and `LoadImage` selection. Returns `byte_identical:true` and hashes only after readback.
+- Backward-compatible `upload_image(data_base64,filename)` remains usable for direct raw bytes. A PNG RGBA 1254×1254 passed a byte-perfect roundtrip on the canonical built canary.
+- Build on Ubuntu from the actual `comfyui-mcp/` folder with `docker build --pull=false -f Dockerfile -t local/comfyui-mcp:0.52.206-chatfiles6 .`; production Coolify application image is set to that tag and deployed. Never build the release from the `comfy-mcp/` project metadata directory.
+- Validated after production redeploy: `tools/list` 42 tools; `upload_chatgpt_image` with original-public PNG → `byte_identical:true`, same SHA-256 from ComfyUI storage, `LoadImage` selectable. A forged/wrong SHA fails; invalid/expired JWT denied on OAuth bridge fixture.
+- Cloudflare Access auth bridge source: `oauth-bridge.mjs` and `oauth-bridge.compose.yml`. Secret-bearing `.env` stays on the server and is excluded from Git. Internal origin MCP token is NOT the ChatGPT OAuth token. Keep upstream bearer auth active.
+- User-facing endpoint: `https://mcp-comfy.kompaszbiorek.pl/mcp`. Its OAuth connection needs a one-time ChatGPT-side login/reconnect to the correct Access application. `UNAUTHORIZED` in a pre-existing connector is not proof of a failed server-side build.
+- Production image is built from GitHub canonical source and not a hotpatch to app/Core. The legacy notes below describe the earlier pre-Coolify state and should not override this current deployment block.
+
+---
+
 
 Production: ComfyUI 0.42.1 (CPU-only) + `comfyui-mcp` 0.52.206, plain Docker on host
 (`coolify` network), Caddy reverse-proxy, Cloudflare Worker edge. This folder is
