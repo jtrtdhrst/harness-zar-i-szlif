@@ -40,6 +40,9 @@ const EXPECTED_TOOLS = [
   "plasmic_use_component",
   "plasmic_validate",
   "plasmic_get_changes",
+  "plasmic_read_ui_outline",
+  "plasmic_append_ui_tree",
+  "plasmic_batch_set_styles",
 ];
 
 /** Narzędzia tylko do odczytu — nie zmieniają projektu Plasmic. */
@@ -58,6 +61,7 @@ const READ_ONLY_TOOLS = [
   "plasmic_read_component_tree",
   "plasmic_validate",
   "plasmic_get_changes",
+  "plasmic_read_ui_outline",
 ];
 
 /** Narzędzia zapisujące — platforma musi je widzieć jako zmiany. */
@@ -71,6 +75,8 @@ const WRITE_TOOLS = [
   "plasmic_set_props",
   "plasmic_set_styles",
   "plasmic_use_component",
+  "plasmic_append_ui_tree",
+  "plasmic_batch_set_styles",
 ];
 
 type ToolAnnotations = {
@@ -172,7 +178,7 @@ async function withServer<T>(
 }
 
 describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
-  it("tools/list zwraca dokładnie 23 narzędzia zgodnych z kontraktem", async () => {
+  it("tools/list zwraca dokładnie 26 narzędzi zgodnych z kontraktem", async () => {
     const tools = await withServer(async (client) => {
       const res = await client.request("tools/list", {});
       assert.ok(res.result, `tools/list nie powiodło się: ${JSON.stringify(res.error)}`);
