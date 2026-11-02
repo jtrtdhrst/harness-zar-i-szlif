@@ -39,6 +39,12 @@ def run(manifest_file: Path, apply: bool, source: Path, profiles: Path) -> dict:
             or not isinstance(company, str) or not re.fullmatch(r"[0-9a-f-]{36}", company)):
         raise ValueError("Invalid allowlist manifest")
     company_src = source / company
+    pins = doc.get("approved_sha256")
+    all_skills = set(skill for names in roles.values() for skill in names)
+    if (not isinstance(pins, dict) or set(pins) != all_skills
+            or any(not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
+                   for v in pins.values())):
+        raise ValueError("Approved SHA-256 manifest is missing or incomplete")
     plan = []
     for role, skills in sorted(roles.items()):
         if not SAFE_NAME.fullmatch(role) or not isinstance(skills, list):
@@ -64,6 +70,8 @@ def run(manifest_file: Path, apply: bool, source: Path, profiles: Path) -> dict:
                 raise ValueError("Unsafe destination file: " + str(dst))
             old_sha = sha(dst) if dst.is_file() else None
             source_sha = sha(src)
+            if source_sha != pins[skill]:
+                raise RuntimeError("UNAPPROVED_SOURCE_SHA: " + role + "/" + skill)
             plan.append({
                 "role": role,
                 "skill": skill,
