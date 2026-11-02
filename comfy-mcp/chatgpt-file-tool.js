@@ -90,7 +90,6 @@ async function fetchChatFile(rawUrl) {
 }
 export function registerChatGptFileTool(server) {
   if (typeof server.registerTool !== "function" || !toolAllowed("upload_chatgpt_image", resolveToolSurfacePolicy())) return; // respect tool surface policy and compact ToolCatalog
-  if (typeof server.registerTool !== "function" || !toolAllowed("upload_chatgpt_image", resolveToolSurfacePolicy())) return; // respect tool surface policy and compact ToolCatalog
   server.registerTool("upload_chatgpt_image", {
     title: "Upload ChatGPT attachment to ComfyUI",
     description: "Save an image the user attached in ChatGPT into the connected ComfyUI input folder, retaining exact bytes and making it selectable in LoadImage. Prefer this tool for user attachments; upload_image remains available for filesystem paths and base64.",
@@ -101,11 +100,13 @@ export function registerChatGptFileTool(server) {
         mime_type: z.string().optional(),
         file_name: z.string().optional(),
       }).strict(),
-      filename: z.string().optional().describe("Optional destination filename; defaults to the attached file's name")
+      filename: z.string().optional().describe("Optional destination filename; defaults to the attached file's name"),
+      expected_sha256: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+      expected_bytes: z.number().int().positive().max(MAX_BYTES).optional()
     },
     _meta: { "openai/fileParams": ["file"] },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: false }
-  }, async ({ file, filename }) => {
+  }, async ({ file, filename, expected_sha256, expected_bytes }) => {
     let folder;
     try {
       const name = normalizeName(filename || file.file_name || "chatgpt-reference.png");
@@ -113,17 +114,32 @@ export function registerChatGptFileTool(server) {
       const data = await fetchChatFile(file.download_url);
       sniffImage(data, name);
       const sha256 = createHash("sha256").update(data).digest("hex");
+      if (expected_sha256 && sha256 !== expected_sha256.toLowerCase()) throw new Error("Attachment hash mismatch; refusing modified image");
+      if (expected_bytes && data.length !== expected_bytes) throw new Error("Attachment size mismatch; refusing modified image");
       folder = await mkdtemp(join(tmpdir(), "comfy-chat-file-"));
       const path = join(folder, name);
       await writeFile(path, data, { mode: 0o600 });
       const uploaded = await uploadImageAuto(path, name);
       if (!uploaded.loaderSelectable) throw new Error("ComfyUI LoadImage did not enumerate uploaded image");
+      // Verify the original stored bytes via ComfyUI /view (NOT a rendered preview).
+      if (!process.env.COMFYUI_URL) throw new Error("COMFYUI_URL is required for integrity verification");
+      const viewUrl = new URL("/view", process.env.COMFYUI_URL);
+      viewUrl.searchParams.set("filename", uploaded.filename);
+      viewUrl.searchParams.set("type", "input");
+      const response = await fetch(viewUrl, { signal: AbortSignal.timeout(45000) });
+      if (!response.ok) throw new Error("ComfyUI input readback HTTP " + response.status);
+      const stored = Buffer.from(await response.arrayBuffer());
+      const readbackSha256 = createHash("sha256").update(stored).digest("hex");
+      if (stored.length !== data.length || readbackSha256 !== sha256) {
+        throw new Error("ComfyUI stored bytes differ from original: integrity check failed");
+      }
       return {
         content: [{type: "text", text: "ComfyUI reference uploaded and verified. Filename: " + uploaded.filename +
             "; file_id: " + file.file_id + "; size: " + data.length + " bytes; SHA-256: " + sha256 +
             ". Use the filename as the image input in LoadImage."}],
         structuredContent: { filename: uploaded.filename, file_id: file.file_id, bytes: data.length,
-          sha256, loader_selectable: true, type: "input" }
+          sha256, readback_sha256: readbackSha256, stored_bytes: stored.length,
+          byte_identical: true, loader_selectable: true, type: "input" }
       };
     } catch(e) {
       return { isError: true, content: [{type:"text",text:"ComfyUI attachment upload failed: "+String(e.message||e)}] };
