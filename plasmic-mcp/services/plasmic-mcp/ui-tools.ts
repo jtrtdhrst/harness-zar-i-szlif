@@ -6,6 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { idempotent } from "@design-stack/contracts/idempotency";
+import { sha256 } from "@design-stack/contracts/sync";
 import type { ToolDef } from "@design-stack/mcp-server";
 import type { BundleDoc } from "@design-stack/plasmic-client";
 import { writeOp, type PlasmicCtx } from "./tools.ts";
@@ -151,13 +152,20 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
   const dryRun = z.boolean().optional();
   const key = z.string().min(8).max(120).optional();
   const write = async (
-    tool: string, pid: string, target: string, idem: string, preview: boolean,
+    tool: string, pid: string, target: string, branch: string | undefined,
+    payload: unknown, idem: string, preview: boolean,
     perform: () => Promise<{ revision: number; dryRun: boolean; changed: string[]; created?: string[] }>,
   ) => {
-    const op = () => writeOp(ctx, tool, pid, target, JSON.stringify({ tool, target }), perform);
+    const inputHash = sha256(JSON.stringify({ target, branch: branch ?? null, payload }));
+    const op = () => writeOp(ctx, tool, pid, target, JSON.stringify({ tool, target, inputHash }), perform);
     if (preview) return { ...(await op()), deduped: false };
-    const value = await idempotent(ctx.stateDir + "/idempotency", "live:" + tool + ":" + pid + ":" + idem, op);
-    return { ...value.result, deduped: value.deduped };
+    const cacheKey = ["live", tool, pid, branch ?? "main", idem].join(":");
+    const value = await idempotent(ctx.stateDir + "/idempotency", cacheKey,
+      async () => ({ inputHash, effect: await op() }));
+    if (value.result.inputHash !== inputHash) {
+      throw new Error("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_INPUT");
+    }
+    return { ...value.result.effect, deduped: value.deduped };
   };
   return [
     {
@@ -198,7 +206,8 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
         const preview = a.dryRun !== false;
         if (!preview && !a.idempotencyKey) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
         return write("plasmic_append_ui_tree", a.projectId as string,
-          a.parentElementId as string, a.idempotencyKey as string, preview, async () => {
+          a.parentElementId as string, a.branchId as string | undefined,
+          nodes, a.idempotencyKey as string, preview, async () => {
             let created: string[] = [];
             const result = await c.mutate(a.projectId as string,
               a.branchId as string | undefined,
@@ -230,7 +239,8 @@ export function plasmicUiTools(ctx: PlasmicCtx): ToolDef[] {
         const preview = a.dryRun !== false;
         if (!preview && !a.idempotencyKey) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
         return write("plasmic_batch_set_styles", a.projectId as string,
-          "multi:" + edits.length, a.idempotencyKey as string, preview, async () =>
+          "multi:" + edits.length, a.branchId as string | undefined,
+          edits, a.idempotencyKey as string, preview, async () =>
             c.mutate(a.projectId as string, a.branchId as string | undefined,
               (bundle: BundleDoc) => {
                 const map = bundle.map as EntryMap, patch: EntryMap = {};
