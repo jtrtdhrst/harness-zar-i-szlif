@@ -13,7 +13,7 @@ services:
       - CODEX_HOME=/app/user/.codex
   comfy-mcp:
     build: { context: ., dockerfile: Dockerfile }
-    image: local/comfyui-mcp:0.52.206-chatfiles6
+    image: local/comfyui-mcp:0.52.206-chatfiles7
     container_name: comfy-mcp
     restart: unless-stopped
     networks: [coolify]
