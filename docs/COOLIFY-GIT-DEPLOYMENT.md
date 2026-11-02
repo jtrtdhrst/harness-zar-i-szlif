@@ -1,10 +1,18 @@
+## Verified access and first isolated Hermes Git build — 2026-11-02
+
+**Access blocker resolved.** The existing Coolify GitHub App `coolify-zar-i-szlif` now lists both `miloszspyrka-code/harness-zar-i-szlif` and `miloszspyrka-code/zar-i-szlif`. A separate private GitHub-backed application `hermes-git-build-canary` (`yh20mb2rurecnmn60t5vfc3s`) was built from `harness-zar-i-szlif` branch `infra/coolify-git-bindings-20261101`, context `/hermes-gateway` and Dockerfile `/Dockerfile`. Build deployment `nlmlnvffyxsbzp84xl2kee45`, exact SHA `46b8d0ab7433b86a3a47f2fea1799da5497f05c7`, status `finished`. No public FQDN, no production credentials or volume copied. Canary is stopped and its watch path disabled. Existing production app `2sganhxhhnioiqh4an9g2f4k` is still inline-Dockerfile based and `running:healthy`.
+
+The isolated image build is **not** authenticated Hermes–Paperclip–Hindsight–Opik E2E, and does not authorize switching over the production runtime. Nine image-only Compose MCP services still have no Git source and have not been cut over. App feature branch PR #6 remains draft and requires independent review. Two extra target Coolify projects `mantic-mcp` and `playwright-mcp` exist, but moving their current Compose resources is explicitly blocked by the Coolify connector's human-confirmation gate; resources remain healthy in old projects. Preserve existing Worker exceptions, volumes and credentials.
+
+---
+
 # Coolify ↔ harness-zar-i-szlif | source binding and safe cutover
 
 Verified on 2026-11-01. The machine-readable source map is [coolify-source-bindings.json](./coolify-source-bindings.json). This is **not** proof of applied source bindings.
 
 ## Current blockers (confirmed in live APIs)
 
-- Coolify GitHub App `coolify-zar-i-szlif` (ID 1) lists only `miloszspyrka-code/zar-i-szlif`. It **cannot read** private `miloszspyrka-code/harness-zar-i-szlif`. Grant that repository to the existing GitHub App installation in [GitHub Installed Apps](https://github.com/settings/installations). Do not make the repository public, create shared PATs or copy secrets into Compose.
+- **RESOLVED 2026-11-02:** Coolify GitHub App ID 1 sees both private repositories. See verified canary evidence above. Do not make either repo public or copy credentials into source.
 - All nine MCP workloads below currently run from prebuilt **image-only Compose services** with no git source. Updating `watch_paths` on an image-only service does not turn it into a Git build. Coolify GitHub App access and a Git-backed candidate app are both required.
 - GitHub Actions are intentionally disabled. Do not enable them silently; Coolify native GitHub webhook/branch path filtering is the intended mechanism.
 - GitHub warns that `main` is not branch protected. Before production auto-deploy, configure protection/ruleset against force-push/deletion, require PR approvals, and only require CI statuses once a genuine external status publisher exists. Do not invent green CI or silently enable GitHub Actions.
