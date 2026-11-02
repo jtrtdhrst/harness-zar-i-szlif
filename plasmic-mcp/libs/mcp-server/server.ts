@@ -68,7 +68,7 @@ export function buildMcpServer(
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           log(`${t.name} FAIL ${message.slice(0, 200)}`);
-          return textResult({ ok: false, error: message });
+          return { ...textResult({ ok: false, error: message }), isError: true };
         }
       },
     );
