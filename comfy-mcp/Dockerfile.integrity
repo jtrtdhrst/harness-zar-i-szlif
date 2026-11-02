@@ -1,0 +1,3 @@
+FROM local/comfyui-mcp:0.52.206-chatfiles4
+COPY chatgpt-file-tool.js /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js
+RUN node --check /usr/local/lib/node_modules/comfyui-mcp/dist/tools/chatgpt-file-tool.js
