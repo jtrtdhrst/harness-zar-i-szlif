@@ -1,0 +1,38 @@
+# Caddy 2.11.7 — add inside the existing comfy.kompaszbiorek.pl site block.
+# Restore if needed: /data/caddy/Caddyfile.bak-comfy-view-cross-site-20261102
+# Why: ComfyUI rejects "Sec-Fetch-Site: cross-site" on every route, even on
+# a read-only output PNG opened directly from chatgpt.com (HTTP 403).
+# Only public GET/HEAD /view?type=output is exempted here.
+# Leave every other route intact to keep the ComfyUI cross-origin protection.
+#
+# The site block should use:
+#
+# comfy.kompaszbiorek.pl {
+#     encode zstd gzip
+#     <paste matchers and handles below>
+#     header {
+#         X-Content-Type-Options nosniff
+#         Referrer-Policy no-referrer
+#     }
+#     log {
+#         output stdout
+#         format console
+#     }
+# }
+
+@public_output_image {
+    path /view
+    method GET HEAD
+    query type=output
+}
+handle @public_output_image {
+    request_header -Sec-Fetch-Site
+    reverse_proxy comfyui:8188 {
+        flush_interval -1
+    }
+}
+handle {
+    reverse_proxy comfyui:8188 {
+        flush_interval -1
+    }
+}
