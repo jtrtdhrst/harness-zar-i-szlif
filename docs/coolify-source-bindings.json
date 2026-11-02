@@ -1,13 +1,16 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-01",
-  "intent": "Source-to-deployment binding inventory, not an applied Coolify configuration.",
+  "generated_at": "2026-11-02",
+  "intent": "Verified live GitHub App access and isolated Hermes build; existing 9 Compose services are not yet Git-backed.",
   "github_app": {
     "name": "coolify-zar-i-szlif",
     "coolify_id": 1,
     "uuid": "67frmex1uindhksnq2felsep",
-    "source_repository_access": false,
-    "only_visible_repository": "miloszspyrka-code/zar-i-szlif"
+    "source_repository_access": true,
+    "visible_repositories": [
+      "miloszspyrka-code/harness-zar-i-szlif",
+      "miloszspyrka-code/zar-i-szlif"
+    ]
   },
   "policy": {
     "source_repo": "miloszspyrka-code/harness-zar-i-szlif",
@@ -247,7 +250,7 @@
   "separate_unbound_resources": [
     {
       "resource": "hermes-gateway-poc-v2",
-      "issue": "inline Dockerfile with coollabsio/coolify metadata; harness repo has no Hermes Gateway source folder"
+      "issue": "inline Dockerfile still active. Independent Git-backed canary from hermes-gateway/Dockerfile succeeded; credential/persistent volume E2E cutover not performed."
     },
     {
       "resource": "hermes-paperclip-sync-checks",
@@ -260,7 +263,7 @@
     "comfy-mcp currently builds from legacy combined comfyui-mcp folder",
     "GitHub Actions currently disabled",
     "active production image-only Compose services have no Git branch webhook",
-    "GitHub main is not currently branch-protected; enable required PR review and disallow force pushes before production auto-deploy"
+    "GitHub App access resolved on 2026-11-02; Hermes canary verified without public ingress, secrets or volume."
   ],
   "evidence": {
     "source_commit": "06c83ec0bbc38a2a59a348c6856519f5ba41b0a7",
@@ -273,6 +276,19 @@
     ],
     "real_mcp_tools_call_tests_passed": 0,
     "production_cutovers": 0,
-    "github_app_source_authorized": false
+    "github_app_source_authorized": true,
+    "hermes_git_canary": {
+      "app_uuid": "yh20mb2rurecnmn60t5vfc3s",
+      "project": "Hermes Gateway POC",
+      "branch": "infra/coolify-git-bindings-20261101",
+      "source_commit": "46b8d0ab7433b86a3a47f2fea1799da5497f05c7",
+      "deployment_uuid": "nlmlnvffyxsbzp84xl2kee45",
+      "status": "finished",
+      "runtime_tests": "NOT_RUN: isolated app has no production credentials",
+      "public_domain": null,
+      "stopped_after_build": true,
+      "watch_paths": "__canary_manual_only__/**",
+      "production_unchanged": true
+    }
   }
 }
