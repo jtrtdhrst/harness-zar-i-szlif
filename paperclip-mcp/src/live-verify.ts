@@ -74,6 +74,7 @@ function err(code: string, message: string, extra?: Record<string, unknown>): Er
 export const LIVE_VERIFY_TOOL_NAMES: string[] = [
   "paperclipVerifyLiveMCP",
   "paperclipMCPRunSmokeTest",
+  "paperclipUploadChatgptImage",
 ];
 
 export function allLiveToolNames(): string[] {
