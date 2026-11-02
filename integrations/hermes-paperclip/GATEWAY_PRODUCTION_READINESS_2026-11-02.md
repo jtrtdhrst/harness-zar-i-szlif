@@ -156,3 +156,10 @@ Do **not** blindly restore all backups: reverting the API allowlist will reopen 
 5. Additional per-role live memory recall and negative cross-bank tests; no claims from a bank's name alone.
 
 **Keep the existing 14 Paperclip OpenCode adapters and all their original model assignments untouched until a separately approved migration.**
+
+
+### Additional regression tests and machine-readable evidence
+
+- Role skill synchronization unit tests: **4/4 PASS** — idempotent re-sync, approved SHA-256 gating, destination symlink denial and required pin validation.
+- [Bounded gateway acceptance evidence](evidence/2026-11-02-gateway-isolation.json) documents the tested and untested controls without conflating Gateway validation with Paperclip E2E.
+- The current `profile-skill-allowlist.json` includes 20 immutable SHA-256 approvals for 68 profile-to-skill bindings. Changing an upstream Paperclip `SKILL.md` without independently updating the approved hash makes the systemd sync fail closed; it does **not** silently publish the revision.
