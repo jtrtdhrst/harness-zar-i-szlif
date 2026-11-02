@@ -1,5 +1,15 @@
 # Hermes ↔ Paperclip — infrastructure E2E harness
 
+> **Operational update — 2026-11-02:** The latest deployed, tested Gateway
+> hardening and isolation status is documented in
+> [GATEWAY_PRODUCTION_READINESS_2026-11-02.md](GATEWAY_PRODUCTION_READINESS_2026-11-02.md).
+> All 14 **active** Paperclip agents remain on `opencode_local`; Hermes Test
+> is a retired pilot, not an active production actor. DeepSeek V4.1 and
+> Paperclip→Hermes adapter migration are deliberately deferred. Existing
+> sections below are historical pilot evidence, not a current migration GO.
+> Gateway limited pre-cutover operation is accepted; unattended production
+> agent execution remains **NO-GO** pending sandbox and run-scoped MCP auth.
+>
 **Repository:** `harness-zar-i-szlif`  
 **Owner:** Paperclip project `04 · Operations / Hermes-Paperclip E2E`  
 **Coolify:** `Hermes - Paperclip Sync` (standalone read-only check service)  
