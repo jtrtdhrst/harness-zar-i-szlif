@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "description": "Approved Paperclip company skills currently installed for each Hermes profile. Explicit allowlist; never scan and install undeclared skills.",
+  "source_company_id": "9894e3c2-3317-46ca-8c72-7a442a76a78e",
+  "profiles": {
+    "ceo": [
+      "paperclip-strategic-owner",
+      "skill-lifecycle-loop",
+      "context-compression-loop",
+      "agent-improvement-loop",
+      "delivery-dag-orchestration",
+      "issue-dag-governance"
+    ],
+    "cho": [
+      "agent-git-delivery",
+      "bounded-delivery-execution"
+    ],
+    "cmo": [
+      "kompas-growth-domain-lead",
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "delivery-dag-orchestration",
+      "issue-dag-governance",
+      "durable-work-products-cases",
+      "mascot-style-2-pipeline"
+    ],
+    "coo": [
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "delivery-dag-orchestration",
+      "issue-dag-governance",
+      "paperclip-langfuse-observability",
+      "durable-work-products-cases"
+    ],
+    "cpo": [
+      "comfyui-arkcodex-runner"
+    ],
+    "cto": [
+      "kompas-technical-domain-lead",
+      "agent-git-delivery",
+      "bounded-delivery-execution",
+      "durable-work-products-cases"
+    ],
+    "designer": [
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "mascot-style-2-pipeline",
+      "delivery-dag-orchestration",
+      "issue-dag-governance",
+      "durable-work-products-cases"
+    ],
+    "email-creative": [
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "delivery-dag-orchestration",
+      "durable-work-products-cases"
+    ],
+    "engineer": [
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "mascot-style-2-pipeline",
+      "delivery-dag-orchestration",
+      "issue-dag-governance",
+      "durable-work-products-cases"
+    ],
+    "harness-engineer": [
+      "kompas-harness-environment-specialist",
+      "agent-git-delivery",
+      "bounded-delivery-execution"
+    ],
+    "lifecycle-ops": [
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "delivery-dag-orchestration",
+      "durable-work-products-cases"
+    ],
+    "mascot-designer": [
+      "agent-git-delivery",
+      "bounded-delivery-execution",
+      "mascot-reference-director",
+      "comfyui-arkcodex-runner",
+      "mascot-anatomy-qa",
+      "mascot-alpha-export",
+      "mascot-e2e-recovery"
+    ],
+    "mcp-engineer": [
+      "kompas-mcp-specialist",
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "delivery-dag-orchestration",
+      "paperclip-langfuse-observability",
+      "issue-dag-governance",
+      "durable-work-products-cases"
+    ],
+    "ui-qa": [
+      "bounded-delivery-execution",
+      "agent-git-delivery",
+      "mascot-style-2-pipeline",
+      "delivery-dag-orchestration",
+      "durable-work-products-cases"
+    ]
+  }
+}
