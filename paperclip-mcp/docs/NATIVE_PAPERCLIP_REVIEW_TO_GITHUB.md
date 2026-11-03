@@ -7,6 +7,8 @@ identity. No GitHub App Administration privileges or additional PAT.
 ## Execution
 1. Engineer/Harness Engineer executes an assigned issue in its own
    workspace on a feature branch, not main.
+   The legacy allowProtected GitPush option never authorizes direct push
+   to main/master or release branches. The path is PR plus native merge.
 2. paperclipGitPush pushes a branch and refreshes the already-linked
    Paperclip PR work product's actual remote HEAD SHA.
 3. paperclipGitCreatePR creates or recovers a PR and upserts a real

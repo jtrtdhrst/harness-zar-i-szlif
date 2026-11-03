@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PaperclipApiClient } from "./client.js";
-import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv } from "./workspace-native.js";
+import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv, nativeGitPushBranchAllowed } from "./workspace-native.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
@@ -242,5 +242,19 @@ describe("read-only GitHub REST command boundary", () => {
       ["gh","api",base+"pulls?state=all"],
       ["gh","api",base+"commits/"+"a".repeat(40)+"/check-runs?per_page=100","--method","POST"],
     ]) expect(isAllowedReadOnlyGithubApiArgv(args)).toBe(false);
+  });
+});
+
+describe("native Git push branch protection", () => {
+  it("rejects direct pushes to main and release even with allowProtected", () => {
+    for (const branch of ["main","master","release/panel-stable-20261027"]) {
+      expect(nativeGitPushBranchAllowed(branch,false)).toBe(false);
+      expect(nativeGitPushBranchAllowed(branch,true)).toBe(false);
+    }
+  });
+  it("permits dedicated implementation branches", () => {
+    for (const branch of ["fix/KOMAA-1512","feature/new-panel","test/canary"]) {
+      expect(nativeGitPushBranchAllowed(branch)).toBe(true);
+    }
   });
 });

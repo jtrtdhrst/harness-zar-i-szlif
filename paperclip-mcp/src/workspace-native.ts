@@ -754,6 +754,11 @@ export const WORKSPACE_NATIVE_TOOL_NAMES: string[] = [
   "paperclipGitGetMergeReadiness",
 ];
 
+/** The legacy allowProtected flag is not a bypass for the PR review. */
+export function nativeGitPushBranchAllowed(branch: string, _allowProtected = false): boolean {
+  return branch !== "main" && branch !== "master" && !branch.startsWith("release/");
+}
+
 async function syncIssuePullRequestProduct(
   client: PaperclipApiClient,
   ws: ResolvedWorkspace,
@@ -1206,8 +1211,8 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const target = branch ?? before.branch;
         if (!target) throw err("git_failed", "Cannot determine current branch", { remediationOwner: "harness" });
         if (target !== before.branch) throw err("push_denied", `Pushing a non-checked-out branch refused (current=${before.branch}, requested=${target})`);
-        if (["main", "master"].includes(target) && !allowProtected) {
-          throw err("push_denied", `Pushing protected branch ${target} needs allowProtected:true`, { remediationOwner: "cto" });
+        if (!nativeGitPushBranchAllowed(target, allowProtected)) {
+          throw err("push_denied", "Native direct push to main/master/release is forbidden. Use a reviewed PR.", { remediationOwner: "CHO" });
         }
         // Git does not read GH_TOKEN: without a credential helper the push asks the
         // terminal for a username and dies with "could not read Username for
