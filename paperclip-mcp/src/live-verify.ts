@@ -13,6 +13,7 @@
 
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
 import type { PaperclipApiClient } from "./client.js";
 import { CONTROL_PLANE_TOOL_NAMES } from "./control-plane.js";
 import { WORKSPACE_NATIVE_TOOL_NAMES } from "./workspace-native.js";
@@ -293,6 +294,32 @@ export function commentCanarySkipReason(
   return null;
 }
 
+// Compare the executing MCP gateway/source to its immutable source staged
+// inside the Docker image. The Paperclip Core API commit is an independent
+// service and must never be compared with the MCP image's build commit.
+async function verifyMcpImageStage(): Promise<{ ok: boolean; checked: Array<{ artifact: string; sha256: string }>; reason?: string }> {
+  const files: Array<[string, string, string]> = [
+    ["gateway", "/opt/paperclip-mcp/mcp-gateway/gateway.mjs", "/paperclip/mcp-gateway/gateway.mjs"],
+    ["workspace-native", "/opt/paperclip-mcp/src/workspace-native.ts", "/paperclip/mcp-patch/src/workspace-native.ts"],
+    ["git-policy", "/opt/paperclip-mcp/src/p1-git.ts", "/paperclip/mcp-patch/src/p1-git.ts"],
+    ["effective-access", "/opt/paperclip-mcp/src/effective-access.ts", "/paperclip/mcp-patch/src/effective-access.ts"],
+    ["live-verify", "/opt/paperclip-mcp/src/live-verify.ts", "/paperclip/mcp-patch/src/live-verify.ts"],
+  ];
+  const checked: Array<{ artifact: string; sha256: string }> = [];
+  try {
+    for (const [name, sourcePath, runningPath] of files) {
+      const [expected, actual] = await Promise.all([fs.readFile(sourcePath), fs.readFile(runningPath)]);
+      const digest = (content: Buffer) => createHash("sha256").update(content).digest("hex");
+      const want = digest(expected);
+      if (want !== digest(actual)) return { ok: false, checked, reason: `staged artifact differs from image: ${name}` };
+      checked.push({ artifact: name, sha256: want });
+    }
+    return { ok: true, checked };
+  } catch (e) {
+    return { ok: false, checked, reason: `MCP source/image staging unavailable: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export function createLiveVerifyTools(client: PaperclipApiClient): LiveVerifyToolDefinition[] {
   return [
     makeTool(
@@ -312,6 +339,7 @@ export function createLiveVerifyTools(client: PaperclipApiClient): LiveVerifyToo
         const runningCommit = api && typeof api.commit === "string" ? (api.commit as string) : null;
         const envCommit = process.env.PAPERCLIP_BUILD_COMMIT || null;
         const envVersion = process.env.PAPERCLIP_BUILD_VERSION || null;
+        const mcpImageStage = await verifyMcpImageStage();
         const manifest = toolManifestDigest();
         // Auth pass: caller token must read its own company.
         let authPass: Record<string, unknown> = { ok: false };
@@ -348,7 +376,13 @@ export function createLiveVerifyTools(client: PaperclipApiClient): LiveVerifyToo
           transport: gw,
           publicTransport: publicProbe,
           oauth: { enabled: true, discovery: "/.well-known/oauth-authorization-server + oauth-protected-resource" },
-          runningImage: { commit: runningCommit, version: api && typeof api.status === "string" ? (api as Record<string, unknown>).commit ?? null : runningCommit, envVersion, envCommit },
+          runningImage: {
+            commit: runningCommit, // backward-compatible: Paperclip Core API commit
+            coreCommit: runningCommit,
+            mcpBuildCommit: envCommit,
+            envCommit, envVersion,
+            stagedMcpArtifacts: mcpImageStage,
+          },
           toolManifest: { ...manifest, names: undefined, manifestDigest: manifest.digest, toolCount: manifest.count },
           authPass,
           authDenial,
@@ -369,14 +403,14 @@ export function createLiveVerifyTools(client: PaperclipApiClient): LiveVerifyToo
         if (!authPass.ok) failures.push("auth pass probe failed");
         if (!authDenial.ok) failures.push("auth denial probe failed (invalid bearer accepted or probe error)");
         if (expectedCommit && runningCommit && expectedCommit !== runningCommit) failures.push(`commit mismatch: expected ${expectedCommit}, running ${runningCommit}`);
-        if (envCommit && runningCommit && envCommit !== runningCommit) failures.push(`source/runtime mismatch: env ${envCommit} vs running ${runningCommit}`);
+        if (!mcpImageStage.ok) failures.push(`source/runtime mismatch: ${mcpImageStage.reason ?? "MCP image staging failed"}`);
         if (expectedToolCount && manifest.count < expectedToolCount) failures.push(`tool manifest short: ${manifest.count} < expected ${expectedToolCount}`);
         let verdict: string;
         if (!authPass.ok) verdict = "AUTH_FAILED";
         else if (failures.some((f) => f.startsWith("source/runtime") || f.startsWith("commit mismatch"))) verdict = "SOURCE_RUNTIME_MISMATCH";
         else if (failures.length > 0) verdict = "DEPLOY_INCOMPLETE";
         else verdict = "LIVE_VERIFIED";
-        return { verdict, failures, evidence, note: "No SHA is compared mechanically across unrelated components; the commit/manifest/policy relations above are the release-manifest evidence." };
+        return { verdict, failures, evidence, note: "Paperclip Core API commit and MCP image build commit are independent; source/runtime integrity is tested using SHA-256 of MCP image artifacts vs staged runtime files." };
       },
     ),
     makeTool(
