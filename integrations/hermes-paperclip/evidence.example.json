@@ -4,7 +4,7 @@
   "executing_agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
   "paperclip_trace_id": "",
   "hermes_run_id": "",
-  "named_profile": "hermes-test",
+  "named_profile": "cho",
   "secrets_exposed": false,
   "profile_auth_test": {
     "passed": false,
@@ -34,9 +34,9 @@
     "version_id": ""
   },
   "hindsight": {
-    "passed": true,
-    "later_session_recalled": true,
-    "cross_bank_isolation": true
+    "passed": false,
+    "later_session_recalled": false,
+    "cross_bank_isolation": false
   },
   "opik_trace": {
     "passed": false,
