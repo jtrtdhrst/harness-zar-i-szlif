@@ -69,6 +69,7 @@ jobs:
           # CI has neither the Hermes MCP runtime nor the canonical private Wiki.
           # Never claim live scoped MCP tests from skipped/offline unit cases.
           python3 -m py_compile "$root/wiki/wiki_scoped.py"
+          python3 -m py_compile "$root/roles/reconcile_model_map.py" "$root/roles/sync_profile_identity.py"
           bash -n "$root/health/readiness.sh" "$root/wiki/sync.sh"
           test ! -e "$root/health/hermes-test-readiness.service"
           test ! -e "$root/health/hermes-test-readiness.timer"
