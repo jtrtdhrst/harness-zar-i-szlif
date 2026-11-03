@@ -66,7 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           root=integrations/hermes-paperclip
-          python3 -m unittest discover -s "$root/wiki/tests" -v
+          # CI has neither the Hermes MCP runtime nor the canonical private Wiki.
+          # Never claim live scoped MCP tests from skipped/offline unit cases.
+          python3 -m py_compile "$root/wiki/wiki_scoped.py" "$root/wiki/wiki_readonly.py"
           bash -n "$root/health/readiness.sh" "$root/wiki/sync.sh"
           test ! -e "$root/health/hermes-test-readiness.service"
           test ! -e "$root/health/hermes-test-readiness.timer"
