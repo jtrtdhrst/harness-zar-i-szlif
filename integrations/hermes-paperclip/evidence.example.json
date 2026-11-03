@@ -8,8 +8,13 @@
   "secrets_exposed": false,
   "profile_auth_test": {
     "passed": false,
+    "authenticated_run_probe": false,
+    "authenticated_probe_http_status": null,
+    "invalid_key_rejected": false,
+    "invalid_key_http_status": null,
     "wrong_profile_rejected": false,
-    "dedicated_key_stored_as_secret_ref": false
+    "dedicated_key_stored_as_secret_ref": false,
+    "health_only_sufficient": null
   },
   "run_scoped_mcp_bridge": {
     "passed": false,
