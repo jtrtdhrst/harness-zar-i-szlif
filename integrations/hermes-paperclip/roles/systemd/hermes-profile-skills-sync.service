@@ -8,6 +8,7 @@ Type=oneshot
 User=root
 Group=root
 ExecStart=/usr/bin/python3 /opt/hermes-gateway-ops/sync_profile_skills.py --apply
+ExecStart=/usr/bin/python3 /opt/hermes-gateway-ops/sync_runtime_skills.py --apply
 WorkingDirectory=/opt/hermes-gateway-ops
 NoNewPrivileges=true
 PrivateTmp=true
