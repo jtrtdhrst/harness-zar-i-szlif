@@ -1,12 +1,25 @@
 {
   "paperclip_run_id": "",
+  "paperclip_issue_id": "KOMAA-1512",
   "executing_agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
+  "paperclip_trace_id": "",
+  "hermes_run_id": "",
   "named_profile": "hermes-test",
   "secrets_exposed": false,
   "profile_auth_test": {
     "passed": false,
     "wrong_profile_rejected": false,
     "dedicated_key_stored_as_secret_ref": false
+  },
+  "run_scoped_mcp_bridge": {
+    "passed": false,
+    "paperclip_token_bound_to_run": false,
+    "agent_id_verified": false,
+    "wrong_run_rejected": false,
+    "wrong_agent_rejected": false,
+    "missing_credential_rejected": false,
+    "revoked_on_completion": false,
+    "secret_not_logged_or_prompted": false
   },
   "wiki_tool_call": {
     "passed": false,
@@ -30,8 +43,23 @@
     "run_id_correlated": false,
     "model_and_usage_spans": false,
     "trace_id": "",
-    "paperclip_run_id": ""
+    "paperclip_run_id": "",
+    "paperclip_issue_id": "",
+    "paperclip_agent_id": "",
+    "paperclip_trace_id": "",
+    "hermes_run_id": ""
   },
+  "failed_early_auth": {
+    "rejected": false,
+    "http_status": null,
+    "attempt_id": "",
+    "acceptance_suite_id": "",
+    "opik_trace_id": "",
+    "paperclip_issue_id": "",
+    "paperclip_agent_id": "",
+    "hermes_run_id": null
+  },
+  "authoritative_readbacks": null,
   "release": {
     "passed": false,
     "sha_verified": false,

@@ -32,7 +32,7 @@ Paperclip is the **control plane** (tasks, approvals, published Wiki and skills)
 ## How to run tests
 
 ```bash
-python3 integrations/hermes-paperclip/verify_e2e.py --evidence integrations/hermes-paperclip/evidence.example.json
+python3 integrations/hermes-paperclip/verify_e2e.py --evidence integrations/hermes-paperclip/evidence.example.json --expected-profile hermes-test
 python3 -m unittest discover -s integrations/hermes-paperclip/tests -v
 ```
 
@@ -64,13 +64,21 @@ In that real run: `gpt-6-luna` invoked the actual Paperclip Named MCP `paperclip
 
 **Blocking failure:** `paperclipai.plugin-llm-wiki:wiki_list_pages` returns `Plugin tools require an agent run context` when invoked from the real Hermes Gateway session, despite an issue-bound Paperclip invocation. The Paperclip Named MCP transport currently lacks the trusted execution context that the native plugin requires. This is **not** fixed by model changes, MCP catalog discovery, or retrying prompts. The Opik trace metadata also contains the issue ID, not the exact Paperclip run ID; stronger structured correlation is still required for strict release evidence. The issue is blocked without automatic retries until runtime context is fixed.
 
-**Acceptance receipt:** `evidence/2026-11-02-canary-v2.json` contains factual partial passes and explicitly failing flags for Wiki, structured Opik run correlation, release, and independent CTO review. Run `verify_e2e.py` against this file; **BLOCKED is the expected honest result**, not a test-suite defect. Do not merge or perform production cutover on partial proof.
+**Acceptance receipt:** `evidence/2026-11-02-canary-v2.json` contains factual partial passes and explicitly failing flags for Wiki, structured Opik run correlation, release, and independent CTO review. Run `verify_e2e.py --expected-profile hermes-test` against this file; **BLOCKED is the expected honest result**, not a test-suite defect. Do not merge or perform production cutover on partial proof.
 
 ## Native per-run MCP contract — confirmed gap (2026-11-02)
 
 Paperclip already prepares short-lived `heartbeat_run` tokens for **local adapter** MCP assignments in `server/src/services/heartbeat/run-preparation.ts`. Its Tool Gateway rejects native plugin calls from a reusable `gateway_client` bearer without `session.runId` (guard in `server/src/services/tool-gateway.ts`, `Plugin tools require an agent run context`). Hermes Gateway currently uses a static Named MCP `gateway_client` token from the profile configuration. Thus a live issue-bound Paperclip run **does not automatically make** Hermes's downstream MCP session run-bound.
 
 This must not be “fixed” by trusting an unsigned run header or adding the shared COO principal to a Board Wiki allowlist. The correct adapter-level design is to deliver a *fresh Paperclip-issued, run-bound MCP token* to the Hermes Gateway runtime during `POST /v1/runs` as a server-side secret, register it only within that run's MCP tool scope, revoke/expire on completion, then verify that the native Wiki plugin receives the **same authenticated** `agentId` and `runId`. The current Hermes `/v1/runs` request does **not** expose a verified runtime MCP override; do not pretend `payloadTemplate` or a prompt embeds trusted credentials.
+
+### Run-scoped bridge feasibility — verified 2026-11-03
+
+The Hermes v0.22.5 run handler only maps its explicit `_RunLaunch.agent_kwargs` allowlist; arbitrary request metadata and MCP credentials are dropped. Paperclip's native `runtimeMcp` credential is available to its adapter execution context, not to an unrelated external process. Therefore a standalone sidecar/proxy cannot safely invent the missing run identity: an unsigned run ID, static Hermes profile key, shared Board credential, or prompt field is not an acceptable substitute.
+
+The smallest non-Core integration needs two explicit adapter/runtime seams: (1) the Hermes adapter must forward the native `runtimeMcp` bearer and `agentId`/`runId`/`issueId` through a private authenticated run-scoped channel; (2) Hermes must bind that secret only to the corresponding live run's MCP client and destroy it on completion. This repository does not contain the Paperclip adapter or Hermes Gateway handler source, so it can supply the harness/readiness gate but cannot complete those runtime changes here. Any candidate implementation must remain fail-closed until both seams are installed and negative cross-run/cross-agent checks pass.
+
+`verify_e2e.py` requires an explicit `--expected-profile` and evidence for run/issue/agent/Hermes IDs, per-run credential revocation, and wrong-run/wrong-agent/missing-credential rejection. Early-auth rejection is a separate acceptance-suite attempt: require its own attempt ID, HTTP 401/403, adapter-edge Opik trace, and no Hermes run ID (the request was rejected before admission); never equate it to the successful Hermes run. This offline verifier cannot authenticate user-authored JSON or fetch Paperclip/Opik records. It therefore reports structural results only and exits `UNVERIFIED` until authoritative readbacks are retrieved; a JSON `passed: true` is not acceptance evidence.
 
 ### Subsequent on-server regression
 
