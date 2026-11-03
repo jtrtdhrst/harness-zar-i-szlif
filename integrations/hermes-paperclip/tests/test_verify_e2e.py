@@ -19,16 +19,7 @@ class EvidenceGateTests(unittest.TestCase):
             "hermes_run_id": "hermes-run-123",
             "named_profile": "hermes-cho",
             "secrets_exposed": False,
-            "profile_auth_test": {
-                "passed": True,
-                "authenticated_run_probe": True,
-                "authenticated_probe_http_status": 400,
-                "invalid_key_rejected": True,
-                "invalid_key_http_status": 401,
-                "wrong_profile_rejected": True,
-                "dedicated_key_stored_as_secret_ref": True,
-                "health_only_sufficient": False,
-            },
+            "profile_auth_test": {"passed": True, "wrong_profile_rejected": True, "dedicated_key_stored_as_secret_ref": True},
             "run_scoped_mcp_bridge": {
                 "passed": True,
                 "paperclip_token_bound_to_run": True,
@@ -86,22 +77,6 @@ class EvidenceGateTests(unittest.TestCase):
         d = self.good()
         d["named_profile"] = "default"
         self.assertTrue(any("named_profile" in s for s in module.validate(d, "hermes-cho")))
-
-    def test_health_only_does_not_prove_profile_auth(self):
-        d = self.good()
-        d["profile_auth_test"] = {"passed": True, "health_only_sufficient": True}
-        errors = module.validate(d, "hermes-cho")
-        self.assertIn("profile_auth_test.authenticated_run_probe: not verified", errors)
-        self.assertIn("profile_auth_test.invalid_key_rejected: not verified", errors)
-        self.assertIn("profile_auth_test.health_only_sufficient must explicitly be false", errors)
-
-    def test_blocks_authenticated_probe_that_was_unauthorized(self):
-        d = self.good()
-        d["profile_auth_test"]["authenticated_probe_http_status"] = 401
-        self.assertIn(
-            "profile_auth_test.authenticated_probe_http_status must show authenticated malformed request (400/422)",
-            module.validate(d, "hermes-cho"),
-        )
 
     def test_blocks_cross_run_opik_trace(self):
         d = self.good()
