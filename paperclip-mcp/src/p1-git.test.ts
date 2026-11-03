@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluatePrChecks } from "./p1-git.js";
+import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks } from "./p1-git.js";
 import type { PaperclipApiClient } from "./client.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -177,8 +177,8 @@ describe("paperclipGitMergePR gate (fail-closed)", () => {
   it("refuses a mismatched SHA, requested changes, or blocked merge state", () => {
     expect(evaluateMergeGate(base, "0000000000000000000000000000000000000000").ok).toBe(false);
     expect(evaluateMergeGate({ ...base, reviewDecision: "CHANGES_REQUESTED" }, "df09a549").ok).toBe(false);
-    expect(evaluateMergeGate({ ...base, reviewDecision: "" }, "df09a549").ok).toBe(false);
-    expect(evaluateMergeGate({ ...base, reviewDecision: "REVIEW_REQUIRED" }, "df09a549").ok).toBe(false);
+    expect(evaluateMergeGate({ ...base, reviewDecision: "" }, "df09a549").ok).toBe(true);
+    expect(evaluateMergeGate({ ...base, reviewDecision: "REVIEW_REQUIRED" }, "df09a549").ok).toBe(true);
     expect(evaluateMergeGate({ ...base, mergeStateStatus: "UNSTABLE" }, "df09a549").ok).toBe(false);
     expect(evaluateMergeGate({ ...base, mergeStateStatus: "BLOCKED" }, "df09a549").ok).toBe(false);
   });
@@ -200,5 +200,41 @@ describe("paperclipGitMergePR head-race guard", () => {
       expect(argv).toContain("--match-head-commit");
       expect(argv[argv.indexOf("--match-head-commit") + 1]).toBe(headSha);
     }
+  });
+});
+
+describe("native Paperclip first-class approval, not synthetic GitHub review", () => {
+  const sha = "a".repeat(40);
+  const url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/26";
+  const issue = {
+    status: "done", reviewPolicy: "not_creator",
+    executionState: {
+      status: "completed", lastDecisionOutcome: "approved",
+      lastDecisionId: "123e4567-e89b-42d3-a456-426614174000",
+      completedStageIds: ["review-stage"], returnAssignee: { type:"agent", agentId:"engineer" },
+    },
+    executionPolicy: {
+      stages: [{ id:"review-stage", type:"review", participants:[{ type:"agent", agentId:"CHO" }], approvalsNeeded:1 }],
+    },
+    workProducts: [{id:"pr-record",type:"pull_request",provider:"github",url,
+      metadata:{headSha:sha,branch:"task-branch",repository:"miloszspyrka-code/harness-zar-i-szlif"}}],
+  };
+  it("permits a real approved issue and its exact PR artifact head SHA", () => {
+    expect(evaluateNativePaperclipReview(issue,url,sha).ok).toBe(true);
+  });
+  it("refuses unapproved, self-reviewed, absent or stale artifact", () => {
+    const cases = [
+      { ...issue,status:"in_review" },
+      { ...issue,executionState:{...issue.executionState,lastDecisionOutcome:"changes_requested"} },
+      { ...issue,executionState:{...issue.executionState,lastDecisionId:null} },
+      { ...issue,executionState:{...issue.executionState,completedStageIds:[]} },
+      { ...issue,executionState:{...issue.executionState,returnAssignee:{type:"agent",agentId:"CHO"}} },
+      { ...issue,workProducts:[] },
+      { ...issue,workProducts:[{...issue.workProducts[0],metadata:{headSha:"b".repeat(40)}}] },
+      { ...issue,workProducts:[{...issue.workProducts[0],url:"https://github.com/miloszspyrka-code/zar-i-szlif/pull/26"}] },
+    ];
+    for(const x of cases)expect(evaluateNativePaperclipReview(x,url,sha).ok).toBe(false);
+    expect(evaluateNativePaperclipReview(issue,url,"b".repeat(40)).ok).toBe(false);
+    expect(evaluateNativePaperclipReview(issue,"https://github.com/foreign/repo/pull/26",sha).ok).toBe(false);
   });
 });
