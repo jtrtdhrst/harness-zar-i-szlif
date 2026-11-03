@@ -754,6 +754,78 @@ export const WORKSPACE_NATIVE_TOOL_NAMES: string[] = [
   "paperclipGitGetMergeReadiness",
 ];
 
+/** The legacy allowProtected flag is not a bypass for the PR review. */
+export function nativeGitPushBranchAllowed(branch: string, _allowProtected = false): boolean {
+  return branch !== "main" && branch !== "master" && !branch.startsWith("release/");
+}
+
+async function syncIssuePullRequestProduct(
+  client: PaperclipApiClient,
+  ws: ResolvedWorkspace,
+  issueId: string,
+  url: string,
+  headSha: string,
+  title: string,
+  branch: string,
+  baseBranch: string,
+  runId?: string | null,
+): Promise<string> {
+  const match = /^https:\/\/github\.com\/(miloszspyrka-code\/(?:zar-i-szlif|harness-zar-i-szlif))\/pull\/([1-9]\d*)$/.exec(url);
+  if (!match || !/^[0-9a-f]{40}$/i.test(headSha) || (await resolveGitHubSlug(ws)) !== match[1]) {
+    throw err("review_evidence_unlinked", "Canonical PR URL, repository or exact head SHA could not be verified");
+  }
+  const path = "/issues/" + enc(issueId) + "/work-products";
+  const items = await client.requestJson<unknown>("GET", path);
+  if (!Array.isArray(items)) throw err("review_evidence_unlinked", "Paperclip work products unreadable");
+  const matching = items.filter((v) => {
+    const a = isRecord(v) ? v : {};
+    return a.type === "pull_request" && a.provider === "github" && a.url === url;
+  });
+  if (matching.length > 1) throw err("review_evidence_unlinked", "Duplicate PR work products require reconciliation");
+  const metadata = { headSha, branch, baseBranch, repository: match[1] };
+  if (matching.length === 1) {
+    const id = isRecord(matching[0]) && typeof matching[0].id === "string" ? matching[0].id : null;
+    if (!id) throw err("review_evidence_unlinked", "Existing PR work product missing id");
+    await client.requestJson("PATCH", "/work-products/" + enc(id), { body: { metadata } });
+    return id;
+  }
+  const result = await client.requestJson<Record<string, unknown>>("POST", path, {
+    body: {
+      type: "pull_request", provider: "github", externalId: match[1] + "#" + match[2],
+      title, url, status: "ready_for_review", reviewState: "needs_board_review",
+      executionWorkspaceId: ws.workspaceId, metadata,
+      ...(runId ? { createdByRunId: runId } : {}),
+    },
+    ...(runId ? { runId } : {}),
+  });
+  if (typeof result.id !== "string") throw err("review_evidence_unlinked", "Work product creation returned no id");
+  return result.id;
+}
+
+async function refreshIssuePullRequestHeads(
+  client: PaperclipApiClient,
+  ws: ResolvedWorkspace,
+  issueId: string,
+  branch: string,
+  headSha: string,
+): Promise<number> {
+  const products = await client.requestJson<unknown>("GET", "/issues/" + enc(issueId) + "/work-products");
+  if (!Array.isArray(products)) throw err("review_evidence_unlinked", "Paperclip work products unreadable after Git push");
+  const slug = await resolveGitHubSlug(ws);
+  let updated = 0;
+  for (const item of products) {
+    if (!isRecord(item) || item.type !== "pull_request" || item.provider !== "github" || !isRecord(item.metadata)
+        || item.metadata.branch !== branch || item.metadata.repository !== slug
+        || typeof item.id !== "string" || typeof item.url !== "string") continue;
+    const base = typeof item.metadata.baseBranch === "string" ? item.metadata.baseBranch : "main";
+    await syncIssuePullRequestProduct(client, ws, issueId, item.url, headSha,
+      typeof item.title === "string" ? item.title : "GitHub Pull Request", branch, base);
+    updated++;
+  }
+  return updated;
+}
+
+
 export function createWorkspaceNativeTools(client: PaperclipApiClient): WorkspaceNativeToolDefinition[] {
   return [
     makeTool(client,
@@ -1139,8 +1211,8 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const target = branch ?? before.branch;
         if (!target) throw err("git_failed", "Cannot determine current branch", { remediationOwner: "harness" });
         if (target !== before.branch) throw err("push_denied", `Pushing a non-checked-out branch refused (current=${before.branch}, requested=${target})`);
-        if (["main", "master"].includes(target) && !allowProtected) {
-          throw err("push_denied", `Pushing protected branch ${target} needs allowProtected:true`, { remediationOwner: "cto" });
+        if (!nativeGitPushBranchAllowed(target, allowProtected)) {
+          throw err("push_denied", "Native direct push to main/master/release is forbidden. Use a reviewed PR.", { remediationOwner: "CHO" });
         }
         // Git does not read GH_TOKEN: without a credential helper the push asks the
         // terminal for a username and dies with "could not read Username for
@@ -1163,8 +1235,18 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const remoteSha = ls.exitCode === 0 ? ls.stdout.trim().split(/\s+/)[0] : null;
         const after = await gitHead(ws);
         const match = Boolean(remoteSha && after.head && remoteSha.startsWith(after.head.slice(0, 12)));
-        await recordWorkspaceMutationAudit(mutationCtx, ws, { action: "git.push", branch: target, remoteSha, shaMatch: match });
-        return { workspaceId: ws.workspaceId, branch: target, before, after, remoteSha, shaMatch: match, attribution: mutationCtx };
+        let workProductUpdated: number | null = null;
+        let evidenceWarning: string | null = null;
+        const trackingIssue = issueId ?? ws.sourceIssueId;
+        if (trackingIssue && match && after.head) {
+          try {
+            workProductUpdated = await refreshIssuePullRequestHeads(client, ws, trackingIssue, target, after.head);
+          } catch {
+            evidenceWarning = "Git push succeeded but its linked PR artifact was not updated; retry native push before review";
+          }
+        }
+        await recordWorkspaceMutationAudit(mutationCtx, ws, { action: "git.push", branch: target, remoteSha, shaMatch: match, workProductUpdated, evidenceWarning });
+        return { workspaceId: ws.workspaceId, branch: target, before, after, remoteSha, shaMatch: match, workProductUpdated, ...(evidenceWarning ? { evidenceWarning } : {}), attribution: mutationCtx };
       },
     ),
     makeTool(client,
@@ -1185,7 +1267,10 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
         if (issueId) await verifyIssueWritable(client, issueId);
+        const trackingIssue = issueId ?? ws.sourceIssueId;
+        if (!trackingIssue) throw err("review_evidence_unlinked", "PR creation requires an originating Paperclip issue", { remediationOwner: "CHO" });
         const before = await gitHead(ws);
+        if (!before.head || !/^[0-9a-f]{40}$/i.test(before.head)) throw err("git_failed", "Cannot pin PR head");
         if (!before.branch || ["main", "master"].includes(before.branch)) {
           throw err("branch_denied", "Create a working branch first (never PR from a protected branch directly)");
         }
@@ -1213,12 +1298,22 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
             });
           }
           if (/already exists|already.*pull request/i.test(out)) {
-            return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, alreadyExists: true, output: out.slice(0, 500) };
+            const existing = await runJailedExec({
+              ws, argv: ["gh", "pr", "view", before.branch, "--json", "url"],
+              timeoutSec: 30, outputLimit: 2048, extraEnv: { ...ghEnv() },
+            });
+            if (existing.exitCode !== 0) throw err("review_evidence_unlinked", "Existing PR URL could not be recovered");
+            let existingUrl: string;
+            try { existingUrl = JSON.parse(existing.stdout).url; }
+            catch { throw err("review_evidence_unlinked", "Existing PR URL malformed"); }
+            const workProductId = await syncIssuePullRequestProduct(client, ws, trackingIssue, existingUrl, before.head, title, before.branch, baseBranch, runId);
+            return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, alreadyExists: true, url: existingUrl, workProductId };
           }
           throw err("git_failed", `PR creation failed: ${out}`, { remediationOwner: "harness" });
         }
-        const url = maybeGh.stdout.trim().split("\n").pop() || null;
-        return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, url, alreadyExists: false };
+        const url = maybeGh.stdout.trim().split("\n").pop() || "";
+        const workProductId = await syncIssuePullRequestProduct(client, ws, trackingIssue, url, before.head, title, before.branch, baseBranch, runId);
+        return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, url, workProductId, alreadyExists: false };
       },
     ),
     makeTool(client,

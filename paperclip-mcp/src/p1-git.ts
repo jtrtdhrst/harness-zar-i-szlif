@@ -27,6 +27,7 @@ import {
   gitCredentialEnv,
 } from "./workspace-native.js";
 import { formatErrorResponse, formatTextResponse } from "./format.js";
+import { evaluateCheckRunsPayload } from "./github-checks.js";
 
 export interface PrChecksEvaluation {
   state: "success" | "failure" | "pending" | "unverified";
@@ -87,9 +88,9 @@ export function evaluateMergeGate(meta: Record<string, unknown>, expectedHeadSha
   if (String(meta?.reviewDecision ?? "").toUpperCase() === "CHANGES_REQUESTED") {
     return { ok: false, code: "refused", message: "required review not satisfied (CHANGES_REQUESTED); branch protection is never bypassed" };
   }
-  if (String(meta?.reviewDecision ?? "").toUpperCase() !== "APPROVED") {
-    return { ok: false, code: "refused", message: "independent GitHub review approval is missing or unreadable (APPROVED required)" };
-  }
+  // CHO/CTO approval is issued in Paperclip, not through another GitHub
+  // account. The PR-level reviewDecision is not required to be APPROVED:
+  // evaluateNativePaperclipReview() verifies the real first-class decision.
   const mergeable = String(meta?.mergeable ?? "").toUpperCase();
   if (mergeable !== "MERGEABLE") {
     return { ok: false, code: "refused", message: `mergeable=${mergeable || "UNKNOWN"} does not prove the PR can merge` };
@@ -99,6 +100,54 @@ export function evaluateMergeGate(meta: Record<string, unknown>, expectedHeadSha
     return { ok: false, code: "refused", message: `mergeStateStatus=${mergeState || "UNKNOWN"} does not prove required checks and review are satisfied` };
   }
   return { ok: true, code: "ok", message: "mergeable" };
+}
+
+/** Verify a true Paperclip review decision against the exact PR artifact.
+ * This prevents the shared GitHub App identity from pretending to be a second
+ * reviewer, and disallows a post-approval head push from riding into merge.
+ */
+export function evaluateNativePaperclipReview(issue: unknown, prUrl: string, exactHeadSha: string): MergeGateDecision {
+  const deny = (message: string): MergeGateDecision => ({ ok: false, code: "review_unverified", message });
+  const asRecord = (v: unknown): Record<string, unknown> | null =>
+    v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
+  const row = asRecord(issue);
+  if (!row || row.status !== "done") return deny("Paperclip issue must be DONE after independent review");
+  if (typeof prUrl !== "string" || !/^https:\/\/github\.com\/miloszspyrka-code\/(?:zar-i-szlif|harness-zar-i-szlif)\/pull\/[1-9]\d*$/.test(prUrl)) {
+    return deny("PR URL is not an approved repository's canonical GitHub URL");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(exactHeadSha)) return deny("PR head must be an exact 40-char SHA");
+  const exec = asRecord(row.executionState);
+  if (!exec || exec.status !== "completed" || exec.lastDecisionOutcome !== "approved"
+      || typeof exec.lastDecisionId !== "string" || !/^[0-9a-f-]{36}$/i.test(exec.lastDecisionId)) {
+    return deny("First-class Paperclip approved review decision is missing");
+  }
+  if (row.reviewPolicy === "none" || !asRecord(row.executionPolicy)) return deny("Independent review policy is missing");
+  const policy = asRecord(row.executionPolicy)!;
+  const stageIds = Array.isArray(exec.completedStageIds) ? exec.completedStageIds : [];
+  const stages = Array.isArray(policy.stages) ? policy.stages : [];
+  const original = asRecord(exec.returnAssignee);
+  const originalAgent = original?.type === "agent" ? original.agentId : null;
+  const reviewed = stages.some((item) => {
+    const stage = asRecord(item);
+    if (!stage || stage.type !== "review" || !stageIds.includes(stage.id)) return false;
+    return Array.isArray(stage.participants) && stage.participants.some((p) => {
+      const participant = asRecord(p);
+      return participant?.type === "agent"
+        && typeof participant.agentId === "string"
+        && typeof originalAgent === "string"
+        && participant.agentId !== originalAgent;
+    });
+  });
+  if (!reviewed) return deny("No completed review stage with an independent agent participant");
+  const products = Array.isArray(row.workProducts) ? row.workProducts : [];
+  const matched = products.some((item) => {
+    const product = asRecord(item);
+    if (!product || product.type !== "pull_request" || product.provider !== "github" || product.url !== prUrl) return false;
+    const metadata = asRecord(product.metadata);
+    return typeof metadata?.headSha === "string" && metadata.headSha.toLowerCase() === exactHeadSha.toLowerCase();
+  });
+  if (!matched) return deny("Linked issue PR work product is absent or its pinned SHA differs from the live PR head");
+  return { ok: true, code: "ok", message: "Native Paperclip approved review and exact artifact SHA verified" };
 }
 
 // Pin the merge to the head SHA verified a moment earlier so a head push
@@ -723,7 +772,9 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
-        if (issueId) await verifyIssueWritable(client, issueId);
+        // A completed review marks the issue DONE; that must not make
+        // subsequent controlled PR merge impossible. Read-only approval
+        // validation happens against the terminal issue below.
         if (!hasGitHubTokenEnv().present) {
           throw err(
             "github_auth_missing",
@@ -740,7 +791,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
         const repoFlag = (repository ? ["--repo", repository] : []) as string[];
         const view = (await runJailedExec({
           ws,
-          argv: ["gh", "pr", "view", String(pullRequestNumber), ...repoFlag, "--json", "headRefOid,mergeable,mergeStateStatus,reviewDecision"],
+          argv: ["gh", "pr", "view", String(pullRequestNumber), ...repoFlag, "--json", "headRefOid,mergeable,mergeStateStatus,reviewDecision,url"],
           timeoutSec: 30,
           outputLimit: 8192,
           operationId: null,
@@ -758,6 +809,37 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           throw err(gate.code, `Merge refused for #${pullRequestNumber}: ${gate.message}.`, {
             remediationOwner: gate.code === "unverified" ? "CTO" : "operator",
           });
+        }
+        const effectiveIssueId = issueId ?? ws.sourceIssueId;
+        if (!effectiveIssueId) {
+          throw err("review_unverified", "No Paperclip issue bound to this PR/workspace; native review cannot be verified", { remediationOwner: "CHO" });
+        }
+        const exactPrUrl = String(meta.url ?? "");
+        const issue = await client.requestJson<Record<string, unknown>>("GET", `/issues/${encodeURIComponent(effectiveIssueId)}`);
+        const nativeReview = evaluateNativePaperclipReview(issue, exactPrUrl, headSha);
+        if (!nativeReview.ok) {
+          throw err(nativeReview.code, `Merge refused #${pullRequestNumber}: ${nativeReview.message}`, { remediationOwner: "CHO" });
+        }
+        const canonical = /^https:\/\/github\.com\/(miloszspyrka-code\/(?:zar-i-szlif|harness-zar-i-szlif))\/pull\/([1-9]\d*)$/.exec(exactPrUrl);
+        if (!canonical || Number(canonical[2]) !== pullRequestNumber) {
+          throw err("review_unverified", "GitHub PR URL mismatch", { remediationOwner: "CHO" });
+        }
+        const checksExec = await runJailedExec({
+          ws,
+          argv: ["gh", "api", `repos/${canonical[1]}/commits/${headSha}/check-runs?per_page=100`],
+          timeoutSec: 30,
+          outputLimit: 65536,
+          operationId: null,
+        });
+        if (checksExec.exitCode !== 0) throw err("checks_unverified", "GitHub Checks API cannot be read; no merge", { remediationOwner: "CTO" });
+        let checksPayload: unknown;
+        try { checksPayload = JSON.parse(String(checksExec.stdout ?? "")); }
+        catch { throw err("checks_unverified", "GitHub check-run response invalid; no merge", { remediationOwner: "CTO" }); }
+        const checks = evaluateCheckRunsPayload(checksPayload);
+        const checkName = canonical[1].endsWith("/harness-zar-i-szlif") ? "validate-paperclip-mcp" : "validate-product";
+        const found = checks.checks.filter((c) => c.name === checkName);
+        if (checks.state !== "success" || checks.total !== checks.checks.length || found.length !== 1 || found[0].conclusion !== "success") {
+          throw err("checks_unverified", `Required ${checkName} CI did not pass on exact PR head SHA`, { remediationOwner: "CTO" });
         }
         const methodFlag = mergeMethod === "squash" ? "--squash" : mergeMethod === "rebase" ? "--rebase" : "--merge";
         const merged = (await runJailedExec({
