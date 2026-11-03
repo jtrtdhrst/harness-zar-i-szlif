@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   sync-regression:
-    name: Production schema-2 approved full-bundle tests (no deploy)
+    name: 14 roles, 120 approved company + Paperclip runtime skills (no deploy)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -52,6 +52,14 @@ jobs:
               assert all(len(digest)==64 for digest in files.values())
           print("PASS schema=2 roles=14 pins="+str(len(wanted))+
                 " approved_assignments="+str(sum(map(len,j["profiles"].values()))))
+          r=json.loads((root/"runtime-skill-allowlist.json").read_text())
+          assert r["schema_version"]==1
+          assert len(r["roles"])==14
+          assert sum(len(v) for v in r["roles"].values())==45
+          assert len(r["sources"])==6
+          assert set(r["sources"])=={k for v in r["roles"].values() for k in v}
+          assert all("SKILL.md" in s["approved_files_sha256"] for s in r["sources"].values())
+          print("PASS runtime roles=14 assignments=45 unique_pinned=6")
           PY
       - name: Run scoped full-bundle tests without API secrets
         shell: bash
