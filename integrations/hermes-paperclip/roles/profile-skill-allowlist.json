@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "description": "Approved Paperclip company skills currently installed for each Hermes profile. Explicit allowlist; never scan and install undeclared skills.",
   "source_company_id": "9894e3c2-3317-46ca-8c72-7a442a76a78e",
   "profiles": {
@@ -25,6 +25,7 @@
       "mascot-style-2-pipeline"
     ],
     "coo": [
+      "paperclip-router",
       "bounded-delivery-execution",
       "agent-git-delivery",
       "delivery-dag-orchestration",
@@ -42,6 +43,8 @@
       "durable-work-products-cases"
     ],
     "designer": [
+      "kompas-design-specialist",
+      "plasmic-designer",
       "bounded-delivery-execution",
       "agent-git-delivery",
       "mascot-style-2-pipeline",
@@ -56,6 +59,7 @@
       "durable-work-products-cases"
     ],
     "engineer": [
+      "kompas-product-engineer",
       "bounded-delivery-execution",
       "agent-git-delivery",
       "mascot-style-2-pipeline",
@@ -69,6 +73,7 @@
       "bounded-delivery-execution"
     ],
     "lifecycle-ops": [
+      "mautic-lifecycle-execution",
       "bounded-delivery-execution",
       "agent-git-delivery",
       "delivery-dag-orchestration",
@@ -81,7 +86,8 @@
       "comfyui-arkcodex-runner",
       "mascot-anatomy-qa",
       "mascot-alpha-export",
-      "mascot-e2e-recovery"
+      "mascot-e2e-recovery",
+      "zar-i-szlif-mascot-appearance"
     ],
     "mcp-engineer": [
       "kompas-mcp-specialist",
@@ -93,6 +99,7 @@
       "durable-work-products-cases"
     ],
     "ui-qa": [
+      "kompas-ui-qa-specialist",
       "bounded-delivery-execution",
       "agent-git-delivery",
       "mascot-style-2-pipeline",
@@ -120,6 +127,89 @@
     "mascot-anatomy-qa": "3ee6a3aea301649bbd2a0c389854ef8e4a7ca5d8cf3d402c80ff1ef5fbbc7f99",
     "mascot-alpha-export": "918d619fc001b44d43b4878c86c88439d957ae67ddff9a3a4ed2b6975dec6cb8",
     "mascot-e2e-recovery": "f1dc27989695bdb3039c64815c17735d486375307595370678ac951adbab4e94",
-    "kompas-mcp-specialist": "b7f4c9425cc23358b60af3ffcdd1b0c89c19cc370caf23bf0796c37a9f682592"
-  }
-}
+    "kompas-mcp-specialist": "b7f4c9425cc23358b60af3ffcdd1b0c89c19cc370caf23bf0796c37a9f682592",
+    "kompas-design-specialist": "158a7601dca7fa8f22ef48d231dc3ee6e3964614f72e9aeb9d216857fdb9aec5",
+    "kompas-product-engineer": "8b30edf4d9b5a492785f965b2d9dc560d7198f6334e7459bb1516cb5bf953d4a",
+    "kompas-ui-qa-specialist": "03b791a6f688bddf2d5b7688066634b8ac638eca1e0e7780f4d296611686f73d",
+    "mautic-lifecycle-execution": "7fa0efb287ef6da03163771917eddd2aaa39fcad08107e4db395fcb3ac6bc9b1",
+    "paperclip-router": "8acc94db531ae17c710157edf1b5f1053b527e6d2c7dce146f779016506faf40",
+    "plasmic-designer": "70201e25d71cbd42361182e2939b4a462d5a7ecb38c5dc3bd1504d05bcc8ca4d",
+    "zar-i-szlif-mascot-appearance": "a044de26ab933a381d86a70edea83be48a8859983979dabc6b9143a76748d316"
+  },
+  "approved_files_sha256": {
+    "agent-git-delivery": {
+      "SKILL.md": "30b537fbdf24ef82e153349e9d309a69347ad464e8a8ad346cb2094f6708e1c5"
+    },
+    "agent-improvement-loop": {
+      "SKILL.md": "de265fa2ab6e1a1aa4a01c5c25875b95d6b613cb9ec099791204d970335c9ab6"
+    },
+    "bounded-delivery-execution": {
+      "SKILL.md": "349917ee1e1f4526ca86b9580053659504c32b4ab154ba1c1dba9ceb4f1cdad0",
+      "references/full-execution-contract-v68-2026-10-20.md": "13c1999a5449a1568d26a41f78b76d2eeebdd29a73c4db53912ed60450d73f23",
+      "references/full-procedures.md": "3e208f4f5b01e001f569e38799dc8e9528be22784fe2e43eefe84fd5f7fef4b4"
+    },
+    "comfyui-arkcodex-runner": {
+      "SKILL.md": "cb40b222349faa0adf30115d3245ca19caa9f1bb7aa653ef184be039e55d65d2"
+    },
+    "context-compression-loop": {
+      "SKILL.md": "6fd6821658c28cc72e195e610c0995a25f5f6abaa397f17bc0fcbf95a49dac93"
+    },
+    "delivery-dag-orchestration": {
+      "SKILL.md": "1d693f64a0b4b2f6dcad61aad4325b04cef734af39b7bb5549c0046be6715d85"
+    },
+    "durable-work-products-cases": {
+      "SKILL.md": "4fd87062cd068a277a81700572cc79b3d309f691a61d1a5f8728c166363cdd71"
+    },
+    "issue-dag-governance": {
+      "SKILL.md": "1af77532732c4a099461f9d1622d43ab5a6af2b3a1b26c891dd72c81f20c988d"
+    },
+    "kompas-design-specialist": {
+      "SKILL.md": "158a7601dca7fa8f22ef48d231dc3ee6e3964614f72e9aeb9d216857fdb9aec5"
+    },
+    "kompas-growth-domain-lead": {
+      "SKILL.md": "0bea4dff145589ae25580a80aacb13063f95e03bd2c71f245b33b56330229578"
+    },
+    "kompas-harness-environment-specialist": {
+      "SKILL.md": "ecede9f6f8422136315f2b88b43a557a838fb0414ded0196b17aed8f2c410e47",
+      "references/current-environment.md": "4805ebae13fc11a73353c708dfcecda00bcf0d3784cbd65d23d31d56ecfc3bfa",
+      "references/full-harness-contract-20261014.md": "dae407150235da67e8899e18bb94224ce72c8aa3ed189bacb5e5efd44e8656bc"
+    },
+    "kompas-mcp-specialist": {
+      "SKILL.md": "b7f4c9425cc23358b60af3ffcdd1b0c89c19cc370caf23bf0796c37a9f682592"
+    },
+    "kompas-product-engineer": {
+      "SKILL.md": "8b30edf4d9b5a492785f965b2d9dc560d7198f6334e7459bb1516cb5bf953d4a"
+    },
+    "kompas-technical-domain-lead": {
+      "SKILL.md": "fb344e80716ed9b601c0da626d1a7ba5707aef332a75cd830a9671009153542d",
+      "references/specialized-ui-and-local-runtime-gates-20261014.md": "fa28fb011de8ed07489499c94936021b833beda88b20671ae903645fdf740d6f"
+    },
+    "kompas-ui-qa-specialist": {
+      "SKILL.md": "03b791a6f688bddf2d5b7688066634b8ac638eca1e0e7780f4d296611686f73d"
+    },
+    "mascot-alpha-export": {
+      "SKILL.md": "918d619fc001b44d43b4878c86c88439d957ae67ddff9a3a4ed2b6975dec6cb8"
+    },
+    "mascot-anatomy-qa": {
+      "SKILL.md": "3ee6a3aea301649bbd2a0c389854ef8e4a7ca5d8cf3d402c80ff1ef5fbbc7f99",
+      "qa/check_image.py": "07a789935630a95cf13a5159dc4e56a928e2d9539e5ea806c24349f2b0520941",
+      "qa/make_lineup.py": "3bada704b436692aea215284cd6491498ea570cc058d9fa6a4439810bd8b8c2a"
+    },
+    "mascot-e2e-recovery": {
+      "SKILL.md": "f1dc27989695bdb3039c64815c17735d486375307595370678ac951adbab4e94"
+    },
+    "mascot-reference-director": {
+      "SKILL.md": "02b79a2c3a9032e5fb268bcb3cda2dbf92fa1d2cb25c27c9c54cf9ee6d0e5e3f"
+    },
+    "mascot-style-2-pipeline": {
+      "SKILL.md": "2de8ae25636c9819ddf754413683686312bf09ec3b2f55d4d03391083d7c851b",
+      "references/character.schema.json": "688145c20a44d92b241c7977c6bf159668f60accc18f662771e7727691013699",
+      "references/export-manifest.schema.json": "f3bce9369b8d44e73831db5d7e95e23d3e8a3c74a5675b423f1eb7327a66b4f5",
+      "references/image-generator-runtime.md": "2945529dd371af65d5d1d8548ba25dd7c56cf147ff75c4759c11c2a13049d522",
+      "references/internet-mascot-reconstruction-pipeline.md": "a7219b04b17ab941935abb182f8786ef242aad9a7ba4853d8824f863f22f9f13",
+      "references/mascot-art-direction-visual-acceptance.md": "290d32437bd685e4f704ab2297941946535adf62f3f442424f61743147c91847",
+      "references/qa-checklist.md": "631ae1dff7d4ec19e389f3b21cbc45f88fb056b58b5883f28ccef9b39195da98",
+      "references/v4-penpot-optical-e2e.md": "eb1632d851eefe8bbba0d7eb8d94928adc3e358c13c76cbc7e3953b46cdc94a2",
+      "scripts/mas
+
+... [2587 characters truncated]
