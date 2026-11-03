@@ -10,24 +10,21 @@ deploy Cloudflare Workers, change agent models or create Paperclip tasks.
 - Uses existing Paperclip Core Git credential helper for read-only source checkout.
 - Before any deployment, Coolify's existing GitHub App checks that the exact
   40-character commit SHA is the merge commit of an actual merged GitHub PR
-  whose base is main, that a separate reviewer approved the current PR head
-  and that validate-paperclip-mcp completed successfully. Direct pushes,
-  unapproved PRs, failed CI and unrelated repositories all fail closed.
+  whose base is main, and that validate-paperclip-mcp completed successfully
+  on the PR head SHA. Direct pushes, failed CI, unknown checks and unrelated
+  repositories fail closed. Review decisions remain first-class in Paperclip.
 - Only code paths in paperclip-mcp/mcp-gateway, src, plugin-runtime,
   plugin-skills, entrypoint.sh and Dockerfile can activate a deployment.
   Other monorepo components never trigger this service.
-- A merged PR is NOT by itself independent CTO/CHO review. The deployed
-  controller now refuses to release a watched change unless it can read
-  a successful validate-paperclip-mcp GitHub Actions check on the PR head
-  and an APPROVED GitHub review by a different GitHub identity, submitted
-  against the current PR head commit. Outstanding CHANGES_REQUESTED denies
-  release even if another review approved. Missing/invalid CI or review
-  permissions fail closed. This does not replace Paperclip's first-class
-  CHO/CTO execution review; both governance layers remain required.
-- Configure GitHub branch rules separately for main: require a pull request,
-  an independent approving review, a successful validate-paperclip-mcp check,
-  no direct pushes and no force pushes. The existing App is intentionally
-  not given Administration:write and cannot change this policy itself.
+- CTO/CHO review is a first-class Paperclip issue execution decision, not a
+  GitHub review by another account. The shared GitHub App authenticates code
+  publication only. Do not fabricate a second GitHub reviewer identity.
+- Agent-created PRs must be linked to the originating Paperclip issue for
+  artifact/decision traceability; operators must not call an issue DONE without
+  actual recorded review, delivery evidence and production readback.
+- To close GitHub-side bypass of Paperclip, repository administrators can
+  enable native branch rules, but this deployment controller never requests
+  Administration:write or invents an alternate reviewer.
 - No privileged GitHub credential or Coolify API token is copied into the
   release container, image, Git repository or logs. Existing signing key
   stays inside Coolify, rotated installation tokens stay in existing locations.
