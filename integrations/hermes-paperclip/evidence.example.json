@@ -1,7 +1,7 @@
 {
   "paperclip_run_id": "",
-  "executing_agent_id": "5595f2c4-95e2-4c3e-97b4-c00d4e4d6601",
-  "named_profile": "cho",
+  "executing_agent_id": "456e000b-6574-4c84-8cab-76af49522afc",
+  "named_profile": "hermes-test",
   "secrets_exposed": false,
   "profile_auth_test": {
     "passed": false,
@@ -21,9 +21,9 @@
     "version_id": ""
   },
   "hindsight": {
-    "passed": false,
-    "later_session_recalled": false,
-    "cross_bank_isolation": false
+    "passed": true,
+    "later_session_recalled": true,
+    "cross_bank_isolation": true
   },
   "opik_trace": {
     "passed": false,
