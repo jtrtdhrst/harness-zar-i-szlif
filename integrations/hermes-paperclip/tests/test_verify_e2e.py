@@ -14,7 +14,7 @@ class EvidenceGateTests(unittest.TestCase):
         return {
             "paperclip_run_id": run,
             "executing_agent_id": "executor",
-            "named_profile": "hermes-test",
+            "named_profile": "cho",
             "secrets_exposed": False,
             "profile_auth_test": {"passed": True, "wrong_profile_rejected": True, "dedicated_key_stored_as_secret_ref": True},
             "wiki_tool_call": {"passed": True, "paperclip_agent_run_context": True, "actual_content_read": True, "http_status": 200, "invocation_id": "invocation-123"},
@@ -37,6 +37,21 @@ class EvidenceGateTests(unittest.TestCase):
         d = self.good()
         d["named_profile"] = "default"
         self.assertTrue(any("named_profile" in s for s in module.validate(d)))
+
+    def test_blocks_retired_test_profile(self):
+        d = self.good()
+        d["named_profile"] = "hermes-test"
+        self.assertTrue(any("named_profile" in item for item in module.validate(d)))
+
+    def test_blocks_retired_release_profile(self):
+        d = self.good()
+        d["named_profile"] = "delivery-release-manager"
+        self.assertTrue(any("named_profile" in item for item in module.validate(d)))
+
+    def test_accepts_real_cpo_profile(self):
+        d = self.good()
+        d["named_profile"] = "cpo"
+        self.assertEqual(module.validate(d), [])
 
     def test_blocks_cross_run_opik_trace(self):
         d = self.good()
