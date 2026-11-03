@@ -140,6 +140,14 @@ class RuntimeSkillSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "14 real roles"):
             self.run_sync()
 
+    def test_special_skill_cannot_be_reassigned_to_cho(self):
+        key = "paperclipai/bundled/paperclip-operations/status-card-query"
+        self.doc["roles"]["coo"].remove(key)
+        self.doc["roles"]["cho"].append(key)
+        self.write()
+        with self.assertRaisesRegex(ValueError, "UNAUTHORIZED_PROFILE_SKILL_ASSIGNMENT"):
+            self.run_sync()
+
     def test_unsafe_destination_symlink_blocks(self):
         first = self.profiles / "cho" / "skills" / "paperclip-managed"
         first.symlink_to(self.sources, target_is_directory=True)
