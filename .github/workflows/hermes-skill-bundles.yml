@@ -1,0 +1,97 @@
+name: Hermes full-bundle skill-sync regression
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/hermes-paperclip/roles/**'
+      - 'integrations/hermes-paperclip/wiki/**'
+      - 'integrations/hermes-paperclip/health/**'
+      - '.github/workflows/hermes-skill-bundles.yml'
+  push:
+    branches:
+      - 'fix/hermes-gateway-isolation-20261102'
+    paths:
+      - 'integrations/hermes-paperclip/roles/**'
+      - 'integrations/hermes-paperclip/wiki/**'
+      - 'integrations/hermes-paperclip/health/**'
+      - '.github/workflows/hermes-skill-bundles.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-skills-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync-regression:
+    name: 14 roles, 120 approved company + Paperclip runtime skills (no deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without persisted GitHub credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify complete pinned manifest structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path("integrations/hermes-paperclip/roles")
+          j=json.loads((root/"profile-skill-allowlist.json").read_text())
+          assert j["schema_version"]==2
+          assert len(j["profiles"])==14
+          assert all(len(v)==len(set(v)) for v in j["profiles"].values())
+          wanted={x for v in j["profiles"].values() for x in v}
+          assert set(j["approved_sha256"])==wanted
+          assert set(j["approved_files_sha256"])==wanted
+          for skill, files in j["approved_files_sha256"].items():
+              assert files["SKILL.md"]==j["approved_sha256"][skill]
+              assert all(len(digest)==64 for digest in files.values())
+          print("PASS schema=2 roles=14 pins="+str(len(wanted))+
+                " approved_assignments="+str(sum(map(len,j["profiles"].values()))))
+          r=json.loads((root/"runtime-skill-allowlist.json").read_text())
+          assert r["schema_version"]==1
+          assert len(r["roles"])==14
+          assert sum(len(v) for v in r["roles"].values())==45
+          assert len(r["sources"])==6
+          assert set(r["sources"])=={k for v in r["roles"].values() for k in v}
+          assert all("SKILL.md" in s["approved_files_sha256"] for s in r["sources"].values())
+          print("PASS runtime roles=14 assignments=45 unique_pinned=6")
+          PY
+      - name: Run scoped full-bundle tests without API secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Atomic installer intentionally chowns staged files to Hermes UID 10000.
+          # Tests create only throwaway temporary directories and require root for chown.
+          sudo -n env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+            -s integrations/hermes-paperclip/roles/tests -v
+      - name: Validate scoped Wiki regression and retired config cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=integrations/hermes-paperclip
+          # CI has neither the Hermes MCP runtime nor the canonical private Wiki.
+          # Never claim live scoped MCP tests from skipped/offline unit cases.
+          # Compile in-memory, avoiding root-owned __pycache__ after sudo tests.
+          python3 - "$root/wiki/wiki_scoped.py" "$root/roles/reconcile_model_map.py" "$root/roles/sync_profile_identity.py" <<'PY'
+          from pathlib import Path
+          import sys
+          for path in sys.argv[1:]:
+              compile(Path(path).read_text(encoding="utf-8"), path, "exec")
+          print("PASS: scoped Wiki, model map and identity sources compile")
+          PY
+          bash -n "$root/health/readiness.sh" "$root/wiki/sync.sh"
+          test ! -e "$root/health/hermes-test-readiness.service"
+          test ! -e "$root/health/hermes-test-readiness.timer"
+          test ! -e "$root/wiki/hermes-test-wiki-sync.service"
+          test ! -e "$root/wiki/hermes-test-wiki-sync.timer"
+          test ! -e "$root/wiki/wiki_readonly.py"
+          test ! -e "$root/wiki/tests/test_wiki_readonly.py"
+          grep -q "14 real Hermes profiles" "$root/wiki/README.md"
+          grep -q 'Unit=hermes-paperclip-wiki-sync.service' "$root/wiki/systemd/hermes-paperclip-wiki-sync.timer"
+          grep -q 'ExecStart=/usr/local/libexec/hermes-paperclip-wiki-sync.sh' "$root/wiki/systemd/hermes-paperclip-wiki-sync.service"
+          echo "PASS: current Wiki systemd only; no retired Hermes Test jobs"

@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "comment": "Role-scoped built-in Hermes API tools; Paperclip agent migration and provider configuration explicitly deferred.",
+  "profiles": {
+    "ceo": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "cho": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "cmo": [
+      "clarify",
+      "image_gen",
+      "memory",
+      "skills",
+      "todo",
+      "vision",
+      "web",
+      "wiki_fs"
+    ],
+    "coo": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "cpo": [
+      "clarify",
+      "image_gen",
+      "memory",
+      "skills",
+      "todo",
+      "vision",
+      "wiki_fs"
+    ],
+    "cto": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "designer": [
+      "clarify",
+      "image_gen",
+      "memory",
+      "skills",
+      "todo",
+      "vision",
+      "wiki_fs"
+    ],
+    "email-creative": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "engineer": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "harness-engineer": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "lifecycle-ops": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "mascot-designer": [
+      "clarify",
+      "image_gen",
+      "memory",
+      "skills",
+      "todo",
+      "vision",
+      "wiki_fs"
+    ],
+    "mcp-engineer": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "web",
+      "wiki_fs"
+    ],
+    "ui-qa": [
+      "clarify",
+      "memory",
+      "skills",
+      "todo",
+      "vision",
+      "wiki_fs"
+    ]
+  }
+}

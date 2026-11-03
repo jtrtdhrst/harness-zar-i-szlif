@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "as_of_utc": "2026-11-02T18:10:00Z",
+  "scope": "Hermes Gateway and profile isolation only; no Paperclip migration or DeepSeek provider",
+  "coolify": {
+    "application_uuid": "2sganhxhhnioiqh4an9g2f4k",
+    "last_observed_status": "running:healthy",
+    "rolling_update": "jy9kogkyovkl4dw00rdxh3zj",
+    "rolling_update_status": "finished"
+  },
+  "controls": {
+    "active_profiles_checked": 14,
+    "hindsight_bank_name_checks": 14,
+    "wiki_role_scope_checks": 14,
+    "api_allowlist_checks": 14,
+    "default_and_retired_api_restricted": true,
+    "live_wiki_mcp_discovery_profiles": [
+      "cho",
+      "cpo",
+      "ceo"
+    ],
+    "wiki_mcp_tools_per_profile": 3,
+    "wiki_acl_unit_tests": 7,
+    "wiki_acl_unit_tests_passed": 7,
+    "skill_sync_unit_tests": 4,
+    "skill_sync_unit_tests_passed": 4,
+    "profile_skill_bindings": 68,
+    "unique_sha256_pinned_company_skills": 20,
+    "drift_before_repair": 4,
+    "drift_after_repair": 0,
+    "full_wiki_checksum_differences": 0,
+    "anonymous_models_401_profiles": [
+      "cho",
+      "cpo",
+      "engineer",
+      "mascot-designer",
+      "ceo",
+      "hermes-test"
+    ],
+    "role_skill_sync_timer": "hermes-profile-skills-sync.timer",
+    "wiki_source_sync_timer": "hermes-test-wiki-sync.timer",
+    "cpo_duplicate_sync_timer_disabled": true,
+    "opik_ch_o_wiki_trace": "01a19d38-1f27-7e46-a0ca-b76f2eb5208c",
+    "opik_ch_o_retain_trace": "01a19d3b-bd4b-7065-bb1b-ef76127484d2",
+    "opik_ch_o_recall_trace": "01a19d3c-5e80-75e6-84ff-b20984160132",
+    "hindsight_synthetic_marker_removed": true
+  },
+  "unsupported_or_pending": {
+    "all_fourteen_live_llm_mcp_tests": "NOT_TESTED — bounded subset of three + live CHO call",
+    "wrong_profile_authorized_key_challenge": "NOT_TESTED — requires authorized key-safe test",
+    "native_paperclip_run_context_mcp": "NO_GO — KOMAA-1512",
+    "docker_execution_sandbox": "NO_GO — container still runs root/local backend; dangerous API toolsets disabled",
+    "paperclip_adapter_migration": "DEFERRED — 0/14",
+    "deepseek_v4_1_provider": "DEFERRED",
+    "independent_pr_review_merge": "PENDING"
+  },
+  "decision": "PASS: limited pre-cutover read-only Gateway / NO-GO: unattended production agent execution",
+  "notes": "Evidence is scoped to tests actually performed; static profile readback does not substitute for live task execution."
+}

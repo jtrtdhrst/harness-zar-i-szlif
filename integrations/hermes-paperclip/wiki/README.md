@@ -1,33 +1,44 @@
-# Hermes Test: read-only Paperclip Wiki via filesystem MCP
+# Hermes Gateway — scoped read-only Paperclip Wiki MCP
 
-**Only Hermes Test** is configured. The other Paperclip agents stay on OpenCode. No edits to Paperclip Core.
+**Current production contract (2026-11-03): 14 real Hermes profiles; the retired `hermes-test` actor is NOT configured or supported.**
 
-Canonical source: the Paperclip persistent volume under `instances/default/data/wiki-root` (Markdown only). An OS-level systemd timer refreshes a separate read-only mirror in the existing Hermes persistent `/opt/data/wiki-paperclip-test`. It does NOT mount Paperclip home or any secrets. The copy is eventually consistent at approximately one-minute cadence, not an exact event-driven transaction.
+## Source, ownership and synchronization
 
-Install `sync.sh` as `/usr/local/libexec/hermes-test-wiki-sync.sh`, the `.service` and `.timer` under `/etc/systemd/system/`, then run `systemctl daemon-reload && systemctl enable --now hermes-test-wiki-sync.timer && systemctl start hermes-test-wiki-sync.service`. The sync service is root-only; it writes only the designated mirror. Use `systemctl status ...` and compare SHA-256 of `wiki/concepts/karta-zbiorki.md` at source and destination.
+Paperclip Markdown under `instances/default/data/wiki-root` is authoritative. The host mirrors Markdown only to the existing, historically named persistent path `/opt/data/wiki-paperclip-test`, using [`sync.sh`](sync.sh) with its existing `rsync` allowlist and read-only destination permissions. The snapshot is eventually consistent on a one-minute timer; it is **not** a live transactional Paperclip MCP read.
 
-Persist `wiki_readonly.py` at `/opt/data/mcp/wiki_readonly.py`. The script uses the installed Hermes `mcp` 2.x `MCPServer` and exposes only read-only `wiki_list`, `wiki_read`, `wiki_search`. Paths are confined under `/opt/data/wiki-paperclip-test`; no write operations exist. Test with `/opt/hermes/.venv/bin/python -m unittest discover -s /opt/data/mcp/tests -v` and `HERMES_HOME=/opt/data/profiles/hermes-test /opt/hermes/.venv/bin/hermes mcp test wiki_fs`.
+Production Linux service templates are tracked at [`systemd/hermes-paperclip-wiki-sync.service`](systemd/hermes-paperclip-wiki-sync.service) and [`.timer`](systemd/hermes-paperclip-wiki-sync.timer); the installed script path is `/usr/local/libexec/hermes-paperclip-wiki-sync.sh`. As verified on the VPS, `hermes-paperclip-wiki-sync.timer` is enabled and active. The obsolete `hermes-test-readiness` and `hermes-test-wiki-sync` units are disabled on the host and deleted from current repository paths; their history remains in Git.
 
-Under `/opt/data/profiles/hermes-test/config.yaml`, add an enabled `mcp_servers.wiki_fs` stdio server invoking `/opt/hermes/.venv/bin/python /opt/data/mcp/wiki_readonly.py`, with `tools.include` containing exactly the three read tools. **Also** include `wiki_fs` in `platform_toolsets.api_server` (not just the global `toolsets`), otherwise Hermes CLI can discover the server but Gateway API runs will not. Apply via a controlled Coolify restart to load profile config.
+Do **not** enable a second timer or change production mounts when pulling this repository. CHO must review release and the existing systemd configuration before any deployment.
 
-This is an explicitly read-only alternative to Paperclip's native Wiki plugin. It does NOT fix the plugin's `Plugin tools require an agent run context` boundary. It does not automatically publish Wiki changes to approved skills or prompts. Proof must come from a real Hermes Test issue-bound Paperclip run, with actual Wiki content, Hindsight recall, Opik same-run ID and independent CTO review before considering the integration ready.
+## Agent profile isolation
 
-Rollback: stop the timer; remove `wiki_fs` from Hermes Test only; restart the Gateway; preserve canonical Paperclip Wiki. Do not alter the OpenCode agents.
-
-## Hermes Test API Gateway toolset correction
-
-Profile configuration must include all three toolsets explicitly for the API server:
+The only current Wiki MCP server source is [`wiki_scoped.py`](wiki_scoped.py), installed in the Hermes persistent data volume at `/opt/data/mcp/wiki_scoped.py`. Each of the 14 real profiles binds its **own** read-only stdio server, e.g.:
 
 ```yaml
+mcp_servers:
+  wiki_fs:
+    command: /opt/hermes/.venv/bin/python
+    args:
+      - /opt/data/mcp/wiki_scoped.py
+      - --profile
+      - cho
+    tools:
+      include: [wiki_list, wiki_read, wiki_search]
 platform_toolsets:
   api_server:
-    - hermes-cli
-    - pc
     - wiki_fs
 ```
 
-The `pc` MCP connection should whitelist only the two verified published-skill read tools (`papercliplistskills`, `paperclipgetskillfile`) in this pilot. The legacy native Wiki plugin entries return `Plugin tools require an agent run context` with reusable named gateway credentials; remove them from the pilot's `pc.tools.include` to prevent model misrouting. Use the separate `wiki_fs` tools for canonical Wiki reads.
+This YAML is illustrative; preserve any other explicitly approved `platform_toolsets.api_server` values rather than replacing the entire list. The scoped code only allows own `wiki/agents/<profile>/` pages and approved shared locations, rejects traversal/symlinks, exposes only `wiki_list`, `wiki_read` and `wiki_search`, and never writes Paperclip or Hermes state.
 
-The initial real Paperclip canary KOMAA-1518, run `36428ebb-3a14-45e2-b174-5c1ef8ec09b8`, succeeded in Wiki file read, published Skills, Hindsight recall and Opik correlation. Opik trace `01a19c9e-e5b3-7eac-80d5-22c407ff275e` has `metadata.task_id=paperclip:run:36428ebb-3a14-45e2-b174-5c1ef8ec09b8`. The issue's independent CTO review is stuck behind a stale cancelled-executor recovery marker, tracked separately; do not claim review approved.
+## Validation and explicit limitations
 
-Runbooks and tests are intentionally scoped to Hermes Test; do not change or redeploy the 15 OpenCode agents.
+- Production empirical 2026-11-03: `hermes -p <real-role> mcp test wiki_fs` **14/14 PASS**, repeated after a Coolify Hermes restart. Evidence `/opt/hermes-gateway-ops/e2e-evidence/real-14-profile-wiki-mcp.json`.
+- Real scope-denial test: Engineer requesting `wiki/agents/engineer/` returned one page; CPO requesting the identical prefix returned zero pages. Hermes-native Opik traces prove actual tool spans.
+- The live scoped tests run **inside Hermes with its MCP package and Wiki snapshot**. GitHub Actions statically compiles this module and checks the current units, but **does not claim production MCP authorization from skipped offline unit tests**.
+- The snapshot Wiki MCP does **not** supply short-lived Paperclip `runtimeMcp` grants or privileged production task rights to Hermes. A real Paperclip-issued run must establish agent/run-bound tool permissions and same-run Opik traces before production adapter migration; see canonical [PR #28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28) and [PR #18](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/18).
+- Current readiness result: `PRE_CUTOVER_BLOCKED`. The `health/readiness.sh` entry uses the single installed fail-closed verifier, not the retired POC profile.
+
+## Rollback
+
+Stop only the current `hermes-paperclip-wiki-sync.timer` if restoring a prior verified deployment; retain the authoritative Paperclip Wiki and current Hermes persistent data. Do not delete snapshots or change unrelated agent configurations. Restore the independently approved prior unit files and source from Git and verify readback. Historical `Hermes Test` POC instructions remain available in Git history, not as runnable production documentation.

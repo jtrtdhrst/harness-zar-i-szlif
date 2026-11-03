@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "source": "Paperclip 2026.1023.0 live container and scoped current desired agent skill set",
+  "company_id": "9894e3c2-3317-46ca-8c72-7a442a76a78e",
+  "roles": {
+    "ceo": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "cho": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "cmo": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "coo": [
+      "paperclipai/bundled/paperclip-operations/status-card-query",
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "cpo": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "cto": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "designer": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "email-creative": [
+      "local/5ee1f0f6fb/kompas-brand-email",
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "engineer": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "harness-engineer": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/paperclip-opencode-health",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "lifecycle-ops": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "mascot-designer": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "mcp-engineer": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ],
+    "ui-qa": [
+      "paperclipai/paperclip/complain",
+      "paperclipai/paperclip/paperclip",
+      "paperclipai/paperclip/suggestion-box"
+    ]
+  },
+  "sources": {
+    "local/5ee1f0f6fb/kompas-brand-email": {
+      "runtime_name": "kompas-brand-email--8e4702b9ca",
+      "source_path": "/paperclip/instances/default/skills/9894e3c2-3317-46ca-8c72-7a442a76a78e/kompas-brand-email",
+      "approved_files_sha256": {
+        "SKILL.md": "c8c139f2020da576cf515ad41a0a80ad6df1dee07caa85cb10fca5f8135d5328"
+      }
+    },
+    "paperclipai/bundled/paperclip-operations/status-card-query": {
+      "runtime_name": "status-card-query--5374d5ae20",
+      "source_path": "/paperclip/instances/default/skills/9894e3c2-3317-46ca-8c72-7a442a76a78e/__catalog__/status-card-query--5374d5ae20",
+      "approved_files_sha256": {
+        "SKILL.md": "0c6140f51d503cbadc98723ce54c0def48e7e31ea159b0935b8ad6369291498a"
+      }
+    },
+    "paperclipai/paperclip/complain": {
+      "runtime_name": "complain",
+      "source_path": "/app/skills/complain",
+      "approved_files_sha256": {
+        "LICENSE": "d975cae6d31d9cf1c52574e5b900cfff05490f43654b0f415ab0c553e0217529",
+        "SKILL.md": "e7782ba1d01c0db56b81ae0070bb5750b0d4b82d9e438a4428af5fd5c0c07f0b"
+      }
+    },
+    "paperclipai/paperclip/paperclip": {
+      "runtime_name": "paperclip",
+      "source_path": "/app/skills/paperclip",
+      "approved_files_sha256": {
+        "SKILL.md": "c7554e6b7624eb9a20711ce01c587c34b70b83304e993bc1a6b5a69434ddfadc",
+        "references/api-reference.md": "4db104a7a398d56ee5194e9a9f4a0b6291a29286e163fcbfd50647d7adebe6a0",
+        "references/artifacts.md": "feb691e0c7ccb1f12bd9a2e4a9bf9c516c0d270b944b5f1e8ec3c2c2f7cad5d2",
+        "references/cases.md": "4b2a64820f5e5a54878abfddcc8dc5a201fd91d5cb6d955da00228535259c424",
+        "references/company-skills.md": "2503ea1e48416f3fe770871b3e4a192fa1a4f1cccfa6fcb322fd31654371ff17",
+        "references/issue-documents.md": "4514fe49d45a77fa865f5f35afd6a5cd7465108363bc8cbd7c5b41eacf744189",
+        "references/issue-workspaces.md": "0bb8d7c077d04bd1e330428ee1b3201ca3fb35357758771d5af16e9de4a4efa4",
+        "references/routines.md": "c63cb8d1eb288bf0fefe28c606afbe056c1b1ad5d42922d0696a7c7d440acfec",
+        "references/workflows.md": "b3d9f86ed9e59048957d65b528ef173bd3c629dff4229e319498e0a5b6bf54f2",
+        "scripts/paperclip-issue-update.sh": "01ce5d731fd4ac6acc317a497e5660f5e79b6228fa8130b0e5dea050f9626cb9",
+        "scripts/paperclip-upload-artifact.sh": "c5dc8a41f8620ae16dc8a2da9929d183385ef6738fde5ea9ec9b50f66799fd17",
+        "scripts/submit-agent-commentary.mjs": "d535b455d230e6f9bd5d54a5e04ea9f830f7418381a087f006c1492c5437257b"
+      }
+    },
+    "paperclipai/paperclip/paperclip-opencode-health": {
+      "runtime_name": "paperclip-opencode-health",
+      "source_path": "/paperclip/instances/default/skills/9894e3c2-3317-46ca-8c72-7a442a76a78e/__runtime__/paperclip-opencode-health",
+      "approved_files_sha256": {
+        "SKILL.md": "8cbde020730264b8a1323904eab98ecead21e7832290c0abbc7406433186fa5e"
+      }
+    },
+    "paperclipai/paperclip/suggestion-box": {
+      "runtime_name": "suggestion-box",
+      "source_path": "/app/skills/suggestion-box",
+      "approved_files_sha256": {
+        "LICENSE": "59918f8b4b42fe893df45ae5779afac4ebca1fd5bd2151fbde87fe1995e94b3a",
+        "SKILL.md": "27f806e5cc6d7da8b13889d91ad3bd7cebc97bb46160f3293145de78ae2a7440"
+      }
+    }
+  }
+}
