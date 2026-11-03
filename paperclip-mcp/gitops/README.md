@@ -10,13 +10,24 @@ deploy Cloudflare Workers, change agent models or create Paperclip tasks.
 - Uses existing Paperclip Core Git credential helper for read-only source checkout.
 - Before any deployment, Coolify's existing GitHub App checks that the exact
   40-character commit SHA is the merge commit of an actual merged GitHub PR
-  whose base is main. Direct pushes and unrelated repositories fail closed.
+  whose base is main, that a separate reviewer approved the current PR head
+  and that validate-paperclip-mcp completed successfully. Direct pushes,
+  unapproved PRs, failed CI and unrelated repositories all fail closed.
 - Only code paths in paperclip-mcp/mcp-gateway, src, plugin-runtime,
   plugin-skills, entrypoint.sh and Dockerfile can activate a deployment.
   Other monorepo components never trigger this service.
-- A merged PR is NOT by itself independent CTO/CHO review. Keep Paperclip's
-  first-class review/approval gate, and enable GitHub branch protection so
-  other callers cannot push directly to main.
+- A merged PR is NOT by itself independent CTO/CHO review. The deployed
+  controller now refuses to release a watched change unless it can read
+  a successful validate-paperclip-mcp GitHub Actions check on the PR head
+  and an APPROVED GitHub review by a different GitHub identity, submitted
+  against the current PR head commit. Outstanding CHANGES_REQUESTED denies
+  release even if another review approved. Missing/invalid CI or review
+  permissions fail closed. This does not replace Paperclip's first-class
+  CHO/CTO execution review; both governance layers remain required.
+- Configure GitHub branch rules separately for main: require a pull request,
+  an independent approving review, a successful validate-paperclip-mcp check,
+  no direct pushes and no force pushes. The existing App is intentionally
+  not given Administration:write and cannot change this policy itself.
 - No privileged GitHub credential or Coolify API token is copied into the
   release container, image, Git repository or logs. Existing signing key
   stays inside Coolify, rotated installation tokens stay in existing locations.

@@ -99,8 +99,53 @@ def save_state(data):
         os.fsync(f.fileno())
     os.replace(temp, STATE)
 
+def assess_release_attestation(data):
+    # An association with a merged PR alone is not acceptance. Require CI
+    # success and an independent, head-SHA-matching GitHub APPROVED review.
+    if not isinstance(data, dict) or not data.get("verified"):
+        raise RuntimeError("Commit is not associated with a merged main PR")
+    pr = data.get("pr")
+    head = data.get("head_sha")
+    author = data.get("author")
+    if not isinstance(pr, int) or pr <= 0 or not validate_sha(head):
+        raise RuntimeError("PR identity or exact head SHA unreadable")
+    if not isinstance(author, str) or not author.strip():
+        raise RuntimeError("PR author identity unreadable")
+    if data.get("reviews_http") != 200 or data.get("checks_http") != 200:
+        raise RuntimeError("GitHub PR review/CI evidence unreadable (missing scope?)")
+    reviews = data.get("reviews")
+    checks = data.get("checks")
+    if not isinstance(reviews, list) or not isinstance(checks, list):
+        raise RuntimeError("GitHub PR reviews/CI evidence malformed")
+    if len(reviews) >= 100 or int(data.get("checks_total", 999999)) > 100:
+        raise RuntimeError("Review or checks pagination unverified; refusing deploy")
+    matching = [c for c in checks if isinstance(c, dict) and c.get("name") == "validate-paperclip-mcp"]
+    if len(matching) != 1 or matching[0].get("status") != "completed" or matching[0].get("conclusion") != "success":
+        raise RuntimeError("Paperclip MCP PR CI did not complete successfully")
+    latest = {}
+    for review in reviews:
+        if not isinstance(review, dict):
+            raise RuntimeError("Review record malformed")
+        user = review.get("user")
+        state = review.get("state")
+        if isinstance(user, str) and user and state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[user.lower()] = review
+    if any(r.get("state") == "CHANGES_REQUESTED" for r in latest.values()):
+        raise RuntimeError("Unresolved CHANGES_REQUESTED from independent reviewer")
+    accepted = [
+        r for login, r in latest.items()
+        if login != author.lower()
+        and r.get("state") == "APPROVED"
+        and r.get("commit_id") == head
+    ]
+    if not accepted:
+        raise RuntimeError("No independent GitHub APPROVED review for current head SHA")
+    return pr
+
 def verified_pr(sha):
-    """Only Coolify's existing GitHub App may inspect authenticated PR history."""
+    # Only the Coolify-held GitHub App token reaches GitHub. A merged PR must
+    # additionally have a distinct reviewer and a green native CI check. No
+    # plain direct main push or status-only assertion can release this service.
     if not validate_sha(sha):
         raise RuntimeError("Invalid merge SHA")
     php = (
@@ -113,16 +158,23 @@ def verified_pr(sha):
         'if(!$r->ok()){throw new \\RuntimeException("PR query refused");}'
         '$m=collect($r->json()??[])->first(fn($p)=>data_get($p,"base.ref")==="main"'
         '&&!blank(data_get($p,"merged_at"))&&data_get($p,"merge_commit_sha")===$sha);'
-        'echo json_encode(["verified"=>!is_null($m),"pr"=>data_get($m,"number")]);'
+        'if(!$m){echo json_encode(["verified"=>false]);}'
+        'else{'
+        '$pr=data_get($m,"number");$head=data_get($m,"head.sha");'
+        '$reviews=$h->get("/repos/miloszspyrka-code/harness-zar-i-szlif/pulls/".$pr."/reviews",["per_page"=>100]);'
+        '$checks=$h->get("/repos/miloszspyrka-code/harness-zar-i-szlif/commits/".$head."/check-runs",["per_page"=>100]);'
+        '$rs=collect($reviews->json()??[])->map(fn($v)=>["user"=>data_get($v,"user.login"),"state"=>data_get($v,"state"),"commit_id"=>data_get($v,"commit_id")])->all();'
+        '$cs=collect($checks->json("check_runs")??[])->map(fn($v)=>["name"=>data_get($v,"name"),"status"=>data_get($v,"status"),"conclusion"=>data_get($v,"conclusion")])->all();'
+        'echo json_encode(["verified"=>true,"pr"=>$pr,"head_sha"=>$head,"author"=>data_get($m,"user.login"),'
+        '"reviews_http"=>$reviews->status(),"checks_http"=>$checks->status(),'
+        '"reviews"=>$rs,"checks"=>$cs,"checks_total"=>$checks->json("total_count")]);}'
     )
     r = run(["docker", "exec", COOLIFY, "php", "artisan", "tinker", "--execute=" + php], timeout=70)
     try:
         out = json.loads(r.stdout.strip())
     except (ValueError, json.JSONDecodeError) as err:
-        raise RuntimeError("Coolify PR provenance response invalid") from err
-    if not out.get("verified") or not isinstance(out.get("pr"), int):
-        raise RuntimeError("Main commit has no verified merged pull request; not releasing")
-    return out["pr"]
+        raise RuntimeError("Coolify PR attestation response invalid") from err
+    return assess_release_attestation(out)
 
 def get_container_id():
     r = run(["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=" + PROJECT_ID,
