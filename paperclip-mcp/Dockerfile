@@ -13,6 +13,12 @@
 ARG PAPERCLIP_BASE=ghcr.io/paperclipai/paperclip:2026.1012.0
 FROM ${PAPERCLIP_BASE}
 
+# The running MCP image contains harness-owned overlay code on top of upstream Core.
+# Preserve both source identities; the release controller stamps the exact overlay SHA.
+ARG PAPERCLIP_BASE
+LABEL org.opencontainers.image.source="https://github.com/miloszspyrka-code/harness-zar-i-szlif" \
+      org.opencontainers.image.base.name="${PAPERCLIP_BASE}"
+
 WORKDIR /app
 
 COPY mcp-gateway /opt/paperclip-mcp/mcp-gateway
