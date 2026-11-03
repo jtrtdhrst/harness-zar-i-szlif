@@ -32,6 +32,14 @@ On the VPS, this patch passed `106/106` focused Vitest tests and the adapter Typ
 ## Still blocked: actual run-scoped MCP bridge
 Paperclip already generates run-scoped MCP grants in `server/src/services/heartbeat/run-preparation.ts` and passes them via `AdapterExecutionContext.runtimeMcp`. The existing Hermes Gateway adapter does not implement transport and Hermes Gateway `/v1/runs` has no verified private, ephemeral MCP override contract. Until a reviewed integration exists that binds each grant to **the exact agentId + runId + session, expires/revokes it, rejects cross-agent/cross-run access, and never logs or persists the secret**, this patch must intentionally fail closed. `wiki_fs` readonly smoke checks are not substitutes for the assigned Paperclip MCP tools.
 
-The generic Paperclip adapter key also failed a real CHO run with `hermes_gateway_auth_failed` (KOMAA-1546), and the connection/security layer refused an automated transfer of private CHO profile credentials. Enroll the dedicated key through the approved Paperclip encrypted-secret workflow. Do not bypass this boundary using SSH/DB/alternate encodings.
+The prior CHO canary KOMAA-1546 returned `hermes_gateway_auth_failed`, but later inspection proved that Cloudflare Access blocked some IPv6 requests *before* Hermes. This 401 **does not establish a bad Paperclip secret**. Exact-VPS IPv6 Access routing is now repaired; repeat a real authenticated Paperclip-issued canary after the current CHO runs finish. The connection/security layer refused an automated transfer of private CHO profile credentials. Enroll the dedicated key through the approved Paperclip encrypted-secret workflow. Do not bypass this boundary using SSH/DB/alternate encodings.
 
 **No bulk migration or deployment success until** an authenticated native Paperclip → Hermes CHO run succeeds with its correct model and authorized named MCP tool call, native Hindsight retained/independent recall, same-run Opik correlation, independent CHO acceptance, verified production image digest, and rollback test. The 14 agents remain on `opencode_local` until those gates are green.
+
+## Canonical ownership — no duplicated production code
+
+- This PR owns **only** `.github/workflows/hermes-adapter-candidate.yml` and the two files in `integrations/hermes-paperclip/adapter-patches/`.
+- Real-agent E2E evidence verification belongs to [PR #28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28) on `KOMAA-1512`.
+- Full-bundle schema-2 role-skill synchronization, 75 company skill assignments and regression tests belong to [PR #9](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/9).
+- Git-backed source and Coolify cutover gate belong to [PR #6](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/6).
+- Do not merge these independently as proof of a working Paperclip → Hermes run. A native E2E run with a matching Paperclip UUID, permissioned MCP call, Hindsight exact recall and Opik trace remains required.
