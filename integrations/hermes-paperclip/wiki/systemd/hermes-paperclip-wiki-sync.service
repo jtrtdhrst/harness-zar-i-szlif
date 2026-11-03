@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync canonical Paperclip Wiki to Hermes Gateway scoped snapshot
+ConditionPathIsDirectory=/var/lib/docker/volumes/phime3w5l50scx9q4tjoelcx_paperclip-home/_data/instances/default/data/wiki-root
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/hermes-paperclip-wiki-sync.sh
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
