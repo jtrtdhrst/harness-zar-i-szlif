@@ -1,5 +1,12 @@
 # Hermes ↔ Paperclip — infrastructure E2E harness
 
+> **Current release verdict (2026-11-03 UTC): PRE_CUTOVER_BLOCKED, do not migrate.** Paperclip has 14/14 agents still on `opencode_local`, Hermes production is `running:healthy`; test of 14/14 real profile inference succeeded (one strict-format deviation), 14/14 Wiki MCP discovery succeeded after restart, 75/75 company-pinned skills passed. Six critical acceptance gates remain: full 120 desired skill assignments, actual run-scoped Paperclip MCP, approved full role prompt in Paperclip-issued Hermes run, Opik correlation for that **same real run**, CPO local Hindsight exact independent recall, and native authenticated real-agent canary. Unverified is not PASS.
+>
+> **Canonical PR ownership:** [#28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28) E2E verifier and this README; [#18](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/18) Hermes adapter patch only; [#9](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/9) production schema-2 skill sync, Wiki, toolsets; [#6](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/6) Git-backed Coolify build/release gate. No duplicate code under `ops/`; no Paperclip Core changes. Production operator runbook: `/opt/hermes-gateway-ops/PRODUCTION-CUTOVER-RUNBOOK.md`.
+>
+> **Authentication evidence correction:** prior CHO canary KOMAA-1546 HTTP 401 occurred *before* Cloudflare Access's missing VPS IPv6 bypass was repaired. It does **not** prove the Paperclip encrypted profile key is wrong. HTTPS from VPS to Hermes now passes IPv4+IPv6 Access and properly rejects unauthenticated requests at Hermes; a new authenticated Paperclip-issued canary remains necessary. **Hindsight is 13 profiles Cloud + CPO local_external**; CPO's local exact read-after-retain has not passed.
+
+
 **Repository:** `harness-zar-i-szlif`  
 **Owner:** Paperclip project `04 · Operations / Hermes-Paperclip E2E`  
 **Coolify:** `Hermes - Paperclip Sync` (standalone read-only check service)  
@@ -7,38 +14,42 @@
 
 ## Execution contract
 
-Paperclip is the **control plane** (tasks, approvals, published Wiki and skills); Hermes Gateway is the **runtime**, one named Hermes profile per Paperclip agent; Hindsight (Vectorize.ai) is profile-isolated memory; Opik is tracing. Wiki is canonical Markdown in Paperclip, read *live* through its Named MCP Gateway; do not copy unreviewed content into the approved Wiki. Skill changes must be reviewed and versioned. **No Paperclip Core modifications.**
+Paperclip is the **control plane** (tasks, approvals, published Wiki and skills); Hermes Gateway is the **runtime**, one named Hermes profile per Paperclip agent; Hindsight (Vectorize.ai) is profile-isolated memory; Opik is tracing. Wiki is canonical Markdown in Paperclip; current Hermes `wiki_fs` uses a verified scoped read-only snapshot, and the desired live Paperclip Named MCP bridge is not yet implemented per-run. Do not copy unreviewed content into the approved Wiki. Skill changes must be reviewed and versioned. **No Paperclip Core modifications.**
 
 ## Safety boundaries
 
 - Do not disable authentication, forward vault secrets into logs, share keys across profiles, copy files from other agents, expose private admin routes or publish diagnostics publicly.
-- Do not re-enable company-wide watchdogs, cron, routines, heartbeats, or GitHub Actions.
+- Do not re-enable company-wide watchdogs, cron, routines, or heartbeats without review. Read-only GitHub Actions CI for tests is allowed; CI must not deploy or modify production.
 - Each task runs on an isolated git worktree derived from `main`, with branch identity traceable to its Paperclip issue; one writer per branch.
-- Only the `Hermes Test` agent and the bounded integration scope may be mutated during the initial acceptance. No prod cutover until independent review.
+- Only the bounded, supervised real-agent CHO canary may temporarily change adapters after confirming no live or queued CHO run; rollback is mandatory on any failed gate. No bulk cutover until independent review.
 - Watchdog is native and attached **only** to the test epic. It monitors stopped subtree work, not a polling replacement; can escalate but never self-approve or automatically merge.
 - Preserve Coolify's existing Gateway and sync-project deployments until rollback/readback acceptance.
 
 ## Definition of Done (all required, none implied by a green healthcheck)
 
-1. A **dedicated** Hermes `hermes-test` API key exists and is stored as an encrypted Paperclip `secret_ref`. The Paperclip adapter points to `/p/hermes-test`. A real authenticated profile request succeeds; default/wrong key is rejected. No value is printed in evidence.
-2. Paperclip Tool Connection's Bearer is valid for its configured MCP host; **actual `tools/call`** for a page in `wiki/agents/ceo/AGENTS.md` succeeds in a Paperclip-issued Hermes Test run. `initialize` and `tools/list` do not count as E2E.
+1. A **dedicated** Hermes `cho` API key must match an encrypted Paperclip `secret_ref`. The Paperclip adapter must use `/p/cho`. A real authenticated profile request succeeds; default/wrong key is rejected. No value is printed in evidence.
+2. Paperclip Tool Connection's Bearer is valid for its configured MCP host; **actual `tools/call`** for a role-approved page under `wiki/agents/cho/` succeeds in a Paperclip-issued, run-scoped CHO Hermes run. `initialize` and `tools/list` do not count as E2E.
 3. The same run reads a published skill version and records its ID/version marker. No unauthorized writes.
-4. The Hermes `hindsight` provider retains and later recalls a synthetic marker in the `hermes-hermes-test` bank. Control bank `hermes-ceo` must not return it.
+4. The Hermes `hindsight` provider retains and later recalls a synthetic marker in the `hermes-cho` bank. Control bank `hermes-cpo` must not return it.
 5. Opik records a **correlated** trace for that same Paperclip run, with model, tool spans and token usage. Synthetic unrelated traces do not count.
 6. Paperclip run ID, Tool Gateway invocation ID, Opik trace ID, named profile ID, published skill version, deployed digest/SHA, smoke status and rollback check are captured in one evidence JSON.
-7. Independent CTO review of scope/security + independent Delivery & Release Manager acceptance of reproducible deployment; no self-review. All dependencies resolved, no live run or untracked changes, then issue closure.
+7. Independent CHO approval of the Harness Engineer's implementation and separate review of the reproducible release; no self-review and no retired Release Manager. All dependencies resolved, no live run or untracked changes, then issue closure.
 8. Documentation, scripts and tests are committed to a feature branch and PR; `main` changes only after review and explicit production approval.
 
 ## How to run tests
 
 ```bash
-python3 integrations/hermes-paperclip/verify_e2e.py --evidence integrations/hermes-paperclip/evidence.example.json --expected-profile hermes-test
+python3 integrations/hermes-paperclip/verify_e2e.py --evidence integrations/hermes-paperclip/evidence.example.json --expected-profile cho
 python3 -m unittest discover -s integrations/hermes-paperclip/tests -v
 ```
 
 The example evidence is intentionally **not passing**. The validator returns nonzero until all real artifacts have been collected. Do not create fabricated success receipts.
 
 For local origin-only checks: `sudo /opt/hermes-paperclip-sync/check.sh`. Its green state validates mounts and HTTP auth **only**.
+
+## Historical POC records — 2026-11-01/02 (retired Hermes Test, NOT a production acceptance)
+
+The following records are retained only for forensic provenance. The retired `hermes-test` and `delivery-release-manager` actors must not be recreated. Their old URLs, keys, run statuses and snapshots are historical and cannot be used as current production evidence.
 
 ## Known starting faults, 2026-11-01
 
@@ -64,7 +75,7 @@ In that real run: `gpt-6-luna` invoked the actual Paperclip Named MCP `paperclip
 
 **Blocking failure:** `paperclipai.plugin-llm-wiki:wiki_list_pages` returns `Plugin tools require an agent run context` when invoked from the real Hermes Gateway session, despite an issue-bound Paperclip invocation. The Paperclip Named MCP transport currently lacks the trusted execution context that the native plugin requires. This is **not** fixed by model changes, MCP catalog discovery, or retrying prompts. The Opik trace metadata also contains the issue ID, not the exact Paperclip run ID; stronger structured correlation is still required for strict release evidence. The issue is blocked without automatic retries until runtime context is fixed.
 
-**Acceptance receipt:** `evidence/2026-11-02-canary-v2.json` contains factual partial passes and explicitly failing flags for Wiki, structured Opik run correlation, release, and independent CTO review. Run `verify_e2e.py --expected-profile hermes-test` against this file; **BLOCKED is the expected honest result**, not a test-suite defect. Do not merge or perform production cutover on partial proof.
+**Acceptance receipt:** `evidence/2026-11-02-canary-v2.json` contains factual partial passes and explicitly failing flags for Wiki, structured Opik run correlation, release, and independent CTO review. Run `verify_e2e.py --expected-profile cho` against this file; **BLOCKED is the expected honest result**, not a test-suite defect. Do not merge or perform production cutover on partial proof.
 
 ## Native per-run MCP contract — confirmed gap (2026-11-02)
 
