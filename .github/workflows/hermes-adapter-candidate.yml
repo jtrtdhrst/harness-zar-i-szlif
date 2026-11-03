@@ -1,0 +1,52 @@
+name: Hermes adapter candidate regression
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/hermes-paperclip/adapter-patches/**'
+      - '.github/workflows/hermes-adapter-candidate.yml'
+  push:
+    branches:
+      - 'infra/hermes-real-agent-acceptance-20261103'
+    paths:
+      - 'integrations/hermes-paperclip/adapter-patches/**'
+      - '.github/workflows/hermes-adapter-candidate.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-adapter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-adapter-regression:
+    name: Pinned Paperclip Hermes adapter (no deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout candidate (without persisted GitHub credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify patch against pinned production image
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH="${GITHUB_WORKSPACE}/integrations/hermes-paperclip/adapter-patches/hermes-gateway-20261103.patch"
+          test -f "$PATCH"
+          printf '%s  %s\n' '1ebeb7ef70bc3c55aa4f70c4dd6f82e8a34fa44bf4666f6a2d71984b725125df' "$PATCH" | sha256sum -c -
+          docker run --rm --network none --user root \
+            -v "$PATCH:/tmp/hermes-gateway-20261103.patch:ro" \
+            --entrypoint /bin/sh \
+            ghcr.io/paperclipai/paperclip:2026.1023.0 -ec '
+              cd /app
+              printf "%s  %s\n" e3593d03d40b37b215d68342c8d615d26014bf5892eef79151b6153737764701 packages/adapters/hermes/src/gateway/server/execute.ts | sha256sum -c -
+              printf "%s  %s\n" 279504640a2464150ed92210002f400cfbe3d6d3855a6583484e4a120178b7c4 packages/adapters/hermes/src/gateway/server/test.ts | sha256sum -c -
+              printf "%s  %s\n" 5cd8988db80e10961a8d80f915513c90001e24a599988b6b9e1f7e5fbf4b4984 packages/adapters/hermes/src/gateway/server/execute.test.ts | sha256sum -c -
+              git apply --check /tmp/hermes-gateway-20261103.patch
+              git apply /tmp/hermes-gateway-20261103.patch
+              cd packages/adapters/hermes
+              pnpm exec vitest run --config vitest.config.ts src/gateway/server/execute.test.ts
+              pnpm exec tsc --project tsconfig.json --noEmit
+            '
