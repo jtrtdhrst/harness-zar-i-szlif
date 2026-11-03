@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh scoped Paperclip GitHub App installation credentials via Coolify
+After=docker.service network-online.target
+Requires=docker.service
+ConditionPathExists=/var/run/docker.sock
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+ExecStart=/usr/bin/python3 /usr/local/libexec/paperclip-github-app-refresh.py
+TimeoutStartSec=100

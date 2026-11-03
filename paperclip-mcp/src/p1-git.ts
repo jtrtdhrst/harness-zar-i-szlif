@@ -187,16 +187,22 @@ function scrub(text: string): string {
  */
 export function hasGitHubTokenEnv(): { present: boolean; kind: string | null; reason: string | null } {
   const token = readBoundGitToken();
-  if (token) return { present: true, kind: "env-token", reason: null };
+  if (token) return {
+    present: true,
+    kind: process.env.PAPERCLIP_GITHUB_APP_TOKEN_FILE ? "github-app-installation" : "env-token",
+    reason: null,
+  };
   const placeholder = [process.env.GH_TOKEN, process.env.GITHUB_TOKEN].find((value) =>
     isUnboundGitCredentialSentinel(value),
   );
   return {
     present: false,
     kind: null,
-    reason: placeholder
-      ? "GH_TOKEN/GITHUB_TOKEN holds an operator placeholder (no GitHub credential bound), not a token"
-      : "No GitHub credential is bound to this runtime",
+    reason: process.env.PAPERCLIP_GITHUB_APP_TOKEN_FILE
+      ? "Scoped GitHub App installation credential missing, malformed or expired; repair the token refresh timer"
+      : placeholder
+        ? "GH_TOKEN/GITHUB_TOKEN holds an operator placeholder (no GitHub credential bound), not a token"
+        : "No GitHub credential is bound to this runtime",
   };
 }
 
@@ -205,6 +211,20 @@ export function hasGitHubTokenEnv(): { present: boolean; kind: string | null; re
 // read-only. A fine-grained PAT or app token may legitimately carry push;
 // reporting it as missing is a false denial. Unknown/unfetchable scopes stay
 // fail-closed (conservative fallback at the call site).
+// GitHub App installation tokens do not advertise effective grants through
+// the user-centric repository .permissions.push flag (it can be false despite
+// confirmed write access). The scoped grant has already been verified against
+// GitHub's signed installation response by readBoundGitToken().
+export function deriveScopedInstallationPermissions(slug: string): {
+  allowedOperations: string[];
+  missingPermissions: string[];
+} {
+  if (slug === "miloszspyrka-code/zar-i-szlif" || slug === "miloszspyrka-code/harness-zar-i-szlif") {
+    return { allowedOperations: ["read", "push", "create_pr"], missingPermissions: [] };
+  }
+  return { allowedOperations: [], missingPermissions: ["repository-not-in-installation-scope"] };
+}
+
 export function deriveGitPermissions(perms: { push?: unknown; admin?: unknown; pull?: unknown } | null): {
   allowedOperations: string[];
   missingPermissions: string[];
@@ -430,6 +450,9 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           allowedOperations = ["read"];
           missingPermissions = [];
         } else if (slug && repositoryAccessible) {
+          if (token.kind === "github-app-installation") {
+            ({ allowedOperations, missingPermissions } = deriveScopedInstallationPermissions(slug));
+          } else {
           const perms = await fetchRepoPermissions(slug, boundToken);
           if (perms) {
             ({ allowedOperations, missingPermissions } = deriveGitPermissions(perms));
@@ -437,6 +460,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
             // Scopes unfetchable: fail closed exactly as before.
             allowedOperations = ["read"];
             missingPermissions = ["contents:write", "pull-requests:write"];
+          }
           }
         } else {
           allowedOperations = ["read"];
