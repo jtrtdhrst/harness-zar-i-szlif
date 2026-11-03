@@ -505,7 +505,29 @@ const GIT_SUBCOMMAND_ALLOW = new Set([
   "clean", // single-file only: git clean -f -- <path> (validated below)
 ]);
 
-const GH_SUBCOMMAND_ALLOW = new Set(["pr"]);
+const GH_SUBCOMMAND_ALLOW = new Set(["pr", "api"]);
+
+/** Whitelist only native read-only check and review REST requests for the
+ * two known repositories. No write verbs, custom flags, or hosts allowed. */
+export function isAllowedReadOnlyGithubApiArgv(argv: string[]): boolean {
+  const bin = (argv[0] ?? "").split("/").pop();
+  if (bin !== "gh" || argv[1] !== "api") return false;
+  if (argv.length !== 3 && !(argv.length === 5 && argv[3] === "--jq" && argv[4] === ".sha")) return false;
+  const path = argv[2] ?? "";
+  const scope = /^repos\/miloszspyrka-code\/(?:zar-i-szlif|harness-zar-i-szlif)\//.exec(path);
+  if (!scope) return false;
+  const resource = path.slice(scope[0].length);
+  const commit = /^commits\/([a-zA-Z0-9][a-zA-Z0-9._%-]{0,127})$/.exec(resource);
+  if (commit && !/%(?![0-9a-fA-F]{2})/.test(commit[1]) && !commit[1].includes(".."))
+    return argv.length === 3 || (argv[3] === "--jq" && argv[4] === ".sha");
+  if (argv.length !== 3) return false;
+  if (/^commits\/[0-9a-fA-F]{40}\/check-runs\?per_page=100$/.test(resource)) return true;
+  if (/^pulls\?head=miloszspyrka-code:[a-zA-Z0-9][a-zA-Z0-9._%-]{0,127}&state=all&per_page=5$/.test(resource)
+      && !resource.includes("..")) return true;
+  if (/^pulls\/[1-9][0-9]{0,8}$/.test(resource)) return true;
+  if (/^pulls\/[1-9][0-9]{0,8}\/reviews\?per_page=100$/.test(resource)) return true;
+  return false;
+}
 
 const GIT_CLEAN_ALLOW = new Set(["-f"]);
 
@@ -569,6 +591,9 @@ function checkExecPolicy(argv: string[]): void {
   }
   if (bin === "gh") {
     const sub = argv[1];
+    if (sub === "api" && !isAllowedReadOnlyGithubApiArgv(argv)) {
+      throw err("command_denied", "GitHub API command refused: only read-only checks and PR paths in the two approved repositories are allowed");
+    }
     if (!sub || !GH_SUBCOMMAND_ALLOW.has(sub)) {
       throw err("command_denied", `gh subcommand not allowlisted: ${sub ?? "(missing)"} (only read/publish PR operations)`);
     }

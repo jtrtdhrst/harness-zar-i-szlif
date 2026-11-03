@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PaperclipApiClient } from "./client.js";
-import { createWorkspaceNativeTools, ghEnv, runJailedExec } from "./workspace-native.js";
+import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv } from "./workspace-native.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
@@ -211,5 +211,36 @@ describe("run-bound Git delivery tool handlers", () => {
     expect(spawnMock.mock.calls.some(([, args]) => args.includes(name === "paperclipGitCommit" ? "commit" : "push"))).toBe(true);
     if (name === "paperclipGitCommit") expect(body.after.head).toBe("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     else expect(body.shaMatch).toBe(true);
+  });
+});
+
+describe("read-only GitHub REST command boundary", () => {
+  const base = "repos/miloszspyrka-code/harness-zar-i-szlif/";
+  const product = "repos/miloszspyrka-code/zar-i-szlif/";
+  it("permits exact native checks/review reads", () => {
+    for (const args of [
+      ["gh","api",base+"commits/KOMAA-1465","--jq",".sha"],
+      ["gh","api",product+"commits/feature%2Fsafe","--jq",".sha"],
+      ["gh","api",base+"commits/"+"a".repeat(40)+"/check-runs?per_page=100"],
+      ["gh","api",base+"pulls?head=miloszspyrka-code:KOMAA-1465&state=all&per_page=5"],
+      ["gh","api",product+"pulls/141"],
+      ["gh","api",base+"pulls/17/reviews?per_page=100"],
+    ]) expect(isAllowedReadOnlyGithubApiArgv(args)).toBe(true);
+  });
+  it("rejects gh api mutations, foreign repos, custom flags and excess data", () => {
+    for (const args of [
+      ["gh","api",base+"pulls","--method","POST"],
+      ["gh","api",base+"pulls","-F","title=bad"],
+      ["gh","api",base+"pulls/17","--method","PATCH"],
+      ["gh","api","repos/other/foreign/pulls/1"],
+      ["gh","api",base+"actions/secrets"],
+      ["gh","api",base+"contents/private"],
+      ["gh","api",base+"pulls/17/comments"],
+      ["gh","api",base+"pulls/17","--jq",".token"],
+      ["gh","api",base+"pulls/17/reviews?per_page=200"],
+      ["gh","api",base+"commits/..%2F..%2Funsafe","--jq",".sha"],
+      ["gh","api",base+"pulls?state=all"],
+      ["gh","api",base+"commits/"+"a".repeat(40)+"/check-runs?per_page=100","--method","POST"],
+    ]) expect(isAllowedReadOnlyGithubApiArgv(args)).toBe(false);
   });
 });
