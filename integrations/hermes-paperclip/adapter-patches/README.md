@@ -36,6 +36,10 @@ The prior CHO canary KOMAA-1546 returned `hermes_gateway_auth_failed`, but later
 
 **No bulk migration or deployment success until** an authenticated native Paperclip → Hermes CHO run succeeds with its correct model and authorized named MCP tool call, native Hindsight retained/independent recall, same-run Opik correlation, independent CHO acceptance, verified production image digest, and rollback test. The 14 agents remain on `opencode_local` until those gates are green.
 
+## Real post-network-repair origin auth failure
+
+Paperclip actually retried CHO on 2026-11-03 as `KOMAA-1562` / run `7f7df793-3ff0-4d17-b287-3126c34fcbff`. It still returned `hermes_gateway_auth_failed`; Hermes origin log at 19:54:19 UTC specifically reported **invalid API key** for `POST /p/cho/v1/runs`. CHO rolled back immediately to `opencode_local`/GPT-6 Luna and the canary was cancelled with evidence. Unlike the original pre-IPv6-fix 401, this confirms the stored Paperclip credential does not authenticate as the active CHO profile. Fix via authorized encrypted secret binding, not via prompt, file, DB or bypass.
+
 ## Canonical ownership — no duplicated production code
 
 - This PR owns **only** `.github/workflows/hermes-adapter-candidate.yml` and the two files in `integrations/hermes-paperclip/adapter-patches/`.
