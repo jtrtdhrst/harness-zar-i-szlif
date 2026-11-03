@@ -1,3 +1,7 @@
+> **Production update — 2026-11-03:** This document records the 2026-11-02 Gateway baseline. The current approved company-skill synchronizer has been upgraded to **schema 2**: 14 profiles, 75 company skill assignments, 27 unique SHA-256 pinned skill bundles, including all reference/scripts/assets. It is the same version deployed in `/opt/hermes-gateway-ops/sync_profile_skills.py` on VPS. The old figures “68 assignments / 20 pins / 4 tests” below are **historical only**. The new production schema-2 unit suite passed **12/12** including per-role isolation, idempotence, source+asset hash enforcement, symlink denial and destination drift repair. See `.github/workflows/hermes-skill-bundles.yml` for GitHub Actions regression; no automated deploy.
+>
+> **Cutover remains blocked:** the dedicated native Paperclip issue run has not yet passed authenticated `hermes_gateway` → run-scoped Paperclip MCP → independent Hindsight exact recall (especially CPO local_external) → same-run Opik. That gate is owned by canonical [PR #28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28); adapter candidate belongs to [PR #18](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/18). Do not merge as E2E acceptance.
+
 # Hermes Gateway — isolated profile operations and pre-cutover readiness
 
 **Validated:** 2026-11-02 UTC  
