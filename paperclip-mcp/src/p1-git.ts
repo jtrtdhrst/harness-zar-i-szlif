@@ -87,12 +87,15 @@ export function evaluateMergeGate(meta: Record<string, unknown>, expectedHeadSha
   if (String(meta?.reviewDecision ?? "").toUpperCase() === "CHANGES_REQUESTED") {
     return { ok: false, code: "refused", message: "required review not satisfied (CHANGES_REQUESTED); branch protection is never bypassed" };
   }
+  if (String(meta?.reviewDecision ?? "").toUpperCase() !== "APPROVED") {
+    return { ok: false, code: "refused", message: "independent GitHub review approval is missing or unreadable (APPROVED required)" };
+  }
   const mergeable = String(meta?.mergeable ?? "").toUpperCase();
   if (mergeable !== "MERGEABLE") {
     return { ok: false, code: "refused", message: `mergeable=${mergeable || "UNKNOWN"} does not prove the PR can merge` };
   }
   const mergeState = String(meta?.mergeStateStatus ?? "").toUpperCase();
-  if (!["CLEAN", "HAS_HOOKS", "UNSTABLE"].includes(mergeState)) {
+  if (!["CLEAN", "HAS_HOOKS"].includes(mergeState)) {
     return { ok: false, code: "refused", message: `mergeStateStatus=${mergeState || "UNKNOWN"} does not prove required checks and review are satisfied` };
   }
   return { ok: true, code: "ok", message: "mergeable" };
