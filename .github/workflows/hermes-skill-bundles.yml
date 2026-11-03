@@ -1,0 +1,59 @@
+name: Hermes full-bundle skill-sync regression
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/hermes-paperclip/roles/**'
+      - '.github/workflows/hermes-skill-bundles.yml'
+  push:
+    branches:
+      - 'fix/hermes-gateway-isolation-20261102'
+    paths:
+      - 'integrations/hermes-paperclip/roles/**'
+      - '.github/workflows/hermes-skill-bundles.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-skills-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync-regression:
+    name: Production schema-2 approved full-bundle tests (no deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without persisted GitHub credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify complete pinned manifest structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path("integrations/hermes-paperclip/roles")
+          j=json.loads((root/"profile-skill-allowlist.json").read_text())
+          assert j["schema_version"]==2
+          assert len(j["profiles"])==14
+          assert all(len(v)==len(set(v)) for v in j["profiles"].values())
+          wanted={x for v in j["profiles"].values() for x in v}
+          assert set(j["approved_sha256"])==wanted
+          assert set(j["approved_files_sha256"])==wanted
+          for skill, files in j["approved_files_sha256"].items():
+              assert files["SKILL.md"]==j["approved_sha256"][skill]
+              assert all(len(digest)==64 for digest in files.values())
+          print("PASS schema=2 roles=14 pins="+str(len(wanted))+
+                " approved_assignments="+str(sum(map(len,j["profiles"].values()))))
+          PY
+      - name: Run scoped full-bundle tests without API secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Atomic installer intentionally chowns staged files to Hermes UID 10000.
+          # Tests create only throwaway temporary directories and require root for chown.
+          sudo -n python3 -m unittest discover \
+            -s integrations/hermes-paperclip/roles/tests -v
