@@ -445,3 +445,5 @@ export function createLiveVerifyTools(client: PaperclipApiClient): LiveVerifyToo
   ];
 }
 
+
+// Automated Coolify Compose GitOps canary: validates reviewed main -> image SHA -> running MCP.
