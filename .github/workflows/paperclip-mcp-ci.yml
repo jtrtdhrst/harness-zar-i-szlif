@@ -2,9 +2,6 @@ name: Paperclip MCP CI
 
 on:
   pull_request:
-    paths:
-      - "paperclip-mcp/**"
-      - ".github/workflows/paperclip-mcp-ci.yml"
   push:
     branches: [main]
     paths:
