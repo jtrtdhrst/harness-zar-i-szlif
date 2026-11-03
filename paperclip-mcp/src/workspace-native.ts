@@ -14,7 +14,7 @@
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, lstatSync, readFileSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import type { PaperclipApiClient } from "./client.js";
 import { formatErrorResponse, formatTextResponse } from "./format.js";
@@ -1329,7 +1329,46 @@ export function isUnboundGitCredentialSentinel(value: string | undefined | null)
  * spellings are considered so a placeholder in one of them cannot hide a real
  * token in the other.
  */
+// Validate the credential independently from filesystem I/O, so expiry and
+// repository/permission isolation can be exercised in negative unit tests.
+export function validateGithubAppTokenRecord(payload: unknown, now: number = Date.now()): string | null {
+  if (!isRecord(payload)) return null;
+  if (payload.app_id !== 5398752 || payload.installation_id !== 173456397) return null;
+  if (!isRecord(payload.permissions)
+      || payload.permissions.contents !== "write"
+      || payload.permissions.pull_requests !== "write"
+      || payload.permissions.metadata !== "read"
+      || Object.keys(payload.permissions).length !== 3) return null;
+  if (!Array.isArray(payload.repositories)
+      || payload.repositories.length !== 2
+      || payload.repositories[0] !== "miloszspyrka-code/harness-zar-i-szlif"
+      || payload.repositories[1] !== "miloszspyrka-code/zar-i-szlif") return null;
+  if (typeof payload.expires_at !== "string"
+      || !Number.isFinite(Date.parse(payload.expires_at))
+      || Date.parse(payload.expires_at) < now + 120_000) return null;
+  if (typeof payload.token !== "string"
+      || payload.token.length < 40 || payload.token.length > 512
+      || /\s/.test(payload.token)) return null;
+  return payload.token;
+}
+
+// This file is updated atomically by the root-owned host rotation timer; node
+// only reads it. Once configured, it is the EXCLUSIVE credential source.
+// Missing, malformed, over-broad or expired token => fail closed; never fall
+// back to an old PAT from GH_TOKEN, GITHUB_TOKEN, or a git credential store.
 export function readBoundGitToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  const file = env.PAPERCLIP_GITHUB_APP_TOKEN_FILE;
+  if (typeof file === "string" && file.length > 0) {
+    if (file !== "/paperclip/github-auth-bin/installation-token.json") return null;
+    try {
+      const st = lstatSync(file);
+      if (!st.isFile() || st.isSymbolicLink() || st.size < 100 || st.size > 8192 || (st.mode & 0o007) !== 0) return null;
+      const payload: unknown = JSON.parse(readFileSync(file, "utf8"));
+      return validateGithubAppTokenRecord(payload);
+    } catch {
+      return null;
+    }
+  }
   return (
     [env.GH_TOKEN, env.GITHUB_TOKEN]
       .map((value) => (typeof value === "string" ? value.trim() : ""))
