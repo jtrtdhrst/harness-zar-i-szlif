@@ -76,6 +76,15 @@ class ReleaseSafetyTests(unittest.TestCase):
             self.assertEqual(image_id, "sha256:" + "c"*64)
             self.assertEqual(len(invoked), 2)
 
+    def test_actual_public_mcp_denial_probe_requires_401(self):
+        with patch.object(m, "run", return_value=SimpleNamespace(stdout="401", returncode=0)):
+            m.verify_anonymous_mcp_denial()
+        for code in ["200", "403", "404", "500", "", "301"]:
+            with self.subTest(status=code):
+                with patch.object(m, "run", return_value=SimpleNamespace(stdout=code, returncode=0)):
+                    with self.assertRaisesRegex(RuntimeError, "must return 401"):
+                        m.verify_anonymous_mcp_denial()
+
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")
         self.assertEqual(m.SERVICE,"paperclip-mcp")
