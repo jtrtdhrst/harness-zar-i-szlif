@@ -759,7 +759,7 @@ export function nativeGitPushBranchAllowed(branch: string, _allowProtected = fal
   return branch !== "main" && branch !== "master" && !branch.startsWith("release/");
 }
 
-async function syncIssuePullRequestProduct(
+export async function syncIssuePullRequestProduct(
   client: PaperclipApiClient,
   ws: ResolvedWorkspace,
   issueId: string,
@@ -786,7 +786,8 @@ async function syncIssuePullRequestProduct(
   if (matching.length === 1) {
     const id = isRecord(matching[0]) && typeof matching[0].id === "string" ? matching[0].id : null;
     if (!id) throw err("review_evidence_unlinked", "Existing PR work product missing id");
-    await client.requestJson("PATCH", "/work-products/" + enc(id), { body: { metadata } });
+    const existingMetadata = isRecord(matching[0]) && isRecord(matching[0].metadata) ? matching[0].metadata : {};
+    await client.requestJson("PATCH", "/work-products/" + enc(id), { body: { metadata: { ...existingMetadata, ...metadata } } });
     return id;
   }
   const result = await client.requestJson<Record<string, unknown>>("POST", path, {

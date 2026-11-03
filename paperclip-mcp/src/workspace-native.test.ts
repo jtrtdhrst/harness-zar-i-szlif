@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PaperclipApiClient } from "./client.js";
-import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv, nativeGitPushBranchAllowed } from "./workspace-native.js";
+import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv, nativeGitPushBranchAllowed, syncIssuePullRequestProduct } from "./workspace-native.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
@@ -256,5 +256,84 @@ describe("native Git push branch protection", () => {
     for (const branch of ["fix/KOMAA-1512","feature/new-panel","test/canary"]) {
       expect(nativeGitPushBranchAllowed(branch)).toBe(true);
     }
+  });
+});
+
+describe("native PR work-product head linkage", () => {
+  const url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/1559";
+  const oldSha = "a".repeat(40);
+  const currentSha = "b".repeat(40);
+  const ws = { workspaceId: WORKSPACE, cwd: process.cwd(), realCwd: process.cwd(), companyId: COMPANY, sourceIssueId: ISSUE, branchName: "KOMAA-1559" };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    spawnMock.mockReset();
+  });
+
+  function mockOrigin() {
+    spawnMock.mockImplementation((_command: string, args: string[]) => {
+      const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = vi.fn();
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("https://github.com/miloszspyrka-code/harness-zar-i-szlif.git\n"));
+        child.emit("close", args.includes("get-url") ? 0 : 1);
+      });
+      return child;
+    });
+  }
+
+  async function withLedger<T>(run: () => Promise<T>): Promise<T> {
+    const dir = await mkdtemp(join(tmpdir(), "paperclip-pr-work-product-"));
+    vi.stubEnv("PAPERCLIP_WORKSPACE_OPS_LEDGER_DIR", dir);
+    try { return await run(); }
+    finally { await rm(dir, { recursive: true, force: true }); }
+  }
+
+  it("creates an issue-linked PR artifact with repository, branch, URL and exact head SHA", async () => {
+    await withLedger(async () => {
+      const api = client();
+      const request = vi.spyOn(api, "requestJson").mockImplementation(async (method, path) => {
+        if (method === "GET" && path === `/issues/${ISSUE}/work-products`) return [] as never;
+        return { id: "pr-product-1" } as never;
+      });
+      mockOrigin();
+
+      const id = await syncIssuePullRequestProduct(api, ws, ISSUE, url, oldSha, "KOMAA-1559 PR", "KOMAA-1559", "main", RUN);
+
+      expect(id).toBe("pr-product-1");
+      expect(request).toHaveBeenCalledWith("GET", `/issues/${ISSUE}/work-products`);
+      expect(request).toHaveBeenCalledWith("POST", `/issues/${ISSUE}/work-products`, expect.objectContaining({
+        body: expect.objectContaining({
+          type: "pull_request", provider: "github", url,
+          metadata: { headSha: oldSha, branch: "KOMAA-1559", baseBranch: "main", repository: "miloszspyrka-code/harness-zar-i-szlif" },
+        }),
+        runId: RUN,
+      }));
+    });
+  });
+
+  it("advances only the current head SHA on rework and preserves existing metadata", async () => {
+    await withLedger(async () => {
+      const api = client();
+      const prior = { id: "pr-product-1", type: "pull_request", provider: "github", url,
+        metadata: { headSha: oldSha, branch: "KOMAA-1559", baseBranch: "main", repository: "miloszspyrka-code/harness-zar-i-szlif", tracker: "release-42" } };
+      const request = vi.spyOn(api, "requestJson").mockImplementation(async (method, path) => {
+        if (method === "GET" && path === `/issues/${ISSUE}/work-products`) return [prior] as never;
+        return { id: "pr-product-1" } as never;
+      });
+      mockOrigin();
+
+      await syncIssuePullRequestProduct(api, ws, ISSUE, url, currentSha, "KOMAA-1559 PR", "KOMAA-1559", "main");
+
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request).toHaveBeenCalledWith("PATCH", "/work-products/pr-product-1", { body: { metadata: {
+        headSha: currentSha, branch: "KOMAA-1559", baseBranch: "main", repository: "miloszspyrka-code/harness-zar-i-szlif", tracker: "release-42",
+      } } });
+      expect(request.mock.calls.some(([method]) => method === "POST")).toBe(false);
+      expect(prior.metadata.headSha).toBe(oldSha);
+    });
   });
 });

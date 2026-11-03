@@ -39,4 +39,15 @@ describe("Git role scope / fail-closed publication", () => {
     await expect(assertGitPublicationRole(fakeClient(CHO) as never, "paperclipGitPush")).rejects.toThrow(/role denied/);
     await expect(assertGitPublicationRole(fakeClient(ENGINEER) as never, "paperclipGitPush")).resolves.toBeUndefined();
   });
+  it("denies push to the reviewer role and merge to the implementation role", async () => {
+    const fakeClient = (id: string) => ({
+      callerApiKey: "non-board-canary",
+      requestJson: async (_method: string, path: string) => {
+        if (path === "/agents/me") return { id };
+        throw Error("Unexpected probe");
+      },
+    });
+    await expect(assertGitPublicationRole(fakeClient(CHO) as never, "paperclipGitPush")).rejects.toThrow(/role denied/);
+    await expect(assertGitPublicationRole(fakeClient(HARNESS) as never, "paperclipGitMergePR")).rejects.toThrow(/role denied/);
+  });
 });
