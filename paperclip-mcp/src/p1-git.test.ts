@@ -177,6 +177,9 @@ describe("paperclipGitMergePR gate (fail-closed)", () => {
   it("refuses a mismatched SHA, requested changes, or blocked merge state", () => {
     expect(evaluateMergeGate(base, "0000000000000000000000000000000000000000").ok).toBe(false);
     expect(evaluateMergeGate({ ...base, reviewDecision: "CHANGES_REQUESTED" }, "df09a549").ok).toBe(false);
+    expect(evaluateMergeGate({ ...base, reviewDecision: "" }, "df09a549").ok).toBe(false);
+    expect(evaluateMergeGate({ ...base, reviewDecision: "REVIEW_REQUIRED" }, "df09a549").ok).toBe(false);
+    expect(evaluateMergeGate({ ...base, mergeStateStatus: "UNSTABLE" }, "df09a549").ok).toBe(false);
     expect(evaluateMergeGate({ ...base, mergeStateStatus: "BLOCKED" }, "df09a549").ok).toBe(false);
   });
 });
