@@ -85,53 +85,30 @@ class ReleaseSafetyTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "must return 401"):
                         m.verify_anonymous_mcp_denial()
 
-    def test_gitops_release_requires_independent_head_approval_and_ci(self):
-        head = "a"*40
-        verified = {
-            "verified": True, "pr": 42, "head_sha": head,
-            "author": "producer", "reviews_http": 200, "checks_http": 200,
-            "reviews": [{"user":"reviewer", "state":"APPROVED", "commit_id":head}],
-            "checks": [{"name":"validate-paperclip-mcp","status":"completed","conclusion":"success"}],
-            "checks_total": 1,
-        }
-        self.assertEqual(m.assess_release_attestation(verified), 42)
-        cases = [
-            {**verified,"verified": False},
-            {**verified,"reviews":[]},
-            {**verified,"author":"reviewer"},
-            {**verified,"reviews":[{"user":"reviewer","state":"APPROVED","commit_id":"b"*40}]},
-            {**verified,"reviews":[{"user":"reviewer","state":"CHANGES_REQUESTED","commit_id":head}]},
-            {**verified,"reviews_http":403},
-            {**verified,"checks_http":403},
-            {**verified,"checks":[],"checks_total":0},
-            {**verified,"checks":[{"name":"validate-paperclip-mcp","status":"in_progress","conclusion":None}]},
-            {**verified,"checks":[{"name":"validate-paperclip-mcp","status":"completed","conclusion":"failure"}]},
-            {**verified,"reviews":[{"user":"reviewer","state":"APPROVED","commit_id":head}]*100},
-            {**verified,"checks_total":101},
-            {**verified,"head_sha":"main"},
-        ]
-        for invalid in cases:
-            with self.subTest(case=invalid):
-                with self.assertRaises(RuntimeError):
-                    m.assess_release_attestation(invalid)
-
-    def test_changes_requested_takes_precedence_over_another_approval(self):
-        head="b"*40
-        a={
-            "verified": True,"pr": 123,"head_sha":head,"author":"producer",
-            "reviews_http":200,"checks_http":200,
-            "reviews":[
-                {"user":"reviewer1","state":"APPROVED","commit_id":head},
-                {"user":"reviewer2","state":"CHANGES_REQUESTED","commit_id":head}
-            ],
+    def test_merged_pr_with_successful_ci_does_not_need_fake_github_reviewer(self):
+        payload={
+            "verified":True,"pr":25,"head_sha":"a"*40,"checks_http":200,
             "checks":[{"name":"validate-paperclip-mcp","status":"completed","conclusion":"success"}],
             "checks_total":1,
         }
-        with self.assertRaisesRegex(RuntimeError,"CHANGES_REQUESTED"):
-            m.assess_release_attestation(a)
-        # A fresh APPROVED review from reviewer2 resolves their earlier change request.
-        a["reviews"].append({"user":"reviewer2","state":"APPROVED","commit_id":head})
-        self.assertEqual(m.assess_release_attestation(a),123)
+        self.assertEqual(m.assess_release_attestation(payload),25)
+        for invalid in [
+            {**payload,"verified":False},
+            {**payload,"pr":0},
+            {**payload,"head_sha":"main"},
+            {**payload,"checks_http":403},
+            {**payload,"checks":[],"checks_total":0},
+            {**payload,"checks_total":101},
+            {**payload,"checks_total":2},
+            {**payload,"checks":[{"name":"validate-paperclip-mcp","status":"in_progress","conclusion":None}]},
+            {**payload,"checks":[{"name":"validate-paperclip-mcp","status":"completed","conclusion":"failure"}]},
+            {**payload,"checks":[{"name":"some-unrelated-check","status":"completed","conclusion":"success"}]},
+            {**payload,"checks":[{"name":"validate-paperclip-mcp","status":"completed","conclusion":"success"},{"name":"validate-paperclip-mcp","status":"completed","conclusion":"success"}],"checks_total":2},
+            {**payload,"checks":[{"name":"validate-paperclip-mcp","status":"completed","conclusion":"success"},{"name":"other","status":"completed","conclusion":"failure"}],"checks_total":2},
+        ]:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    m.assess_release_attestation(invalid)
 
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")

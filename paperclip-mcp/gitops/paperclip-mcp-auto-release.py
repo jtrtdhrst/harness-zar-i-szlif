@@ -100,52 +100,39 @@ def save_state(data):
     os.replace(temp, STATE)
 
 def assess_release_attestation(data):
-    # An association with a merged PR alone is not acceptance. Require CI
-    # success and an independent, head-SHA-matching GitHub APPROVED review.
-    if not isinstance(data, dict) or not data.get("verified"):
+    """Deployment proof is an actual merged main PR and its successful CI.
+
+    GitHub installation identity is shared. An invented second GitHub reviewer
+    is not a substitute for CHO/CTO's first-class Paperclip review. The native
+    issue review lifecycle owns that decision; GitOps verifies the delivery
+    artifact and CI, and is never permitted to fabricate approval.
+    """
+    if not isinstance(data, dict) or data.get("verified") is not True:
         raise RuntimeError("Commit is not associated with a merged main PR")
     pr = data.get("pr")
     head = data.get("head_sha")
-    author = data.get("author")
     if not isinstance(pr, int) or pr <= 0 or not validate_sha(head):
-        raise RuntimeError("PR identity or exact head SHA unreadable")
-    if not isinstance(author, str) or not author.strip():
-        raise RuntimeError("PR author identity unreadable")
-    if data.get("reviews_http") != 200 or data.get("checks_http") != 200:
-        raise RuntimeError("GitHub PR review/CI evidence unreadable (missing scope?)")
-    reviews = data.get("reviews")
+        raise RuntimeError("Merged PR identity / head SHA invalid")
+    if data.get("checks_http") != 200:
+        raise RuntimeError("GitHub Actions check-runs unreadable")
     checks = data.get("checks")
-    if not isinstance(reviews, list) or not isinstance(checks, list):
-        raise RuntimeError("GitHub PR reviews/CI evidence malformed")
-    if len(reviews) >= 100 or int(data.get("checks_total", 999999)) > 100:
-        raise RuntimeError("Review or checks pagination unverified; refusing deploy")
+    total = data.get("checks_total")
+    if not isinstance(checks, list) or not isinstance(total, int):
+        raise RuntimeError("GitHub Actions check-runs malformed")
+    if total > 100 or total != len(checks):
+        raise RuntimeError("GitHub Actions checks pagination / count unverified")
     matching = [c for c in checks if isinstance(c, dict) and c.get("name") == "validate-paperclip-mcp"]
     if len(matching) != 1 or matching[0].get("status") != "completed" or matching[0].get("conclusion") != "success":
-        raise RuntimeError("Paperclip MCP PR CI did not complete successfully")
-    latest = {}
-    for review in reviews:
-        if not isinstance(review, dict):
-            raise RuntimeError("Review record malformed")
-        user = review.get("user")
-        state = review.get("state")
-        if isinstance(user, str) and user and state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
-            latest[user.lower()] = review
-    if any(r.get("state") == "CHANGES_REQUESTED" for r in latest.values()):
-        raise RuntimeError("Unresolved CHANGES_REQUESTED from independent reviewer")
-    accepted = [
-        r for login, r in latest.items()
-        if login != author.lower()
-        and r.get("state") == "APPROVED"
-        and r.get("commit_id") == head
-    ]
-    if not accepted:
-        raise RuntimeError("No independent GitHub APPROVED review for current head SHA")
+        raise RuntimeError("Paperclip MCP CI must complete successfully on the PR head")
+    if any(not isinstance(c, dict) or c.get("conclusion") not in ("success", "skipped", "neutral")
+           or c.get("status") != "completed" for c in checks):
+        raise RuntimeError("A GitHub Actions check is pending, failing or unreadable")
     return pr
 
 def verified_pr(sha):
-    # Only the Coolify-held GitHub App token reaches GitHub. A merged PR must
-    # additionally have a distinct reviewer and a green native CI check. No
-    # plain direct main push or status-only assertion can release this service.
+    # The existing Coolify GitHub App reads PR provenance and green CI.
+    # CHO/CTO's independent review belongs to Paperclip's native decision
+    # record, not an extra artificial GitHub account/review requirement.
     if not validate_sha(sha):
         raise RuntimeError("Invalid merge SHA")
     php = (
@@ -161,13 +148,10 @@ def verified_pr(sha):
         'if(!$m){echo json_encode(["verified"=>false]);}'
         'else{'
         '$pr=data_get($m,"number");$head=data_get($m,"head.sha");'
-        '$reviews=$h->get("/repos/miloszspyrka-code/harness-zar-i-szlif/pulls/".$pr."/reviews",["per_page"=>100]);'
         '$checks=$h->get("/repos/miloszspyrka-code/harness-zar-i-szlif/commits/".$head."/check-runs",["per_page"=>100]);'
-        '$rs=collect($reviews->json()??[])->map(fn($v)=>["user"=>data_get($v,"user.login"),"state"=>data_get($v,"state"),"commit_id"=>data_get($v,"commit_id")])->all();'
         '$cs=collect($checks->json("check_runs")??[])->map(fn($v)=>["name"=>data_get($v,"name"),"status"=>data_get($v,"status"),"conclusion"=>data_get($v,"conclusion")])->all();'
-        'echo json_encode(["verified"=>true,"pr"=>$pr,"head_sha"=>$head,"author"=>data_get($m,"user.login"),'
-        '"reviews_http"=>$reviews->status(),"checks_http"=>$checks->status(),'
-        '"reviews"=>$rs,"checks"=>$cs,"checks_total"=>$checks->json("total_count")]);}'
+        'echo json_encode(["verified"=>true,"pr"=>$pr,"head_sha"=>$head,'
+        '"checks_http"=>$checks->status(),"checks"=>$cs,"checks_total"=>$checks->json("total_count")]);}'
     )
     r = run(["docker", "exec", COOLIFY, "php", "artisan", "tinker", "--execute=" + php], timeout=70)
     try:
