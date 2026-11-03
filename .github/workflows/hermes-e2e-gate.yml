@@ -1,0 +1,49 @@
+name: Hermes Paperclip E2E evidence gate
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/hermes-paperclip/**'
+      - '.github/workflows/hermes-e2e-gate.yml'
+  push:
+    branches:
+      - 'KOMAA-1512'
+    paths:
+      - 'integrations/hermes-paperclip/**'
+      - '.github/workflows/hermes-e2e-gate.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-e2e-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evidence-validator:
+    name: Evidence schema regression (fail-closed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run unit tests
+        run: python -m unittest discover -s integrations/hermes-paperclip/tests -v
+      - name: Reject incomplete example evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python integrations/hermes-paperclip/verify_e2e.py \
+            --evidence integrations/hermes-paperclip/evidence.example.json \
+            --expected-profile cho; then
+            echo "::error::Incomplete evidence unexpectedly passed"
+            exit 1
+          fi
+      - name: Compile validation code
+        run: python -m compileall -q integrations/hermes-paperclip/verify_e2e.py integrations/hermes-paperclip/tests
