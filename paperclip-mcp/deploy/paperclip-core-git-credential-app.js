@@ -25,8 +25,8 @@ try {
   if (p.app_id !== 5398752 || p.installation_id !== 173456397) process.exit(0);
   if (JSON.stringify(p.repositories) !== JSON.stringify(repos)) process.exit(0);
   if (!p.permissions || p.permissions.contents !== "write" || p.permissions.pull_requests !== "write"
-      || p.permissions.metadata !== "read" || ![undefined, "read"].includes(p.permissions.checks)
-      || ![3, 4].includes(Object.keys(p.permissions).length)
+      || p.permissions.metadata !== "read" || p.permissions.checks !== "read"
+      || Object.keys(p.permissions).length !== 4
       || Object.keys(p.permissions).some((k) => !["contents","pull_requests","metadata","checks"].includes(k))) process.exit(0);
   if (typeof p.token !== "string" || p.token.length < 40 || p.token.length > 512 || /\s/.test(p.token)) process.exit(0);
   if (typeof p.expires_at !== "string" || Date.parse(p.expires_at) < Date.now() + 120000) process.exit(0);

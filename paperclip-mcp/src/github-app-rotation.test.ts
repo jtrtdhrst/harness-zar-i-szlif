@@ -11,7 +11,7 @@ function scoped() {
     app_id: 5398752,
     installation_id: 173456397,
     repositories: ["miloszspyrka-code/harness-zar-i-szlif", "miloszspyrka-code/zar-i-szlif"],
-    permissions: { contents: "write", pull_requests: "write", metadata: "read" },
+    permissions: { contents: "write", pull_requests: "write", metadata: "read", checks: "read" },
   };
 }
 describe("short-lived GitHub App credential verification", () => {
@@ -22,12 +22,16 @@ describe("short-lived GitHub App credential verification", () => {
     expect(validateGithubAppTokenRecord({ ...scoped(), expires_at: new Date(NOW - 1).toISOString() }, NOW)).toBeNull();
     expect(validateGithubAppTokenRecord({ ...scoped(), expires_at: new Date(NOW + 60_000).toISOString() }, NOW)).toBeNull();
   });
-  it("accepts Checks read during scoped token rollout and rejects write or over-grant", () => {
+  it("requires Checks read and rejects legacy three-scope, Checks write or over-grant", () => {
     const minimal = scoped();
     expect(validateGithubAppTokenRecord({
       ...minimal,
       permissions: { ...minimal.permissions, checks: "read" },
     }, NOW)).toBe(MOCK_TOKEN);
+    expect(validateGithubAppTokenRecord({
+      ...minimal,
+      permissions: { contents: "write", pull_requests: "write", metadata: "read" },
+    }, NOW)).toBeNull();
     expect(validateGithubAppTokenRecord({
       ...minimal,
       permissions: { ...minimal.permissions, checks: "write" },

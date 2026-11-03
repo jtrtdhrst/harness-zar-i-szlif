@@ -1363,8 +1363,8 @@ export function validateGithubAppTokenRecord(payload: unknown, now: number = Dat
       || payload.permissions.contents !== "write"
       || payload.permissions.pull_requests !== "write"
       || payload.permissions.metadata !== "read"
-      || (payload.permissions.checks !== undefined && payload.permissions.checks !== "read")
-      || ![3, 4].includes(Object.keys(payload.permissions).length)
+      || payload.permissions.checks !== "read"
+      || Object.keys(payload.permissions).length !== 4
       || Object.keys(payload.permissions).some((k) => !["contents", "pull_requests", "metadata", "checks"].includes(k))) return null;
   if (!Array.isArray(payload.repositories)
       || payload.repositories.length !== 2
