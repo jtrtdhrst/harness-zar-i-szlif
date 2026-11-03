@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 spec=importlib.util.spec_from_file_location("paperclip_mcp_auto_release", Path(__file__).with_name("paperclip-mcp-auto-release.py"))
 m=importlib.util.module_from_spec(spec)
@@ -53,6 +55,26 @@ class ReleaseSafetyTests(unittest.TestCase):
     def test_release_pr_verification_never_takes_unvalidated_input(self):
         with self.assertRaisesRegex(RuntimeError,"Invalid merge SHA"):
             m.verified_pr('main; echo unsafe')
+
+    def test_candidate_build_sends_tar_bytes_not_file_object(self):
+        with tempfile.TemporaryDirectory() as root:
+            archive=Path(root)/"source.tar.gz"
+            archive.write_bytes(b"fake-test-tar-context")
+            invoked=[]
+            def fake_run(argv, timeout=100, stdin=None, allow_fail=False):
+                invoked.append((argv, stdin))
+                if argv[1] == "build":
+                    self.assertIsInstance(stdin, bytes)
+                    self.assertEqual(stdin, b"fake-test-tar-context")
+                    return SimpleNamespace(stdout=b"", stderr=b"", returncode=0)
+                if argv[1:3] == ["image", "inspect"]:
+                    return SimpleNamespace(stdout="sha256:" + "c"*64 + chr(10), stderr="", returncode=0)
+                raise AssertionError("Unexpected command")
+            with patch.object(m, "run", side_effect=fake_run), patch.object(m, "ensure_candidate_tests"):
+                tag, image_id=m.build_image("a"*40, str(archive))
+            self.assertEqual(tag, "paperclip-mcp:gitops-" + "a"*40)
+            self.assertEqual(image_id, "sha256:" + "c"*64)
+            self.assertEqual(len(invoked), 2)
 
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")

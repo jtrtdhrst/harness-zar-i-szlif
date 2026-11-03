@@ -245,7 +245,7 @@ def build_image(sha, tar_path):
     with open(tar_path, "rb") as f:
         run(["docker", "build", "--build-arg", "PAPERCLIP_BASE=" + BASE,
              "--label", "org.opencontainers.image.revision=" + sha,
-             "-t", tag, "-"], stdin=f, timeout=300)
+             "-t", tag, "-"], stdin=f.read(), timeout=300)
     ensure_candidate_tests(tag)
     image_id = run(["docker", "image", "inspect", tag, "--format", "{{.Id}}"]).stdout.strip()
     if not image_id.startswith("sha256:"):
