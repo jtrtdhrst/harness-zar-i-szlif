@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Strict, secret-free acceptance gate for a Hermes ↔ Paperclip run.
 
-Usage: python3 verify_e2e.py --evidence evidence.json --expected-profile hermes-cho
+Usage: python3 verify_e2e.py --evidence evidence.json --expected-profile cho
 No external SDK, no network access, no auto-approval or modifications.
 """
 from __future__ import annotations
@@ -10,6 +10,14 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+# Real named Hermes profiles, not bank IDs and not retired POC actors.
+# Model/profile identity must agree with the authoritative Paperclip registry.
+PRODUCTION_PROFILES = frozenset({
+    "ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
+    "email-creative", "engineer", "harness-engineer",
+    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa",
+})
 
 REQUIRED = {
     "paperclip_run_id": "Real Paperclip-owned Hermes run",
@@ -34,8 +42,10 @@ def validate(data: dict, expected_profile: str) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["Evidence root must be a JSON object"]
-    if not expected_profile:
-        errors.append("expected profile must be supplied explicitly")
+    if expected_profile not in PRODUCTION_PROFILES:
+        errors.append("expected profile is not one of the 14 real named Hermes profiles")
+    if data.get("named_profile") not in PRODUCTION_PROFILES:
+        errors.append("named_profile is not a registered real agent profile")
     if data.get("named_profile") != expected_profile:
         errors.append("named_profile does not match --expected-profile")
     run = data.get("paperclip_run_id")
