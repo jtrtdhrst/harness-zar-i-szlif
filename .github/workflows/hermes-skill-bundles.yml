@@ -68,12 +68,15 @@ jobs:
           root=integrations/hermes-paperclip
           # CI has neither the Hermes MCP runtime nor the canonical private Wiki.
           # Never claim live scoped MCP tests from skipped/offline unit cases.
-          python3 -m py_compile "$root/wiki/wiki_scoped.py" "$root/wiki/wiki_readonly.py"
+          python3 -m py_compile "$root/wiki/wiki_scoped.py"
           bash -n "$root/health/readiness.sh" "$root/wiki/sync.sh"
           test ! -e "$root/health/hermes-test-readiness.service"
           test ! -e "$root/health/hermes-test-readiness.timer"
           test ! -e "$root/wiki/hermes-test-wiki-sync.service"
           test ! -e "$root/wiki/hermes-test-wiki-sync.timer"
+          test ! -e "$root/wiki/wiki_readonly.py"
+          test ! -e "$root/wiki/tests/test_wiki_readonly.py"
+          grep -q "14 real Hermes profiles" "$root/wiki/README.md"
           grep -q 'Unit=hermes-paperclip-wiki-sync.service' "$root/wiki/systemd/hermes-paperclip-wiki-sync.timer"
           grep -q 'ExecStart=/usr/local/libexec/hermes-paperclip-wiki-sync.sh' "$root/wiki/systemd/hermes-paperclip-wiki-sync.service"
           echo "PASS: current Wiki systemd only; no retired Hermes Test jobs"
