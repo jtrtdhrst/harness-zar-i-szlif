@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 REQUIRED = {
-    "paperclip_run_id": "Real Paperclip-owned Hermes Test run",
+    "paperclip_run_id": "Real Paperclip-owned named-agent Hermes run",
     "named_profile": "The invoked Hermes profile, not default",
     "profile_auth_test": "Authentication and cross-profile negative test",
     "wiki_tool_call": "Real Paperclip Named MCP tools/call read",
@@ -22,15 +22,20 @@ REQUIRED = {
     "release": "Deployed SHA/digest and rollback result",
     "review": "Independent, explicit review and approval",
 }
-EXPECTED_PROFILE = "hermes-test"
+PRODUCTION_PROFILES = frozenset({
+    "ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
+    "email-creative", "engineer", "harness-engineer",
+    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa",
+})
+# Intentionally exclude retired hermes-test and delivery-release-manager profiles.
 
 
 def validate(data: dict) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["Evidence root must be a JSON object"]
-    if data.get("named_profile") != EXPECTED_PROFILE:
-        errors.append("named_profile must equal hermes-test")
+    if data.get("named_profile") not in PRODUCTION_PROFILES:
+        errors.append("named_profile must be one of the 14 real Paperclip agent profiles (not a retired test or release profile)")
     run = data.get("paperclip_run_id")
     if not isinstance(run, str) or len(run) < 12:
         errors.append("paperclip_run_id missing or invalid")
