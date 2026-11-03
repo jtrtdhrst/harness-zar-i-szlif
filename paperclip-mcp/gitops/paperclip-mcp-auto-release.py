@@ -151,6 +151,24 @@ def assert_compose_armed():
         raise RuntimeError("GitHub App bootstrap drifted")
     run(["docker", "compose", "-p", PROJECT_ID, "-f", COMPOSE, "config", "-q"])
 
+def verify_anonymous_mcp_denial():
+    # Cloudflare allows normal HTTP clients such as curl, but may respond 403
+    # to Python-urllib's distinct TLS/UA fingerprint before MCP sees the
+    # request. A literal external curl probe checks the actual public MCP
+    # OAuth boundary, rather than mistaking Cloudflare bot policy for
+    # gateway authentication failure. Never sends bearer credentials.
+    body = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+    code = run([
+        "curl", "--silent", "--show-error", "--max-time", "12",
+        "--output", "/dev/null", "--write-out", "%{http_code}",
+        "--request", "POST", PUBLIC + "/mcp",
+        "--header", "Content-Type: application/json",
+        "--header", "Accept: application/json, text/event-stream",
+        "--data-binary", body,
+    ], timeout=20).stdout.strip()
+    if code != "401":
+        raise RuntimeError("Anonymous public MCP must return 401; got " + str(code))
+
 def public_health():
     req = urllib.request.Request(PUBLIC + "/health", headers={"User-Agent": "Paperclip-GitOps/1"})
     try:
@@ -160,18 +178,7 @@ def public_health():
     except (urllib.error.URLError, TimeoutError) as err:
         raise RuntimeError("Public MCP health unavailable") from err
     # Every anonymous MCP request must still be denied at the OAuth boundary.
-    req2 = urllib.request.Request(
-        PUBLIC + "/mcp",
-        data=b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
-        headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream"},
-        method="POST")
-    try:
-        with urllib.request.urlopen(req2, timeout=12) as r:
-            code = r.status
-    except urllib.error.HTTPError as e:
-        code = e.code
-    if code != 401:
-        raise RuntimeError("MCP OAuth gate changed; expected anonymous 401")
+    verify_anonymous_mcp_denial()
 
 def wait_healthy(expected_image_id, sha=None, seconds=115):
     until = time.monotonic() + seconds
