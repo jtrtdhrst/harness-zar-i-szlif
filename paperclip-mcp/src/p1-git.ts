@@ -125,8 +125,14 @@ export function evaluateNativePaperclipReview(issue: unknown, prUrl: string, exa
   const policy = asRecord(row.executionPolicy)!;
   const stageIds = Array.isArray(exec.completedStageIds) ? exec.completedStageIds : [];
   const stages = Array.isArray(policy.stages) ? policy.stages : [];
+  // returnAssignee is an execution routing target, not necessarily the
+  // executor/creator. For reviewPolicy:not_creator, Paperclip itself verified
+  // independence when it committed the first-class APPROVED decision.
+  // If that policy is missing, conservatively require a distinct known
+  // return assignee; never treat a configured stage alone as approval.
   const original = asRecord(exec.returnAssignee);
-  const originalAgent = original?.type === "agent" ? original.agentId : null;
+  const returnAgent = original?.type === "agent" ? original.agentId : null;
+  const paperclipEnforcesIndependence = row.reviewPolicy === "not_creator";
   const reviewed = stages.some((item) => {
     const stage = asRecord(item);
     if (!stage || stage.type !== "review" || !stageIds.includes(stage.id)) return false;
@@ -134,11 +140,11 @@ export function evaluateNativePaperclipReview(issue: unknown, prUrl: string, exa
       const participant = asRecord(p);
       return participant?.type === "agent"
         && typeof participant.agentId === "string"
-        && typeof originalAgent === "string"
-        && participant.agentId !== originalAgent;
+        && (paperclipEnforcesIndependence
+          || (typeof returnAgent === "string" && participant.agentId !== returnAgent));
     });
   });
-  if (!reviewed) return deny("No completed review stage with an independent agent participant");
+  if (!reviewed) return deny("Independent approval not verified by first-class Paperclip review policy/stage");
   const products = Array.isArray(row.workProducts) ? row.workProducts : [];
   const matched = products.some((item) => {
     const product = asRecord(item);
