@@ -1,5 +1,18 @@
 # Hermes ↔ Paperclip — infrastructure E2E harness
 
+## Current production acceptance — 2026-11-03 (supersedes Hermes Test POC)
+**LIVE STATUS: PRE_CUTOVER_BLOCKED; 14/14 Paperclip agents remain on opencode_local.**
+The operational owner is CHO in Paperclip. Harness Engineer implements an approved branch; CHO performs native independent acceptance and controls deployment gate. The Hermes Test and Release Manager actors are retired; do not recreate them.
+- First real-agent adapter canary: CHO issue KOMAA-1546, Paperclip run `4e993fa7-5928-4c94-ba04-eb24d9661028` failed `hermes_gateway_auth_failed` (401) with no model tokens. The Paperclip built-in /health adapter test returned PASS but is **not** proof of run authorization. CHO was rolled back to `opencode_local` by native revision.
+- Mandatory: encrypted, profile-scoped `API_SERVER_KEY` reference for `/p/cho`, authenticated POST /v1/runs, SSE/response readback and wrong-profile denial; never print or transport secret plaintext in chat, logs, source or test evidence. Any security-gated secret enrollment is a human-approved Paperclip vault action, not a shell/DB workaround.
+- Separate blocking dependency: Paperclip issued per-run MCP token must reach the correct Hermes run without becoming model prompt text or a shared Board key. Authorized Wiki and published Skill tools/call from the real Paperclip run, and negative cross-agent/run calls are required. Public Paperclip MCP `tools/list` and harmless `tools/call` verified, but not from Hermes named agent.
+- Independently passed: 7 GPT-6 Luna / 7 DeepSeek model mapping, 14 profile-specific Hindsight banks, 68 pinned role skills, 113 canonical Wiki files, Hermes CLI model smoke, cloud Hindsight independent retain/recall/negative CPO isolation and post-restart recall, native Opik traces. These are not a correlated Paperclip-issued Hermes E2E; self-hosted Hindsight cutover is separate.
+- Readback and backups: `/opt/hermes-gateway-ops/PRODUCTION-CUTOVER-RUNBOOK.md`; `verify_production.py` reports PRE_CUTOVER_BLOCKED until real evidence. Two retired profiles have encrypted local backups and are absent from active Gateway supervisors.
+- **DoD**: CHO real-agent `hermes_gateway` run succeeds; correct model, live Paperclip instructions, role-specific skills, Paperclip MCP call under actual agent/run authorization, Hindsight cross-session isolation, Opik same-run trace, negative auth tests, independent CHO acceptance, production SHA/digest and verified rollback. Only then migrate remaining 13 agents.
+
+**Historical information below describes the 2026-11-01/02 retired Hermes Test POC; it is not permission to revive the POC or bypass the current gates.**
+
+
 **Repository:** `harness-zar-i-szlif`  
 **Owner:** Paperclip project `04 · Operations / Hermes-Paperclip E2E`  
 **Coolify:** `Hermes - Paperclip Sync` (standalone read-only check service)  
@@ -14,19 +27,19 @@ Paperclip is the **control plane** (tasks, approvals, published Wiki and skills)
 - Do not disable authentication, forward vault secrets into logs, share keys across profiles, copy files from other agents, expose private admin routes or publish diagnostics publicly.
 - Do not re-enable company-wide watchdogs, cron, routines, heartbeats, or GitHub Actions.
 - Each task runs on an isolated git worktree derived from `main`, with branch identity traceable to its Paperclip issue; one writer per branch.
-- Only the `Hermes Test` agent and the bounded integration scope may be mutated during the initial acceptance. No prod cutover until independent review.
+- Only the approved CHO real-agent canary may be switched temporarily for acceptance; no bulk production cutover without independent review.
 - Watchdog is native and attached **only** to the test epic. It monitors stopped subtree work, not a polling replacement; can escalate but never self-approve or automatically merge.
 - Preserve Coolify's existing Gateway and sync-project deployments until rollback/readback acceptance.
 
 ## Definition of Done (all required, none implied by a green healthcheck)
 
-1. A **dedicated** Hermes `hermes-test` API key exists and is stored as an encrypted Paperclip `secret_ref`. The Paperclip adapter points to `/p/hermes-test`. A real authenticated profile request succeeds; default/wrong key is rejected. No value is printed in evidence.
-2. Paperclip Tool Connection's Bearer is valid for its configured MCP host; **actual `tools/call`** for a page in `wiki/agents/ceo/AGENTS.md` succeeds in a Paperclip-issued Hermes Test run. `initialize` and `tools/list` do not count as E2E.
+1. A **dedicated** Hermes `cho` API key exists and is stored as an encrypted Paperclip `secret_ref`. The Paperclip adapter points to `/p/cho`. A real authenticated profile request succeeds; default/wrong key is rejected. No value is printed in evidence.
+2. Paperclip Tool Connection's Bearer is valid for its configured MCP host; **actual `tools/call`** for a page in `wiki/agents/ceo/AGENTS.md` succeeds in a Paperclip-issued real CHO run. `initialize` and `tools/list` do not count as E2E.
 3. The same run reads a published skill version and records its ID/version marker. No unauthorized writes.
-4. The Hermes `hindsight` provider retains and later recalls a synthetic marker in the `hermes-hermes-test` bank. Control bank `hermes-ceo` must not return it.
+4. The Hermes `hindsight` provider retains and later recalls a synthetic marker in the `hermes-cho` bank. Control bank `hermes-cpo` must not return it.
 5. Opik records a **correlated** trace for that same Paperclip run, with model, tool spans and token usage. Synthetic unrelated traces do not count.
 6. Paperclip run ID, Tool Gateway invocation ID, Opik trace ID, named profile ID, published skill version, deployed digest/SHA, smoke status and rollback check are captured in one evidence JSON.
-7. Independent CTO review of scope/security + independent Delivery & Release Manager acceptance of reproducible deployment; no self-review. All dependencies resolved, no live run or untracked changes, then issue closure.
+7. Independent CHO approval/changes_requested review of implementation, and separate reviewed release by Harness Engineer; no self-review or Release Manager. All dependencies resolved, no live run or untracked changes, then issue closure.
 8. Documentation, scripts and tests are committed to a feature branch and PR; `main` changes only after review and explicit production approval.
 
 ## How to run tests
@@ -40,7 +53,7 @@ The example evidence is intentionally **not passing**. The validator returns non
 
 For local origin-only checks: `sudo /opt/hermes-paperclip-sync/check.sh`. Its green state validates mounts and HTTP auth **only**.
 
-## Known starting faults, 2026-11-01
+## Historical starting faults, 2026-11-01 (POC only)
 
 - Named profile `hermes-test` has no dedicated `API_SERVER_KEY`; existing agent adapter calls unprefixed root Gateway URL.
 - Paperclip Tool Connection `7551d8ac-ce4b-4af9-a2af-eefe3cfd63c5` allowed `paperclipWikiGetPage`, but the upstream returned HTTP **401** (surface error 502 `mcp_remote_status`). Health/catalog are not sufficient.
@@ -54,7 +67,7 @@ For local origin-only checks: `sudo /opt/hermes-paperclip-sync/check.sh`. Its gr
 - `evidence.example.json`: deliberately failing, redacted example.
 - `tests/`: unit tests for the verification gate.
 
-## Pilot E2E results — 2026-11-02 (actual connected services)
+## Historical POC E2E results — 2026-11-02 (retired test agent)
 
 **Scope:** Hermes Test is the only agent currently using `hermes_gateway`. This is a **temporary test configuration**, **not** a hard-coded platform policy or limit on future adoption. The accidental adapter-count guard was removed from this PR. Production migration of additional agents is a separate decision after pilot acceptance.
 
