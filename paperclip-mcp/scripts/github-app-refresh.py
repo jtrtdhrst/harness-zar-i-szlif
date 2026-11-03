@@ -17,7 +17,7 @@ INSTALLATION_ID = 173456397
 APP_DB_ID = 1
 REPOS = ("miloszspyrka-code/harness-zar-i-szlif", "miloszspyrka-code/zar-i-szlif")
 DEST = Path("/var/lib/docker/volumes/fs9rik9axzl1ubbimekvqs03-paperclip-mcp-state/_data/github-auth-bin/installation-token.json")
-REQUIRED_PERMISSIONS = {"contents": "write", "pull_requests": "write", "metadata": "read"}
+REQUIRED_PERMISSIONS = {"contents": "write", "pull_requests": "write", "metadata": "read", "checks": "read"}
 RUNTIME_GID = 1000
 CORE_DEST = Path("/var/lib/docker/volumes/phime3w5l50scx9q4tjoelcx_paperclip-home/_data/.github-app-installation-token.json")
 
@@ -34,7 +34,7 @@ $r=Illuminate\Support\Facades\Http::GitSource($a->api_url)->withHeaders([
  "X-GitHub-Api-Version"=>"2022-11-28"
 ])->post($a->api_url."/app/installations/".$a->installation_id."/access_tokens",[
  "repositories"=>["zar-i-szlif","harness-zar-i-szlif"],
- "permissions"=>["contents"=>"write","pull_requests"=>"write"]
+ "permissions"=>["contents"=>"write","pull_requests"=>"write","checks"=>"read"]
 ]);
 if($r->status()!==201){throw new \RuntimeException("Scoped installation grant refused: status=".$r->status());}
 echo json_encode(["status"=>$r->status(),"app_id"=>(int)$a->app_id,
