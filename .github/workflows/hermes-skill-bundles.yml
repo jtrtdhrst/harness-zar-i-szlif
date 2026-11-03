@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           # Atomic installer intentionally chowns staged files to Hermes UID 10000.
           # Tests create only throwaway temporary directories and require root for chown.
-          sudo -n python3 -m unittest discover \
+          sudo -n env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
             -s integrations/hermes-paperclip/roles/tests -v
       - name: Validate scoped Wiki regression and retired config cleanup
         shell: bash
@@ -68,8 +68,14 @@ jobs:
           root=integrations/hermes-paperclip
           # CI has neither the Hermes MCP runtime nor the canonical private Wiki.
           # Never claim live scoped MCP tests from skipped/offline unit cases.
-          python3 -m py_compile "$root/wiki/wiki_scoped.py"
-          python3 -m py_compile "$root/roles/reconcile_model_map.py" "$root/roles/sync_profile_identity.py"
+          # Compile in-memory, avoiding root-owned __pycache__ after sudo tests.
+          python3 - "$root/wiki/wiki_scoped.py" "$root/roles/reconcile_model_map.py" "$root/roles/sync_profile_identity.py" <<'PY'
+          from pathlib import Path
+          import sys
+          for path in sys.argv[1:]:
+              compile(Path(path).read_text(encoding="utf-8"), path, "exec")
+          print("PASS: scoped Wiki, model map and identity sources compile")
+          PY
           bash -n "$root/health/readiness.sh" "$root/wiki/sync.sh"
           test ! -e "$root/health/hermes-test-readiness.service"
           test ! -e "$root/health/hermes-test-readiness.timer"
