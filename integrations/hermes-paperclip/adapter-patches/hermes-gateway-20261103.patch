@@ -206,6 +206,123 @@
    it("allows remote plain HTTP only with the unsafe dev escape hatch", async () => {
 -    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
 +    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-+      if (!String(url).en
-
-... [5962 characters truncated]
++      if (!String(url).endsWith("/v1/runs")) return new Response("{}", { status: 200 });
++      return new Response("{}", { status: String((init?.headers as Record<string, string>)?.Authorization).includes("negative-probe") ? 401 : 400 });
++    });
+     vi.stubGlobal("fetch", fetchMock);
+ 
+     const result = await testEnvironment({
+@@ -1031,7 +1070,10 @@
+   });
+ 
+   it("tests a bare Hermes dashboard URL on port 9119 through the API prefix", async () => {
+-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
++      if (!String(url).endsWith("/v1/runs")) return new Response("{}", { status: 200 });
++      return new Response("{}", { status: String((init?.headers as Record<string, string>)?.Authorization).includes("negative-probe") ? 401 : 400 });
++    });
+     vi.stubGlobal("fetch", fetchMock);
+ 
+     const result = await testEnvironment({
+@@ -1061,7 +1103,10 @@
+   });
+ 
+   it("tests a Hermes dashboard chat URL on port 9119 through the API prefix", async () => {
+-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
++      if (!String(url).endsWith("/v1/runs")) return new Response("{}", { status: 200 });
++      return new Response("{}", { status: String((init?.headers as Record<string, string>)?.Authorization).includes("negative-probe") ? 401 : 400 });
++    });
+     vi.stubGlobal("fetch", fetchMock);
+ 
+     const result = await testEnvironment({
+@@ -1107,3 +1152,89 @@
+     expect(result.errorMessage).toBe("boom");
+   });
+ });
++
++describe("Paperclip role instruction transport", () => {
++  it("injects the approved role bundle into Hermes instructions but not user input", async () => {
++    const root = await mkdtemp(join(tmpdir(), "hermes-gateway-role-"));
++    try {
++      const entry = join(root, "AGENTS.md");
++      await writeFile(entry, "ROLE_GATE_CANARY: CHO owns the Paperclip workflow.", "utf8");
++      const captured: Array<Record<string, unknown>> = [];
++      const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
++        if (String(url).endsWith("/v1/runs")) {
++          captured.push(JSON.parse(String(init?.body)));
++          return new Response(JSON.stringify({ run_id: "run-hermes-1", status: "started" }), { status: 200 });
++        }
++        if (String(url).endsWith("/events"))
++          return new Response(sseStream(['event: run.completed','data: {"status":"completed","output":"ok"}',''].join("\n")), { status: 200, headers: { "content-type": "text/event-stream" } });
++        return new Response(JSON.stringify({ status: "completed", output: "ok" }), { status: 200 });
++      });
++      vi.stubGlobal("fetch", fetchMock);
++      const result = await execute(makeCtx({
++        apiBaseUrl: "http://127.0.0.1:8642", apiKey: "unit-test-only",
++        instructionsRootPath: root, instructionsFilePath: entry, timeoutSec: 6,
++      }));
++      expect(result.exitCode).toBe(0);
++      expect(captured).toHaveLength(1);
++      expect(captured[0]?.instructions).toContain("ROLE_GATE_CANARY");
++      expect(captured[0]?.input).not.toContain("ROLE_GATE_CANARY");
++    } finally {
++      await rm(root, { recursive: true, force: true });
++    }
++  });
++
++  it("refuses to start if role path escapes the approved Paperclip root", async () => {
++    const root = await mkdtemp(join(tmpdir(), "hermes-gateway-root-"));
++    const outside = await mkdtemp(join(tmpdir(), "hermes-gateway-outside-"));
++    try {
++      const file = join(outside, "AGENTS.md");
++      await writeFile(file, "Unauthorized outside role file", "utf8");
++      const fetchMock = vi.fn();
++      vi.stubGlobal("fetch", fetchMock);
++      const result = await execute(makeCtx({
++        apiBaseUrl: "http://127.0.0.1:8642", apiKey: "unit-test-only",
++        instructionsRootPath: root, instructionsFilePath: file,
++      }));
++      expect(result.errorCode).toBe("hermes_gateway_role_instructions_unavailable");
++      expect(fetchMock).not.toHaveBeenCalled();
++    } finally {
++      await rm(root, { recursive: true, force: true });
++      await rm(outside, { recursive: true, force: true });
++    }
++  });
++});
++
++
++describe("run-scoped Paperclip MCP grant safety", () => {
++  it("refuses a Hermes run rather than silently dropping a run-bound MCP token", async () => {
++    const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "unit-test-key" });
++    ctx.runtimeMcp = {
++      getServers: () => [{
++        name: "Paperclip named Wiki", url: "https://paperclip.example/mcp/gateways/assigned",
++        token: "must-never-leave-runtime-bridge", connectionId: "assignment:verified",
++      }],
++    };
++    const mockedFetch = vi.fn();
++    vi.stubGlobal("fetch", mockedFetch);
++    const result = await execute(ctx);
++    expect(result.errorCode).toBe("hermes_gateway_run_scoped_mcp_bridge_required");
++    expect(JSON.stringify(result)).not.toContain("must-never-leave-runtime-bridge");
++    expect(mockedFetch).not.toHaveBeenCalled();
++  });
++
++  it("refuses a Hermes run with unforwarded Paperclip connection runtime tools", async () => {
++    const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "unit-test-key" });
++    ctx.runtimeTools = {
++      version: 1, guidance: "connection only", mcpEndpoint: "https://paperclip.example/mcp/runtime-tools",
++      rest: { connectionsSearch: "https://paperclip.example/search", connectionRequest: "https://paperclip.example/request" },
++      bearerToken: "not-a-real-token", expiresAt: "2099-01-01T00:00:00Z",
++      tools: ["connections_search", "connection_request"] as const,
++    };
++    const fetchMock = vi.fn();
++    vi.stubGlobal("fetch", fetchMock);
++    const result = await execute(ctx);
++    expect(result.errorCode).toBe("hermes_gateway_run_scoped_mcp_bridge_required");
++    expect(fetchMock).not.toHaveBeenCalled();
++  });
++});
++
