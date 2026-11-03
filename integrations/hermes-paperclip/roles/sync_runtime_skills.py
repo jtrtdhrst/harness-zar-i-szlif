@@ -24,6 +24,17 @@ COMPANY = "9894e3c2-3317-46ca-8c72-7a442a76a78e"
 ROLES = frozenset(("ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
                    "email-creative", "engineer", "harness-engineer",
                    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"))
+CORE_KEYS = frozenset((
+    "paperclipai/paperclip/paperclip",
+    "paperclipai/paperclip/complain",
+    "paperclipai/paperclip/suggestion-box",
+))
+SPECIAL_ASSIGNMENTS = {
+    "coo": "paperclipai/bundled/paperclip-operations/status-card-query",
+    "harness-engineer": "paperclipai/paperclip/paperclip-opencode-health",
+    "email-creative": "local/5ee1f0f6fb/kompas-brand-email",
+}
+EXPECTED_KEYS = CORE_KEYS | frozenset(SPECIAL_ASSIGNMENTS.values())
 SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,90}$")
 SAFE_ASSET = re.compile(r"^[\w.\-]+(?:/[\w.\-]+)*$")
 SHA = re.compile(r"^[a-f0-9]{64}$")
@@ -58,8 +69,12 @@ def verify_manifest(data: dict) -> tuple[dict, dict]:
             raise ValueError("Duplicate or invalid role skill assignment")
         count += len(names)
         selected.update(names)
-    if count != 45 or set(sources) != selected:
+    if count != 45 or set(sources) != selected or set(sources) != EXPECTED_KEYS:
         raise ValueError("Approved runtime skill assignments must equal the 45 current desired entries")
+    for role, keys in roles.items():
+        required = CORE_KEYS | ({SPECIAL_ASSIGNMENTS[role]} if role in SPECIAL_ASSIGNMENTS else set())
+        if set(keys) != required:
+            raise ValueError("UNAUTHORIZED_PROFILE_SKILL_ASSIGNMENT " + role)
     runtime_names = set()
     for key, info in sources.items():
         if not isinstance(info, dict):
