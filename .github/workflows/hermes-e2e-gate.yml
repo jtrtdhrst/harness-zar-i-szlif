@@ -45,5 +45,14 @@ jobs:
             echo "::error::Incomplete evidence unexpectedly passed"
             exit 1
           fi
-      - name: Compile validation code
-        run: python -m compileall -q integrations/hermes-paperclip/verify_e2e.py integrations/hermes-paperclip/tests
+      - name: Compile evidence and production verifier source without executing live checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=integrations/hermes-paperclip
+          python -m compileall -q "$root/verify_e2e.py" "$root/tests" \
+            "$root/health/verify_production.py" "$root/health/audit_runtime_skill_packages.py"
+          bash -n "$root/health/check-dualstack-gateway.sh"
+          # These are syntax/source guards only. Real VPS run still requires
+          # the 14 profiles, the Paperclip Vault and scoped MCP permission grant.
+
