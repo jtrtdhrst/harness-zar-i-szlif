@@ -25,6 +25,32 @@ Use only these states: **PASS** means verified in production; **FAIL** means a c
 | Scheduler overlap snapshot | PASS | Current scheduler read returned 0 live runs. “CHO — Hourly Native Delivery Coordination” is active on 0 * * * * Europe/Warsaw; last run completed and has no active issue, next trigger is 2026-11-03T23:00:00Z. “HARNESS — TECHNICAL BLOCKER RECOVERY” remains paused; no schedule or heartbeat was changed. | Read back after the next scheduled tick; keep paused/archived routines unchanged. |
 | Cleanup / full E2E matrix | NOT TESTED | Temporary-resource candidates were inspected as candidates only. No services, volumes, databases, Workers or repositories were deleted. E2E 1 and E2E 2 suites, rollback/retry/idempotence paths, and production cleanup dependency checks were not re-run. | Run suites after their integrations are restored; confirm dependency references and recovery path before any deletion. |
 
+## Live backlog snapshot
+
+A fresh read-only Paperclip query loaded 1,198 issues: 762 done, 417 cancelled, 2 in_progress, 14 blocked, 1 todo and 2 in_review. The 19 nonterminal records below remain open; no task statuses or assignments were changed in this execution.
+
+| Issue | Status | Current owner |
+|---|---|---|
+| KOMAA-1553 | in_progress | MCP Engineer |
+| KOMAA-1556 | in_progress | CHO |
+| KOMAA-1512 | blocked | Harness Engineer |
+| KOMAA-1549 | blocked | CHO |
+| KOMAA-1564 | todo | Harness Engineer |
+| KOMAA-1559 | blocked | CHO |
+| KOMAA-1535 | in_review | CHO |
+| KOMAA-1497 | blocked | Harness Engineer |
+| KOMAA-1513 | blocked | Harness Engineer |
+| KOMAA-1492 | blocked | CHO |
+| KOMAA-1494 | blocked | Harness Engineer |
+| KOMAA-1528 | in_review | Unassigned |
+| KOMAA-1496 | blocked | Harness Engineer |
+| KOMAA-1538 | blocked | CHO |
+| KOMAA-1534 | blocked | CHO |
+| KOMAA-1537 | blocked | UI QA |
+| KOMAA-1536 | blocked | Designer |
+| KOMAA-1527 | blocked | CPO |
+| KOMAA-1531 | blocked | Mascot Designer |
+
 ## Active control-plane records
 
 | Issue | Current state | Evidence / owner |
