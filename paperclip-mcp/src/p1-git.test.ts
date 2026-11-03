@@ -222,13 +222,19 @@ describe("native Paperclip first-class approval, not synthetic GitHub review", (
   it("permits a real approved issue and its exact PR artifact head SHA", () => {
     expect(evaluateNativePaperclipReview(issue,url,sha).ok).toBe(true);
   });
+  it("trusts first-class not_creator enforcement even when returnAssignee points to reviewer", () => {
+    const delegated = { ...issue,executionState:{...issue.executionState,
+      returnAssignee:{type:"agent",agentId:"CHO"}} };
+    expect(evaluateNativePaperclipReview(delegated,url,sha).ok).toBe(true);
+    expect(evaluateNativePaperclipReview({...delegated,reviewPolicy:"none"},url,sha).ok).toBe(false);
+  });
   it("refuses unapproved, self-reviewed, absent or stale artifact", () => {
     const cases = [
       { ...issue,status:"in_review" },
       { ...issue,executionState:{...issue.executionState,lastDecisionOutcome:"changes_requested"} },
       { ...issue,executionState:{...issue.executionState,lastDecisionId:null} },
       { ...issue,executionState:{...issue.executionState,completedStageIds:[]} },
-      { ...issue,executionState:{...issue.executionState,returnAssignee:{type:"agent",agentId:"CHO"}} },
+      { ...issue,reviewPolicy:null,executionState:{...issue.executionState,returnAssignee:{type:"agent",agentId:"CHO"}} },
       { ...issue,workProducts:[] },
       { ...issue,workProducts:[{...issue.workProducts[0],metadata:{headSha:"b".repeat(40)}}] },
       { ...issue,workProducts:[{...issue.workProducts[0],url:"https://github.com/miloszspyrka-code/zar-i-szlif/pull/26"}] },
