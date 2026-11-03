@@ -1,0 +1,211 @@
+--- a/packages/adapters/hermes/src/gateway/server/execute.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.ts
+@@ -1,3 +1,5 @@
++import { readFile, realpath, stat } from "node:fs/promises";
++import { relative, isAbsolute, sep } from "node:path";
+ import type {
+   AdapterExecutionContext,
+   AdapterExecutionResult,
+@@ -390,17 +392,42 @@
+   return lines.filter((line) => line !== null && line !== undefined).join("\n").trim();
+ }
+ 
+-function buildRunBody(ctx: AdapterExecutionContext, sessionKey: string | null): Record<string, unknown> {
++/** Fail closed: a named Hermes run must load its current Paperclip-approved role bundle.
++ * Never inject role text into the user-input channel or a persisted adapter configuration.
++ */
++async function loadPaperclipRoleInstructions(ctx: AdapterExecutionContext): Promise<string> {
++  const filePath = nonEmpty(ctx.config.instructionsFilePath);
++  if (!filePath) return "";
++  const rootPath = nonEmpty(ctx.config.instructionsRootPath);
++  if (!rootPath) throw new Error("Paperclip role bundle has no approved instructionsRootPath.");
++  if (!isAbsolute(rootPath) || !isAbsolute(filePath)) throw new Error("Paperclip role bundle path must be absolute.");
++  const [rootReal, fileReal] = await Promise.all([realpath(rootPath), realpath(filePath)]);
++  const inside = relative(rootReal, fileReal);
++  if (!inside || inside.startsWith("..") || isAbsolute(inside) || inside.split(sep).includes("..")) {
++    throw new Error("Paperclip role instructions path escapes its assigned bundle root.");
++  }
++  const st = await stat(fileReal);
++  if (!st.isFile() || st.size <= 0 || st.size > 150_000) {
++    throw new Error("Paperclip role instructions must be a nonempty, bounded file.");
++  }
++  const body = await readFile(fileReal, "utf8");
++  if (!body.trim()) throw new Error("Paperclip role instructions are empty.");
++  return body;
++}
++
++function buildRunBody(ctx: AdapterExecutionContext, sessionKey: string | null, roleInstructions: string): Record<string, unknown> {
+   const paperclipApiUrl = nonEmpty(ctx.config.paperclipApiUrl);
+   const payloadTemplate = parseObject(ctx.config.payloadTemplate);
+   const configuredInput = nonEmpty(payloadTemplate.input);
+   const input = configuredInput && ctx.context.conversationMode === true
+     ? `${configuredInput}\n\n${buildInput(ctx, paperclipApiUrl)}`
+     : configuredInput ?? buildInput(ctx, paperclipApiUrl);
+-  const instructions =
+-    nonEmpty(ctx.config.instructions) ??
++  const baseline = nonEmpty(ctx.config.instructions) ??
+     nonEmpty(payloadTemplate.instructions) ??
+     "Follow the Paperclip wake instructions exactly. Do not expose secrets in logs, comments, or final output.";
++  const instructions = roleInstructions
++    ? [baseline, "CURRENT PAPERCLIP APPROVED AGENT ROLE INSTRUCTIONS:", roleInstructions].join("\n\n")
++    : baseline;
+   return {
+     ...payloadTemplate,
+     input,
+@@ -967,7 +994,36 @@
+     runHeaders.Authorization,
+     runHeaders["X-Hermes-Session-Key"],
+   ]);
+-  const body = buildRunBody(ctx, sessionKey);
++  // Paperclip already mints short-lived, run-bound MCP/connection grants.
++  // Hermes Gateway currently has no accepted per-run MCP override contract.
++  // Never silently discard these private credentials or push them into a prompt.
++  const assignedRuntimeMcp = ctx.runtimeMcp?.getServers() ?? [];
++  if (assignedRuntimeMcp.length > 0 || ctx.runtimeTools) {
++    return {
++      exitCode: 1,
++      signal: null,
++      timedOut: false,
++      errorCode: "hermes_gateway_run_scoped_mcp_bridge_required",
++      errorMessage: "Hermes Gateway run-scoped Paperclip MCP grant delivery is not implemented; refusing to execute without assigned tools.",
++    };
++  }
++
++  let roleInstructions: string;
++  try {
++    roleInstructions = await loadPaperclipRoleInstructions(ctx);
++  } catch {
++    return {
++      exitCode: 1,
++      signal: null,
++      timedOut: false,
++      errorCode: "hermes_gateway_role_instructions_unavailable",
++      errorMessage: "Paperclip-approved role instructions could not be loaded safely; refusing an unscoped Gateway run.",
++    };
++  }
++  if (roleInstructions) {
++    await ctx.onLog("stdout", `[hermes-gateway] Verified approved Paperclip role bundle (${roleInstructions.length} chars)\n`);
++  }
++  const body = buildRunBody(ctx, sessionKey, roleInstructions);
+   const createRunUrl = apiUrl(baseUrl, "/v1/runs");
+ 
+   await ctx.onMeta?.({
+--- a/packages/adapters/hermes/src/gateway/server/test.ts
++++ b/packages/adapters/hermes/src/gateway/server/test.ts
+@@ -160,6 +160,53 @@
+     });
+   }
+ 
++  // /health is deliberately public in Hermes; a green GET is NOT proof that
++  // this credential can create an authenticated named-profile run.
++  // Malformed JSON is rejected before agent execution, so the probe burns no tokens.
++  if (!checks.some((check) => check.level === "error") && parsed && apiKey) {
++    const probeUrl = apiUrl(parsed, "/v1/runs");
++    const invalidBody = "{";
++    const makeRequest = (key: string) => fetch(probeUrl, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${key}`,
++        Accept: "application/json",
++        "Content-Type": "application/json",
++      },
++      body: invalidBody,
++      signal: AbortSignal.timeout(5_000),
++    });
++    try {
++      const acceptedKeyProbe = await makeRequest(apiKey);
++      if (acceptedKeyProbe.status !== 400) {
++        checks.push({
++          code: "hermes_gateway_run_auth_failed",
++          level: "error",
++          message: `Hermes named-profile run endpoint returned HTTP ${acceptedKeyProbe.status} instead of authenticated invalid-payload HTTP 400.`,
++          hint: "The profile API_SERVER_KEY must match the encrypted Paperclip adapter secret_ref; /health does not validate authentication.",
++        });
++      } else {
++        // Deliberately wrong bearer must fail authentication, not reach validation.
++        // A 400 here would mean auth is bypassed and an API key check cannot be trusted.
++        const invalidKeyProbe = await makeRequest("paperclip-auth-negative-probe-not-a-key");
++        const denied = invalidKeyProbe.status === 401 || invalidKeyProbe.status === 403;
++        checks.push({
++          code: denied ? "hermes_gateway_authenticated_run_probe_ok" : "hermes_gateway_run_auth_not_enforced",
++          level: denied ? "info" : "error",
++          message: denied
++            ? "The named-profile run route authenticates the supplied credential and rejects unrelated credentials."
++            : `Hermes run endpoint did not reject an invalid credential (HTTP ${invalidKeyProbe.status}).`,
++        });
++      }
++    } catch (err) {
++      checks.push({
++        code: "hermes_gateway_run_auth_unreachable",
++        level: "error",
++        message: "Cannot verify authentication on the real Hermes run endpoint.",
++        detail: errorDetail(err),
++      });
++    }
++  }
+   return {
+     adapterType: ctx.adapterType,
+     status: summarizeStatus(checks),
+--- a/packages/adapters/hermes/src/gateway/server/execute.test.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.test.ts
+@@ -1,3 +1,6 @@
++import { mkdtemp, writeFile, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
+ import { describe, expect, it, vi, afterEach } from "vitest";
+ import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
+ import { createPromptContextFixture } from "@paperclipai/adapter-utils/test-fixtures/prompt-context";
+@@ -923,9 +926,42 @@
+   });
+ });
+ 
+-describe("testEnvironment", () => {
++describe("testEnvironment", () => {  it("fails when /health is green but /v1/runs rejects the named key", async () => {
++    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
++      new Response("{}", { status: String(url).endsWith("/health") ? 200 : 401 }));
++    vi.stubGlobal("fetch", fetchMock);
++    const result = await testEnvironment({
++      companyId: "company-1", adapterType: "hermes_gateway",
++      config: { apiBaseUrl: "http://127.0.0.1:8642/p/cho", apiKey: "old-generic-key" },
++    });
++    expect(result.status).toBe("fail");
++    expect(result.checks).toEqual(expect.arrayContaining([
++      expect.objectContaining({ code: "hermes_gateway_health_ok" }),
++      expect.objectContaining({ code: "hermes_gateway_run_auth_failed", level: "error" }),
++    ]));
++    expect(fetchMock).toHaveBeenCalledTimes(2);
++  });
++
++  it("fails when an incorrect bearer is accepted by the run route", async () => {
++    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
++      new Response("{}", { status: String(url).endsWith("/health") ? 200 : 400 }));
++    vi.stubGlobal("fetch", fetchMock);
++    const result = await testEnvironment({
++      companyId: "company-1", adapterType: "hermes_gateway",
++      config: { apiBaseUrl: "http://127.0.0.1:8642/p/cho", apiKey: "wrongly-open-route" },
++    });
++    expect(result.status).toBe("fail");
++    expect(result.checks).toEqual(expect.arrayContaining([
++      expect.objectContaining({ code: "hermes_gateway_run_auth_not_enforced", level: "error" }),
++    ]));
++  });
++
++
+   it("fails remote plain HTTP before probing health", async () => {
+-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
++      if (!String(url).endsWith("/v1/runs")) return new Response("{}", { status: 200 });
++      return new Response("{}", { status: String((init?.headers as Record<string, string>)?.Authorization).includes("negative-probe") ? 401 : 400 });
++    });
+     vi.stubGlobal("fetch", fetchMock);
+ 
+     const result = await testEnvironment({
+@@ -950,7 +986,10 @@
+   });
+ 
+   it("allows remote plain HTTP only with the unsafe dev escape hatch", async () => {
+-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
++      if (!String(url).en
+
+... [5962 characters truncated]
