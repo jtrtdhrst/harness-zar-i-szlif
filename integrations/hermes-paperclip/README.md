@@ -4,6 +4,8 @@
 >
 > **Canonical PR ownership:** [#28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28) E2E verifier and this README; [#18](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/18) Hermes adapter patch only; [#9](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/9) production schema-2 skill sync, Wiki, toolsets; [#6](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/6) Git-backed Coolify build/release gate. No duplicate code under `ops/`; no Paperclip Core changes. Production operator runbook: `/opt/hermes-gateway-ops/PRODUCTION-CUTOVER-RUNBOOK.md`.
 >
+> **Post-fix empirical auth result:** A new **real Paperclip-issued** CHO run `KOMAA-1562` / `7f7df793-3ff0-4d17-b287-3126c34fcbff` was attempted over the now-fixed IPv4/IPv6 HTTPS path. It failed `hermes_gateway_auth_failed`; the **Hermes origin log** (19:54:19 UTC) confirmed `API server rejected invalid API key` on `POST /p/cho/v1/runs`. CHO was rolled back to `opencode_local`/GPT-6 Luna and the temporary test task cancelled with first-class evidence. Correct scoped Paperclip Vault credential is a real blocker; no shell/DB secret transfer or shared admin key is acceptable.
+>
 > **Authentication evidence correction:** prior CHO canary KOMAA-1546 HTTP 401 occurred *before* Cloudflare Access's missing VPS IPv6 bypass was repaired. It does **not** prove the Paperclip encrypted profile key is wrong. HTTPS from VPS to Hermes now passes IPv4+IPv6 Access and properly rejects unauthenticated requests at Hermes; a new authenticated Paperclip-issued canary remains necessary. **Hindsight is 13 profiles Cloud + CPO local_external**; CPO's local exact read-after-retain has not passed.
 
 
