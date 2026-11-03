@@ -10,7 +10,8 @@ const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 const COMPANY = "11111111-1111-1111-1111-111111111111";
-const AGENT = "22222222-2222-2222-2222-222222222222";
+// Explicitly authorized implementation agent; the global Git publisher role filter is enforced.
+const AGENT = "3fe90c23-8386-40d5-b0a8-52d8c40f812e";
 const ISSUE = "44444444-4444-4444-8444-444444444444";
 const OTHER_ISSUE = "66666666-6666-4666-8666-666666666666";
 const RUN = "77777777-7777-4777-8777-777777777777";

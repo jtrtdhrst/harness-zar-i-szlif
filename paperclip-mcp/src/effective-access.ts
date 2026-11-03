@@ -10,7 +10,7 @@
 import { z } from "zod";
 import type { PaperclipApiClient } from "./client.js";
 import { CONTROL_PLANE_TOOL_NAMES } from "./control-plane.js";
-import { WORKSPACE_NATIVE_TOOL_NAMES } from "./workspace-native.js";
+import { WORKSPACE_NATIVE_TOOL_NAMES, GIT_PUBLICATION_TOOL_NAMES, gitPublicationAllowed } from "./workspace-native.js";
 import { P1_GIT_TOOL_NAMES } from "./p1-git.js";
 import { P1_PLATFORM_TOOL_NAMES } from "./p1-platform.js";
 import { ISSUE_FIELD_TOOL_NAMES } from "./issue-fields.js";
@@ -202,7 +202,8 @@ export function createEffectiveAccessTools(client: PaperclipApiClient): Effectiv
           const cap = toolCapability(toolName);
           const chatBoardOnly = pol.boardOnly === true;
           const authenticationType = chatBoardOnly ? "board-user" : toolName.startsWith("/agents/") ? "agent-key" : (toolName === "paperclipMe" || toolName === "paperclipInboxLite" ? "agent-key" : "caller-key-or-board");
-          const authorizationGranted = !agentMissing && exposedToAgent && !chatBoardOnly;
+          const gitRoleDenied = GIT_PUBLICATION_TOOL_NAMES.has(toolName) && (!ctx.agentId || !gitPublicationAllowed(ctx.agentId, toolName));
+          const authorizationGranted = !agentMissing && exposedToAgent && !chatBoardOnly && !gitRoleDenied;
           const runtimeAvailable = pol.runtime === "api" ? apiHealth : true;
           const providerReachable = pol.runtime === "api" ? apiHealth : true;
           const missingRun = needsRun(toolName) && !issueId;
@@ -221,6 +222,7 @@ export function createEffectiveAccessTools(client: PaperclipApiClient): Effectiv
           else if (!cap.supported) { denialReason = cap.unsupportedReason ?? "unsupported capability"; remediationOwner = "cto"; }
           else if (chatBoardOnly) { denialReason = "requires an authenticated Board-user chat session; agent keys cannot own or post to chats"; remediationOwner = "board"; }
           else if (!exposedToAgent) { denialReason = "tool hidden by PAPERCLIP_MCP_TOOL_FILTER"; remediationOwner = "owner"; }
+          else if (gitRoleDenied) { denialReason = "Git publication role denied: implementation agents can branch/commit/push/PR; CHO/CTO only merge through gated review"; remediationOwner = "CHO"; }
           else if (!runtimeAvailable) { denialReason = "API runtime unreachable"; remediationOwner = "owner"; }
           else if (missingRun) { denialReason = "missing live execution context (pass issueId; mutations also accept runId of the caller's own running run, or a board key)"; remediationOwner = "caller"; }
           return {
@@ -269,6 +271,9 @@ export function createEffectiveAccessTools(client: PaperclipApiClient): Effectiv
         }
         if (!isKnownToolName(toolName)) {
           return { toolName, executableNow: false, denialReason: "tool not registered", remediationOwner: "owner" as const, probe: null };
+        }
+        if (GIT_PUBLICATION_TOOL_NAMES.has(toolName) && (!ctx.agentId || !gitPublicationAllowed(ctx.agentId, toolName))) {
+          return { toolName, executableNow: false, denialReason: "Git publication role denied", remediationOwner: "CHO" as const, probe: null };
         }
         // Side-effect-free probes per tool class.
         try {

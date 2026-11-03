@@ -37,6 +37,7 @@ export interface WorkspaceNativeToolDefinition {
 }
 
 function makeTool<TSchema extends z.ZodRawShape>(
+  client: PaperclipApiClient,
   name: string,
   description: string,
   schema: z.ZodObject<TSchema>,
@@ -49,6 +50,7 @@ function makeTool<TSchema extends z.ZodRawShape>(
     execute: async (input) => {
       try {
         const parsed = schema.parse(input);
+        await assertGitPublicationRole(client, name);
         return formatTextResponse(await execute(parsed));
       } catch (error) {
         return formatErrorResponse(error);
@@ -227,6 +229,38 @@ export type CallerIdentity =
   | { type: "board" }
   | { type: "agent"; agentId: string }
   | { type: "unknown" };
+
+// Production Git publication roles. Board calls are explicit operator authority;
+// agent calls require authenticated caller identity AND the existing live issue/run gate.
+// GitHub MCP is separately read-only; write access is provided ONLY by native tools.
+export const GIT_PUBLICATION_TOOL_NAMES = new Set([
+  "paperclipGitCreateBranch", "paperclipGitCommit",
+  "paperclipGitPush", "paperclipGitCreatePR", "paperclipGitMergePR",
+  "paperclipWorkspaceExec", // arbitrary build/script execution belongs to implementation roles only
+]);
+const GIT_IMPLEMENTERS = new Set([
+  "3fe90c23-8386-40d5-b0a8-52d8c40f812e", // Engineer
+  "ada5390b-b87e-43f3-a250-3657811e7a0c", // Harness Engineer
+  "1a9eba12-8a05-4a58-ac99-17d1bc80ed62", // MCP Engineer
+]);
+const GIT_APPROVERS = new Set([
+  "5595f2c4-95e2-4c3e-97b4-c00d4e4d6601", // CHO
+  "ff703eba-3c3d-46f0-b265-df0db1101a19", // CTO
+]);
+export function gitPublicationAllowed(agentId: string, toolName: string): boolean {
+  if (!GIT_PUBLICATION_TOOL_NAMES.has(toolName)) return true;
+  return (toolName === "paperclipGitMergePR" ? GIT_APPROVERS : GIT_IMPLEMENTERS).has(agentId);
+}
+export async function assertGitPublicationRole(client: PaperclipApiClient, toolName: string): Promise<void> {
+  if (!GIT_PUBLICATION_TOOL_NAMES.has(toolName)) return;
+  const caller = await resolveCallerIdentity(client);
+  if (caller.type === "board") return; // explicit Board operator, audited separately
+  if (caller.type !== "agent" || !gitPublicationAllowed(caller.agentId, toolName)) {
+    throw err("permission_denied", `Git publication role denied for ${toolName}`, {
+      remediationOwner: "CHO", requiredAction: "Delegate the authorized Git publication step to the proper implementation/release agent",
+    });
+  }
+}
 
 export interface WorkspaceMutationContext {
   authority: "board" | "agent-run" | "operator";
@@ -541,6 +575,20 @@ function checkExecPolicy(argv: string[]): void {
   }
 }
 
+function assertNoDirectGitPublicationViaExec(argv: string[]): void {
+  const bin = (argv[0] ?? "").split("/").pop();
+  if (bin === "git") {
+    let index = 1;
+    while (argv[index] === "-c" && argv[index + 1]) index += 2;
+    if (argv[index] === "push") {
+      throw err("command_denied", "Direct git push via generic WorkspaceExec refused: use the native issue-scoped paperclipGitPush");
+    }
+  }
+  if (bin === "gh" && argv[1] === "pr" && ["create", "merge", "close", "reopen", "edit", "review"].includes(argv[2] ?? "")) {
+    throw err("command_denied", "GitHub PR mutation via generic WorkspaceExec refused: use native approved Git tools");
+  }
+}
+
 export async function runJailedExec(opts: {
   ws: ResolvedWorkspace;
   argv: string[];
@@ -683,7 +731,7 @@ export const WORKSPACE_NATIVE_TOOL_NAMES: string[] = [
 
 export function createWorkspaceNativeTools(client: PaperclipApiClient): WorkspaceNativeToolDefinition[] {
   return [
-    makeTool(
+    makeTool(client,
       "paperclipWorkspaceListFiles",
       "List files in an authorized execution workspace (by workspaceId, or the current workspace of issueId). Company-scoped: cross-company refused. Returns path/type/size (+sha256 for small files).",
       z.object({
@@ -733,7 +781,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, cwd: ws.cwd, branch: ws.branchName, entries, truncated, scope: "company-owned execution workspace" };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipWorkspaceReadFile",
       "Read a file from an authorized execution workspace with line pagination. Returns numbered lines, full-file sha256, and truncation info. Large files are paged via startLine/endLine.",
       z.object({
@@ -765,7 +813,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipWorkspacePatchFile",
       "Atomically REPLACE a file's full content in an authorized workspace (optimistic concurrency via expectedSha; tmp+rename; no writes outside the workspace). NOTE: despite the legacy parameter name, `patch` carries the FULL target content, not a unified diff — `content` is the canonical alias for the same value. For true unified diffs use paperclipWorkspaceApplyUnifiedDiff. Mutations are authorized by the caller's own live heartbeat run (runId; issue-bound, expires with the run) or by a board key; operator sessions were removed in Paperclip 2026.1012.0. dryRun returns the diff without writing.",
       z.object({
@@ -848,7 +896,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, path, dryRun: false, beforeSha: currentSha, afterSha: reread, beforeLines, afterLines, attribution: mutationCtx };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipWorkspaceExec",
       "Execute an allowlisted command (git/pnpm/npm/node/npx/tsc/vitest/eslint, no shell) as an unprivileged process jailed to an authorized workspace. Authorized by the caller's own live heartbeat run (runId; issue-bound, expires with the run) or by a board key; operator sessions were removed in Paperclip 2026.1012.0. Bounded CPU/time/output; secrets redacted; stdout/stderr/exitCode/timeout returned. Pass operationId to replay a previous result without re-executing.",
       z.object({
@@ -885,6 +933,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
         if (issueId) await verifyIssueWritable(client, issueId);
+        assertNoDirectGitPublicationViaExec(argv as string[]);
         await enforceWriteScope(client, { issueId: issueId ?? ws.sourceIssueId, argv: argv as string[], tool: "paperclipWorkspaceExec" });
         await enforceDeploymentRoot(client, { issueId: issueId ?? ws.sourceIssueId, targetPath: ws.realCwd, workspacePath: ws.realCwd, tool: "paperclipWorkspaceExec" });
         const fetchCredentialEnv = await gitFetchCredentialEnvForWorkspace(ws, argv as string[]);
@@ -901,7 +950,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { ...execResult, attribution: mutationCtx };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitStatus",
       "Git status of an authorized workspace: branch, HEAD, dirty state, porcelain list. Read-only (no operatorRunId needed).",
       z.object({ workspaceId: workspaceIdSchema, issueId: issueIdSchema }),
@@ -923,7 +972,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitDiff",
       "Git diff of an authorized workspace (working tree and/or staged). Read-only. Supports --stat and path filtering.",
       z.object({
@@ -945,7 +994,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, staged: staged ?? false, diff: r.stdout, truncated: r.stdoutTruncated };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitCreateBranch",
       "Create (or deterministically reuse) one canonical working branch per delivery unit. When issueId is given the branch must start with the issue identifier (e.g. KOMAA-798/...) so changes from different units never share a commit. Authorized by the caller's own live heartbeat run (runId; issue-bound, expires with the run) or by a board key; operator sessions were removed in Paperclip 2026.1012.0.",
       z.object({
@@ -983,7 +1032,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, branch, reused: false, before, after: await gitHead(ws) };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitCommit",
       "Commit an explicit file list in an authorized workspace (never commits unrelated units' changes). Verifies HEAD/branch/dirty before and after, scans the staged diff for secrets, and returns the new SHA. Authorized by the caller's own live heartbeat run (runId; issue-bound, expires with the run) or by a board key; operator sessions were removed in Paperclip 2026.1012.0.",
       z.object({
@@ -1041,7 +1090,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, before, after, files, message, attribution: mutationCtx };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitPush",
       "Push the current branch to origin in an authorized workspace. Origin + current branch only, no force by default, protected branches (main/master) need explicit opt-in. Verifies the remote SHA after push. Authorized by the caller's own live heartbeat run (runId; issue-bound, expires with the run) or by a board key; operator sessions were removed in Paperclip 2026.1012.0.",
       z.object({
@@ -1093,7 +1142,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, branch: target, before, after, remoteSha, shaMatch: match, attribution: mutationCtx };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitCreatePR",
       "Open a pull request for the workspace branch via gh (uses the host's GitHub auth; no separate keys minted). No extra review gates beyond the repo's own CI/review policy. Authorized by the caller's own live heartbeat run (runId; issue-bound, expires with the run) or by a board key; operator sessions were removed in Paperclip 2026.1012.0.",
       z.object({
@@ -1147,7 +1196,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, url, alreadyExists: false };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitGetChecks",
       "Read CI checks for the workspace branch's PR (via gh). Read-only; UNVERIFIED with owner if GitHub auth is missing.",
       z.object({ workspaceId: workspaceIdSchema, issueId: issueIdSchema, branch: z.string().min(1).max(128).optional().nullable() }),
@@ -1196,7 +1245,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         };
       },
     ),
-    makeTool(
+    makeTool(client,
       "paperclipGitGetMergeReadiness",
       "Merge readiness for the workspace branch's PR: mergeable state, required checks, review decision. Read-only; UNVERIFIED with owner if GitHub auth is missing.",
       z.object({ workspaceId: workspaceIdSchema, issueId: issueIdSchema, branch: z.string().min(1).max(128).optional().nullable() }),

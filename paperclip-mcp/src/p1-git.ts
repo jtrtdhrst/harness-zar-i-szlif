@@ -19,6 +19,7 @@ import {
   runJailedExec,
   redactWorkspaceOutput,
   authorizeWorkspaceMutation,
+  assertGitPublicationRole,
   assertWorkspaceMutationScope,
   recordWorkspaceMutationAudit,
   readBoundGitToken,
@@ -691,6 +692,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
         operatorRunId: operatorRunIdSchema,
       }),
       async ({ repository, workspaceId, issueId, pullRequestNumber, expectedHeadSha, mergeMethod, idempotencyKey, runId, operatorRunId }) => {
+        await assertGitPublicationRole(client, "paperclipGitMergePR");
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
