@@ -1,0 +1,33 @@
+name: Hermes Gateway Coolify Image CI
+
+on:
+  pull_request:
+    paths:
+      - "integrations/hermes-paperclip/gateway/**"
+      - ".github/workflows/hermes-gateway-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "integrations/hermes-paperclip/gateway/**"
+      - ".github/workflows/hermes-gateway-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-hermes-gateway-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned image with Coolify probe binary
+        run: docker build -f integrations/hermes-paperclip/gateway/Dockerfile -t hermes-gateway-healthcheck-ci:verified integrations/hermes-paperclip/gateway
+      - name: Check image capabilities without starting gateway
+        run: |
+          docker run --rm --entrypoint sh hermes-gateway-healthcheck-ci:verified -ec '
+            command -v wget
+            wget --version | head -n 1
+            command -v python3
+            python3 -c "import urllib.request; print(\"python-runtime-ok\")"
+          '
