@@ -22,6 +22,17 @@ describe("short-lived GitHub App credential verification", () => {
     expect(validateGithubAppTokenRecord({ ...scoped(), expires_at: new Date(NOW - 1).toISOString() }, NOW)).toBeNull();
     expect(validateGithubAppTokenRecord({ ...scoped(), expires_at: new Date(NOW + 60_000).toISOString() }, NOW)).toBeNull();
   });
+  it("accepts Checks read during scoped token rollout and rejects write or over-grant", () => {
+    const minimal = scoped();
+    expect(validateGithubAppTokenRecord({
+      ...minimal,
+      permissions: { ...minimal.permissions, checks: "read" },
+    }, NOW)).toBe(MOCK_TOKEN);
+    expect(validateGithubAppTokenRecord({
+      ...minimal,
+      permissions: { ...minimal.permissions, checks: "write" },
+    }, NOW)).toBeNull();
+  });
   it("rejects token with expanded repository scope", () => {
     expect(validateGithubAppTokenRecord({ ...scoped(), repositories: [...scoped().repositories, "some/other-repo"] }, NOW)).toBeNull();
   });
