@@ -36,7 +36,8 @@ jobs:
           PATCH="${GITHUB_WORKSPACE}/integrations/hermes-paperclip/adapter-patches/hermes-gateway-20261103.patch"
           test -f "$PATCH"
           printf '%s  %s\n' '1ebeb7ef70bc3c55aa4f70c4dd6f82e8a34fa44bf4666f6a2d71984b725125df' "$PATCH" | sha256sum -c -
-          docker run --rm --network none --user root \
+          # No secrets are passed into this disposable container; Corepack may fetch pinned pnpm.
+          docker run --rm --network bridge --user root \
             -v "$PATCH:/tmp/hermes-gateway-20261103.patch:ro" \
             --entrypoint /bin/sh \
             ghcr.io/paperclipai/paperclip:2026.1023.0 -ec '
