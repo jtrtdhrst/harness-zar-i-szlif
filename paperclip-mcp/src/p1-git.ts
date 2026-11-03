@@ -237,6 +237,13 @@ function scrub(text: string): string {
  * never receives (the probe/transport disagreement this issue names). It reads as
  * absent, exactly like the control-plane preflight predicate does.
  */
+/** Use the validated short-lived installation credential with noninteractive gh.
+ * Git's credential helper alone cannot authenticate the gh CLI. */
+export function scopedGhEnv(): Record<string, string> | null {
+  const token = readBoundGitToken();
+  return token ? { GH_TOKEN: token, GITHUB_TOKEN: token, GH_PROMPT_DISABLED: "1" } : null;
+}
+
 export function hasGitHubTokenEnv(): { present: boolean; kind: string | null; reason: string | null } {
   const token = readBoundGitToken();
   if (token) return {
@@ -684,6 +691,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
             timeoutSec: 30,
             outputLimit: 16384,
             operationId: null,
+          extraEnv: scopedGhEnv() ?? undefined,
           })) as unknown as Record<string, unknown>;
           const out = scrub(String(r.stdout ?? ""));
           const exitCode = Number(r.exitCode ?? 1);
@@ -795,6 +803,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           timeoutSec: 30,
           outputLimit: 8192,
           operationId: null,
+          extraEnv: scopedGhEnv() ?? undefined,
         })) as unknown as Record<string, unknown>;
         if (Number(view.exitCode ?? 1) !== 0) throw err("not_found", `PR not found or not readable: #${pullRequestNumber}`);
         let meta: Record<string, unknown> = {};
@@ -830,6 +839,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           timeoutSec: 30,
           outputLimit: 65536,
           operationId: null,
+          extraEnv: scopedGhEnv() ?? undefined,
         });
         if (checksExec.exitCode !== 0) throw err("checks_unverified", "GitHub Checks API cannot be read; no merge", { remediationOwner: "CTO" });
         let checksPayload: unknown;
@@ -848,6 +858,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           timeoutSec: 60,
           outputLimit: 8192,
           operationId: null,
+          extraEnv: scopedGhEnv() ?? undefined,
         })) as unknown as Record<string, unknown>;
         if (Number(merged.exitCode ?? 1) !== 0) {
           throw err("refused", `Merge rejected for #${pullRequestNumber} (branch protection or CI unsatisfied; no force merge attempted): ${scrub(String(merged.stderr ?? merged.stdout ?? "")).slice(0, 500)}`, {
@@ -861,6 +872,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           timeoutSec: 30,
           outputLimit: 4096,
           operationId: null,
+          extraEnv: scopedGhEnv() ?? undefined,
         })) as unknown as Record<string, unknown>;
         let confirmed: Record<string, unknown> = {};
         try {
