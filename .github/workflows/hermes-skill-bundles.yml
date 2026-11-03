@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - 'integrations/hermes-paperclip/roles/**'
+      - 'integrations/hermes-paperclip/wiki/**'
+      - 'integrations/hermes-paperclip/health/**'
       - '.github/workflows/hermes-skill-bundles.yml'
   push:
     branches:
       - 'fix/hermes-gateway-isolation-20261102'
     paths:
       - 'integrations/hermes-paperclip/roles/**'
+      - 'integrations/hermes-paperclip/wiki/**'
+      - 'integrations/hermes-paperclip/health/**'
       - '.github/workflows/hermes-skill-bundles.yml'
 
 permissions:
@@ -57,3 +61,17 @@ jobs:
           # Tests create only throwaway temporary directories and require root for chown.
           sudo -n python3 -m unittest discover \
             -s integrations/hermes-paperclip/roles/tests -v
+      - name: Validate scoped Wiki regression and retired config cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=integrations/hermes-paperclip
+          python3 -m unittest discover -s "$root/wiki/tests" -v
+          bash -n "$root/health/readiness.sh" "$root/wiki/sync.sh"
+          test ! -e "$root/health/hermes-test-readiness.service"
+          test ! -e "$root/health/hermes-test-readiness.timer"
+          test ! -e "$root/wiki/hermes-test-wiki-sync.service"
+          test ! -e "$root/wiki/hermes-test-wiki-sync.timer"
+          grep -q 'Unit=hermes-paperclip-wiki-sync.service' "$root/wiki/systemd/hermes-paperclip-wiki-sync.timer"
+          grep -q 'ExecStart=/usr/local/libexec/hermes-paperclip-wiki-sync.sh' "$root/wiki/systemd/hermes-paperclip-wiki-sync.service"
+          echo "PASS: current Wiki systemd only; no retired Hermes Test jobs"
