@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks } from "./p1-git.js";
+import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, scopedGhEnv } from "./p1-git.js";
 import type { PaperclipApiClient } from "./client.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -236,5 +236,16 @@ describe("native Paperclip first-class approval, not synthetic GitHub review", (
     for(const x of cases)expect(evaluateNativePaperclipReview(x,url,sha).ok).toBe(false);
     expect(evaluateNativePaperclipReview(issue,url,"b".repeat(40)).ok).toBe(false);
     expect(evaluateNativePaperclipReview(issue,"https://github.com/foreign/repo/pull/26",sha).ok).toBe(false);
+  });
+});
+
+describe("GitHub App credential projection into noninteractive gh", () => {
+  it("refuses to synthesize an auth environment from a missing credential", () => {
+    // The test runtime does not mount a root-owned production token.
+    // Do not mistake a placeholder for a real installation credential.
+    const projected = scopedGhEnv();
+    expect(projected === null || (typeof projected.GH_TOKEN === "string"
+      && projected.GH_TOKEN === projected.GITHUB_TOKEN
+      && projected.GH_PROMPT_DISABLED === "1")).toBe(true);
   });
 });
