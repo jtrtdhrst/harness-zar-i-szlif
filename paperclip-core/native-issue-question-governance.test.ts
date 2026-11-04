@@ -32,6 +32,24 @@ describe("Core direct API technical-question governance", () => {
       ]), AGENT,
     )).toThrow("Agent technical or credential escalation");
   });
+  it("blocks technical access requests disguised as ordinary confirmations", () => {
+    for (const kind of ["request_confirmation", "request_checkbox_confirmation"]) {
+      expect(() => assertNativeIssueQuestionGovernance({
+        kind,
+        title: "Which source repository should be authorized?",
+        payload: { question: "Pick the implementation path", options: ["Temporary worktree", "Production repository"] },
+      }, AGENT)).toThrow("Agent technical or credential escalation");
+    }
+  });
+  it("preserves governed native tool-action and protected proposal confirmation", () => {
+    for (const payload of [{ toolAction: { id: "governed-action" } }, { secretProposal: { id: "governed-proposal" } }]) {
+      expect(() => assertNativeIssueQuestionGovernance({
+        kind: "request_confirmation",
+        title: "Authorize controlled action",
+        payload,
+      }, AGENT)).not.toThrow();
+    }
+  });
   it("allows genuine product/editorial questions", () => {
     expect(() => assertNativeIssueQuestionGovernance(
       form("Wybierz styl", "Który styl ilustracji wybrać?", [
