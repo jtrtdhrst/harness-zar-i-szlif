@@ -23,6 +23,7 @@ from apply_opik_segmentation import BASE_SHA256, KNOWN_ROLES, transform
 RELATIVE_FILE = Path("plugins/opik/lifecycle.py")
 JOURNAL_DIR = ".opik-segmentation-rollout"
 LOCK_FILE = ".lock"
+PATCHED_SHA256 = "bd0bb126ca0328f0f1420b0fbb8cf1729de092e85d581966d738edb8f86fa4ae"
 
 
 class RolloutError(RuntimeError):
@@ -69,20 +70,29 @@ def source_paths(root: Path) -> dict[str, Path]:
 def snapshot(root: Path) -> tuple[dict[str, dict], bytes, bytes]:
     results: dict[str, dict] = {}
     original: bytes | None = None
+    first_file: bytes | None = None
     for role, path in source_paths(root).items():
         assert_regular_path(root, path)
         data = path.read_bytes()
-        if original is None:
+        if first_file is None:
+            first_file = data
+        if digest(data) == BASE_SHA256:
             original = data
         results[role] = {"relative_path": str(path.relative_to(root)),
                          "sha256": digest(data),
                          "mode": path.stat().st_mode & 0o777}
-    if original is None or digest(original) != BASE_SHA256:
-        raise RolloutError("pristine source checksum mismatch")
-    modified = transform(original.decode("utf-8")).encode("utf-8")
     hashes = {v["sha256"] for v in results.values()}
-    if not hashes <= {BASE_SHA256, digest(modified)}:
+    if not hashes <= {BASE_SHA256, PATCHED_SHA256}:
         raise RolloutError("profile source drift: refusing partial rollout")
+    if original is None:
+        # All profiles patched: verify against pinned patched hash rather than
+        # trying to re-run the one-time transform on already transformed code.
+        if hashes != {PATCHED_SHA256} or first_file is None:
+            raise RolloutError("missing canonical pristine or patched source")
+        return results, b"", first_file
+    modified = transform(original.decode("utf-8")).encode("utf-8")
+    if digest(modified) != PATCHED_SHA256:
+        raise RolloutError("patched code hash drift")
     return results, original, modified
 
 
