@@ -14,7 +14,7 @@ class OpikSegmentationTest(unittest.TestCase):
     def test_known_role_only_from_profile_scoped_path(self):
         transformed = patch.transform(
             "import datetime\n\ndef start_root_trace(\n    task_key: str,\n):\n"
-            '    metadata = {\n        "source": "hermes",\n'
+            '    metadata = {\n        "source": "hermes",\n    }\n'
             "    # Build the create payload once and keep it:\n"
             '    create_kwargs = {\n        "tags": tags(),\n    }\n'
         )
@@ -34,7 +34,7 @@ class OpikSegmentationTest(unittest.TestCase):
 
     def test_idempotence_is_fail_closed(self):
         template = ("import datetime\n\ndef start_root_trace(\n    task_key: str,\n):\n"
-                    '    metadata = {\n        "source": "hermes",\n'
+                    '    metadata = {\n        "source": "hermes",\n    }\n'
                     "    # Build the create payload once and keep it:\n"
                     '    create_kwargs = {\n        "tags": tags(),\n    }\n')
         once = patch.transform(template)
@@ -53,7 +53,7 @@ class OpikSegmentationTest(unittest.TestCase):
 
     def test_no_secret_or_prompt_scraping(self):
         template = ("import datetime\n\ndef start_root_trace(\n    task_key: str,\n):\n"
-                    '    metadata = {\n        "source": "hermes",\n'
+                    '    metadata = {\n        "source": "hermes",\n    }\n'
                     "    # Build the create payload once and keep it:\n"
                     '    create_kwargs = {\n        "tags": tags(),\n    }\n')
         code = patch.transform(template)
