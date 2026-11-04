@@ -54,7 +54,7 @@ Receiver installer checks pinned upstream `api_server_runs.py` source SHA-256
 | Gate | Native task | Current decision | Remaining evidence / blocker |
 | --- | --- | --- | --- |
 | **H01 adapter security** | **KOMAA-1564** | **DONE; independent CTO `approved` at 2026-11-04 19:14:01 UTC** | Code/source accepted; this is **not** a release approval |
-| **H02 integration + admission** | KOMAA-1512 | TODO, blocked by H01 before approval | Reconcile exact receiver and adapter artifact; real run-scoped admission, tool cleanup, concurrent runs and grant-replay controls |
+| **H02 integration + admission** | KOMAA-1512 | **IN_PROGRESS in issue projection, but no live run** (`false_progress_no_issue_run`); H01 dependency is `done` | Recover native scheduler/DAG eligibility without bypass, then reconcile exact receiver and adapter artifact; real run-scoped admission, cleanup, concurrency and grant replay controls |
 | **H05 Named MCP access** | KOMAA-1494 | BLOCKED by KOMAA-1512 | Positive Wiki + Skills from real authorized Paperclip issue/run; negative issuer tests |
 | **Agent E2E** | KOMAA-1496 | BLOCKED by KOMAA-1494 | Real Hermes issue run, own-bank Hindsight readback, cross-bank denial, correlated native Opik |
 | **GitHub/release authentication** | KOMAA-1513 | BLOCKED by KOMAA-1512 | Approved existing GitHub App from intended agent/deploy runtime, canary push/PR, immutable artifact mapping, forbidden repo denial |
@@ -65,6 +65,19 @@ Receiver installer checks pinned upstream `api_server_runs.py` source SHA-256
 `KOMAA-1513`, `KOMAA-1497`.
 The actual number of commands or days is **not** inferable from the issue statuses.
 This is a causal DAG, not five independent parallel tickets.
+
+**Observed orchestration issue after H01 closure:** `paperclipGetExecutionEligibility(KOMAA-1512)`
+returned `executable=false`, `reasons=["false_progress_no_issue_run","blocked_by_1"]`,
+`liveRunCount=0`, even though its only listed relational blocker
+`KOMAA-1564` is `done` with `isDependencyReady=true`. Automatic wake requests
+were skipped. This is a **real control-plane recovery task**, not an
+unfulfilled H01 test. CHO must inspect the authoritative relation and native
+scheduler state, reconcile or resolve the completed dependency via the
+appropriate first-class operation, then verify a real H02 issue run starts.
+Do **not** force-wake through a blocker, delete native review records,
+mark `in_progress` as proven execution, or claim H02 complete based on status
+alone. Evidence: 2026-11-04 operator eligibility readback; preserve the
+before/after issue IDs and run UUID on repair.
 
 Historical `KOMAA-1493` and `KOMAA-1495` are **cancelled**;
 do not make the retired Hermes Test or Release Manager agents mandatory signoffs.
