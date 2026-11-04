@@ -21,6 +21,7 @@ class RunMcpGrantTests(unittest.TestCase):
         servers, scope = validate_grant(self.grant, authenticated_profile="cho", run_id="run-1", now=self.now)
         self.assertEqual(scope, "paperclip-run:cho:run-1")
         self.assertEqual(servers[0]["headers"][0]["value"], "Bearer opaque")
+        self.assertIs(servers[0]["strict_redirect_headers"], True)
 
     def test_wrong_run_and_profile_are_rejected(self):
         for profile, run in (("cho", "run-2"), ("cto", "run-1")):
