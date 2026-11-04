@@ -252,6 +252,70 @@ describe("eligibility & DAG", () => {
     expect(text).toContain("executable");
   });
 
+  it("ignores a fulfilled DONE blocker in execution eligibility (H03 regression)", async () => {
+    eligibilityMocks("todo", [{ id: "done", status: "done", isUnresolved: false, isDependencyReady: true }], []);
+    const res = await getTool("paperclipGetExecutionEligibility").execute({ issueId: ISSUE });
+    const result = JSON.parse(res.content[0]?.text ?? "{}");
+    expect(result.executable).toBe(true);
+    expect(result.blockerCount).toBe(0);
+    expect(result.blockers).toEqual([]);
+  });
+
+  it("still denies unresolved and cancelled blocker relations", async () => {
+    for (const blocker of [
+      { id: "pending", status: "in_progress", isUnresolved: true },
+      { id: "cancelled", status: "cancelled", isUnresolved: true },
+      { id: "unknown", status: "unknown" },
+    ]) {
+      eligibilityMocks("todo", [blocker], []);
+      const res = await getTool("paperclipGetExecutionEligibility").execute({ issueId: ISSUE });
+      const result = JSON.parse(res.content[0]?.text ?? "{}");
+      expect(result.executable).toBe(false);
+      expect(result.blockerCount).toBe(1);
+      expect(result.reasons).toContain("blocked_by_1");
+    }
+  });
+
+  it("reconciles false progress when normalized review attention is none", async () => {
+    const issue = {
+      id: ISSUE, status: "in_progress", assigneeAgentId: AGENT,
+      reviewAttention: { state: "none", paths: [], reason: null },
+      executionState: { status: "changes_requested", currentStageType: "review" },
+      scheduledRetry: null, unblockDescriptor: null,
+    };
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/approvals", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
+      { match: `/issues/${ISSUE}`, body: issue },
+    ]);
+    const res = await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    expect(res.content[0]?.text ?? "").toContain("in_progress_to_todo");
+    const patch = calls.find((call) => call.init.method === "PATCH" && call.url.endsWith(`/issues/${ISSUE}`));
+    expect(patch).toBeDefined();
+    expect(JSON.parse(String(patch?.init.body)).status).toBe("todo");
+  });
+
+  it("does not reconcile while an actual review is pending", async () => {
+    const issue = {
+      id: ISSUE, status: "in_progress", assigneeAgentId: AGENT,
+      reviewAttention: { state: "pending", paths: ["review"], reason: "awaiting_review" },
+      executionState: { status: "pending", currentStageType: "review" },
+      scheduledRetry: null, unblockDescriptor: null,
+    };
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/approvals", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
+      { match: `/issues/${ISSUE}`, body: issue },
+    ]);
+    const res = await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    expect(res.content[0]?.text ?? "").toContain("review_attention_present");
+    expect(calls.some((call) => call.init.method === "PATCH" && call.url.endsWith(`/issues/${ISSUE}`))).toBe(false);
+  });
+
   it("computes blockedBy add/remove as one atomic PATCH", async () => {
     const { calls } = mockFetchRoutes([
       { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "blocked", blockedByIssueIds: ["b1", "b2"] } },
