@@ -2,14 +2,14 @@
 
 This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Every active infrastructure service owns a root folder.
 
-**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The Hermes Gateway Dockerfile exists in open infrastructure PR #6 pending review, and has been build-tested in Coolify; do not claim that it is already merged into `main` or active as the production runtime.
+**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The canonical Hermes candidate Dockerfile is at `integrations/hermes-paperclip/gateway/Dockerfile` in this repository. A successfully built candidate **does not** mean the production Gateway is Git-backed or Hermes agents are migrated. Historical source-binding PR #6 was closed without merge; the source-pinned run-scoped MCP receiver is in PR #36 and its strict E2E gate is in PR #28.
 
 ## Service folders
 
 - `plasmic/` — Plasmic self-hosted application
 - `plasmic-mcp/` — Plasmic MCP
 - `paperclip-mcp/` — Paperclip MCP
-- `comfyui-mcp/` — ComfyUI engine + MCP (split pending)
+- `comfyui-mcp/` — ComfyUI engine + MCP (independently versioned image builds; verify each active deployment)
 - `mantic-mcp/` — Mantic MCP
 - `emailens-mcp/` — Emailens MCP bridge
 - `playwright-mcp/` — Playwright MCP with idle HTTP proxy
@@ -27,12 +27,13 @@ volume map and pending structural cleanup.
 
 Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` under `harness-legacy-20261029/`, preserving each file's relative path. Verified archived source SHA matches were removed from this repository.
 
-## Coolify monorepo build contract
+## Source ownership and candidate build layout — not a production deployment claim
 
-**Source:** `miloszspyrka-code/harness-zar-i-szlif`, branch `main`.
-Every **infrastructure MCP in this repository** is built from its own root folder with its own Docker build context. Do not point these infrastructure deployments at `zar-i-szlif` or the repo root. The **product MCP** is the sole MCP exception and belongs in the separate product repository.
+**Source owner:** `miloszspyrka-code/harness-zar-i-szlif`. `main` is an integration branch, **not** a universal production release ref. Existing infrastructure MCP services include image-only/upstream-pinned Coolify resources. A folder, Dockerfile or green GitHub Action alone does not prove automatic deployment. Promote an exact reviewed image/ref per service only after its own Git-backed canary, health, authenticated MCP test, immutable digest, runtime readback and rollback. Current per-service policies and observed baselines are tracked in [release-lane PR #41](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/41); review/merge and live acceptance remain separate.
 
-| Service | Coolify base directory | Build pack / file | Watch paths |
+The table below is a **candidate source layout** for independently verified service bindings, not an assertion that every production resource already builds from Git. Do not point general-purpose infrastructure MCPs to `zar-i-szlif` or the repo root. The **product MCP** belongs exclusively in the separate product repository.
+
+| Service | Candidate build directory | Dockerfile / build source | Watch paths after verified Git binding |
 | --- | --- | --- | --- |
 | Paperclip MCP | `/paperclip-mcp` | Dockerfile `/Dockerfile` | `paperclip-mcp/**` |
 | Plasmic MCP | `/plasmic-mcp` | Dockerfile `/Dockerfile` | `plasmic-mcp/**` |

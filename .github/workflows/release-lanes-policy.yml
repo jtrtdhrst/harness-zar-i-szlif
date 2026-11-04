@@ -1,0 +1,32 @@
+name: Release Lanes Policy
+
+on:
+  pull_request:
+    paths:
+      - "ops/release-lanes.json"
+      - "docs/RELEASE-POLICY.md"
+      - "scripts/check-release-lanes.py"
+      - ".github/workflows/release-lanes-policy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ops/release-lanes.json"
+      - "docs/RELEASE-POLICY.md"
+      - "scripts/check-release-lanes.py"
+      - ".github/workflows/release-lanes-policy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release-lanes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate lane release mode and governance invariants
+        run: python scripts/check-release-lanes.py --self-test
