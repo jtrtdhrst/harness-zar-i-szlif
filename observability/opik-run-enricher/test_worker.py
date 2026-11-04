@@ -72,4 +72,25 @@ class Tests(unittest.TestCase):
    with patch("sys.argv",["worker.py","--once"]):
     with self.assertRaisesRegex(SystemExit,"unsafe_hindsight_target"):w.main()
 
+
+ def test_safe_reader_denies_symlink_parent(self):
+  agent=next(iter(w.BANKS))
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);company=root/"11111111-1111-4111-8111-111111111111"
+   company.mkdir()
+   outside=root/"private";outside.mkdir()
+   run="33333333-3333-4333-8333-333333333333.ndjson"
+   (outside/run).write_bytes(b"{}\n")
+   (company/agent).symlink_to(outside,target_is_directory=True)
+   with self.assertRaises(OSError):w.read_log_safely(company/agent/run)
+   self.assertEqual(w.candidates(root,1,1),[])
+ def test_safe_reader_incomplete_final_line(self):
+  agent=next(iter(w.BANKS))
+  with tempfile.TemporaryDirectory() as d:
+   parent=Path(d)/"11111111-1111-4111-8111-111111111111"/agent
+   parent.mkdir(parents=True)
+   file=parent/"33333333-3333-4333-8333-333333333333.ndjson"
+   file.write_bytes(b'{"chunk":"pc_obs ')
+   with self.assertRaisesRegex(RuntimeError,"unterminated_final"):w.read_log_safely(file)
+
 if __name__=="__main__":unittest.main()

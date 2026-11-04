@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import re
 import time
@@ -70,6 +71,7 @@ def parse_events(raw,run,agent):
   "source_log_size_bytes":len(raw),"raw_log_exported":False}
 def candidates(root,quiet,age_hours):
  if root.is_symlink() or not root.is_dir():raise RuntimeError("bad_log_root")
+ resolved_root=root.resolve(strict=True)
  found=[];ts=time.time()
  for company in root.iterdir():
   if company.is_symlink() or not company.is_dir() or not is_uuid(company.name):continue
@@ -77,6 +79,7 @@ def candidates(root,quiet,age_hours):
    if agent.is_symlink() or not agent.is_dir() or agent.name not in BANKS:continue
    for log in agent.glob("*.ndjson"):
     if log.is_symlink() or not log.is_file() or not is_uuid(log.stem):continue
+    if not log.resolve(strict=True).is_relative_to(resolved_root):continue
     info=log.stat();delta=ts-info.st_mtime
     if 0<info.st_size<=MAX_BYTES and quiet<delta<age_hours*3600:
      found.append((log,agent.name,log.stem,info.st_mtime))
@@ -130,6 +133,29 @@ def stats(hindsight,bank):
  date=d.get("last_memory_write_at")
  if isinstance(date,str) and len(date)<60:safe["last_memory_write_at"]=date
  return safe
+def read_log_safely(log):
+ # Parent symlink swaps cannot redirect file access: use no-follow directory fds.
+ root=log.parent.parent.parent
+ relative=log.relative_to(root).parts
+ if len(relative)!=3 or root.is_symlink():raise RuntimeError("unsafe_log_path")
+ flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+ fd=os.open(root,flags)
+ try:
+  for directory in relative[:2]:
+   nxt=os.open(directory,flags,dir_fd=fd)
+   os.close(fd);fd=nxt
+  leaf=os.open(relative[2],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd)
+ finally:
+  os.close(fd)
+ with os.fdopen(leaf,"rb") as stream:
+  info=os.fstat(stream.fileno())
+  if not stat.S_ISREG(info.st_mode) or info.st_size>MAX_BYTES:
+   raise RuntimeError("invalid_log_file")
+  data=stream.read(MAX_BYTES+1)
+ if len(data)>MAX_BYTES or len(data)!=info.st_size:raise RuntimeError("log_changed_during_read")
+ if data and not data.endswith(b"\n"):raise RuntimeError("unterminated_final_ndjson_line")
+ return data
+
 def enrich(log,agent,run,opik,hindsight,cache):
  trace=trace_for(opik,agent,run,cache)
  if trace is None:return 0
@@ -137,9 +163,7 @@ def enrich(log,agent,run,opik,hindsight,cache):
  present=span_names(opik,project,trace["id"])
  added=0
  if "paperclip.run.audit_summary" not in present:
-  raw=log.read_bytes()
-  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
-   raise RuntimeError("log_changed")
+  raw=read_log_safely(log)
   summary=parse_events(raw,run,agent)
   if summary["parsed_event_count"]>0:
    emit(opik,project,trace["id"],run,agent,"paperclip.run.audit_summary",summary,
