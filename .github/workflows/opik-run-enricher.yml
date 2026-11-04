@@ -1,0 +1,27 @@
+name: Opik Run Enricher Regression
+on:
+  pull_request:
+    paths:
+      - 'observability/opik-run-enricher/**'
+      - '.github/workflows/opik-run-enricher.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'observability/opik-run-enricher/**'
+      - '.github/workflows/opik-run-enricher.yml'
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Source check
+        run: python -m py_compile worker.py
+        working-directory: observability/opik-run-enricher
+      - name: Privacy and correlation regression
+        run: python -m unittest -v test_worker.py
+        working-directory: observability/opik-run-enricher
