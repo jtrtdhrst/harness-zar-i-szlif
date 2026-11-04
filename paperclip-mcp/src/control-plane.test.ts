@@ -384,7 +384,7 @@ describe("eligibility & DAG", () => {
       { match: "/heartbeat-runs/", body: { id: badRun, status: "queued", agentId: AGENT } },
       { match: "/checkout", body: { woke: true, runId: badRun } },
       { match: "/approvals", body: [] },
-      { match: \`/issues/\${ISSUE}\`, body: { id: ISSUE, status: "todo", assigneeAgentId: AGENT, executionState: null } },
+      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "todo", assigneeAgentId: AGENT, executionState: null } },
     ]);
     const out = JSON.parse((await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE })).content[0]?.text ?? "{}");
     expect(out.woke).toBe(false);
