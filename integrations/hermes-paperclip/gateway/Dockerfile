@@ -1,7 +1,7 @@
 # Hermes Gateway base image deployed in Coolify.
-# Install the HTTP probe binary used by Coolify's generated Docker healthcheck.
-# Coolify must check dashboard port 9119: GET /api/status -> 200.
-# Dashboard readiness alone is not agent execution E2E readiness.
+# Install GNU Wget for Coolify's source-configured HTTP readiness probe.
+# Use the gateway API endpoint GET http://127.0.0.1:8642/health; it does not require dashboard auth setup.
+# Gateway readiness alone is not Paperclip agent execution E2E readiness.
 FROM nousresearch/hermes-agent:v0.22.5
 
 USER root
