@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build pinned image with Coolify probe binary
         run: docker build -f integrations/hermes-paperclip/gateway/Dockerfile -t hermes-gateway-healthcheck-ci:verified integrations/hermes-paperclip/gateway
-      - name: Check image capabilities without starting gateway
+      - name: Check image capabilities
         run: |
           docker run --rm --entrypoint sh hermes-gateway-healthcheck-ci:verified -ec '
             command -v wget
@@ -31,3 +31,45 @@ jobs:
             command -v python3
             python3 -c "import urllib.request; print(\"python-runtime-ok\")"
           '
+      - name: Verify live and stopped gateway health behavior
+        run: |
+          set -euo pipefail
+          name=hermes-gateway-healthcheck-ci
+          trap 'docker rm -f -v "$name" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$name" \
+            -e API_SERVER_PORT=8642 \
+            -e HERMES_HOME=/opt/data \
+            hermes-gateway-healthcheck-ci:verified
+
+          healthy=false
+          for attempt in $(seq 1 120); do
+            if docker exec "$name" wget -q --timeout=2 -O /dev/null \
+              http://127.0.0.1:8642/health; then
+              healthy=true
+              break
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' "$name")" != "true" ]; then
+              docker logs "$name"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$healthy" != "true" ]; then
+            docker logs "$name"
+            exit 1
+          fi
+
+          docker exec "$name" python3 -c 'import json, urllib.request; data = json.load(urllib.request.urlopen("http://127.0.0.1:8642/health", timeout=5)); assert data.get("status") == "ok", data'
+          docker exec "$name" /package/admin/s6/command/s6-svc -d /run/service/gateway-default
+
+          down=false
+          for attempt in $(seq 1 20); do
+            if docker exec "$name" wget -q --timeout=1 -O /dev/null \
+              http://127.0.0.1:8642/health; then
+              sleep 1
+            else
+              down=true
+              break
+            fi
+          done
+          test "$down" = "true"
