@@ -2,13 +2,14 @@
 
 This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Every active infrastructure service owns a root folder.
 
-**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The Hermes Gateway Dockerfile exists in open infrastructure PR #6 pending review, and has been build-tested in Coolify; do not claim that it is already merged into `main` or active as the production runtime.
+**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The historical Hermes Gateway PR #6 was **closed without merge**. The current receiver/adapter candidate is open PR #36; its H01 source/security gate was approved, but H02/H05 and production release remain unverified. Use the [current Hermes integration runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md) rather than historical PR descriptions for the live acceptance ledger.
 
 ## Service folders
 
 - `plasmic/` — Plasmic self-hosted application
 - `plasmic-mcp/` — Plasmic MCP
 - `paperclip-mcp/` — Paperclip MCP
+- `integrations/hermes-paperclip/` — source-pinned Hermes Gateway receiver + Paperclip adapter overlays; [E2E status and release runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md)
 - `comfyui-mcp/` — ComfyUI engine + MCP (split pending)
 - `mantic-mcp/` — Mantic MCP
 - `emailens-mcp/` — Emailens MCP bridge
@@ -29,8 +30,8 @@ Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` 
 
 ## Coolify monorepo build contract
 
-**Source:** `miloszspyrka-code/harness-zar-i-szlif`, branch `main`.
-Every **infrastructure MCP in this repository** is built from its own root folder with its own Docker build context. Do not point these infrastructure deployments at `zar-i-szlif` or the repo root. The **product MCP** is the sole MCP exception and belongs in the separate product repository.
+**Source:** `miloszspyrka-code/harness-zar-i-szlif`, with a per-service **reviewed artifact promotion policy** (merged PR #41); `main` is not a universal unconditional deployment rule.
+Every **standalone infrastructure MCP in this repository** is built from its own root folder with its own Docker build context. The **unified Paperclip Core + Hermes adapter candidate** intentionally uses the repository-root build context to apply two source-pinned overlays and preserve the already merged Core review recovery (PR #43). See the Hermes runbook; do not deploy it as an ordinary independent MCP. Do not point these infrastructure deployments at `zar-i-szlif` or the repo root. The **product MCP** is the sole MCP exception and belongs in the separate product repository.
 
 | Service | Coolify base directory | Build pack / file | Watch paths |
 | --- | --- | --- | --- |
