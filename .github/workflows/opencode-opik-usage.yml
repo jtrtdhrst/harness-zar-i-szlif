@@ -1,0 +1,30 @@
+name: OpenCode Opik usage regression
+on:
+  pull_request:
+    paths:
+      - 'observability/opencode-opik/**'
+      - '.github/workflows/opencode-opik-usage.yml'
+  push:
+    branches:
+      - 'perf/opik-opencode-llm-usage-20261104'
+    paths:
+      - 'observability/opencode-opik/**'
+      - '.github/workflows/opencode-opik-usage.yml'
+permissions:
+  contents: read
+concurrency:
+  group: opik-usage-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: node --check observability/opencode-opik/index.mjs
+      - name: Usage, tracing and redaction regression
+        run: node --test observability/opencode-opik/index.test.mjs
