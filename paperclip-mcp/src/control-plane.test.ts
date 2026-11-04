@@ -779,8 +779,10 @@ mockFetchRoutes([
       { match: "/stalled-review-decision", body: { error: "Issue is no longer a stalled review" }, status: 409 },
       { match: "/live-runs", body: [] },
       { match: "/approvals", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
       { match: "/active-run", body: { error: "no active run" }, status: 404 },
-      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "in_review", identifier: "KOMAA-999", title: "wedged review" } },
+      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "in_review", identifier: "KOMAA-999", title: "wedged review", executionState: { status: "pending", currentStageType: "review", currentParticipant: { type: "agent", agentId: AGENT } } } },
     ]);
     const res = await getTool("paperclipResolveReviewWedge").execute({ issueId: ISSUE, action: "route" });
     const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
@@ -792,6 +794,15 @@ mockFetchRoutes([
     const refreshed = JSON.parse(text);
     expect(refreshed.result.noMutation).toBe(true);
     expect(refreshed.result.canonicalState.status).toBe("in_review");
+    const review = JSON.parse((await getTool("paperclipGetReviewState").execute({ issueId: ISSUE })).content[0]?.text ?? "{}");
+    expect(review.wedged).toBe(true);
+    expect(review.currentStage.currentParticipant.agentId).toBe(AGENT);
+    const wake = JSON.parse((await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE, agentId: AGENT })).content[0]?.text ?? "{}");
+    expect(wake.woke).toBe(false);
+    expect(wake.reason).toBe("review_pending_no_checkout");
+    // A stale 409 must never authorize checkout, approve the review or demote its status.
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/checkout") && init?.method === "POST")).toBe(false);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   });
 
   // KOMAA-849: when stalled-review-decision is unavailable (5xx), route fails
