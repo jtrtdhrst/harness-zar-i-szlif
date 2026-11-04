@@ -214,6 +214,22 @@ describe("KOMAA-1094 — the decision attempt is atomic, there is no compensatin
     expect(calls.filter((c) => c.method === "GET")).toHaveLength(1);
   });
 
+  it("rejects foreign/Board agent decision attempts on in_review before status mutation", async () => {
+    for (const action of ["approve", "request_changes"] as const) {
+      vi.restoreAllMocks();
+      const { calls } = mockApi([{ method: "GET", path: GET_PATH, body: issue() }]);
+      const out = await callTool(
+        "paperclipSubmitReviewDecision",
+        { issueId: ISSUE, action, note: "Unprivileged decision must not mutate status" },
+        AGENT,
+      );
+      expect(out.isError).toBe(true);
+      expect(out.text).toContain("REVIEW_ACTOR_NOT_PARTICIPANT");
+      expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+      expect(calls.filter((c) => c.method === "GET")).toHaveLength(1);
+    }
+  });
+
   it("never rolls back when the server applied done without persisting a decision", async () => {
     // The server applied the status but persisted no decision (Core defect).
     // The MCP has no compare-and-set, so a rollback write could overwrite a
