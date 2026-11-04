@@ -132,3 +132,13 @@
    const createRunUrl = apiUrl(baseUrl, "/v1/runs");
  
    await ctx.onMeta?.({
+@@ -1008,6 +1052,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
+     ctx.onDispatch?.();
+     const created = await fetchJson(createRunUrl, {
+       method: "POST",
++      // Node fetch follows 307/308 by default, replaying the private
++      // Paperclip MCP bearer in the JSON body to a redirect target.
++      redirect: "error",
+       headers: runHeaders,
+       body: JSON.stringify(body),
+     });
