@@ -49,6 +49,30 @@ class RolloutTest(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), self.old)
         self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o640)
 
+    def test_journal_privacy_and_target_owner_match(self):
+        out = rollout.apply(self.target, self.source, True)
+        journal = self.root / rollout.JOURNAL_NAME
+        batch = journal / out["batch_id"]
+        owner = (self.target.stat().st_uid, self.target.stat().st_gid)
+        for path in (journal, batch, journal / ".lock", batch / "original.mjs", batch / "manifest.json"):
+            metadata = path.stat()
+            self.assertEqual((metadata.st_uid, metadata.st_gid), owner)
+            self.assertEqual(stat.S_IMODE(metadata.st_mode), 0o700 if path.is_dir() else 0o600)
+        rollout.rollback(self.target, self.source, out["batch_id"], True)
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root to simulate a node-owned plugin")
+    def test_root_deployer_preserves_nonroot_plugin_owner(self):
+        os.chown(self.target, 1000, 1000)
+        out = rollout.apply(self.target, self.source, True)
+        journal = self.root / rollout.JOURNAL_NAME
+        batch = journal / out["batch_id"]
+        for path in (self.target, journal, journal / ".lock", batch,
+                     batch / "original.mjs", batch / "manifest.json"):
+            self.assertEqual((path.stat().st_uid, path.stat().st_gid), (1000, 1000))
+        rollback = rollout.rollback(self.target, self.source, out["batch_id"], True)
+        self.assertEqual(rollback["state"], "rolled_back")
+        self.assertEqual((self.target.stat().st_uid, self.target.stat().st_gid), (1000, 1000))
+
     def test_no_explicit_drain_refuses_write(self):
         with self.assertRaisesRegex(rollout.RolloutError, "drain"):
             rollout.apply(self.target, self.source, False)
