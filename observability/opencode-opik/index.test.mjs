@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+const nativeFetch = globalThis.fetch;
 
 process.env.PAPERCLIP_RUN_ID = 'aaaabbbb-cccc-4ddd-8eee-ffffffff0001';
 process.env.PAPERCLIP_AGENT_ID = '11112222-3333-4444-8555-666677778888';
@@ -156,5 +158,40 @@ test('token-shaped identifiers and dynamic MCP names are never emitted verbatim'
     assert.ok(!payload.includes(name),'untrusted identifier leaked');
     assert.ok(!payload.includes('SYNTHETIC_ARG_NEVER_LOG'));
     assert.ok(!payload.includes('SYNTHETIC_RESPONSE_NEVER_LOG'));
+  }
+});
+
+test('HTTP 307/308 redirects fail closed with zero target replay', async () => {
+  const priorFetch = globalThis.fetch;
+  const priorBase = process.env.OPIK_BASE_URL;
+  try {
+    for (const redirectStatus of [307, 308]) {
+      let targetHits = 0;
+      let redirectHits = 0;
+      const target = createServer((_req,res) => { targetHits++; res.writeHead(200); res.end('UNSAFE'); });
+      await new Promise(resolve => target.listen(0, '127.0.0.1', resolve));
+      const dst = 'http://127.0.0.1:' + target.address().port + '/redirect-target';
+      const redirector = createServer((_req,res) => {
+        redirectHits++;
+        res.writeHead(redirectStatus, {'Location': dst}); res.end();
+      });
+      await new Promise(resolve => redirector.listen(0, '127.0.0.1', resolve));
+      try {
+        process.env.OPIK_BASE_URL = 'http://127.0.0.1:' + redirector.address().port;
+        globalThis.fetch = nativeFetch;
+        const {default:canaryFactory} = await import('./index.mjs?redirect-negative-' + redirectStatus);
+        const canary = await canaryFactory();
+        await canary.event({event:{type:'session.idle'}});
+        assert.ok(redirectHits > 0, 'redirect endpoint was exercised');
+        assert.equal(targetHits, 0, String(redirectStatus) + ' must not replay the request body to target');
+      } finally {
+        await new Promise(resolve => { redirector.close(resolve); redirector.closeAllConnections?.(); });
+        await new Promise(resolve => { target.close(resolve); target.closeAllConnections?.(); });
+      }
+    }
+  } finally {
+    globalThis.fetch = priorFetch;
+    if (priorBase === undefined) delete process.env.OPIK_BASE_URL;
+    else process.env.OPIK_BASE_URL = priorBase;
   }
 });

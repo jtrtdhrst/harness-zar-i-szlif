@@ -18,7 +18,7 @@ import time
 import uuid
 
 BASELINE_SHA = "3331ab8310a08448dd40cae8bcda0ee7fa9a299fcaa817db58e82007134839f6"
-CANDIDATE_SHA = "fda6838c0be065fa32844057cabcca8103a5fb4ee47cc1f22567d5630611e681"
+CANDIDATE_SHA = "f3509d91bf6c5f5d8d23c7221767cd3fbbe53b83c4669acc9cf99665d5565f49"
 DEFAULT_TARGET = Path("/paperclip/.config/opencode/opik-observability/index.mjs")
 JOURNAL_NAME = ".opik-observability-rollout"
 

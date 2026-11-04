@@ -41,6 +41,7 @@ async function send(method, path, body) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
         signal: ctl.signal,
+        redirect: "error",
       });
       if (response.ok || (method === "POST" && response.status === 409)) return true;
       category = "HTTP_" + String(response.status);

@@ -109,5 +109,11 @@ class RolloutTest(unittest.TestCase):
             rollout.rollback(self.target, self.source, "../escape", True)
         self.assertEqual(self.target.read_bytes(), self.new)
 
+class PinnedCandidateTest(unittest.TestCase):
+    def test_checked_in_candidate_sha_matches_source_file(self):
+        source = ROOT / "index.mjs"
+        self.assertTrue(source.is_file())
+        self.assertEqual(digest(source.read_bytes()), rollout.CANDIDATE_SHA)
+
 if __name__ == "__main__":
     unittest.main()
