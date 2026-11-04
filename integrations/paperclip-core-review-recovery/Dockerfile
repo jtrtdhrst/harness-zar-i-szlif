@@ -11,4 +11,9 @@ RUN test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' 
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"
 RUN cd /app && NO_COLOR=1 pnpm exec vitest run server/src/services/execution-blocker-undispatched.test.ts --reporter=default
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc --noEmit
-RUN cd /app && pnpm --filter @paperclipai/server build
+# The pinned runtime already contains compiled runner/vendor assets. Rebuilding
+# unrelated Rust runner binaries requires cargo absent from the production base.
+# Emit only the changed TypeScript server module and verify that it is present.
+RUN cd /app && pnpm --filter @paperclipai/server exec tsc && \
+    test -s /app/server/dist/services/execution-blocker.js && \
+    grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js
