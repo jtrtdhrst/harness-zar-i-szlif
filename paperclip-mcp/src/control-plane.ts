@@ -738,7 +738,14 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
             reason: "Eligibility preflight failed (blocked/hold). Pass force:true to override (recorded), or clear the hold/blockers first.",
           };
         }
-        const resolvedAgent = agentId ?? (typeof issue.assigneeAgentId === "string" ? issue.assigneeAgentId : null) ?? client.defaults.agentId;
+        const returnAssignee = workflow?.status === "changes_requested" && isRecord(workflow.returnAssignee)
+          ? workflow.returnAssignee : null;
+        const requiredExecutor = returnAssignee?.type === "agent" && typeof returnAssignee.agentId === "string"
+          ? returnAssignee.agentId : null;
+        if (requiredExecutor && agentId && agentId !== requiredExecutor) {
+          return { woke: false, verified: true, issueId, status, reason: "changes_requested_return_assignee_mismatch", requiredExecutor };
+        }
+        const resolvedAgent = requiredExecutor ?? agentId ?? (typeof issue.assigneeAgentId === "string" ? issue.assigneeAgentId : null) ?? client.defaults.agentId;
         if (!resolvedAgent) throw new Error("No agent to wake: pass agentId or ensure the issue has an assigneeAgentId");
         const checkout = await client.requestJson<Record<string, unknown>>("POST", `/issues/${enc(issueId)}/checkout`, {
           body: { agentId: resolvedAgent, expectedStatuses: expectedStatuses ?? ["todo", "backlog", "blocked"] },
@@ -747,7 +754,7 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
         // KOMAA-1415: a 200 checkout is not proof of a wake. Confirm an
         // issue-bound queued/running run actually exists; otherwise report
         // woke:false and reconcile the false in_progress instead of leaving it.
-        const observed = await observeIssueBoundRun(client, issueId, checkout);
+        const observed = await observeIssueBoundRun(client, issueId, resolvedAgent, checkout);
         if (!observed.observed) {
           const reconcile = await reconcileFalseInProgress(client, issueId, auth).catch((error) => ({
             reconciled: false, status: null, reason: error instanceof Error ? error.message : String(error), issue: null,
@@ -2848,6 +2855,7 @@ function runTimestamp(run: Record<string, unknown>): number {
 async function observeIssueBoundRun(
   client: PaperclipApiClient,
   issueId: string,
+  expectedAgentId: string,
   checkoutResponse?: unknown,
   options: { attempts?: number; delayMs?: number } = {},
 ): Promise<{ observed: boolean; run: Record<string, unknown> | null; source: string | null; attempts: number }> {
@@ -2856,7 +2864,8 @@ async function observeIssueBoundRun(
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const live = await getJsonOrNull(client, `/issues/${enc(issueId)}/live-runs`);
     const active = Array.isArray(live) ? live.filter(runIsActive) : [];
-    const bound = active.find((r) => !isRecord(r) || r.issueId === undefined || String(r.issueId) === issueId);
+    // Missing issue/agent identity is not proof of a real scoped execution.
+    const bound = active.find((r) => isRecord(r) && r.issueId === issueId && r.agentId === expectedAgentId);
     if (isRecord(bound)) return { observed: true, run: bound, source: "live-runs", attempts: attempt };
 
     const issue = await getJsonOrNull(client, `/issues/${enc(issueId)}`);
@@ -2870,8 +2879,7 @@ async function observeIssueBoundRun(
       for (const runId of new Set(candidates)) {
         const run = await getJsonOrNull(client, `/heartbeat-runs/${enc(runId)}`);
         if (isRecord(run) && runIsActive(run)) {
-          const boundIssue = typeof run.issueId === "string" ? run.issueId : null;
-          if (boundIssue === null || boundIssue === issueId) {
+          if (run.issueId === issueId && run.agentId === expectedAgentId) {
             return { observed: true, run, source: "heartbeat-run", attempts: attempt };
           }
         }
@@ -2957,11 +2965,15 @@ async function checkoutWake(
   auth: { operatorRunId?: string; runId?: string },
 ): Promise<Record<string, unknown>> {
   const issue = await client.requestJson<Record<string, unknown>>("GET", `/issues/${enc(issueId)}`);
-  const agent = typeof issue.assigneeAgentId === "string" && issue.assigneeAgentId
-    ? issue.assigneeAgentId
-    : client.defaults.agentId;
-  if (!agent) return { woke: false, issueId, reason: "no assigneeAgentId and no session agent" };
   const workflow = isRecord(issue.executionState) ? issue.executionState : null;
+  const returnAssignee = workflow?.status === "changes_requested" && isRecord(workflow.returnAssignee)
+    ? workflow.returnAssignee : null;
+  const agent = returnAssignee?.type === "agent" && typeof returnAssignee.agentId === "string"
+    ? returnAssignee.agentId
+    : typeof issue.assigneeAgentId === "string" && issue.assigneeAgentId
+      ? issue.assigneeAgentId
+      : client.defaults.agentId;
+  if (!agent) return { woke: false, issueId, reason: "no assigneeAgentId and no session agent" };
   const status = issueStatusOf(issue);
   const checkoutGate = allowNativeCheckout(status, workflow, null);
   if (!checkoutGate.allowed) {
@@ -2977,7 +2989,7 @@ async function checkoutWake(
       body: { agentId: agent, expectedStatuses: ["todo", "backlog"] },
       ...auth,
     });
-    const observed = await observeIssueBoundRun(client, issueId, checkout);
+    const observed = await observeIssueBoundRun(client, issueId, agent, checkout);
     if (!observed.observed) {
       return {
         woke: false, verified: false, issueId, agentId: agent, checkoutAccepted: true,
