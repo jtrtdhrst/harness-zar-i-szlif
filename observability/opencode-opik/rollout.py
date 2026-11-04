@@ -73,27 +73,44 @@ def status(target: Path, source: Path) -> dict:
             "baseline_sha256": BASELINE_SHA, "candidate_sha256": CANDIDATE_SHA,
             "release_admission": "not_verified_by_status"}
 
+def preserve_owner(path: Path, owner: tuple[int, int]) -> None:
+    # The deployment operator may be root, while live OpenCode runs as node.
+    # Never leave private 0700 rollback metadata owned by the wrong user.
+    if os.geteuid() == 0:
+        os.chown(path, *owner)
+
 def journal_dir(target: Path, create: bool) -> Path:
     journal = target.parent / JOURNAL_NAME
+    owner = (target.stat().st_uid, target.stat().st_gid)
     if journal.is_symlink():
         raise RolloutError("journal symlink refused")
     if create and not journal.exists():
         journal.mkdir(mode=0o700)
+        preserve_owner(journal, owner)
     if journal.exists():
-        if not journal.is_dir() or (journal.stat().st_mode & 0o777) != 0o700:
+        metadata = journal.stat()
+        if not journal.is_dir() or (metadata.st_mode & 0o777) != 0o700:
             raise RolloutError("journal directory must be private 0700")
+        if (metadata.st_uid, metadata.st_gid) != owner:
+            raise RolloutError("journal owner mismatch; repair ownership explicitly before release")
     return journal
 
-def write_manifest(path: Path, document: dict) -> None:
-    atomic_write(path, json.dumps(document, indent=2, sort_keys=True).encode(), 0o600)
+def write_manifest(path: Path, document: dict, owner: tuple[int, int]) -> None:
+    atomic_write(path, json.dumps(document, indent=2, sort_keys=True).encode(), 0o600, owner)
 
-def acquire_lock(journal: Path):
+def acquire_lock(journal: Path, owner: tuple[int, int]):
     flags = os.O_CREAT | os.O_RDWR
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(journal / ".lock", flags, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX)
-    return fd
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if os.geteuid() == 0:
+            os.fchown(fd, *owner)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
 
 def apply(target: Path, source: Path, drained: bool) -> dict:
     if not drained:
@@ -101,7 +118,8 @@ def apply(target: Path, source: Path, drained: bool) -> dict:
     assert_regular(target)
     candidate = candidate_bytes(source)
     journal = journal_dir(target, create=True)
-    fd = acquire_lock(journal)
+    owner = (target.stat().st_uid, target.stat().st_gid)
+    fd = acquire_lock(journal, owner)
     try:
         current = target.read_bytes()
         existing = digest(current)
@@ -119,13 +137,14 @@ def apply(target: Path, source: Path, drained: bool) -> dict:
         batch_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:10]
         batch = journal / batch_id
         batch.mkdir(mode=0o700)
+        preserve_owner(batch, owner)
         backup = batch / "original.mjs"
-        atomic_write(backup, current, 0o600)
+        atomic_write(backup, current, 0o600, owner)
         manifest = {"version": 1, "batch_id": batch_id, "state": "applying",
                     "original_sha256": BASELINE_SHA, "candidate_sha256": CANDIDATE_SHA,
                     "mode": mode, "uid": owner[0], "gid": owner[1]}
         mf = batch / "manifest.json"
-        write_manifest(mf, manifest)
+        write_manifest(mf, manifest, owner)
         try:
             if digest(target.read_bytes()) != BASELINE_SHA:
                 raise RolloutError("source changed during admission")
@@ -133,12 +152,12 @@ def apply(target: Path, source: Path, drained: bool) -> dict:
             if digest(target.read_bytes()) != CANDIDATE_SHA:
                 raise RolloutError("candidate readback mismatch")
             manifest["state"] = "applied"
-            write_manifest(mf, manifest)
+            write_manifest(mf, manifest, owner)
         except Exception:
             if digest(target.read_bytes()) == CANDIDATE_SHA:
                 atomic_write(target, current, mode, owner)
                 manifest["state"] = "rolled_back"
-                write_manifest(mf, manifest)
+                write_manifest(mf, manifest, owner)
             raise
         return {"state": "applied", "batch_id": batch_id, "sha256": CANDIDATE_SHA}
     finally:
@@ -154,7 +173,8 @@ def rollback(target: Path, source: Path, batch_id: str, drained: bool) -> dict:
     journal = journal_dir(target, create=False)
     if not journal.exists():
         raise RolloutError("rollback journal missing")
-    fd = acquire_lock(journal)
+    owner = (target.stat().st_uid, target.stat().st_gid)
+    fd = acquire_lock(journal, owner)
     try:
         manifest_file = journal / batch_id / "manifest.json"
         backup_file = journal / batch_id / "original.mjs"
@@ -176,7 +196,7 @@ def rollback(target: Path, source: Path, batch_id: str, drained: bool) -> dict:
         if digest(target.read_bytes()) != BASELINE_SHA:
             raise RolloutError("rollback readback mismatch")
         manifest["state"] = "rolled_back"
-        write_manifest(manifest_file, manifest)
+        write_manifest(manifest_file, manifest, owner)
         return {"state": "rolled_back", "batch_id": batch_id, "sha256": BASELINE_SHA}
     finally:
         os.close(fd)
