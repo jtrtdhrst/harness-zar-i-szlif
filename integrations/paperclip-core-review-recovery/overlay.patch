@@ -1,0 +1,111 @@
+--- a/server/src/services/execution-blocker.ts
++++ b/server/src/services/execution-blocker.ts
+@@ -1,8 +1,8 @@
+ import { isPreDispatchReviewWait } from "./pre-dispatch-review-wait.js";
+-import { and, desc, eq, gt, inArray, not, or, sql } from "drizzle-orm";
++import { and, desc, eq, gt, inArray, ne, not, or, sql } from "drizzle-orm";
+ import { conversationRecoveryActionPredicate, getConversationOwnershipBlocker } from "./conversation-continuation.js";
+ import { z } from "zod";
+-import { agentWakeupRequests, chatConversations, chatEndpoints, heartbeatRuns, issueComments, issues, issueRecoveryActions, toolConnections, type Db } from "@paperclipai/db";
++import { agentWakeupRequests, chatConversations, chatEndpoints, heartbeatRunEvents, heartbeatRuns, issueComments, issues, issueRecoveryActions, toolConnections, type Db } from "@paperclipai/db";
+ import { canContinueCancelledRun, readRunCancellation } from "./run-cancellation.js";
+ import { canRetryStoppedRun } from "./cancelled-native-startup.js";
+ import { queuedCommentIdsFromWakePayload } from "./issue-queued-comment-queue.js";
+@@ -19,6 +19,68 @@
+   );
+ }
+ 
++/**
++ * A resolved legacy recovery record must normally retain a no-replay hold.
++ * Exception: the original worker was definitively cancelled BEFORE runtime
++ * selection or provider dispatch during an owner-to-independent-review handoff.
++ * Never use this for an active recovery, a running/dispatched provider, a
++ * cancelled issue, or a change of assignee outside the formal review state.
++ *
++ * The caller additionally checks for any non-lifecycle run event before
++ * suppressing the read-only blocker projection. No recovery/audit row is
++ * deleted or rewritten, and review approval remains mandatory.
++ */
++export function safeUndispatchedReviewHandoff(input: {
++  actionStatus: string;
++  actionCause: string;
++  noReplayMarker: unknown;
++  issueStatus: string | undefined;
++  currentAssigneeAgentId: string | null | undefined;
++  sourceIssueId: string;
++  run: {
++    agentId: string;
++    status: string;
++    errorCode: string | null;
++    scopeKind: string | null;
++    contextSnapshot: Record<string, unknown> | null;
++    runtimeModeResolvedAt: Date | null;
++    processPid: number | null;
++    processGroupId: number | null;
++    processStartedAt: Date | null;
++    externalRunId: string | null;
++    runnerInstanceId: string | null;
++    nativeSessionId: string | null;
++    driverKind: string | null;
++    logBytes: number | bigint | null;
++    resultJson: Record<string, unknown> | null;
++  } | null | undefined;
++}): boolean {
++  const { run } = input;
++  return Boolean(
++    input.actionStatus === "resolved" &&
++    input.actionCause === "legacy_execution_requires_reconciliation" &&
++    input.noReplayMarker === "blocked" &&
++    input.issueStatus === "in_review" &&
++    input.currentAssigneeAgentId &&
++    run &&
++    input.currentAssigneeAgentId !== run.agentId &&
++    run.status === "cancelled" &&
++    run.errorCode === "issue_reassigned" &&
++    run.scopeKind === "issue" &&
++    run.contextSnapshot?.issueId === input.sourceIssueId &&
++    run.resultJson?.reassignmentStopConfirmed === true &&
++    run.runtimeModeResolvedAt === null &&
++    run.processPid === null &&
++    run.processGroupId === null &&
++    run.processStartedAt === null &&
++    run.externalRunId === null &&
++    run.runnerInstanceId === null &&
++    run.nativeSessionId === null &&
++    run.driverKind === null &&
++    (run.logBytes === null || Number(run.logBytes) === 0)
++  );
++}
++
+ export async function getExecutionBlocker(db: Db, companyId: string, issueId: string, options?: { conversationResetCommentId?: string | null }): Promise<ExecutionBlocker | null> {
+   const [conversation] = await db.select({ agentId: issues.conversationAgentId,
+     boundaryId: issues.conversationBoundaryCommentId, status: issues.status,
+@@ -65,6 +127,28 @@
+   const [run] = runId ? await db.select().from(heartbeatRuns).where(and(
+     eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.id, runId),
+   )).limit(1) : [];
++  // Only a proven pre-dispatch reviewer handoff may stop projecting an
++  // already-resolved no-replay recovery action as a live execution blocker.
++  // A provider/tool event (even without stored logs) keeps the hold intact.
++  if (safeUndispatchedReviewHandoff({
++    actionStatus: action.status,
++    actionCause: action.cause,
++    noReplayMarker: (action.evidence.automaticRecovery as { replay?: unknown } | undefined)?.replay,
++    issueStatus: conversation?.status,
++    currentAssigneeAgentId: conversation?.assigneeAgentId,
++    sourceIssueId: issueId,
++    run,
++  })) {
++    const [providerEvent] = await db.select({ id: heartbeatRunEvents.id })
++      .from(heartbeatRunEvents)
++      .where(and(
++        eq(heartbeatRunEvents.companyId, companyId),
++        eq(heartbeatRunEvents.runId, run!.id),
++        ne(heartbeatRunEvents.eventType, "lifecycle"),
++      ))
++      .limit(1);
++    if (!providerEvent) return null;
++  }
+   const queue = await db.select({ payload: agentWakeupRequests.payload }).from(agentWakeupRequests).where(and(
+     eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.status, "deferred_issue_execution"),
+     sql`${agentWakeupRequests.payload}->>'issueId' = ${issueId}`,
