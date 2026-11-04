@@ -64,7 +64,7 @@ class RunMcpGrantTests(unittest.TestCase):
                                run_id="run-1", now=self.now)
 
     def test_bearer_header_injection_and_whitespace_are_rejected(self):
-        for bearer in ("token\\r\\nX-Forged: yes", "token value", "token\\tvalue", "sketch\\n"):
+        for bearer in ("token" + chr(13) + chr(10) + "X-Forged: yes", "token value", "token" + chr(9) + "value", "sketch" + chr(10)):
             grant = {**self.grant, "servers": [
                 {"name": "paperclip",
                  "url": "https://paperclip-mcp.zariszlif.pl/mcp", "token": bearer}
