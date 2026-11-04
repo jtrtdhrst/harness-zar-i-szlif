@@ -825,6 +825,8 @@ async function getEligibility(client: PaperclipApiClient, issueId: string): Prom
   // Unknown/cancelled relations remain blocking (fail closed).
   const unresolvedBlockers = blockerList.filter((blocker) => {
     if (!isRecord(blocker)) return true;
+    // A cancelled predecessor never satisfies a causal dependency, even if a stale projection says ready.
+    if (blocker.status === "cancelled") return true;
     if (blocker.isUnresolved === true) return true;
     if (blocker.isUnresolved === false) return false;
     if (blocker.isDependencyReady === true) return false;
