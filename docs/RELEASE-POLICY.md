@@ -14,7 +14,7 @@ Real evidence from 2026-11-04: GitHub `main=ci-approved` and finished Coolify de
 
 ### Manual pinned-image release lane for unverified Coolify services
 
-The dated manifest `ops/release-lanes.json` inventories **4 Coolify applications and 26 Coolify services**. Six already classified lanes retain their specific release modes; the remaining 24 services/apps are explicitly represented as `other_resources`, with `promotion_state=hold` until verifiable provenance is obtained. Some are stopped or one-off and marked `inactive_no_promotion`. `running:healthy` does not prove source→image equivalence.
+The dated manifest `ops/release-lanes.json` inventories **5 Coolify applications and 26 Coolify services**. Seven already classified lanes retain their specific release modes; the remaining 24 services/apps are explicitly represented as `other_resources`, with `promotion_state=hold` until verifiable provenance is obtained. Some are stopped or one-off and marked `inactive_no_promotion`. `running:healthy` does not prove source→image equivalence.
 
 A release of a held service requires all of the following, per **specific Coolify UUID**, not a mass redeploy:
 
@@ -24,9 +24,9 @@ A release of a held service requires all of the following, per **specific Coolif
 4. Authorized deployment of that *approved immutable digest* to that service only. Read back Coolify deployment ID/time, actual container ID/digest, live release revision/health and service-specific authenticated/unauthenticated smoke.
 5. On failure, halt the promotion, roll back to the independently identified previously healthy digest, read back actual runtime and retain the previous serving release. Mark DONE only after the ledger includes source SHA, CI, independent approval, candidate digest, deployment time, actual runtime digest, authenticated/anonymous probes and rollback identifier.
 
-For an upstream-pinned version, prove the registry digest; for locally built overlays, prove **both upstream base revision and actual overlay source SHA**. Do not infer harness provenance from upstream OCI labels. Paperclip Core is `ghcr.io/paperclipai/paperclip:2026.1023.0` sourced from `paperclipai/paperclip`, upstream revision `1b4c803816e82b0265c8422e1a804327a7ed8c54`, **not** a verified build of `miloszspyrka-code/paperclip`. Paperclip MCP overlay attestation belongs with existing PR #32. Multi-container services (Opik, Supabase, Hindsight, Plasmic etc.) require component-level digests and dependency-aware rollback, not just the representative image string in the manifest.
+For an upstream-pinned version, prove the registry digest; for locally built overlays, prove **both upstream base revision and actual overlay source SHA**. Do not infer harness provenance from upstream OCI labels. Paperclip Core has **changed since the earlier upstream-image baseline**: current Coolify service runs `local/paperclip-review-recovery:4f05e290`, Docker image ID `sha256:ba2bf404be28f2ae5ee8a2a5785944280463f67f84fd52a3b20bda49d9af1855`. The base is upstream `ghcr.io/paperclipai/paperclip:2026.1023.0` at revision `1b4c803816e82b0265c8422e1a804327a7ed8c54`; the harness overlay source is merged PR #43 commit `4f05e2904b8663e096bf4f839f25d46767f18899`. These are three distinct identities. Running-image observation is real, but a reproducible overlay source-to-image digest build chain is **NOT VERIFIED**. Paperclip MCP overlay attestation belongs with existing PR #32. Multi-container services (Opik, Supabase, Hindsight, Plasmic etc.) require component-level digests and dependency-aware rollback, not just the representative image string in the manifest.
 
-Hermes private canary is Git-backed at candidate branch `KOMAA-1512-receiver-20261104` with auto-deploy disabled. It is **not production**; Hermes production Coolify reports `degraded:unhealthy`. No cohort cutover without full authorized Paperclip run and Opik/Hindsight/Wiki/skills evidence.
+The newer `hermes-gateway-git-release-candidate` application (Coolify UUID `hut52do8jdwumzdnaphtnmfp`) runs a GitHub-backed harness `main` candidate with auto-deploy **to the isolated candidate only**. No public host ports and a separate `/opt/data` volume were observed, but the shared Coolify Docker network means complete isolation is **NOT VERIFIED**; this is neither Hermes production nor permission for automatic production promotion. A merge to harness `main` may trigger a rebuild of this candidate: verify the image/digest and runtime and do not call it a production release. Hermes private canary is Git-backed at candidate branch `KOMAA-1512-receiver-20261104` with auto-deploy disabled. It is **not production**; Hermes production Coolify reports `degraded:unhealthy`. No cohort cutover without full authorized Paperclip run and Opik/Hindsight/Wiki/skills evidence.
 
 ### Three protected existing Workers: separate platform lanes
 
@@ -42,7 +42,7 @@ Full audited evidence: Paperclip native issue `KOMAA-1587`, document `release-e2
 | Missing `SOURCE_COMMIT` blocks product startup | Product CI negative container test | **PASS (real CI)** |
 | Fast-forward allowed, divergent ref denied | Isolated temp Git repo reproducing `git merge-base --is-ancestor` | **PASS (isolated)** |
 | Wrong expected release SHA rejected | Deliberately mismatched SHA in read-only production comparator | **PASS (read-only)** |
-| Missing Coolify service/Worker, duplicate, fake approval, unreviewed promotion | `scripts/check-release-lanes.py --self-test` performs 11 fail-closed mutations | **Structural regression only** |
+| Missing Coolify service/Worker, duplicate, fake approval, unreviewed promotion | `scripts/check-release-lanes.py --self-test` performs 13 fail-closed mutations | **Structural regression only** |
 | Unauthorized feature-branch push bypass impossible at GitHub server | GitHub private-repo rulesets read returned HTTP 403 under current plan | **NOT VERIFIED / NOT ENFORCED** |
 | Real failing production build preserves previous deployment | Deliberate destructive production failure not exercised | **NOT VERIFIED** |
 | Real rollback of product or Hermes | Coolify previous image tags available; `current=null` in rollback-images response; no rollback executed | **NOT VERIFIED** |
@@ -56,3 +56,7 @@ Current GitHub private-repository rulesets API responded HTTP 403. Consequently 
 ## Scope and owners
 
 Keep all three existing Workers, secrets, production profiles and agent model allocations unchanged by this policy PR. No new Workers or global `main` rule. CHO owns reconciliation of existing KOMAA-1556/1559 and source PRs #28/#32/#36/#37/#39/#40, true native independent review decision, merge only after approval, post-merge CI and separately verified per-service deployments. This policy release is not authorization for a mass Hermes migration.
+
+## Inventory freshness and concurrent releases
+
+Snapshot 2026-11-04T17:02:30Z: **5 Coolify applications + 26 services = 31 distinct UUIDs**, plus 3 existing Cloudflare Workers. The extra Hermes Git release candidate was created at 16:49:56Z, after the previous 30-resource snapshot, and is represented explicitly. Another concurrent production change replaced the old upstream-only Paperclip Core runtime with a locally built overlay from PR #43; both source layers and runtime image ID are recorded separately. Fresh readback is required at merge time because other teams may create or redeploy services in parallel. A policy CI pass alone does not freeze live inventory or make a runtime release safe.
