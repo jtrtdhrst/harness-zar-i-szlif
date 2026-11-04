@@ -25,7 +25,7 @@ RUN set -eux; \
     git apply --check /tmp/hermes-adapter-tests.patch; \
     git apply /tmp/hermes-adapter-tests.patch; \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"; \
-    test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "c4b152fdc355216979d3029d86fcd71b5a369af0a7db94f2623484551dcf51b7"
+    test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "977e6ecfc457c330b8bc59e020456ca3361aebe877b065d4878573cd3cae0578"
 
 # The same image must satisfy the Core recovery and Hermes adapter suites,
 # TypeScript checks and compiled Core runtime. No fake green health-only build.
