@@ -1,3 +1,46 @@
+# Migration staging readback — 2026-11-04 (current; supersedes dated historical observations below)
+
+**Decision: STAGING READY / AGENT CUTOVER NO-GO.** All 14 Paperclip agents keep their current `opencode_local` adapters and models. This is a real Coolify candidate with a verified container, not a claim that the cross-service issue-run protocol has passed.
+
+## Verified source and independent runtime
+
+| Proof | Readback |
+| --- | --- |
+| Harness feature candidate | [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), exact SHA `8f2bd8674b0c730c4443aaa395b72b7982a6d8fb` |
+| GitHub CI for PR #36 | `validate-hermes-gateway-image` and `validate-paperclip-mcp` both success; no release implied |
+| Coolify GitHub-backed shadow app | `yh20mb2rurecnmn60t5vfc3s`, repository `harness-zar-i-szlif`, branch `KOMAA-1512-receiver-20261104`, base `/integrations/hermes-paperclip/gateway`, Dockerfile `/Dockerfile` |
+| Shadow deployment | `pid1srcg0ekxxgsu4jw3nlki`, `finished`; immutable Docker image `sha256:3be829d276d3039f9fd0625fa4c8a632b96df338ef5e9c8c513fb0880c8d3528`; Docker `running/healthy` |
+| Production app (preserved) | `2sganhxhhnioiqh4an9g2f4k`, image `sha256:813992ff23d9b82936ad5f35ed9f1d74908584d44888197b492c4615680cd65a`, Docker healthy; public `https://hermes-poc.zariszlif.pl/health` returns HTTP 200 |
+| Source-model limitation | Production app still uses an **inline Dockerfile**, `source_type=null` and repository metadata `coollabsio/coolify`, not the harness source. Coolify connector refused source/inline Dockerfile conversion; do not pretend this is Git-backed |
+| Isolation | Shadow has no public domain, no production `/opt/data` mount and auto-deploy OFF. It uses only an explicitly synthetic API key; no private service key was transferred |
+| Memory metadata | Vectorize administrative inventory has exactly 14 expected `hermes-*` banks; this does not prove authenticated profile/bank denial or model-run recall |
+
+Live **non-inference** HTTP probes on the Git-backed shadow app:
+
+- Root `POST /v1/runs`: missing bearer **401**, invalid bearer **401**, correct synthetic bearer with malformed JSON **400**, null/invalid `paperclip_run_mcp` envelope **403**.
+- A newly created **synthetic** `designer` profile in the shadow has its *own* file-mode-0600 key: correct profile bearer with malformed JSON **400**; global/default bearer **401**; wrong bearer **401**; malformed MCP grant **403**.
+- No model inference, real Paperclip issue credentials, role tools/call, secret synchronization or Opik production correlation was initiated by these negative tests. Do not infer that scope revocation, grant authenticity or session cleanup passed from 401/403 alone.
+
+## Blocking prerequisites for 14-agent migration (keep fail-closed)
+
+1. **Native profile secret binding.** Paperclip's secret catalog lists two historical Hermes keys with usage targeting a *retired Hermes Test* and another old identity; there is no positive evidence of a correct `API_SERVER_KEY` secret binding for each of the 14 current agents. The previous real CHO Hermes run failed with profile-specific HTTP 401. Provision/bind each role's key using authorized Paperclip secret provider/Vault workflow, and prove correct named-profile 400 (malformed JSON) and wrong-profile 401; do not transfer keys through issue text, chat, git, logs or unmanaged VPS/DB copies.
+2. **Per-run MCP authority.** Source-controlled PR #36 now contains patched Hermes admission/cleanup and candidate adapter diff; independent CTO/CHO security review remains required. Demonstrate a **real** Paperclip-issued run ID, real run/agent/issue-scoped grant, Wiki and versioned skill tool calls, and denied wrong agent/run, expired/revoked token, and after-run reuse. A synthetically accepted API request is insufficient.
+3. **Hindsight and Opik.** On that same real Paperclip-issued run, prove profile's own Hindsight retain, independent-session exact recall, cross-bank denial, and Hermes-native Opik trace including the exact Paperclip run UUID plus tool/model/usage spans. `14/14` bank metadata alone is insufficient.
+4. **Source-controlled deployment and rollback.** After reviewed merge, rebuild the immutable image from approved `main`, not from this feature branch. Existing production app cannot be converted to Git-backed source through the supported Coolify update call. Use the **existing** Git-backed successor, preserve the current production image and 3.2 GB `/opt/data` volume, perform an approved stopped-writer backup/restore into a separate target volume only at the release window, then transfer the legacy `hermes-gateway-poc-v2` network alias / Cloudflare origin with exact URL and Docker SHA readback. Never copy live mutable state while two gateways are running; do not create a new Worker. Roll back aliases and the verified old container on any failed gate.
+5. **Independent acceptance.** CTO reviews source/security; CHO owns review/merge/DAG/release. `KOMAA-1564` is the native adapter/receiver subtask, `KOMAA-1512` the authoritative parent, `KOMAA-1496` real agent E2E, `KOMAA-1497` release. [PR #28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28) is the canonical **strict offline structure** gate and intentionally cannot assert a live PASS without authenticated source readbacks. No self-approval or `status=done` override.
+
+## Rollout order and exact stop conditions
+
+- **Wave 0:** Designer (DeepSeek) alone; retain original `adapterType`, `adapterConfig`, model, tool grants and runtime revision ID as rollback.
+- **Wave 1:** COO and UI QA only after the Designer run has full first-class PASS and no memory or access leakage.
+- **Wave 2:** CEO, CMO, Mascot Designer, Lifecycle Ops.
+- **Wave 3:** Engineer, MCP Engineer, Email Creative, CPO, Harness Engineer, CTO, CHO.
+- On each wave: exact issue UUID/run UUID, `/p/<profile>/v1/runs` profile-key proof, Named MCP Wiki/skills scope and negative tests, exact Hindsight recall, Opik trace correlation, image SHA/digest, review approval, and agent adapter config readback. Stop at **first failed** condition. Restore only the affected cohort's previous adapter config via native Paperclip revision rollback; never flip 14 simultaneously.
+
+**Warning about local host verifier:** `/opt/hermes-gateway-ops/verify_production.py` describes itself as read-only but invokes `sync_profile_skills.py`, `reconcile_model_map.py` and `apply_gateway_api_toolsets.py`. Those may change configuration. Do not use it as a read-only preflight until those calls are separated into explicit opt-in `--apply` operations. Use the source-controlled `verify_e2e.py` (PR #28 version) for *offline structural* evidence checks and live connector evidence for runtime acceptance.
+
+---
+
 > **Production update — 2026-11-03:** This document records the 2026-11-02 Gateway baseline. The current approved company-skill synchronizer has been upgraded to **schema 2**: 14 profiles, 75 company skill assignments, 27 unique SHA-256 pinned skill bundles, including all reference/scripts/assets. It is the same version deployed in `/opt/hermes-gateway-ops/sync_profile_skills.py` on VPS. The old figures “68 assignments / 20 pins / 4 tests” below are **historical only**. The new production schema-2 unit suite passed **12/12** including per-role isolation, idempotence, source+asset hash enforcement, symlink denial and destination drift repair. See `.github/workflows/hermes-skill-bundles.yml` for GitHub Actions regression; no automated deploy.
 >
 > **Cutover remains blocked:** the dedicated native Paperclip issue run has not yet passed authenticated `hermes_gateway` → run-scoped Paperclip MCP → independent Hindsight exact recall (especially CPO local_external) → same-run Opik. That gate is owned by canonical [PR #28](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/28); adapter candidate belongs to [PR #18](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/18). Do not merge as E2E acceptance.
