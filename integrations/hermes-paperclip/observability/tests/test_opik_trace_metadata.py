@@ -95,6 +95,16 @@ class OpikTraceMetadataTest(unittest.TestCase):
         self.assertEqual(got["metadata"]["agent_role"], "harness-engineer")
         self.assertEqual(got["metadata"]["memory_bank"], "hermes-harness-engineer")
 
+    def test_invalid_paperclip_label_does_not_become_thread(self):
+        got = run_spy(
+            "/opt/data/profiles/cho/plugins/opik/lifecycle.py",
+            task_id="paperclip:run:not-a-real-uuid",
+            session_id="session-fallback",
+        )
+        self.assertEqual(got["thread_id"], "session-fallback")
+        self.assertEqual(got["metadata"]["task_id"], "paperclip:run:not-a-real-uuid")
+        self.assertEqual(got["metadata"]["agent_role"], "cho")
+
     def test_shared_plugin_does_not_fake_identity(self):
         got = run_spy(
             "/opt/data/plugins/opik/lifecycle.py",
