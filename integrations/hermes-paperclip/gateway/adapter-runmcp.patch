@@ -11,7 +11,7 @@ index 3fed82032..61b81b2f1 100644
      const fetchMock = vi.fn();
      vi.stubGlobal("fetch", fetchMock);
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key" });
-@@ -102,6 +102,78 @@ describe("execute", () => {
+@@ -102,6 +102,79 @@ describe("execute", () => {
      expect(ctx.onDispatch).not.toHaveBeenCalled();
    });
  
@@ -45,6 +45,7 @@ index 3fed82032..61b81b2f1 100644
 +    expect(result.exitCode).toBe(0);
 +    const createCall = (fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit?]>)
 +      .find(([input]) => String(input).endsWith("/v1/runs"));
++    expect(String(createCall?.[0])).toBe("https://hermes.example/p/cho/v1/runs");
 +    expect(createCall?.[1]?.headers).toMatchObject({
 +      "X-Paperclip-Run-Id": ctx.runId,
 +      "Idempotency-Key": ctx.runId,
@@ -102,6 +103,19 @@ index 74f2e2f25..748a9c455 100644
  ]);
  
  const SENSITIVE_KEY_PATTERN =
+@@ -193,11 +194,11 @@ function normalizeBaseUrl(value: string): URL | null {
+     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+     const normalizedPath = url.pathname.replace(/\/+$/, "") || "/";
+     if (
+       url.port === DEFAULT_HERMES_DASHBOARD_PORT &&
+       HERMES_DASHBOARD_API_PATHS.has(normalizedPath)
+     ) {
+       url.pathname = "/api";
+     } else {
+-      url.pathname = url.pathname.replace(/\/+$/, "");
++      url.pathname = /^\/p\/[a-z][a-z0-9-]*\/v1$/.test(normalizedPath) ? normalizedPath.slice(0, -3) : normalizedPath;
+     }
+     url.search = "";
 @@ -328,6 +329,7 @@ function buildHeaders(input: {
      Accept: input.accept,
      ...(input.contentType ? { "Content-Type": input.contentType } : {}),
