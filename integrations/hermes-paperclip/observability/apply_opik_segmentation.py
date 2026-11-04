@@ -41,7 +41,7 @@ def _verified_role_from_plugin_path(plugin_file: str) -> str:
 
 _KNOWN_OPIK_ROLES = frozenset(%r)
 
-''' % tuple(sorted(KNOWN_ROLES))
+''' % (tuple(sorted(KNOWN_ROLES)),)
 
 def transform(original: str) -> str:
     """Pure, pinned transformation; preserves existing trace create/upsert lifecycle."""
