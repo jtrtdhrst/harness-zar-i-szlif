@@ -1901,6 +1901,15 @@ function reviewTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
         }
         const callerIsParticipant =
           participantAgentId !== null && callerAgentId !== null && participantAgentId === callerAgentId;
+        // A Board/default client is not the independently assigned agent reviewer.
+        // Core can apply the requested issue status without a review decision row
+        // even while status is still in_review. Fail BEFORE the PATCH in every
+        // status, not only after checkout drifted it to in_progress.
+        if (participantAgentId !== null && !callerIsParticipant) {
+          throw new Error(
+            `Only the configured agent participant can submit this review decision. No status mutation was attempted. [errorCode=REVIEW_ACTOR_NOT_PARTICIPANT] [stageId=${stageId ?? "unknown"}] [reviewerAgentId=${participantAgentId}]`,
+          );
+        }
         if (preDecisionStatus !== "in_review" && participantAgentId !== null && !callerIsParticipant) {
           // The issue status drifted away from in_review while the stage is
           // still pending (the reviewer-checkout demotion). In that state the
