@@ -15,7 +15,7 @@ BASELINE = (
     "\ndef start_root_trace(\n    task_key: str,\n):\n"
     '    metadata = {\n        "source": "hermes",\n    }\n'
     "    # Build the create payload once and keep it:\n"
-    '    create_kwargs = {\n        "tags": tags(),\n    }\n'
+    '    create_kwargs = {\n        "thread_id": session_id or None,\n        "tags": tags(),\n    }\n'
 )
 
 
