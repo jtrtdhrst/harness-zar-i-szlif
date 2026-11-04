@@ -15,6 +15,38 @@ index 3fed82032..2de782e6f 100644
      expect(ctx.onDispatch).not.toHaveBeenCalled();
    });
  
++  it("rejects cross-origin 307/308 redirects without forwarding run-scoped grants", async () => {
++    for (const status of [307, 308]) {
++      const token = "synthetic-private-grant";
++      const ctx = makeCtx({
++        apiBaseUrl: "https://hermes.example/p/cho",
++        apiKey: "synthetic-profile-key",
++        sessionKeyStrategy: "run",
++      });
++      ctx.runId = "00000000-0000-4000-8000-000000000001";
++      ctx.runtimeMcp = {
++        getServers: () => [{ name: "Wiki", url: "https://mcp.example/mcp", token, connectionId: "c-1" }],
++      };
++      const destination = "https://attacker.example/steal";
++      const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
++        expect(init?.redirect).toBe("error");
++        if (init?.redirect !== "error") {
++          throw new Error("Redirects must be disabled before sending the grant");
++        }
++        // Model the browser fetch contract: redirect:error rejects on HTTP redirects.
++        throw new TypeError(`Redirect disallowed: ${status} to ${destination}`);
++      });
++      vi.stubGlobal("fetch", fetchMock);
++      const result = await execute(ctx);
++      expect(result.exitCode).not.toBe(0);
++      expect(fetchMock).toHaveBeenCalledTimes(1);
++      expect(String(fetchMock.mock.calls[0][0])).toBe("https://hermes.example/p/cho/v1/runs");
++      expect(JSON.stringify(result)).not.toContain(token);
++      expect(JSON.stringify(result)).not.toContain(destination);
++      vi.unstubAllGlobals();
++    }
++  });
++
 +  it("delivers a real run-scoped grant only in private transport and redacts its bearer", async () => {
 +    const token = "synthetic-mcp-token-never-log-2026";
 +    const ctx = makeCtx({
@@ -119,39 +151,6 @@ index 3fed82032..2de782e6f 100644
    it("keeps consecutive streamed events parseable in the persisted stdout", async () => {
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key", timeoutSec: 5 });
      const deltas = ["Hello", " there\n", "world",
-+  it("rejects cross-origin 307/308 redirects without forwarding run-scoped grants", async () => {
-+    for (const status of [307, 308]) {
-+      const token = "synthetic-private-grant";
-+      const ctx = makeCtx({
-+        apiBaseUrl: "https://hermes.example/p/cho",
-+        apiKey: "synthetic-profile-key",
-+        sessionKeyStrategy: "run",
-+      });
-+      ctx.runId = "00000000-0000-4000-8000-000000000001";
-+      ctx.runtimeMcp = {
-+        getServers: () => [{ name: "Wiki", url: "https://mcp.example/mcp", token, connectionId: "c-1" }],
-+      };
-+      const destination = "https://attacker.example/steal";
-+      const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-+        expect(init?.redirect).toBe("error");
-+        if (init?.redirect !== "error") {
-+          throw new Error("Redirects must be disabled before sending the grant");
-+        }
-+        // Model the browser fetch contract: redirect:error rejects on HTTP redirects.
-+        throw new TypeError(`Redirect disallowed: ${status} to ${destination}`);
-+      });
-+      vi.stubGlobal("fetch", fetchMock);
-+      const result = await execute(ctx);
-+      expect(result.exitCode).not.toBe(0);
-+      expect(fetchMock).toHaveBeenCalledTimes(1);
-+      expect(String(fetchMock.mock.calls[0][0])).toBe("https://hermes.example/p/cho/v1/runs");
-+      expect(JSON.stringify(result)).not.toContain(token);
-+      expect(JSON.stringify(result)).not.toContain(destination);
-+      vi.unstubAllGlobals();
-+    }
-+  });
-+
-
 diff --git a/packages/adapters/hermes/src/gateway/server/execute.ts b/packages/adapters/hermes/src/gateway/server/execute.ts
 index 74f2e2f25..cbfabe760 100644
 --- a/packages/adapters/hermes/src/gateway/server/execute.ts
