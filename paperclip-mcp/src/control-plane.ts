@@ -202,7 +202,7 @@ async function relationalLiveBlockerIds(
   for (const b of diag.blockers) {
     if (!isRecord(b) || typeof b.id !== "string" || !b.id) continue;
     const st = typeof b.status === "string" ? b.status : "";
-    if (st !== "done" && st !== "cancelled") live.push(b.id);
+    if (isUnresolvedDependency(b)) live.push(b.id);
   }
   return { live: [...new Set(live)], unavailable: false, truncated: diag.truncated === true };
 }
@@ -707,7 +707,7 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
           }),
           getJsonOrNull(client, `/issues/${enc(issueId)}/live-runs`),
         ]);
-        const blockerCount = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers.length : 0;
+        const blockerCount = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers.filter(isUnresolvedDependency).length : 0;
         const liveCount = Array.isArray(liveRuns) ? liveRuns.length : 0;
         const hold = blockingHold(holdView);
         const status = issueStatusOf(issue);
@@ -799,6 +799,12 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
 // ---------------------------------------------------------------------------
 // Eligibility, reconcile, holds, DAG, bulk
 // ---------------------------------------------------------------------------
+// A cancelled, unknown or contradictory dependency never satisfies a release gate.
+function isUnresolvedDependency(blocker: unknown): boolean {
+  if (!isRecord(blocker)) return true;
+  return blocker.status !== "done" || blocker.isUnresolved === true || blocker.isDependencyReady === false;
+}
+
 async function getEligibility(client: PaperclipApiClient, issueId: string): Promise<Record<string, unknown>> {
   const [issue, blockers, wakes, liveRuns, activeRun, runs, holdView] = await Promise.all([
     getJsonOrNull(client, `/issues/${enc(issueId)}`),
@@ -830,15 +836,7 @@ async function getEligibility(client: PaperclipApiClient, issueId: string): Prom
   const blockerList: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : blockedByIdsOf(issue);
   // Diagnostics preserve satisfied relations for audit, but DONE edges are not execution blockers.
   // Unknown/cancelled relations remain blocking (fail closed).
-  const unresolvedBlockers = blockerList.filter((blocker) => {
-    if (!isRecord(blocker)) return true;
-    // A cancelled predecessor never satisfies a causal dependency, even if a stale projection says ready.
-    if (blocker.status === "cancelled") return true;
-    if (blocker.isUnresolved === true) return true;
-    if (blocker.isUnresolved === false) return false;
-    if (blocker.isDependencyReady === true) return false;
-    return blocker.status !== "done";
-  });
+  const unresolvedBlockers = blockerList.filter(isUnresolvedDependency);
   const liveList: unknown[] = Array.isArray(liveRuns) ? liveRuns : [];
   const reasons: string[] = [];
   // KOMAA-841: a status label is not proof of a leased heartbeat run.
@@ -1242,7 +1240,7 @@ function eligibilityTools(client: PaperclipApiClient): ControlPlaneToolDefinitio
             anomalies.push({ kind: "blocked_zero_blockers", issueId: v.id });
           }
           for (const b of v.blockers) {
-            if ((b.status === "done" || b.status === "cancelled") && v.status === "blocked") {
+            if (!isUnresolvedDependency(b) && v.status === "blocked") {
               anomalies.push({ kind: "done_dependency", issueId: v.id, blockerId: b.id, blockerStatus: b.status });
             }
           }
@@ -3065,11 +3063,11 @@ function operatorCompositeTools(client: PaperclipApiClient): ControlPlaneToolDef
         const blockerList: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : [];
         const liveBlockers = blockerList.filter((b) => {
           const st = isRecord(b) ? String(b.status ?? "") : "";
-          return st !== "done" && st !== "cancelled";
+          return isUnresolvedDependency(b);
         });
         const doneBlockers = blockerList.filter((b) => {
           const st = isRecord(b) ? String(b.status ?? "") : "";
-          return st === "done" || st === "cancelled";
+          return !isUnresolvedDependency(b);
         });
         const descriptor = isRecord(before.unblockDescriptor) ? before.unblockDescriptor : null;
         const status = issueStatusOf(before);
@@ -3215,14 +3213,14 @@ function operatorCompositeTools(client: PaperclipApiClient): ControlPlaneToolDef
         // 4. done-blocker edges
         const blockers = await getJsonOrNull(client, `/issues/${enc(issueId)}/diagnostics/blockers`);
         const blist: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : [];
-        const hasDone = blist.some((b) => isRecord(b) && (b.status === "done" || b.status === "cancelled"));
+        const hasDone = blist.some((b) => isRecord(b) && !isUnresolvedDependency(b));
         if (hasDone && apply) {
           // KOMAA-874: surviving set is relational; skip when truncated.
           if (!isRecord(blockers) || blockers.truncated === true) {
             actions.push({ action: "removed_done_blocker_edges_skipped", reason: "relational_truncated" });
           } else {
             const next = blist
-              .filter((b) => isRecord(b) && b.status !== "done" && b.status !== "cancelled")
+              .filter((b) => isRecord(b) && isUnresolvedDependency(b))
               .map((b) => (isRecord(b) && typeof b.id === "string" ? b.id as string : "")).filter(Boolean);
             after = await client.requestJson("PATCH", `/issues/${enc(issueId)}`, {
               body: { blockedByIssueIds: [...new Set(next)].sort() },
@@ -3781,7 +3779,7 @@ async function getExecutionStateCompat(client: PaperclipApiClient, issueId: stri
   else if (blockedByRaw.every((b) => isRecord(b))) {
     unresolvedBlockerCount = blockedByRaw.filter((b) => {
       const st = String((b as Record<string, unknown>).status ?? "");
-      return !(st === "done" || st === "cancelled");
+      return isUnresolvedDependency(b);
     }).length;
   } else {
     unresolvedBlockerCount = blockedByRaw.length;
@@ -4345,7 +4343,7 @@ async function execCycleAction(
       const diag0 = await getJsonOrNull(client, `/issues/${enc(issueId)}/diagnostics/blockers`);
       const bl0: unknown[] = isRecord(diag0) && Array.isArray(diag0.blockers) ? diag0.blockers : [];
       const next0 = bl0
-        .filter((b) => isRecord(b) && b.status !== "done" && b.status !== "cancelled")
+        .filter((b) => isRecord(b) && isUnresolvedDependency(b))
         .map((b) => (isRecord(b) && typeof b.id === "string" ? b.id as string : "")).filter(Boolean);
       if (isRecord(diag0) && diag0.truncated === true) {
         return { ok: false, detail: { skipped: true, reason: "relational blockers truncated; refusing edge rewrite" } };
@@ -4746,7 +4744,7 @@ function deliveryCycleToolsPartB(client: PaperclipApiClient): ControlPlaneToolDe
                   const diag = await getJsonOrNull(client, `/issues/${enc(issueId)}/diagnostics/blockers`);
                   const blist: unknown[] = isRecord(diag) && Array.isArray(diag.blockers) ? diag.blockers : [];
                   const doneIds = new Set(
-                    blist.filter((b) => isRecord(b) && (b.status === "done" || b.status === "cancelled"))
+                    blist.filter((b) => isRecord(b) && !isUnresolvedDependency(b))
                       .map((b) => (isRecord(b) && typeof b.id === "string" ? b.id as string : "")).filter(Boolean),
                   );
                   const r = await execCycleAction(client, { kind: "unblock_wake", issueId, reason: "cycle deliver", params: { removeBlockerIds: [...doneIds] } }, auth);
