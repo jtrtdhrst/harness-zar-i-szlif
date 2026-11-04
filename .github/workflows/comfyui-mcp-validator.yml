@@ -1,0 +1,25 @@
+name: ComfyUI MCP validator cost regression
+on:
+  pull_request:
+    paths:
+      - 'comfyui-mcp/**'
+      - '.github/workflows/comfyui-mcp-validator.yml'
+  push:
+    branches:
+      - 'perf/comfyui-compact-loader-errors-20261104'
+    paths:
+      - 'comfyui-mcp/**'
+      - '.github/workflows/comfyui-mcp-validator.yml'
+permissions:
+  contents: read
+concurrency:
+  group: comfy-validator-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  vendor-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned ComfyUI MCP and run Dockerfile regression
+        run: docker build --file comfyui-mcp/Dockerfile --tag comfyui-mcp:validator-ci comfyui-mcp
