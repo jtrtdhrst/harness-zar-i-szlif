@@ -152,6 +152,9 @@ def rollback(root: Path, journal: Path, batch_id: str) -> dict:
 
 
 def apply(root: Path, journal: Path) -> dict:
+    if journal.is_symlink():
+        raise RolloutError("unsafe journal link")
+    journal.mkdir(mode=0o700, exist_ok=True)
     metadata, original, patched = snapshot(root)
     if any(record["sha256"] != BASE_SHA256 for record in metadata.values()):
         raise RolloutError("not all profiles are pristine; refusing mixed rollout")
