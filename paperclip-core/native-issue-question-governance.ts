@@ -18,7 +18,14 @@ export function assertNativeIssueQuestionGovernance(
   },
   creatorAgentId: string | null,
 ): void {
-  if (!creatorAgentId || input.kind !== "ask_user_questions") return;
+  if (!creatorAgentId || ![
+    "ask_user_questions", "request_confirmation", "request_checkbox_confirmation",
+  ].includes(input.kind)) return;
+  // Real toolAction and secretProposal confirmations carry native governed
+  // execution/consent semantics. Preserve that separate human approval path.
+  if (input.kind === "request_confirmation" && input.payload &&
+      typeof input.payload === "object" && !Array.isArray(input.payload) &&
+      ("toolAction" in input.payload || "secretProposal" in input.payload)) return;
   const text = JSON.stringify({
     title: input.title ?? "",
     summary: input.summary ?? "",
@@ -34,7 +41,7 @@ export function assertNativeIssueQuestionGovernance(
 
   if (privileged.test(text) || (operationalPath.test(text) && decisionPrompt.test(text))) {
     throw unprocessable(
-      "Agent technical or credential escalation cannot use ask_user_questions. " +
+      "Agent technical or credential escalation cannot use an ordinary issue-thread form. " +
       "Use native human_only connection_intent for a real grant; otherwise route " +
       "engineering work to its assigned CTO/CHO without an everyone-answerable form.",
       { code: "ISSUE_QUESTION_TECHNICAL_ESCALATION_DENIED" },
