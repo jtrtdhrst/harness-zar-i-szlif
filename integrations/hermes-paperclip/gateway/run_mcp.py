@@ -7,11 +7,46 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
+import os
 import re
 
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
 _ALLOWED_SCOPES = {"tools:call"}
+# Production defaults to the existing authenticated Paperclip native MCP gateway.
+# Additional endpoints require an explicit operator-owned runtime env setting.
+_DEFAULT_MCP_URLS = "https://paperclip-mcp.zariszlif.pl/mcp"
+
+
+def _allowed_mcp_url(url: object) -> bool:
+    if not isinstance(url, str) or any(ord(ch) < 33 or ord(ch) > 126 for ch in url):
+        return False
+    allowed = {
+        value.strip() for value in os.environ.get(
+            "HERMES_PAPERCLIP_MCP_URLS", _DEFAULT_MCP_URLS
+        ).split(",") if value.strip()
+    }
+    if url not in allowed:
+        return False
+    try:
+        parts = urlsplit(url)
+        return (
+            parts.scheme == "https"
+            and parts.hostname is not None
+            and parts.username is None
+            and parts.password is None
+            and parts.port in (None, 443)
+            and parts.query == ""
+            and parts.fragment == ""
+            and parts.path == "/mcp"
+            and parts.hostname not in {"localhost", "127.0.0.1", "::1"}
+            and "." in parts.hostname
+        )
+    except ValueError:
+        return False
+
+
 
 
 class InvalidRunGrant(ValueError):
@@ -54,8 +89,9 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
                 raise InvalidRunGrant
             name, url, token = server["name"], server["url"], server["token"]
             if (not isinstance(name, str) or not _ID.fullmatch(name) or name in names
-                    or not isinstance(url, str) or not url.startswith("https://")
-                    or not isinstance(token, str) or not token or len(token) > 8192):
+                    or not _allowed_mcp_url(url)
+                    or not isinstance(token, str) or not token or len(token) > 8192
+                    or any(not ch.isascii() or not ch.isprintable() or ch.isspace() for ch in token)):
                 raise InvalidRunGrant
             names.add(name)
             specs.append({"type": "http", "name": name, "url": url,
