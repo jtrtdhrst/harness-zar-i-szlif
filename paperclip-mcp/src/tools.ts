@@ -1117,17 +1117,77 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
     ),
     makeTool(
       "paperclipCheckoutIssue",
-      "Checkout an issue for an agent. REQUIRED for agent-actor callers: pass a live runId (own live issue run where supported); operator sessions are removed in Paperclip 2026.1012.0 (CAPABILITY_REMOVED) — without a live context cross-agent checkout fails. Checkout as board auto-wakes the assignee via the server.",
+      "Native issue checkout; Board-only in_review reviewer recovery is explicitly verified against the current pending reviewer stage and a genuine issue+agent-bound run. Cross-reviewer and live-run overwrites are refused. Native Core may temporarily project in_progress during reviewer checkout; report this drift and use a first-class review decision to conclude. For ordinary checkout, a caller's own live issue run or Board authority is required.",
       checkoutIssueToolSchema,
-      async ({ issueId, agentId, expectedStatuses, runId, operatorRunId }) =>
-        client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/checkout`, {
+      async ({ issueId, agentId, expectedStatuses, runId, operatorRunId }) => {
+        const path = `/issues/${encodeURIComponent(issueId)}`;
+        const wanted = expectedStatuses ?? ["todo", "backlog", "blocked"];
+        if (wanted.includes("in_review")) {
+          if (wanted.length !== 1 || wanted[0] !== "in_review" || client.defaults.principalKind !== "board") {
+            throw new Error("Board-only reviewer recovery requires exact expectedStatuses=['in_review']");
+          }
+          const before = await client.requestJson<Record<string, unknown>>("GET", path);
+          const stage = before.executionState;
+          const execution = stage && typeof stage === "object" && !Array.isArray(stage)
+            ? stage as Record<string, unknown> : null;
+          const participant = execution?.currentParticipant;
+          const reviewer = participant && typeof participant === "object" && !Array.isArray(participant)
+            ? participant as Record<string, unknown> : null;
+          const reviewerId = reviewer?.type === "agent" && typeof reviewer.agentId === "string"
+            ? reviewer.agentId : null;
+          if (before.status !== "in_review" || execution?.status !== "pending" ||
+              execution?.currentStageType !== "review" || !reviewerId ||
+              (agentId !== null && agentId !== undefined && agentId !== reviewerId)) {
+            throw new Error("native_reviewer_recovery_denied: foreign reviewer or non-pending review");
+          }
+          if (before.scheduledRetry || before.executionBlocker) {
+            throw new Error("native_reviewer_recovery_denied: active retry or execution blocker");
+          }
+          const live = await client.requestJson<unknown[]>("GET", path + "/live-runs");
+          if (!Array.isArray(live) || live.length > 0) {
+            throw new Error("native_reviewer_recovery_denied: live-run state is unavailable or occupied");
+          }
+          const approvals = await client.requestJson<unknown[]>("GET", path + "/approvals");
+          if (!Array.isArray(approvals) || approvals.some((item) =>
+            item && typeof item === "object" && (item as Record<string, unknown>).status === "pending")) {
+            throw new Error("native_reviewer_recovery_denied: pending approval or unknown approval state");
+          }
+          // Core's existing Board-authorized checkout owns the atomic claim.
+          // Never pretend its HTTP 200 itself proves a reviewer was scheduled.
+          const checkout = await client.requestJson<Record<string, unknown>>("POST", path + "/checkout", {
+            body: { agentId: reviewerId, expectedStatuses: ["in_review"] },
+            runId: runId ?? undefined,
+            operatorRunId: operatorRunId ?? undefined,
+          });
+          const observed = await client.requestJson<unknown[]>("GET", path + "/live-runs").catch(() => null);
+          const matching = Array.isArray(observed)
+            ? observed.find((item) => item && typeof item === "object" &&
+                (item as Record<string, unknown>).issueId === before.id &&
+                (item as Record<string, unknown>).agentId === reviewerId &&
+                ["queued", "running"].includes(String((item as Record<string, unknown>).status ?? "")))
+            : null;
+          const after = await client.requestJson<Record<string, unknown>>("GET", path).catch(() => null);
+          return {
+            reviewerRecovery: true, woke: Boolean(matching), verified: Boolean(matching),
+            issueId: before.id, agentId: reviewerId, observedRun: matching ?? null,
+            nativeCheckoutAccepted: Boolean(checkout),
+            statusDrift: after?.status !== "in_review",
+            committedStatus: after?.status ?? null,
+            pendingReviewPreserved: Boolean(after?.executionState &&
+              typeof after.executionState === "object" &&
+              (after.executionState as Record<string, unknown>).status === "pending"),
+            note: "Only a first-class participant review decision can finish this review; never infer approval from checkout.",
+          };
+        }
+        return client.requestJson("POST", path + "/checkout", {
           body: {
             agentId: client.resolveAgentId(agentId),
-            expectedStatuses: expectedStatuses ?? ["todo", "backlog", "blocked"],
+            expectedStatuses: wanted,
           },
-          runId: runId ?? undefined, // FIX 2026-10-14: wczesniej brak forward
+          runId: runId ?? undefined,
           operatorRunId: operatorRunId ?? undefined,
-        }),
+        });
+      },
     ),
     makeTool(
       "paperclipWakeupAgent",
