@@ -34,7 +34,7 @@ index 3fed82032..2de782e6f 100644
 +          throw new Error("Redirects must be disabled before sending the grant");
 +        }
 +        // Model the browser fetch contract: redirect:error rejects on HTTP redirects.
-+        throw new TypeError(`Redirect disallowed: ${status} to ${destination}`);
++        throw new TypeError(`Redirect disallowed: ${status}`);
 +      });
 +      vi.stubGlobal("fetch", fetchMock);
 +      const result = await execute(ctx);
