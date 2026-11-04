@@ -1,0 +1,178 @@
+diff --git a/packages/adapters/hermes/src/gateway/server/execute.test.ts b/packages/adapters/hermes/src/gateway/server/execute.test.ts
+index 3fed82032..61b81b2f1 100644
+--- a/packages/adapters/hermes/src/gateway/server/execute.test.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.test.ts
+@@ -82,7 +82,7 @@ describe("parseSseFramesForTest", () => {
+ });
+ 
+ describe("execute", () => {
+-  it("fails closed when run-scoped MCP grants have no Hermes receiver protocol", async () => {
++  it("fails closed if an MCP grant lacks a named profile and UUID run", async () => {
+     const fetchMock = vi.fn();
+     vi.stubGlobal("fetch", fetchMock);
+     const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key" });
+@@ -102,6 +102,78 @@ describe("execute", () => {
+     expect(ctx.onDispatch).not.toHaveBeenCalled();
+   });
+ 
++  it("delivers a real run-scoped grant only in private transport and redacts its bearer", async () => {
++    const token = "synthetic-mcp-token-never-log-2026";
++    const ctx = makeCtx({
++      apiBaseUrl: "https://hermes.example/p/cho/v1",
++      apiKey: "synthetic-profile-key",
++      sessionKeyStrategy: "run",
++      timeoutSec: 5,
++    });
++    ctx.runId = "00000000-0000-4000-8000-000000000001";
++    ctx.runtimeMcp = {
++      getServers: () => [{ name: "Paperclip Wiki", url: "https://mcp.example/mcp", token, connectionId: "c-1" }],
++    };
++    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
++      if (String(input).endsWith("/v1/runs")) {
++        return new Response(JSON.stringify({ run_id: "run-hermes-1", status: "started" }), { status: 200 });
++      }
++      if (String(input).endsWith("/events")) {
++        return new Response(sseStream([
++          "event: run.completed",
++          'data: {"status":"completed","output":"done"}',
++          "",
++        ].join("\n")), { status: 200, headers: { "content-type": "text/event-stream" } });
++      }
++      return new Response(JSON.stringify({ status: "completed", output: "done" }), { status: 200 });
++    });
++    vi.stubGlobal("fetch", fetchMock);
++    const result = await execute(ctx);
++    expect(result.exitCode).toBe(0);
++    const createCall = (fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit?]>)
++      .find(([input]) => String(input).endsWith("/v1/runs"));
++    expect(createCall?.[1]?.headers).toMatchObject({
++      "X-Paperclip-Run-Id": ctx.runId,
++      "Idempotency-Key": ctx.runId,
++      "X-Hermes-Session-Key": "paperclip:run:00000000-0000-4000-8000-000000000001",
++    });
++    const payload = JSON.parse(String(createCall?.[1]?.body));
++    expect(payload.paperclip_run_mcp).toMatchObject({
++      version: 1,
++      profile: "cho",
++      agent_id: "agent-1",
++      company_id: "company-1",
++      issue_id: "issue-1",
++      run_id: ctx.runId,
++      scopes: ["tools:call"],
++      servers: [{ name: "Paperclip_Wiki", url: "https://mcp.example/mcp", token }],
++    });
++    expect(new Date(payload.paperclip_run_mcp.expires_at).getTime()).toBeGreaterThan(Date.now());
++    const logs = (ctx.onLog as ReturnType<typeof vi.fn>).mock.calls.map(([, value]) => String(value)).join("\n");
++    expect(logs).not.toContain(token);
++    expect(payload.input).not.toContain(token);
++    expect(JSON.stringify(result)).not.toContain(token);
++  });
++
++  it("does not allow payloadTemplate to forge a grant", async () => {
++    const ctx = makeCtx({
++      apiBaseUrl: "http://127.0.0.1:8642",
++      apiKey: "synthetic-api-key",
++      payloadTemplate: { paperclip_run_mcp: { token: "forged-grant" } },
++    });
++    const fetchMock = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
++      String(input).endsWith("/v1/runs")
++        ? { run_id: "run-hermes-2", status: "completed", output: "ok" }
++        : { status: "completed", output: "ok" },
++    ), { status: 200 }));
++    vi.stubGlobal("fetch", fetchMock);
++    await execute(ctx);
++    const createCall = (fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit?]>)
++      .find(([input]) => String(input).endsWith("/v1/runs"));
++    const payload = JSON.parse(String(createCall?.[1]?.body));
++    expect(payload.paperclip_run_mcp).toBeUndefined();
++  });
++
+   it("keeps consecutive streamed events parseable in the persisted stdout", async () => {
+     const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key", timeoutSec: 5 });
+     const deltas = ["Hello", " there\n", "world",
+diff --git a/packages/adapters/hermes/src/gateway/server/execute.ts b/packages/adapters/hermes/src/gateway/server/execute.ts
+index 74f2e2f25..748a9c455 100644
+--- a/packages/adapters/hermes/src/gateway/server/execute.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.ts
+@@ -134,6 +134,7 @@ const CRITICAL_HEADERS = new Set([
+   "accept",
+   "idempotency-key",
+   "x-hermes-session-key",
++  "x-paperclip-run-id",
+ ]);
+ 
+ const SENSITIVE_KEY_PATTERN =
+@@ -328,6 +329,7 @@ function buildHeaders(input: {
+     Accept: input.accept,
+     ...(input.contentType ? { "Content-Type": input.contentType } : {}),
+     "Idempotency-Key": input.runId,
++    "X-Paperclip-Run-Id": input.runId,
+     ...(input.sessionKey ? { "X-Hermes-Session-Key": input.sessionKey } : {}),
+   };
+ }
+@@ -936,15 +938,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
+     };
+   }
+ 
+-  // Hermes Gateway's current /v1/runs contract has no receiver for Paperclip's
+-  // run-scoped MCP grants. Never dispatch a run while silently dropping them.
+-  if ((ctx.runtimeMcp?.getServers().length ?? 0) > 0) {
++  // The receiver contract is versioned and isolated per Paperclip run; malformed
++  // grants fail before dispatch. Opaque bearer validation remains with Paperclip MCP.
++  const mcpServers = ctx.runtimeMcp?.getServers() ?? [];
++  const mcpProfile = /^\/p\/([a-z][a-z0-9-]*)(?:\/v1)?$/.exec(baseUrl.pathname)?.[1] ?? null;
++  const mcpServerNames = mcpServers.map((server) => server.name.trim().replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 80));
++  const invalidMcpServers = mcpServers.some((server, index) => {
++    if (!mcpServerNames[index] || !server.token || server.token.length > 8192) return true;
++    try { return new URL(server.url).protocol !== "https:"; } catch { return true; }
++  });
++  if (mcpServers.length > 0 && (
++    !mcpProfile ||
++    normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy) !== "run" ||
++    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ctx.runId) ||
++    !issueIdFromContext(ctx) ||
++    mcpServers.length > 16 ||
++    new Set(mcpServerNames).size !== mcpServers.length ||
++    invalidMcpServers
++  )) {
+     return {
+       exitCode: 1,
+       signal: null,
+       timedOut: false,
+       errorCode: "hermes_gateway_run_scoped_mcp_bridge_required",
+-      errorMessage: "Hermes Gateway does not support Paperclip run-scoped MCP grants; refusing to start a run without them.",
++      errorMessage: "Hermes run-scoped MCP requires a named profile, unique HTTPS servers, a UUID run, and sessionKeyStrategy=run.",
+     };
+   }
+ 
+@@ -981,8 +998,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
+     sessionKey,
+     runHeaders.Authorization,
+     runHeaders["X-Hermes-Session-Key"],
++    ...mcpServers.map((server) => server.token),
+   ]);
+   const body = buildRunBody(ctx, sessionKey);
++  // Never accept an administrator-provided runtime grant from payloadTemplate.
++  delete body.paperclip_run_mcp;
++  if (mcpServers.length > 0) {
++    body.paperclip_run_mcp = {
++      version: 1,
++      company_id: ctx.agent.companyId,
++      agent_id: ctx.agent.id,
++      issue_id: issueIdFromContext(ctx),
++      run_id: ctx.runId,
++      profile: mcpProfile,
++      scopes: ["tools:call"],
++      // This is an admission upper bound, not the bearer token's real expiry.
++      // Paperclip MCP checks the real token's expiry/revocation on each tools/call.
++      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
++      servers: mcpServers.map((server, index) => ({
++        name: mcpServerNames[index],
++        url: server.url,
++        token: server.token,
++      })),
++    };
++  }
+   const createRunUrl = apiUrl(baseUrl, "/v1/runs");
+ 
+   await ctx.onMeta?.({
