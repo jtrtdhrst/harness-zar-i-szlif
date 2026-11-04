@@ -1,0 +1,26 @@
+name: Paperclip Core pinned-source invariants
+
+on:
+  pull_request:
+    paths:
+      - "paperclip-core/**"
+      - ".github/workflows/paperclip-core-pinned-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "paperclip-core/**"
+      - ".github/workflows/paperclip-core-pinned-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-pinned-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production-pinned Paperclip Core with safety and regression tests
+        run: |
+          docker build --pull --file paperclip-core/Dockerfile --tag paperclip-core-ci:${{ github.sha }} paperclip-core
