@@ -1,0 +1,50 @@
+name: opik-run-enricher
+services:
+  run-enricher:
+    image: local/opik-run-enricher:d27babc915c0
+    pull_policy: never
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 40
+    mem_limit: 192m
+    cpus: 0.5
+    environment:
+      PAPERCLIP_LOG_ROOT: /paperclip-logs
+      OPIK_INTERNAL_BASE: http://backend-s7a4rwqbij7w4fxlnauriblo:8080
+      HINDSIGHT_INTERNAL_BASE: http://hindsight-admin-hjda7ckq5z4luhd1vpdepi0r:8888
+    volumes:
+      - type: bind
+        source: /var/lib/docker/volumes/phime3w5l50scx9q4tjoelcx_paperclip-home/_data/instances/default/data/run-logs
+        target: /paperclip-logs
+        read_only: true
+    networks:
+      - coolify
+      - hindsight-isolated
+    labels:
+      org.opencontainers.image.revision: "d27babc915c0da9159b7a9c868ef156171c73942"
+      opik.enricher.policy: "aggregated-metadata-only"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://backend-s7a4rwqbij7w4fxlnauriblo:8080/v1/private/projects', timeout=5); urllib.request.urlopen('http://hindsight-admin-hjda7ckq5z4luhd1vpdepi0r:8888/health', timeout=5)"
+      interval: 120s
+      timeout: 12s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "2m"
+        max-file: "3"
+networks:
+  coolify:
+    external: true
+  hindsight-isolated:
+    external: true
