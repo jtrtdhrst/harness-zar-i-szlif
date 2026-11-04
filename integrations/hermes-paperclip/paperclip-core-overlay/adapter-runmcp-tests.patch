@@ -9,7 +9,7 @@
    });
  
    it.each([
-@@ -1107,3 +1107,38 @@
+@@ -1107,3 +1107,92 @@
      expect(result.errorMessage).toBe("boom");
    });
  });
@@ -48,3 +48,57 @@
 +    vi.unstubAllGlobals();
 +  });
 +});
++
++  it.each([
++    "https://hermes.example/p/cho",
++    "https://hermes.example/p/cho/v1",
++    "https://hermes.example/p/cho/v1/",
++  ])("routes start, event streaming, and status polling under one profile v1: %s", async (apiBaseUrl) => {
++    const ctx = makeCtx({ apiBaseUrl, apiKey: "synthetic-key", sessionKeyStrategy: "run", timeoutSec: 4, pollIntervalMs: 250, eventReconnectMs: 250 });
++    ctx.runId = "00000000-0000-4000-8000-000000000001";
++    ctx.runtimeMcp = { getServers: () => [{ name: "Wiki", url: "https://mcp.example/mcp", token: "synthetic-only", connectionId: "c1" }] };
++    const called: string[] = [];
++    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
++      const u = String(url);
++      called.push(u);
++      if (u.endsWith("/v1/runs")) return new Response(JSON.stringify({ run_id: "test-run", status: "started" }), { status: 200 });
++      if (u.endsWith("/events")) return new Response("stream retry", { status: 503 });
++      if (u.endsWith("/v1/runs/test-run")) return new Response(JSON.stringify({ status: "completed", output: "done" }), { status: 200 });
++      throw new Error("Unexpected Hermes URL");
++    }));
++    const result = await execute(ctx);
++    const base = "https://hermes.example/p/cho/v1/runs";
++    expect(result.exitCode).toBe(0);
++    expect(called).toContain(base);
++    expect(called).toContain(base + "/test-run/events");
++    expect(called).toContain(base + "/test-run");
++    expect(called.every((url) => url.startsWith(base) && !url.includes("/v1/v1/"))).toBe(true);
++  });
++
++  it.each([
++    "https://hermes.example/p/cho",
++    "https://hermes.example/p/cho/v1",
++    "https://hermes.example/p/cho/v1/",
++  ])("routes timeout stop and final status under one profile v1: %s", async (apiBaseUrl) => {
++    const ctx = makeCtx({ apiBaseUrl, apiKey: "synthetic-key", sessionKeyStrategy: "run", timeoutSec: 0.12, pollIntervalMs: 250, eventReconnectMs: 250 });
++    ctx.runId = "00000000-0000-4000-8000-000000000001";
++    ctx.runtimeMcp = { getServers: () => [{ name: "Wiki", url: "https://mcp.example/mcp", token: "synthetic-only", connectionId: "c1" }] };
++    const called: string[] = [];
++    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
++      const u = String(url);
++      called.push(u);
++      if (u.endsWith("/v1/runs")) return new Response(JSON.stringify({ run_id: "test-run", status: "started" }), { status: 200 });
++      if (u.endsWith("/events")) return new Response("stream retry", { status: 503 });
++      if (u.endsWith("/stop")) return new Response(JSON.stringify({ status: "stopping" }), { status: 200 });
++      if (u.endsWith("/v1/runs/test-run")) return new Response(JSON.stringify({ status: "cancelled" }), { status: 200 });
++      throw new Error("Unexpected Hermes URL");
++    }));
++    const result = await execute(ctx);
++    const base = "https://hermes.example/p/cho/v1/runs";
++    expect(result.timedOut).toBe(true);
++    expect(called).toContain(base);
++    expect(called).toContain(base + "/test-run/events");
++    expect(called).toContain(base + "/test-run/stop");
++    expect(called).toContain(base + "/test-run");
++    expect(called.every((url) => url.startsWith(base) && !url.includes("/v1/v1/"))).toBe(true);
++  });
