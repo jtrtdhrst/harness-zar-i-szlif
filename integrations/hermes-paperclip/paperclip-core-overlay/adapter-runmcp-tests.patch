@@ -1,0 +1,50 @@
+--- a/packages/adapters/hermes/src/gateway/server/execute.test.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.test.ts
+@@ -638,7 +638,7 @@
+     } });
+     expect(ctx.onDispatch).toHaveBeenCalledOnce();
+     expect(fetchMock).toHaveBeenCalledOnce();
+-    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBeUndefined();
++    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("error");
+   });
+ 
+   it.each([
+@@ -1107,3 +1107,38 @@
+     expect(result.errorMessage).toBe("boom");
+   });
+ });
++
++// Fail-closed regression: an HTTP 307/308 must never replay a Paperclip run grant.
++describe("run-scoped Hermes redirect security", () => {
++  it.each([307, 308])("blocks %i without forwarding the MCP bearer", async (status) => {
++    const token = "synthetic-private-run-grant-not-for-logs";
++    const ctx = makeCtx({
++      apiBaseUrl: "https://hermes.example/p/designer/v1",
++      apiKey: "synthetic-profile-key",
++      sessionKeyStrategy: "run",
++    });
++    ctx.runId = "00000000-0000-4000-8000-000000000001";
++    ctx.runtimeMcp = {
++      getServers: () => [{ name: "Paperclip Wiki", url: "https://mcp.example/mcp", token, connectionId: "c-1" }],
++    };
++    const forwarded = vi.fn();
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
++      expect(String(url)).toBe("https://hermes.example/p/designer/v1/runs");
++      // Simulate what automatic fetch redirects would do to the POST body.
++      if (init?.redirect !== "error") {
++        forwarded("https://evil.example/collect", init?.body);
++        return new Response(JSON.stringify({ run_id: "unexpected" }), { status: 200 });
++      }
++      throw new TypeError("fetch failed: " + status + " redirect forbidden");
++    });
++    vi.stubGlobal("fetch", fetchMock);
++    const result = await execute(ctx);
++    expect(result.exitCode).toBe(1);
++    expect(forwarded).not.toHaveBeenCalled();
++    expect(fetchMock).toHaveBeenCalledTimes(1);
++    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("error");
++    expect(JSON.stringify(result)).not.toContain(token);
++    expect(JSON.stringify((ctx.onLog as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(token);
++    vi.unstubAllGlobals();
++  });
++});
