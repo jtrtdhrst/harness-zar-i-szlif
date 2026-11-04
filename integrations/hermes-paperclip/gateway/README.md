@@ -1,39 +1,62 @@
-# Hermes Gateway image
+# Hermes Gateway build and Paperclip per-run MCP receiver candidate
 
-This is the single source-controlled production Dockerfile for the Hermes Gateway integration.
+Source of truth: miloszspyrka-code/harness-zar-i-szlif. Base image:
+nousresearch/hermes-agent:v0.22.5, upstream source commit
+bf0203a794a07aac3ff764972ab9087baa4e4f4e.
 
-## Coolify source contract
+Coolify production contract (after review): branch main, build context
+/integrations/hermes-paperclip/gateway, Dockerfile /Dockerfile,
+watch path integrations/hermes-paperclip/gateway/**, health
+GET http://127.0.0.1:8642/health. Persistent /opt/data and existing profile keys
+remain managed by Coolify. No secrets in the image or Git.
 
-- Repository: `miloszspyrka-code/harness-zar-i-szlif`
-- Branch: `main`, after independent review
-- Build context: `/integrations/hermes-paperclip/gateway`
-- Dockerfile: `/Dockerfile`
-- Watch paths: `integrations/hermes-paperclip/gateway/**`
-- Image base: `nousresearch/hermes-agent:v0.22.5`
-- Hermes source pin: `NousResearch/hermes-agent@bf0203a794a07aac3ff764972ab9087baa4e4f4e`
+## Runtime patch (source pinned)
 
-The image includes GNU Wget for Coolify's in-container HTTP readiness probe. Configure Coolify to probe `GET http://127.0.0.1:8642/health`; dashboard `/api/status` requires dashboard authentication and is not the container readiness endpoint.
+install_run_mcp.py checks SHA-256
+a9c3b02e51407ca30fc948753149984c0ec75dcc047763cf75a356c1baaba466
+for the pinned Hermes gateway/platforms/api_server_runs.py and fails the
+build on drift. It then installs a private ephemeral bridge using Hermes'
+existing session_local_mcp._borrowed registry; run_mcp.py validates the grant.
+The isolated image build and Python compilation passed; runtime rejects
+unauthenticated admission with 401 and malformed/empty run grants with 403.
+This is not yet proof of a positive Paperclip-issued run.
 
-Keep profile credentials and the persistent `/opt/data` volume in the existing Coolify runtime configuration. Do not copy them into the image, build logs, or a candidate service.
+## Wire contract — adapter and receiver
 
-## Validation and scope
+The Paperclip Hermes adapter POSTs to the named profile's /v1/runs endpoint
+using that profile's distinct API_SERVER_KEY. X-Paperclip-Run-Id contains the
+canonical Paperclip run UUID. Private JSON field paperclip_run_mcp carries:
+version=1, company_id, agent_id, issue_id, run_id, profile,
+scopes=["tools:call"], expires_at (ISO UTC) and
+servers=[{name, url (HTTPS), token (opaque Paperclip bearer)}].
 
-The image workflow builds the final Dockerfile, starts the gateway, verifies the health response, stops the supervised gateway service, and confirms the same probe fails while the service is down.
+The receiver strips paperclip_run_mcp before routing, prompts, session history,
+durable run status or Opik. The tool config is registered only while the
+synchronous agent turn is running and cleared on exit/error. The caller-provided
+run ID and profile cannot on their own confer authorization: the profile
+API_SERVER_KEY authenticates the route and the Paperclip MCP gateway verifies
+the original short-lived bearer and actual grant on EVERY tool call, including
+run/agent identity, access and revocation.
 
-Passing this image check proves container readiness only. It does not prove Paperclip run-scoped MCP authorization, profile authentication, Hindsight persistence/isolation, or Opik correlation; those remain separate integration gates.
+The adapter MUST set sessionKeyStrategy=run and provide an actual UUID. It
+derives the profile from the named URL, uses only runtimeMcp.getServers()
+(not payloadTemplate), sends its token only in the ephemeral request, and
+redacts the bearer in every error/log path. The local expires_at is an
+admission bound, not a substitution for the issuer's token expiry.
 
-## Run-scoped MCP receiver work
+## Validation and remaining release gates
 
-`run_mcp.py` defines the strict grant envelope and a context manager over Hermes' existing
-`gateway.session_local_mcp._borrowed` facility. The grant is accepted only on a profile-authenticated
-request; the opaque bearer is retained only in the in-memory server spec and the upstream MCP
-gateway must validate it on every tool call. The run id is the scope namespace, so connections
-cannot be reused across runs. Never persist this envelope, include it in prompts, or log request
-bodies.
+- Standalone Python grant-validation tests: 4/4 PASS.
+- Installer dry-run against exact running pinned source checksum: PASS.
+- Isolated Docker build and Python compilation: PASS.
+- Local isolated container module import, HTTP health 200: PASS.
+- Unauthenticated POST returned 401; authenticated malformed/null grant 403.
+- Adapter Vitest 104/104 and TypeScript PASS in independent Paperclip worktree.
 
-This helper is not wired into the pinned `/v1/runs` executor yet. The API currently admits a
-`_RunLaunch` and invokes `_run_agent_sync` without a runtime-MCP argument or a Hermes execution
-authority in scope. Therefore this commit is a tested receiver component, **not** a functioning
-Paperclip-to-Hermes bridge and must not be deployed or treated as acceptance. The integration hook
-must be added to the version-pinned `gateway/platforms/api_server_runs.py` path, with cleanup on
-success, error, and cancellation, before the feature can be considered ready.
+BLOCKED for production until: independent CTO/CHO source review; real
+Paperclip-issued token and named profile authentication; native Named MCP
+Wiki + Skills read with positive and negative run/agent authorization; Hindsight
+selfhost retain, separate session exact recall and cross-bank denial; Opik
+thread_id and task_id with the SAME real Paperclip run UUID; reviewed merge,
+GitHub-to-Coolify exact SHA/digest, rollback and cohort-by-cohort verification.
+No Core edits, Cloud data deletion or mass agent cutover permitted.
