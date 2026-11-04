@@ -27,6 +27,14 @@
      ...(input.sessionKey ? { "X-Hermes-Session-Key": input.sessionKey } : {}),
    };
  }
+@@ -442,6 +448,6 @@ async function fetchJson(input: RequestInfo | URL, init: RequestInit): Promise<unknown> {
+   let response: Response;
+   try {
+-    response = await fetch(input, init);
++    response = await fetch(input, { ...init, redirect: "error" });
+   } catch (err) {
+     const fetchErr = new Error(`Hermes gateway request failed: ${fetchFailureMessage(err)}`) as HermesHttpError;
+     fetchErr.code = "hermes_gateway_connect_failed";
 @@ -565,16 +571,19 @@
    const record = asRecord(parsed);
    const eventName = eventNameFromData(parsed, frame.event);
@@ -52,7 +60,14 @@
    }
  
    const status = extractStatus(parsed) ?? (eventName?.startsWith("run.") ? eventName.slice(4) : null);
-@@ -933,6 +942,33 @@
+@@ -655,5 +664,6 @@
+       const response = await fetch(apiUrl(input.baseUrl, `/v1/runs/${encodeURIComponent(input.state.runId)}/events`), {
+         method: "GET",
+         headers: input.headers,
++        redirect: "error",
+         signal: input.signal,
+       });
+@@ -933,6 +943,33 @@
      };
    }
  
@@ -86,7 +101,7 @@
    const timeoutSec = parseNonNegativeNumber(ctx.config.timeoutSec, DEFAULT_TIMEOUT_SEC);
    const timeoutMs = timeoutSec > 0 ? Math.ceil(timeoutSec * 1000) : 0;
    const reconnectMs = Math.floor(clamp(parseNonNegativeNumber(ctx.config.eventReconnectMs, DEFAULT_EVENT_RECONNECT_MS), 250, 30_000));
-@@ -966,8 +1002,30 @@
+@@ -966,8 +1003,30 @@
      sessionKey,
      runHeaders.Authorization,
      runHeaders["X-Hermes-Session-Key"],
