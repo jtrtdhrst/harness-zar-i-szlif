@@ -48,18 +48,24 @@
     {
       "id": "paperclip-core",
       "environment": "production",
-      "mode": "upstream_pinned",
-      "repository": "paperclipai/paperclip",
+      "mode": "manual_pinned",
+      "repository": "miloszspyrka-code/harness-zar-i-szlif",
       "coolify_kind": "service",
       "coolify_uuid": "2omzqpy8dxgmhuwfbzo7bvvv",
       "auto_deploy_expected": false,
       "review_required": true,
       "production_readback": "https://paperclip.kompaszbiorek.pl/api/health",
       "exact_sha_required": true,
-      "observed_baseline": "2026-11-04: running image ghcr.io/paperclipai/paperclip:2026.1023.0; /api/health reports commit 1b4c8038",
-      "artifact_source_ref": "ghcr.io/paperclipai/paperclip:2026.1023.0",
+      "observed_baseline": "2026-11-04T17:02Z: running local/paperclip-review-recovery:4f05e290; base upstream revision 1b4c8038; overlay commit 4f05e290 from merged PR #43; runtime image ID sha256:ba2bf404...; reproducible source-to-image proof OPEN",
+      "artifact_source_ref": "local/paperclip-review-recovery:4f05e290",
       "source_revision": "1b4c803816e82b0265c8422e1a804327a7ed8c54",
-      "source_provenance_scope": "Upstream image only, not harness overlays"
+      "source_provenance_scope": "Upstream base + harness overlay at merged PR #43; running local image separately observed. Build reproducibility and source-to-digest attestation remain OPEN",
+      "upstream_base_repository": "paperclipai/paperclip",
+      "upstream_base_ref": "ghcr.io/paperclipai/paperclip:2026.1023.0",
+      "upstream_base_revision": "1b4c803816e82b0265c8422e1a804327a7ed8c54",
+      "overlay_source_sha": "4f05e2904b8663e096bf4f839f25d46767f18899",
+      "runtime_image_id": "sha256:ba2bf404be28f2ae5ee8a2a5785944280463f67f84fd52a3b20bda49d9af1855",
+      "overlay_source_to_runtime_digest_verified": false
     },
     {
       "id": "paperclip-mcp",
@@ -86,6 +92,25 @@
       "production_readback": "https://mcp-comfy.kompaszbiorek.pl/mcp",
       "exact_sha_required": true,
       "observed_baseline": "2026-11-04: local image local/comfyui-mcp:0.52.206-chatfiles7; running healthy; deployment provenance not verified"
+    },
+    {
+      "id": "hermes-gateway-git-release-candidate",
+      "environment": "canary",
+      "mode": "git_canary_auto",
+      "repository": "miloszspyrka-code/harness-zar-i-szlif",
+      "integration_ref": "main",
+      "candidate_ref": "main",
+      "coolify_kind": "application",
+      "coolify_uuid": "hut52do8jdwumzdnaphtnmfp",
+      "auto_deploy_expected": true,
+      "production_auto_promotion": false,
+      "review_required": true,
+      "exact_sha_required": true,
+      "production_readback": null,
+      "source_to_digest_verified": false,
+      "network_isolation_verified": false,
+      "observed_no_public_host_ports": true,
+      "observed_baseline": "2026-11-04T17:01Z: Coolify healthy; harness main 4f05e290... candidate image; no public host ports, separate /opt/data, shared Coolify Docker network; auto deploy to candidate true. Not production, not isolation certified, not a cutover gate PASS"
     }
   ],
   "other_resources": [
@@ -499,12 +524,12 @@
     }
   ],
   "scope_snapshot": {
-    "observed_at": "2026-11-04",
-    "coolify_applications": 4,
+    "observed_at": "2026-11-04T17:02:30Z",
+    "coolify_applications": 5,
     "coolify_services": 26,
-    "coolify_total": 30,
+    "coolify_total": 31,
     "cloudflare_workers": 3,
-    "source": "Coolify authenticated readback; Cloudflare native Worker data recorded at KOMAA-1587 release-e2e-attestation-20261104; dated snapshot"
+    "source": "Coolify authenticated readback including newly created Hermes git-release candidate; Cloudflare three Worker version IDs from native readback; dated not continuous"
   },
   "cloudflare_workers": [
     {
