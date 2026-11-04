@@ -95,6 +95,8 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
                 raise InvalidRunGrant
             names.add(name)
             specs.append({"type": "http", "name": name, "url": url,
+                          # Fail closed on cross-origin redirects and unsupported SSE fallback.
+                          "strict_redirect_headers": True,
                           "headers": [{"name": "Authorization", "value": f"Bearer {token}"}]})
         # Scope keys are unique per run and profile; tool names and connections cannot cross runs.
         return specs, f"paperclip-run:{authenticated_profile}:{run_id}"
