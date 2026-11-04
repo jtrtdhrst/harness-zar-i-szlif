@@ -16,7 +16,7 @@ class OpikSegmentationTest(unittest.TestCase):
             "import datetime\n\ndef start_root_trace(\n    task_key: str,\n):\n"
             '    metadata = {\n        "source": "hermes",\n    }\n'
             "    # Build the create payload once and keep it:\n"
-            '    create_kwargs = {\n        "tags": tags(),\n    }\n'
+            '    create_kwargs = {\n        "thread_id": session_id or None,\n        "tags": tags(),\n    }\n'
         )
         tree = ast.parse(transformed)
         # Evaluate only the pure helper definition with standard pathlib dependency.
@@ -36,7 +36,7 @@ class OpikSegmentationTest(unittest.TestCase):
         template = ("import datetime\n\ndef start_root_trace(\n    task_key: str,\n):\n"
                     '    metadata = {\n        "source": "hermes",\n    }\n'
                     "    # Build the create payload once and keep it:\n"
-                    '    create_kwargs = {\n        "tags": tags(),\n    }\n')
+                    '    create_kwargs = {\n        "thread_id": session_id or None,\n        "tags": tags(),\n    }\n')
         once = patch.transform(template)
         self.assertIn('"agent_role"', once)
         self.assertIn('"memory_bank"', once)
@@ -55,7 +55,7 @@ class OpikSegmentationTest(unittest.TestCase):
         template = ("import datetime\n\ndef start_root_trace(\n    task_key: str,\n):\n"
                     '    metadata = {\n        "source": "hermes",\n    }\n'
                     "    # Build the create payload once and keep it:\n"
-                    '    create_kwargs = {\n        "tags": tags(),\n    }\n')
+                    '    create_kwargs = {\n        "thread_id": session_id or None,\n        "tags": tags(),\n    }\n')
         code = patch.transform(template)
         for forbidden in ("bearer", "token", "password", "api_key"):
             self.assertNotIn(forbidden, code.lower())
