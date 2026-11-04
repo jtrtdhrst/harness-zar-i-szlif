@@ -18,10 +18,7 @@ services:
       OPIK_INTERNAL_BASE: http://backend-s7a4rwqbij7w4fxlnauriblo:8080
       HINDSIGHT_INTERNAL_BASE: http://hindsight-admin-hjda7ckq5z4luhd1vpdepi0r:8888
     volumes:
-      - type: bind
-        source: /var/lib/docker/volumes/phime3w5l50scx9q4tjoelcx_paperclip-home/_data/instances/default/data/run-logs
-        target: /paperclip-logs
-        read_only: true
+      - /var/lib/docker/volumes/phime3w5l50scx9q4tjoelcx_paperclip-home/_data/instances/default/data/run-logs:/paperclip-logs:ro
     networks:
       - coolify
       - hindsight-isolated
