@@ -868,7 +868,7 @@ mockFetchRoutes([
       }
       if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse({
         id: ISSUE, status, assigneeAgentId: AGENT,
-        executionState: { status: "pending", currentStageType: "review",
+        executionState: { status: "pending", currentStageId: "aaaaaaaa-1111-4111-8111-111111111111", currentStageType: "review",
           currentParticipant: { type: "agent", agentId: AGENT } },
       });
       return mockJsonResponse(null);
@@ -901,7 +901,7 @@ mockFetchRoutes([
       { match: "/approvals", body: [] },
       { match: `/issues/${ISSUE}`, body: {
         id: ISSUE, status: "in_review",
-        executionState: { status: "pending", currentStageType: "review",
+        executionState: { status: "pending", currentStageId: "aaaaaaaa-1111-4111-8111-111111111111", currentStageType: "review",
           currentParticipant: { type: "agent", agentId: AGENT } },
       } },
     ]);
@@ -921,6 +921,52 @@ mockFetchRoutes([
     expect(unprivileged.isError).toBe(true);
     expect(unprivileged.content[0]?.text ?? "").toContain("Board-only reviewer recovery");
     expect(calls.some((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toBe(false);
+  });
+
+
+  it("reviewer recovery detects participant and stage change after native checkout", async () => {
+    const board = new PaperclipApiClient({
+      apiUrl: "http://localhost:3100/api", apiKey: "token-board",
+      boardApiKey: "token-board", companyId: COMPANY, agentId: AGENT,
+      principalKind: "board",
+    });
+    const runId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const oldStage = "aaaaaaaa-1111-4111-8111-111111111111";
+    const newStage = "cccccccc-1111-4111-8111-111111111111";
+    let checkedOut = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/live-runs")) return mockJsonResponse(checkedOut
+        ? [{ id: runId, issueId: ISSUE, agentId: AGENT, status: "running" }] : []);
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/checkout") && init?.method === "POST") {
+        checkedOut = true;
+        return mockJsonResponse({ woke: true });
+      }
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse({
+        id: ISSUE, status: checkedOut ? "in_progress" : "in_review",
+        executionState: {
+          status: "pending", currentStageId: checkedOut ? newStage : oldStage,
+          currentStageType: "review",
+          currentParticipant: { type: "agent", agentId: checkedOut ? OWNER : AGENT },
+        },
+      });
+      return mockJsonResponse(null);
+    }));
+    const native = createToolDefinitions(board).find((candidate) => candidate.name === "paperclipCheckoutIssue");
+    if (!native) throw new Error("native checkout tool not registered");
+    const out = JSON.parse((await native.execute({
+      issueId: ISSUE, agentId: AGENT, expectedStatuses: ["in_review"],
+    })).content[0]?.text ?? "{}");
+    expect(checkedOut).toBe(true);
+    expect(out.nativeCheckoutAccepted).toBe(true);
+    expect(out.woke).toBe(false);
+    expect(out.verified).toBe(false);
+    expect(out.staleTransition).toBe(true);
+    expect(out.observedRun).toBeNull();
+    expect(out.pendingReviewPreserved).toBe(false);
+    expect(out.statusDrift).toBe(false);
+    expect(out.note).toMatch(/Stale reviewer transition/);
   });
 
   // KOMAA-849: when stalled-review-decision is unavailable (5xx), route fails
