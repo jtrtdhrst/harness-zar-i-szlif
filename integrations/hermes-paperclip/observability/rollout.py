@@ -34,11 +34,12 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def atomic_write(path: Path, data: bytes, mode: int = 0o644) -> None:
+def atomic_write(path: Path, data: bytes, mode: int = 0o644,\n                 owner: tuple[int, int] | None = None) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".opik-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as target:
             os.fchmod(target.fileno(), mode)
+            if owner is not None:\n                os.fchown(target.fileno(), owner[0], owner[1])
             target.write(data)
             target.flush()
             os.fsync(target.fileno())
@@ -78,9 +79,11 @@ def snapshot(root: Path) -> tuple[dict[str, dict], bytes, bytes]:
             first_file = data
         if digest(data) == BASE_SHA256:
             original = data
+        stat = path.stat()
         results[role] = {"relative_path": str(path.relative_to(root)),
                          "sha256": digest(data),
-                         "mode": path.stat().st_mode & 0o777}
+                         "mode": stat.st_mode & 0o777,
+                         "uid": stat.st_uid, "gid": stat.st_gid}
     hashes = {v["sha256"] for v in results.values()}
     if not hashes <= {BASE_SHA256, PATCHED_SHA256}:
         raise RolloutError("profile source drift: refusing partial rollout")
@@ -150,10 +153,9 @@ def rollback(root: Path, journal: Path, batch_id: str) -> dict:
         current = target.read_bytes()
         if digest(current) not in {record["previous_sha256"], record["patched_sha256"]}:
             raise RolloutError("profile drift since rollout; refusing overwrite")
-        restorations.append((target, saved, record["mode"], current != saved))
-    for target, saved, mode, different in restorations:
+        restorations.append((target, saved, record["mode"],\n                             (record["uid"], record["gid"]), current != saved))\n    for target, saved, mode, owner, different in restorations:
         if different:
-            atomic_write(target, saved, mode)
+            atomic_write(target, saved, mode, owner)
             changed += 1
     data["state"] = "rolled-back"
     atomic_write(journal / batch_id / "manifest.json",
@@ -184,6 +186,7 @@ def apply(root: Path, journal: Path) -> dict:
         atomic_write(backup, original, 0o600)
         roles[role] = {"relative_path": record["relative_path"],
                        "mode": record["mode"],
+                       "uid": record["uid"], "gid": record["gid"],
                        "previous_sha256": BASE_SHA256,
                        "patched_sha256": patched_hash}
     manifest = {"version": 1, "batch_id": batch_id, "state": "applying",
@@ -193,7 +196,7 @@ def apply(root: Path, journal: Path) -> dict:
     sync_dir(batch)
     try:
         for role, target in source_paths(root).items():
-            atomic_write(target, patched, roles[role]["mode"])
+            atomic_write(target, patched, roles[role]["mode"],\n                         (roles[role]["uid"], roles[role]["gid"]))
             if digest(target.read_bytes()) != patched_hash:
                 raise RolloutError("patched profile readback mismatch")
         manifest["state"] = "applied"
