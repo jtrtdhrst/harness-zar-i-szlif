@@ -63,6 +63,7 @@ function isToolEnabled(name: string): boolean {
 }
 
 import { formatErrorResponse, formatTextResponse } from "./format.js";
+import { assertIssueQuestionGoverned } from "./issue-question-governance.js";
 
 export interface ToolDefinition {
   name: string;
@@ -1220,15 +1221,17 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         operatorRunId: z.string().guid().optional().nullable(),
       }),
       // P1 2026-10-14: backend wymaga run-id dla agent-actora; forward jak w AddComment.
-      async ({ issueId, runId, operatorRunId, ...body }) =>
-        client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {
+      async ({ issueId, runId, operatorRunId, ...body }) => {
+        assertIssueQuestionGoverned("ask_user_questions", body);
+        return client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {
           body: {
             kind: "ask_user_questions",
             ...body,
           },
           runId: runId ?? undefined,
           operatorRunId: operatorRunId ?? undefined,
-        }),
+        });
+      },
     ),
     makeTool(
       "paperclipRequestConfirmation",
@@ -1238,15 +1241,17 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         operatorRunId: z.string().guid().optional().nullable(),
       }),
       // P1 2026-10-14: backend wymaga run-id dla agent-actora; forward jak w AddComment.
-      async ({ issueId, runId, operatorRunId, ...body }) =>
-        client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {
+      async ({ issueId, runId, operatorRunId, ...body }) => {
+        assertIssueQuestionGoverned("request_confirmation", body);
+        return client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {
           body: {
             kind: "request_confirmation",
             ...body,
           },
           runId: runId ?? undefined,
           operatorRunId: operatorRunId ?? undefined,
-        }),
+        });
+      },
     ),
     makeTool(
       "paperclipRequestCheckboxConfirmation",
@@ -1256,15 +1261,17 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         operatorRunId: z.string().guid().optional().nullable(),
       }),
       // P1 2026-10-14: backend wymaga run-id dla agent-actora; forward jak w AddComment.
-      async ({ issueId, runId, operatorRunId, ...body }) =>
-        client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {
+      async ({ issueId, runId, operatorRunId, ...body }) => {
+        assertIssueQuestionGoverned("request_checkbox_confirmation", body);
+        return client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/interactions`, {
           body: {
             kind: "request_checkbox_confirmation",
             ...body,
           },
           runId: runId ?? undefined,
           operatorRunId: operatorRunId ?? undefined,
-        }),
+        });
+      },
     ),
     makeTool(
       "paperclipListIssueInteractions",
@@ -1739,6 +1746,13 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         assertNoSkillApiRequestFallback(apiPath);
         const body = parseOptionalJson(jsonBody);
         enforceTaskAssignmentPolicy(method, apiPath, body);
+        // Do not let the generic API tool bypass governed native question admission.
+        if (method.toUpperCase() === "POST" && /^\\/issues\\/[^/]+\\/interactions\\/?$/.test(apiPath)) {
+          if (body && typeof body === "object" && !Array.isArray(body)) {
+            const interaction = body as Record<string, unknown>;
+            assertIssueQuestionGoverned(String(interaction.kind ?? ""), interaction);
+          }
+        }
         return client.requestJson(method, apiPath, { body, runId, operatorRunId }); // KOMAA-630
       },
     ),
