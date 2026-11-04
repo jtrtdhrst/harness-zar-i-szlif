@@ -317,6 +317,82 @@ describe("eligibility & DAG", () => {
     expect(calls.some((call) => call.init.method === "PATCH" && call.url.endsWith(`/issues/${ISSUE}`))).toBe(false);
   });
 
+
+  // H03 / changes_requested must recover into a REAL issue/agent bound run.
+  // This exercises the MCP contract against a stateful Paperclip-compatible test server;
+  // it does NOT replace a production issue-run readback.
+  it("rework recovery selects native original executor and proves a matching issue run", async () => {
+    const checkoutRun = "99999999-9999-4999-8999-999999999999";
+    let status = "in_progress";
+    let issued = false;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const issue = () => ({
+      id: ISSUE, status, assigneeAgentId: AGENT,
+      reviewAttention: { state: "none" },
+      executionState: {
+        status: "changes_requested", currentStageType: "review",
+        returnAssignee: { type: "agent", agentId: OWNER },
+      },
+      scheduledRetry: null, unblockDescriptor: null,
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const request = init ?? {};
+      calls.push({ url: u, init: request });
+      if (u.endsWith("/live-runs")) return mockJsonResponse(issued
+        ? [{ id: checkoutRun, issueId: ISSUE, agentId: OWNER, status: "queued" }]
+        : []);
+      if (u.endsWith("/documents?includeSystem=true")) return mockJsonResponse([]);
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/diagnostics/blockers")) return mockJsonResponse({ blockers: [] });
+      if (u.endsWith("/checkout") && request.method === "POST") {
+        const posted = JSON.parse(String(request.body)) as { agentId: string };
+        if (status !== "todo" || posted.agentId !== OWNER) return mockJsonResponse({ error: "wrong rework owner" }, 409);
+        issued = true;
+        status = "in_progress";
+        return mockJsonResponse({ runId: checkoutRun, woke: true });
+      }
+      if (u.endsWith("/issues/" + ISSUE) && request.method === "PATCH") {
+        status = (JSON.parse(String(request.body)) as {status:string}).status;
+        return mockJsonResponse(issue());
+      }
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse(issue());
+      return mockJsonResponse(null);
+    }));
+    const repair = await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    expect(repair.content[0]?.text ?? "").toContain("in_progress_to_todo");
+    expect(status).toBe("todo");
+    // A caller cannot substitute the assigned Harness agent for the native CHO returnAssignee.
+    const wrongOwner = await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE, agentId: AGENT });
+    expect(wrongOwner.content[0]?.text ?? "").toContain("changes_requested_return_assignee_mismatch");
+    expect(issued).toBe(false);
+    const wake = await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE });
+    const out = JSON.parse(wake.content[0]?.text ?? "{}");
+    expect(out.woke).toBe(true);
+    expect(out.verified).toBe(true);
+    expect(out.observedRun).toMatchObject({ id: checkoutRun, issueId: ISSUE, agentId: OWNER, status: "queued" });
+    expect(calls.filter((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toHaveLength(1);
+    expect(calls.some((call) => call.url.includes("stalled-review-decision"))).toBe(false);
+  });
+
+  it("does not count unbound or foreign-agent live runs as successful checkout", async () => {
+    const badRun = "88888888-8888-4888-8888-888888888888";
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [{ id: badRun, status: "queued", agentId: OWNER, issueId: ISSUE }] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
+      { match: "/heartbeat-runs/", body: { id: badRun, status: "queued", agentId: AGENT } },
+      { match: "/checkout", body: { woke: true, runId: badRun } },
+      { match: "/approvals", body: [] },
+      { match: \`/issues/\${ISSUE}\`, body: { id: ISSUE, status: "todo", assigneeAgentId: AGENT, executionState: null } },
+    ]);
+    const out = JSON.parse((await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE })).content[0]?.text ?? "{}");
+    expect(out.woke).toBe(false);
+    expect(out.verified).toBe(false);
+    expect(out.observedRun).toBeNull();
+    expect(calls.some((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toBe(true);
+  });
+
   it("computes blockedBy add/remove as one atomic PATCH", async () => {
     const { calls } = mockFetchRoutes([
       { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "blocked", blockedByIssueIds: ["b1", "b2"] } },
@@ -712,6 +788,10 @@ mockFetchRoutes([
     const text = res.content[0]?.text ?? "";
     expect(text).toContain("No status mutation");
     expect(text).toContain("no longer stalled");
+    // Route 409 is not a review decision or a permission to override native reviewer admission.
+    const refreshed = JSON.parse(text);
+    expect(refreshed.result.noMutation).toBe(true);
+    expect(refreshed.result.canonicalState.status).toBe("in_review");
   });
 
   // KOMAA-849: when stalled-review-decision is unavailable (5xx), route fails
