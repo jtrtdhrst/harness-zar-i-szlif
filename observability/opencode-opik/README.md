@@ -21,3 +21,17 @@ Local node --check and node --test (mock Opik fetch) cover event deduplication, 
 5. Measure fresh input, cache read/write, task success, latency and independently verifiable provider costs before/after. Roll back to backed-up SHA on regression.
 
 Do not claim complete E2E based only on tests or PR state. Hermes native Opik segmentation PR #39 is separate and remains under its own review.
+
+## Controlled release (source-pinned, no direct production patching)
+
+The running OpenCode plugin is `/paperclip/.config/opencode/opik-observability/index.mjs` (inside the Paperclip container). On the Ubuntu host the same file is in the Paperclip Docker volume. `rollout.py` pins both the existing plugin hash and the reviewed candidate hash. The command `status` is read-only. `apply` and `rollback` require an explicit `--drained` admission assertion, independently verified no-live-run state, CHO/CTO review, and immutable source approval; **the flag does not itself check Paperclip run liveness**.
+
+```sh
+python3 observability/opencode-opik/rollout.py status --target /paperclip/.config/opencode/opik-observability/index.mjs
+# Only after drain, approval, verified snapshot and candidate identity:
+python3 observability/opencode-opik/rollout.py apply --drained --target /paperclip/.config/opencode/opik-observability/index.mjs
+# Keep returned batch_id. If telemetry regression, drain again and rollback:
+python3 observability/opencode-opik/rollout.py rollback --drained --target /paperclip/.config/opencode/opik-observability/index.mjs --batch-id <verified-batch-id>
+```
+
+Never run release commands on active production runs, never reuse a stale reviewed SHA, and never claim completion until a genuine Paperclip-issued issue run has a correlated Opik trace with first-class LLM/tool spans, safe metadata and cost provenance. The journal is private (0700), snapshots have checksums and reads are verified after apply and rollback. This PR alone does not migrate Hermes or alter the 14 Hermes profiles.

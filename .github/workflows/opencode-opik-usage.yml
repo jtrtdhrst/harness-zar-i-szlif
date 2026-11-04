@@ -28,3 +28,6 @@ jobs:
         run: node --check observability/opencode-opik/index.mjs
       - name: Usage, tracing and redaction regression
         run: node --test observability/opencode-opik/index.test.mjs
+
+      - name: Controlled plugin promotion and rollback regression
+        run: python3 -m unittest discover -s observability/opencode-opik -p 'test_rollout.py' -v
