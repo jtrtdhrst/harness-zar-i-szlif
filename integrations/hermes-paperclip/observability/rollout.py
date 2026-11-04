@@ -34,12 +34,14 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def atomic_write(path: Path, data: bytes, mode: int = 0o644,\n                 owner: tuple[int, int] | None = None) -> None:
+def atomic_write(path: Path, data: bytes, mode: int = 0o644,
+                 owner: tuple[int, int] | None = None) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".opik-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as target:
             os.fchmod(target.fileno(), mode)
-            if owner is not None:\n                os.fchown(target.fileno(), owner[0], owner[1])
+            if owner is not None:
+                os.fchown(target.fileno(), owner[0], owner[1])
             target.write(data)
             target.flush()
             os.fsync(target.fileno())
@@ -153,7 +155,9 @@ def rollback(root: Path, journal: Path, batch_id: str) -> dict:
         current = target.read_bytes()
         if digest(current) not in {record["previous_sha256"], record["patched_sha256"]}:
             raise RolloutError("profile drift since rollout; refusing overwrite")
-        restorations.append((target, saved, record["mode"],\n                             (record["uid"], record["gid"]), current != saved))\n    for target, saved, mode, owner, different in restorations:
+        restorations.append((target, saved, record["mode"],
+                             (record["uid"], record["gid"]), current != saved))
+    for target, saved, mode, owner, different in restorations:
         if different:
             atomic_write(target, saved, mode, owner)
             changed += 1
@@ -196,7 +200,8 @@ def apply(root: Path, journal: Path) -> dict:
     sync_dir(batch)
     try:
         for role, target in source_paths(root).items():
-            atomic_write(target, patched, roles[role]["mode"],\n                         (roles[role]["uid"], roles[role]["gid"]))
+            atomic_write(target, patched, roles[role]["mode"],
+                         (roles[role]["uid"], roles[role]["gid"]))
             if digest(target.read_bytes()) != patched_hash:
                 raise RolloutError("patched profile readback mismatch")
         manifest["state"] = "applied"
