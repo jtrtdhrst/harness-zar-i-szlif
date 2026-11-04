@@ -57,12 +57,43 @@ describe("issue questions are not a credential or technical escalation channel",
       payload: form("Which source workspace should we use?", ["Use PR #31", "Mount another worktree"]),
     })).toThrow(TECHNICAL_QUESTION_DENIED);
   });
-  it("rejects a confirmation/checkbox permission-grant fallback", () => {
-    for (const kind of ["request_confirmation", "request_checkbox_confirmation"]) {
-      expect(() => assertIssueQuestionGoverned(kind, {
-        title: "Approve SSH sudo permissions",
+  it("rejects euphemistic access and architecture questions but allows editorial product names", () => {
+    for (const prompt of [
+      "Which way should I sign in to the machine?",
+      "Where should we mount the worktree for this implementation?",
+    ]) {
+      expect(() => assertIssueQuestionGoverned("ask_user_questions", {
+        payload: form(prompt, ["Option A", "Option B"]),
       })).toThrow(TECHNICAL_QUESTION_DENIED);
     }
+    expect(() => assertIssueQuestionGoverned("ask_user_questions", {
+      payload: form("Which Paperclip description reads better?", ["Plasmic in the title", "Shorter wording"]),
+    })).not.toThrow();
+  });
+  it("does not let an editorial title mask an operational prompt or option", () => {
+    expect(() => assertIssueQuestionGoverned("ask_user_questions", {
+      title: "Which description reads better?",
+      payload: form("Which source workspace should we use?", ["Use PR #31"]),
+    })).toThrow(TECHNICAL_QUESTION_DENIED);
+    expect(() => assertIssueQuestionGoverned("ask_user_questions", {
+      payload: form("Which Paperclip description reads better?", ["Which server should we deploy?", "Shorter wording"]),
+    })).toThrow(TECHNICAL_QUESTION_DENIED);
+  });
+  it("rejects both confirmation tool paths before HTTP write", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const [toolName, payload] of [
+      ["paperclipRequestConfirmation", { version: 1, prompt: "Which way should I sign in to the machine?" }],
+      ["paperclipRequestCheckboxConfirmation", {
+        version: 1,
+        prompt: "Choose the workspace to mount the worktree",
+        options: [{ id: "one", label: "Use this workspace" }],
+      }],
+    ] as const) {
+      const result = await getTool(toolName).execute({ issueId: "KOMAA-1553", title: "Choose a route", payload });
+      expect(result.content[0]?.text, toolName).toContain("TECHNICAL_QUESTION_REQUIRES_OWNER");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
   it("rejects the generic paperclipApiRequest bypass before HTTP write", async () => {
     const fetchMock = vi.fn().mockResolvedValue(responseBody());
@@ -77,6 +108,19 @@ describe("issue questions are not a credential or technical escalation channel",
       }),
     });
     expect(result.content[0]?.text).toContain("TECHNICAL_QUESTION_REQUIRES_OWNER");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("rejects generic API confirmation-kind bypasses before HTTP write", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const kind of ["request_confirmation", "request_checkbox_confirmation"]) {
+      const result = await getTool("paperclipApiRequest").execute({
+        method: "POST",
+        path: "/issues/KOMAA-1553/interactions",
+        jsonBody: JSON.stringify({ kind, payload: { prompt: "Which repository should host the runtime?" } }),
+      });
+      expect(result.content[0]?.text).toContain("TECHNICAL_QUESTION_REQUIRES_OWNER");
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("allows a normal editorial preference question and posts exactly once", async () => {
