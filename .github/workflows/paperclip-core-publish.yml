@@ -1,0 +1,49 @@
+name: Publish reviewed Paperclip Core candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: Exact reviewed main-branch commit SHA
+        required: true
+        type: string
+      review_reference:
+        description: Link to CTO/CHO independent review record (audit reference)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact main source and audit references
+        env:
+          APPROVED_SHA: ${{ inputs.approved_sha }}
+          REVIEW_REF: ${{ inputs.review_reference }}
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
+          test "${#APPROVED_SHA}" -eq 40
+          case "$REVIEW_REF" in https://*) ;; *) exit 1 ;; esac
+          echo "EXACT_SOURCE_CHECK_PASSED"
+      - name: Build and retest pinned Core candidate
+        run: docker build --pull -f paperclip-core/Dockerfile -t paperclip-core-reviewed:${{ github.sha }} paperclip-core
+      - name: Authenticate to GHCR (no secrets in logs)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Publish immutable source-tagged candidate
+        run: |
+          set -eu
+          tag="ghcr.io/miloszspyrka-code/paperclip-core:${{ github.sha }}"
+          docker tag paperclip-core-reviewed:${{ github.sha }} "$tag"
+          docker push "$tag"
+          docker buildx imagetools inspect "$tag"
+          echo "CANDIDATE_PUBLISHED - not deployed"
