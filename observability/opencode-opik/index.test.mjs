@@ -52,7 +52,9 @@ test('tool traces still emitted after instrumenting model generations', async ()
   await plugin['tool.execute.before'](input,{});
   await plugin['tool.execute.after'](input,{output:{ok:true}});
   await flush();
-  assert.equal(calls.filter(c => c.url.endsWith('/spans') && c.body.name === 'test_tool').length,1);
+  const toolSpans = calls.filter(c => c.url.endsWith('/spans') && c.body.name === 'test_tool');
+  assert.equal(toolSpans.length,1);
+  assert.equal(toolSpans[0].body.type,'tool','Opik tool spans must be typed for downstream metrics');
 });
 
 test('session idle still finalizes the trace', async () => {
