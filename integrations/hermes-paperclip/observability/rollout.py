@@ -23,7 +23,7 @@ from apply_opik_segmentation import BASE_SHA256, KNOWN_ROLES, transform
 RELATIVE_FILE = Path("plugins/opik/lifecycle.py")
 JOURNAL_DIR = ".opik-segmentation-rollout"
 LOCK_FILE = ".lock"
-PATCHED_SHA256 = "bd0bb126ca0328f0f1420b0fbb8cf1729de092e85d581966d738edb8f86fa4ae"
+PATCHED_SHA256 = "a4955c71ab2029065d3751496d864c4d8ae921da3a1f18355ca6adbddc64a638"
 
 
 class RolloutError(RuntimeError):
