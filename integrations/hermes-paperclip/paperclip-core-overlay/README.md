@@ -1,11 +1,35 @@
-# Paperclip Core Hermes adapter-only release image
+# Unified Paperclip Core review-recovery + Hermes adapter image
 
-**Not a fork of Paperclip Core.** This overlay changes only `packages/adapters/hermes/src/gateway/server/execute.ts` on the exact deployed `ghcr.io/paperclipai/paperclip:2026.1023.0` base. The patch was computed from the verified original runtime file (SHA-256 `e3593d03d40b37b215d68342c8d615d26014bf5892eef79151b6153737764701`) and the reviewed, isolated `KOMAA-1564` adapter source (commit `3fc315ed4b70e76c350c168f43b2dc4176786bdc`, SHA-256 `ad69e65cf4827dcc46d33110d80511ce7e09d07030e1e19a2a8a7e3e0c44b249`).
+This image preserves the independently fixed **Paperclip native review blocker**
+from [PR #43](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/43)
+while adding the Hermes run-scoped MCP adapter from
+[PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36).
+It does **not** merge or bypass the native review decision for KOMAA-1564.
 
-The Dockerfile fails closed on source or output SHA mismatch. The built image passes the adapter TypeScript typecheck. This patch is separate from the Hermes Gateway receiver in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36); both must be reviewed and deployed for a real issue-run MCP test.
+Both patches are applied to a single immutable source-pinned base,
+`ghcr.io/paperclipai/paperclip:2026.1023.0`.
+The Dockerfile uses the **repository root build context**, so the actual
+merged source from `integrations/paperclip-core-review-recovery/overlay.patch`
+is reused rather than copied/duplicated. Each of the two original source
+SHA-256 hashes and both patched output hashes are verified; a mismatch fails
+the build.
 
-## Delivery
+The image runs the native Core regression suite, the Hermes adapter
+regression suite, adapter/server TypeScript checks, and emits the updated
+server runtime JavaScript. A successful build is not equivalent to a
+Paperclip-issued token or a real LLM/Hindsight/Opik run.
 
-A PR can validate the image but cannot publish it. Only a merged and checked `main` push publishes an immutable GHCR tag `ghcr.io/miloszspyrka-code/paperclip-hermes-adapter:<main-sha>`. The package is **not** automatically deployed to the production Paperclip Core service. CHO must first confirm independent CTO security review, production named-profile secret bindings, negative access control, exact Opik trace and Hindsight isolation evidence. The existing Paperclip Core image/volume must remain available for rollback.
+## Release gate
 
-Do not start a second Paperclip Core against the production database or mount; do not edit running containers in place or disable the native review gate.
+- PR #36 must receive a genuine independent CTO decision on its exact head.
+- Run an authorized Paperclip issue against a named Hermes profile with a
+  short-lived per-run MCP grant; verify Wiki/Skills positive and revoked,
+  cross-run/agent denial at the issuer.
+- Prove a Hermes-native Hindsight retain + independent-session recall in the
+  correct role bank, wrong-bank rejection and matching Opik task_id/run UUID.
+- CHO approves a source-controlled tagged release with image-digest readback,
+  rollback receipt, and cohort-0 real-agent canary before more agents switch.
+
+Do not run a second Core connected to the production DB and /paperclip volume.
+Do not replace the running production image merely because this composite
+candidate passes isolated CI.
