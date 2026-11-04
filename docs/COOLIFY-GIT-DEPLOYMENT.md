@@ -16,7 +16,7 @@ Verified on 2026-11-01. The machine-readable source map is [coolify-source-bindi
 - All nine MCP workloads below currently run from prebuilt **image-only Compose services** with no git source. Updating `watch_paths` on an image-only service does not turn it into a Git build. Coolify GitHub App access and a Git-backed candidate app are both required.
 - GitHub Actions are intentionally disabled. Do not enable them silently; Coolify native GitHub webhook/branch path filtering is the intended mechanism.
 - GitHub warns that `main` is not branch protected. Before production auto-deploy, configure protection/ruleset against force-push/deletion, require PR approvals, and only require CI statuses once a genuine external status publisher exists. Do not invent green CI or silently enable GitHub Actions.
-- `hermes-gateway-poc-v2` is inline-Dockerfile based, with misleading `coollabsio/coolify` Git metadata. The harness repository has no buildable Hermes Gateway source folder: do **not** auto-deploy that service from the harness root.
+- `hermes-gateway-poc-v2` is inline-Dockerfile based, with misleading `coollabsio/coolify` Git metadata. The harness root is not a Hermes build context; PR #31 defines the canonical `integrations/hermes-paperclip/gateway/` build folder. Do **not** auto-deploy from the repository root.
 - `hermes-paperclip-sync-checks` reads host-mounted scripts and an Alpine image; it is not a Git deployment and its green smoke check must not stand in for real Paperclip→Hermes→Wiki/Skills→Hindsight→Opik E2E.
 - The panel `zar-i-szlif-web` belongs to the OTHER repo, has a stable release branch and a deliberately paused watch path; don't rewire it into harness.
 
