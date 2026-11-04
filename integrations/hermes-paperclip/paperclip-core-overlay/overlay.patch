@@ -1,0 +1,119 @@
+--- a/packages/adapters/hermes/src/gateway/server/execute.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.ts
+@@ -134,6 +134,7 @@
+   "accept",
+   "idempotency-key",
+   "x-hermes-session-key",
++  "x-paperclip-run-id",
+ ]);
+ 
+ const SENSITIVE_KEY_PATTERN =
+@@ -199,6 +200,10 @@
+       url.pathname = "/api";
+     } else {
+       url.pathname = url.pathname.replace(/\/+$/, "");
++      // Accept either /p/<role> or /p/<role>/v1 as the API base (append /v1 only once).
++      if (/\/p\/[a-z][a-z0-9-]*\/v1$/.test(url.pathname)) {
++        url.pathname = url.pathname.slice(0, -3);
++      }
+     }
+     url.search = "";
+     url.hash = "";
+@@ -328,6 +333,7 @@
+     Accept: input.accept,
+     ...(input.contentType ? { "Content-Type": input.contentType } : {}),
+     "Idempotency-Key": input.runId,
++    "X-Paperclip-Run-Id": input.runId,
+     ...(input.sessionKey ? { "X-Hermes-Session-Key": input.sessionKey } : {}),
+   };
+ }
+@@ -565,16 +571,19 @@
+   const record = asRecord(parsed);
+   const eventName = eventNameFromData(parsed, frame.event);
+   state.lastEventName = eventName;
++  const delta = asString(record?.delta, "") || asString(record?.text_delta, "");
++  const sanitizedDelta = eventName === "message.delta" && delta ? redactText(delta) : null;
++  const redacted = redactForLog(parsed, [], 0, redactText);
++  const eventData = sanitizedDelta !== null
++    ? JSON.stringify({ delta: sanitizedDelta })
++    : stringifyForLog(redacted, 8_000);
+   await ctx.onLog(
+     "stdout",
+-    `[hermes-gateway:event] run=${state.runId} event=${eventName ?? "message"} data=${stringifyForLog(redactForLog(parsed, [], 0, redactText), 8_000)}\n`,
++    `[hermes-gateway:event] run=${state.runId} event=${eventName ?? "message"} data=${eventData}\n`,
+   );
+ 
+-  const delta = nonEmpty(record?.delta) ?? nonEmpty(record?.text_delta);
+-  if (eventName === "message.delta" && delta) {
+-    const sanitizedDelta = redactText(delta);
++  if (sanitizedDelta !== null) {
+     state.outputChunks.push(sanitizedDelta);
+-    await ctx.onLog("stdout", sanitizedDelta);
+   }
+ 
+   const status = extractStatus(parsed) ?? (eventName?.startsWith("run.") ? eventName.slice(4) : null);
+@@ -933,6 +942,33 @@
+     };
+   }
+ 
++  // The receiver contract is versioned and isolated per Paperclip run; malformed
++  // grants fail before dispatch. Opaque bearer validation remains with Paperclip MCP.
++  const mcpServers = ctx.runtimeMcp?.getServers() ?? [];
++  const mcpProfile = /^\/p\/([a-z][a-z0-9-]*)(?:\/v1)?$/.exec(baseUrl.pathname)?.[1] ?? null;
++  const mcpServerNames = mcpServers.map((server) => server.name.trim().replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 80));
++  const invalidMcpServers = mcpServers.some((server, index) => {
++    if (!mcpServerNames[index] || !server.token || server.token.length > 8192) return true;
++    try { return new URL(server.url).protocol !== "https:"; } catch { return true; }
++  });
++  if (mcpServers.length > 0 && (
++    !mcpProfile ||
++    normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy) !== "run" ||
++    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ctx.runId) ||
++    !issueIdFromContext(ctx) ||
++    mcpServers.length > 16 ||
++    new Set(mcpServerNames).size !== mcpServers.length ||
++    invalidMcpServers
++  )) {
++    return {
++      exitCode: 1,
++      signal: null,
++      timedOut: false,
++      errorCode: "hermes_gateway_run_scoped_mcp_bridge_required",
++      errorMessage: "Hermes run-scoped MCP requires a named profile, unique HTTPS servers, a UUID run, and sessionKeyStrategy=run.",
++    };
++  }
++
+   const timeoutSec = parseNonNegativeNumber(ctx.config.timeoutSec, DEFAULT_TIMEOUT_SEC);
+   const timeoutMs = timeoutSec > 0 ? Math.ceil(timeoutSec * 1000) : 0;
+   const reconnectMs = Math.floor(clamp(parseNonNegativeNumber(ctx.config.eventReconnectMs, DEFAULT_EVENT_RECONNECT_MS), 250, 30_000));
+@@ -966,8 +1002,30 @@
+     sessionKey,
+     runHeaders.Authorization,
+     runHeaders["X-Hermes-Session-Key"],
++    ...mcpServers.map((server) => server.token),
+   ]);
+   const body = buildRunBody(ctx, sessionKey);
++  // Never accept an administrator-provided runtime grant from payloadTemplate.
++  delete body.paperclip_run_mcp;
++  if (mcpServers.length > 0) {
++    body.paperclip_run_mcp = {
++      version: 1,
++      company_id: ctx.agent.companyId,
++      agent_id: ctx.agent.id,
++      issue_id: issueIdFromContext(ctx),
++      run_id: ctx.runId,
++      profile: mcpProfile,
++      scopes: ["tools:call"],
++      // This is an admission upper bound, not the bearer token's real expiry.
++      // Paperclip MCP checks the real token's expiry/revocation on each tools/call.
++      expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
++      servers: mcpServers.map((server, index) => ({
++        name: mcpServerNames[index],
++        url: server.url,
++        token: server.token,
++      })),
++    };
++  }
+   const createRunUrl = apiUrl(baseUrl, "/v1/runs");
+ 
+   await ctx.onMeta?.({
