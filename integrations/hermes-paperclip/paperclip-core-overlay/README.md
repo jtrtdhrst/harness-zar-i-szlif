@@ -4,7 +4,7 @@ This image preserves the independently fixed **Paperclip native review blocker**
 from [PR #43](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/43)
 while adding the Hermes run-scoped MCP adapter from
 [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36).
-It does **not** merge or bypass the native review decision for KOMAA-1564.
+KOMAA-1564 (H01) received an **independent CTO-approved source/security** decision on 2026-11-04; that decision does **not** authorize a merge, production deployment or agent cutover.
 
 Both patches are applied to a single immutable source-pinned base,
 `ghcr.io/paperclipai/paperclip:2026.1023.0`.
@@ -16,12 +16,21 @@ the build.
 
 The image runs the native Core regression suite, the Hermes adapter
 regression suite, adapter/server TypeScript checks, and emits the updated
-server runtime JavaScript. A successful build is not equivalent to a
-Paperclip-issued token or a real LLM/Hindsight/Opik run.
+server runtime JavaScript. Last independently verified H01: 114/114 adapter
+Vitest tests in issue source, 108/108 in the pinned image, adapter TypeScript
+PASS, and 3/3 exact-code-HEAD CI checks SUCCESS. A successful build is not
+equivalent to a Paperclip-issued token or a real LLM/Hindsight/Opik run.
 
-## Release gate
+## Status and release gate
 
-- PR #36 must receive a genuine independent CTO decision on its exact head.
+The canonical status ledger, evidence links, trust boundary, negative-test matrix,
+and ordered production/rollback procedure live in
+[**Hermes operations and E2E runbook**](../OPERATIONS-STATUS.md).
+
+- H01 source/security approval applies to issue worktree commit
+  `792598741832c31d91d74c8de9e787639944d13e` and original reviewed
+  PR #36 code SHA `d6a6f5455f9732b17ba00dc163c4c985ca9627ff`.
+  Any later documentation-only PR HEAD needs fresh CI/readback before promotion.
 - Run an authorized Paperclip issue against a named Hermes profile with a
   short-lived per-run MCP grant; verify Wiki/Skills positive and revoked,
   cross-run/agent denial at the issuer.
