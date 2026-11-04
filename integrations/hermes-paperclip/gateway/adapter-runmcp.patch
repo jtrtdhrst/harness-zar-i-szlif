@@ -11,7 +11,7 @@ index 3fed82032..2de782e6f 100644
      const fetchMock = vi.fn();
      vi.stubGlobal("fetch", fetchMock);
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key" });
-@@ -102,6 +102,107 @@ describe("execute", () => {
+@@ -102,6 +102,139 @@ describe("execute", () => {
      expect(ctx.onDispatch).not.toHaveBeenCalled();
    });
  
@@ -119,10 +119,6 @@ index 3fed82032..2de782e6f 100644
    it("keeps consecutive streamed events parseable in the persisted stdout", async () => {
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key", timeoutSec: 5 });
      const deltas = ["Hello", " there\n", "world",
-diff --git a/packages/adapters/hermes/src/gateway/server/execute.ts b/packages/adapters/hermes/src/gateway/server/execute.ts
-index 74f2e2f25..cbfabe760 100644
---- a/packages/adapters/hermes/src/gateway/server/execute.ts
-+++ b/packages/adapters/hermes/src/gateway/server/execute.ts
 +  it("rejects cross-origin 307/308 redirects without forwarding run-scoped grants", async () => {
 +    for (const status of [307, 308]) {
 +      const token = "synthetic-private-grant";
@@ -156,6 +152,10 @@ index 74f2e2f25..cbfabe760 100644
 +  });
 +
 
+diff --git a/packages/adapters/hermes/src/gateway/server/execute.ts b/packages/adapters/hermes/src/gateway/server/execute.ts
+index 74f2e2f25..cbfabe760 100644
+--- a/packages/adapters/hermes/src/gateway/server/execute.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.ts
 @@ -134,6 +134,7 @@ const CRITICAL_HEADERS = new Set([
    "accept",
    "idempotency-key",
