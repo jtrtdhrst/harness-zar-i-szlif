@@ -98,3 +98,36 @@ test('Opik root trace retains source and billing provenance', async () => {
   assert.equal(root.body.metadata.billing_status,'unknown_until_verified');
 });
 
+
+test('privacy gate: tool arguments and output never leave agent, even with capture env enabled', async () => {
+  process.env.OPIK_CAPTURE_TOOL_PAYLOADS = 'true';
+  const input = {tool:'privacy_probe',args:{
+    auth:'Bearer TOOL_ARGS_PRIVATE_987',nested:{privateNote:'USER_CONTENT_PRIVATE_654'},
+  }};
+  const before = calls.length;
+  await plugin['tool.execute.before'](input,{args:{token:'OUTPUT_ARGS_PRIVATE_987'}});
+  await plugin['tool.execute.after'](input,{output:{
+    message:'TOOL_RESPONSE_PRIVATE_321',deep:{accessToken:'SECRETS_PRIVATE_000'}
+  }});
+  const emitted = calls.slice(before).filter(c=>c.body.type==='tool');
+  assert.equal(emitted.length,1);
+  const serialized = JSON.stringify(emitted[0].body);
+  for (const secret of ['TOOL_ARGS_PRIVATE_987','USER_CONTENT_PRIVATE_654','OUTPUT_ARGS_PRIVATE_987',
+                        'TOOL_RESPONSE_PRIVATE_321','SECRETS_PRIVATE_000']) {
+    assert.ok(!serialized.includes(secret), 'payload leakage: '+secret);
+  }
+  assert.deepEqual(emitted[0].body.input,{tool:'privacy_probe'});
+  assert.equal(emitted[0].body.output.status,'completed');
+  assert.equal(typeof emitted[0].body.output.duration_ms,'number');
+  delete process.env.OPIK_CAPTURE_TOOL_PAYLOADS;
+});
+
+test('unsafe dynamic tool name is replaced with an unclassified identifier', async () => {
+  const input={tool:'Bearer should-not-ever-be-here',args:{raw:'PRIVATE_BLOB_111'}};
+  await plugin['tool.execute.before'](input,{});
+  await plugin['tool.execute.after'](input,{error:{message:'PRIVATE_BLOB_222'}});
+  const matches=calls.filter(c=>c.body.type==='tool'&&c.body.name==='unknown_tool');
+  assert.equal(matches.length,1);
+  assert.equal(matches[0].body.output.status,'error');
+  assert.ok(!JSON.stringify(matches[0].body).includes('PRIVATE_BLOB_'));
+});

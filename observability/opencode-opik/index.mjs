@@ -9,19 +9,12 @@ const TASK_ID = (process.env.PAPERCLIP_TASK_ID || "").trim();
 const BASE = (process.env.OPIK_BASE_URL || "https://opik.kompaszbiorek.pl/api").replace(/\/$/, "");
 const PROJECT = AGENT_ID ? `paperclip-${AGENT_ID.slice(0, 8)}` : "paperclip-runs";
 
-const SECRET_KEY = /api[_-]?key|token|secret|passwd|password|authorization|bearer|cookie|private[_-]?key/i;
-const trunc = (s, n) => (typeof s === "string" && s.length > n ? s.slice(0, n) + `…[+${s.length - n}]` : s);
-function redact(v, depth = 0) {
-  if (typeof v === "string") return trunc(v, 2000);
-  if (Array.isArray(v)) return depth > 4 ? [`[array ${v.length}]`] : v.slice(0, 50).map((x) => redact(x, depth + 1));
-  if (v && typeof v === "object") {
-    const o = {};
-    for (const [k, val] of Object.entries(v).slice(0, 100)) o[k] = SECRET_KEY.test(k) ? "[REDACTED]" : redact(val, depth + 1);
-    return o;
-  }
-  return v;
+// Privacy-by-default: tools emit only structured status/timing, never arguments,
+// results, error text, or auth material. No environment toggle can re-enable raw capture.
+function normalizedToolName(value) {
+  const name = String(value ?? "");
+  return /^[A-Za-z][A-Za-z0-9_.:-]{0,119}$/.test(name) ? name : "unknown_tool";
 }
-const cap = (v, n = 8000) => { const s = JSON.stringify(v ?? null); return s.length > n ? s.slice(0, n) : s; };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Do not log URLs, payloads, headers or credentials. A failed request must not
 // be silently counted as ingested. Only a bounded transport/status code is logged.
@@ -191,9 +184,9 @@ const OpikObservability = async () => {
       try {
         const r = run();
         if (!await ensureRoot(r)) return;
-        const tool = String(input?.tool ?? output?.tool ?? "unknown");
+        const tool = normalizedToolName(input?.tool ?? output?.tool);
         const key = [RUN_ID, tool, ++seq].join(":");
-        calls.set(key, { tool, start: Date.now(), args: cap(redact({ ...(input?.args ?? {}), ...(output?.args ?? {}) })) });
+        calls.set(key, { tool, start: Date.now() });
         if (input && typeof input === "object") input.__opikCallKey = key;
       } catch { console.error("[opik-observability] tool_before_failed"); }
     },
@@ -201,17 +194,18 @@ const OpikObservability = async () => {
       try {
         const r = run();
         if (!await ensureRoot(r)) return;
-        const tool = String(input?.tool ?? "unknown");
+        const tool = normalizedToolName(input?.tool);
         const key = input?.__opikCallKey;
         const prev = (key && calls.get(key)) || null;
         if (key) calls.delete(key);
         const end = new Date(); const start = new Date(prev?.start || Date.now());
+        const safeTool = prev?.tool ?? tool;
         await post("/v1/private/spans", {
           id: uuidv7(), trace_id: r.traceId, project_name: PROJECT,
-          name: tool, type: "tool",
+          name: safeTool, type: "tool",
           start_time: start.toISOString(), end_time: end.toISOString(),
-          input: parseArgs(prev?.args),
-          output: { result: cap(redact(output?.output ?? output ?? null)), duration_ms: end - start },
+          input: { tool: safeTool },
+          output: { status: output?.error ? "error" : "completed", duration_ms: end - start },
           metadata: {
             paperclip_run_id: RUN_ID, agent_id: AGENT_ID || null,
             task_id: TASK_ID || null, company_id: COMPANY_ID || null,
@@ -223,6 +217,5 @@ const OpikObservability = async () => {
   };
 };
 
-function parseArgs(s) { try { return { args: JSON.parse(s ?? "{}") }; } catch { return { args_raw: (s ?? "").slice(0, 4000) }; } }
 export default OpikObservability;
 
