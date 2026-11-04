@@ -14,5 +14,9 @@ RUN /app/node_modules/.bin/vitest run --root /app \
     server/src/__tests__/issue-execution-policy.test.ts \
     server/src/__tests__/issues-checkout-wakeup.test.ts \
     --maxWorkers=2 --reporter=dot
-RUN pnpm --filter @paperclipai/server build
+# Recompile only TypeScript Core against the pinned prebuilt production deps.
+# Rust/runner/UI remain byte-identical to the base image; no unrelated rebuild.
+RUN /app/node_modules/.bin/tsc --project /app/server/tsconfig.json
+# Assert the actual runtime JS, not merely the TS source, contains the guards.
+RUN node -e 'const fs=require("fs"); const base="/app/server/dist/services/"; const a=fs.readFileSync(base+"issue-thread-interactions.js","utf8"); const b=fs.readFileSync(base+"issue-execution-policy.js","utf8"); const c=fs.readFileSync(base+"issues.js","utf8"); for(const [s,q] of [[a,"assertNativeIssueQuestionGovernance"],[b,"Pending review requires an independently recorded stage decision"],[c,"reviewerAwareCheckoutStatusSql"]]) if(!s.includes(q)) throw Error("Core runtime JS missing guard: "+q); console.log("CORE_RUNTIME_JS_GUARDS_PRESENT")'
 USER node
