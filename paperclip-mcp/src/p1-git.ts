@@ -67,6 +67,24 @@ export function evaluatePrChecks(exitCode: number, stdout: string): PrChecksEval
   return { state: "success", failures: [] };
 }
 
+// Read the same commit-scoped REST checks used by the native merge gate.
+// GitHub's GraphQL-backed "gh pr checks" can fail under a repo-scoped App token
+// even when REST check-runs is accessible; never confuse that with pending CI.
+export function evaluateRestCheckRuns(exitCode: number, stdout: string): ReturnType<typeof evaluateCheckRunsPayload> {
+  const unverified = (reason: string): ReturnType<typeof evaluateCheckRunsPayload> => ({
+    state: "unverified", total: 0, checks: [], failures: [], reason,
+  });
+  if (exitCode !== 0) return unverified(`GitHub check-runs REST request failed (exit ${exitCode})`);
+  let payload: unknown;
+  try { payload = JSON.parse(stdout); }
+  catch { return unverified("GitHub check-runs REST response is not valid JSON"); }
+  const evaluation = evaluateCheckRunsPayload(payload);
+  if (evaluation.total !== evaluation.checks.length) {
+    return unverified("GitHub check-runs response was truncated or paginated; refusing incomplete checks");
+  }
+  return evaluation;
+}
+
 export interface MergeGateDecision {
   ok: boolean;
   code: string;
@@ -687,28 +705,50 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           );
         }
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
-        const repoFlag = (repository ? ["--repo", repository] : []) as string[];
+        // Verify the workspace origin and exact PR head before reading checks.
+        // This avoids both cross-repository reads and status checks for a stale SHA.
+        const origin = await runJailedExec({ ws, argv: ["git", "remote", "get-url", "origin"], timeoutSec: 15, outputLimit: 2048 });
+        const originSlug = origin.exitCode === 0 ? githubRepositorySlug(String(origin.stdout ?? "").trim()) : null;
+        const requestedSlug = repository ? githubRepositorySlug(repository) : originSlug;
+        if (!originSlug || requestedSlug !== originSlug) {
+          throw err("checks_unverified", "PR checks repository does not match this authorized workspace origin", { remediationOwner: "CTO" });
+        }
+        const head = await runJailedExec({ ws, argv: ["git", "rev-parse", "HEAD"], timeoutSec: 15, outputLimit: 256 });
+        const localHead = String(head.stdout ?? "").trim();
+        if (head.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(localHead)) {
+          throw err("checks_unverified", "Workspace HEAD could not be verified", { remediationOwner: "CTO" });
+        }
+        const ghEnv = scopedGhEnv() ?? undefined;
+        const pull = await runJailedExec({
+          ws, argv: ["gh", "api", `repos/${requestedSlug}/pulls/${pullRequestNumber}`],
+          timeoutSec: 30, outputLimit: 65536, extraEnv: ghEnv,
+        });
+        if (pull.exitCode !== 0) {
+          throw err("checks_unverified", "GitHub REST PR head is unreadable; checks cannot be trusted", { remediationOwner: "CTO" });
+        }
+        let pullPayload: unknown;
+        try { pullPayload = JSON.parse(String(pull.stdout ?? "")); }
+        catch { throw err("checks_unverified", "GitHub REST PR head response invalid", { remediationOwner: "CTO" }); }
+        const headData = pullPayload && typeof pullPayload === "object" ? (pullPayload as Record<string, unknown>).head : null;
+        const remoteHead = headData && typeof headData === "object" ? String((headData as Record<string, unknown>).sha ?? "") : "";
+        if (remoteHead !== localHead) {
+          throw err("version_conflict", "PR head differs from issue workspace HEAD; re-read before checking", { remediationOwner: "caller" });
+        }
         const deadline = Date.now() + (timeoutSec ?? 120) * 1000;
         let last: Record<string, unknown> | null = null;
         for (;;) {
-          const r = (await runJailedExec({
-            ws,
-            argv: ["gh", "pr", "checks", String(pullRequestNumber), ...repoFlag],
-            timeoutSec: 30,
-            outputLimit: 16384,
-            operationId: null,
-          extraEnv: scopedGhEnv() ?? undefined,
-          })) as unknown as Record<string, unknown>;
-          const out = scrub(String(r.stdout ?? ""));
-          const exitCode = Number(r.exitCode ?? 1);
-          const conclusions = out.split("\n").filter(Boolean).map((l) => l.trim().slice(0, 200));
-          const evaluation = evaluatePrChecks(exitCode, out);
+          const r = await runJailedExec({
+            ws, argv: ["gh", "api", `repos/${requestedSlug}/commits/${remoteHead}/check-runs?per_page=100`],
+            timeoutSec: 30, outputLimit: 65536, extraEnv: ghEnv,
+          });
+          const evaluation = evaluateRestCheckRuns(Number(r.exitCode ?? 1), String(r.stdout ?? ""));
           last = {
             workflowRuns: [],
-            requiredChecks: [],
-            checkConclusions: conclusions,
+            requiredChecks: evaluation.checks.map((c) => c.name),
+            checkConclusions: evaluation.checks.map((c) => `${c.name}\\t${c.status}\\t${c.conclusion ?? "-"}`),
             failureSummaries: evaluation.failures.slice(0, 50),
             rawExitCode: r.exitCode,
+            headSha: remoteHead,
           };
           if (evaluation.state === "success") {
             return {

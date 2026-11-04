@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, scopedGhEnv } from "./p1-git.js";
+import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, evaluateRestCheckRuns, scopedGhEnv } from "./p1-git.js";
 import type { PaperclipApiClient } from "./client.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -158,6 +158,25 @@ describe("paperclipGitWaitChecks evaluation (fail-closed)", () => {
     expect(evaluatePrChecks(1, "mcp-tests\tfail\t2m")).toMatchObject({ state: "failure" });
     expect(evaluatePrChecks(1, "mcp-tests\tpending\t0")).toMatchObject({ state: "pending" });
     expect(evaluatePrChecks(1, "mcp-tests\tqueued\t0")).toMatchObject({ state: "pending" });
+  });
+});
+
+describe("paperclipGitWaitChecks REST checks regression", () => {
+  const run = (status: string, conclusion: string | null) => ({ name: "validate-paperclip-mcp", status, conclusion });
+  it("accepts successful REST check runs even when gh pr checks lacks GraphQL access", () => {
+    expect(evaluateRestCheckRuns(0, JSON.stringify({ total_count: 1, check_runs: [run("completed", "success")] }))).toMatchObject({ state: "success", total: 1 });
+  });
+  it("treats pending REST checks as pending rather than an authorization failure", () => {
+    expect(evaluateRestCheckRuns(0, JSON.stringify({ total_count: 1, check_runs: [run("in_progress", null)] }))).toMatchObject({ state: "pending" });
+  });
+  it("fails closed on denied, invalid, empty or paginated check data", () => {
+    expect(evaluateRestCheckRuns(1, "")).toMatchObject({ state: "unverified" });
+    expect(evaluateRestCheckRuns(0, "not-json")).toMatchObject({ state: "unverified" });
+    expect(evaluateRestCheckRuns(0, JSON.stringify({ total_count: 0, check_runs: [] }))).toMatchObject({ state: "unverified" });
+    expect(evaluateRestCheckRuns(0, JSON.stringify({ total_count: 101, check_runs: [run("completed", "success")] }))).toMatchObject({ state: "unverified" });
+  });
+  it("preserves failure status from REST check-runs", () => {
+    expect(evaluateRestCheckRuns(0, JSON.stringify({ total_count: 1, check_runs: [run("completed", "failure")] }))).toMatchObject({ state: "failure" });
   });
 });
 
