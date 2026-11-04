@@ -28,5 +28,5 @@ jobs:
             cp -r /opt/paperclip-mcp/src /tmp/mcp-ci/src
             ln -s /app/packages/mcp-server/node_modules /tmp/mcp-ci/node_modules
             cd /tmp/mcp-ci
-            /app/node_modules/.bin/vitest run --root /tmp/mcp-ci src/github-app-rotation.test.ts src/git-publication-role.test.ts src/git-credential-projection.test.ts src/p1-git.test.ts src/live-verify.test.ts src/workspace-native.test.ts --maxWorkers=2 --reporter=dot
+            /app/node_modules/.bin/vitest run --root /tmp/mcp-ci src/github-app-rotation.test.ts src/git-publication-role.test.ts src/git-credential-projection.test.ts src/p1-git.test.ts src/live-verify.test.ts src/workspace-native.test.ts src/issue-question-governance.test.ts --maxWorkers=2 --reporter=dot
           '
