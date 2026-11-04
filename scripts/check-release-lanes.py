@@ -13,9 +13,9 @@ def check(data):
     lanes, other, workers = data.get("lanes"), data.get("other_resources"), data.get("cloudflare_workers")
     snap = data.get("scope_snapshot", {})
     must(all(isinstance(x, list) and len(x) for x in (lanes, other, workers)), "incomplete inventory arrays")
-    must(snap.get("coolify_applications") == 4 and snap.get("coolify_services") == 26 and snap.get("coolify_total") == 30, "incomplete Coolify snapshot")
+    must(snap.get("coolify_applications") == 5 and snap.get("coolify_services") == 26 and snap.get("coolify_total") == 31, "incomplete Coolify snapshot")
     must(snap.get("cloudflare_workers") == 3 == len(workers), "incomplete Workers snapshot")
-    allowed = {"git_promoted", "git_canary_manual", "manual_pinned", "upstream_pinned"}
+    allowed = {"git_promoted", "git_canary_manual", "git_canary_auto", "manual_pinned", "upstream_pinned"}
     ids, uuids, counts = set(), set(), {"application": 0, "service": 0}
     for lane in lanes:
         name, uuid = lane.get("id"), lane.get("coolify_uuid")
@@ -37,6 +37,10 @@ def check(data):
             must(lane["integration_ref"] != lane["release_ref"], f"{name}: integration branch deployed directly")
         elif lane["mode"] == "git_canary_manual":
             must(lane["environment"] == "canary" and lane.get("auto_deploy_expected") is False and bool(lane.get("candidate_ref")), f"{name}: unsafe canary")
+        elif lane["mode"] == "git_canary_auto":
+            must(lane["environment"] == "canary" and lane.get("auto_deploy_expected") is True, f"{name}: wrong auto canary")
+            must(bool(lane.get("candidate_ref")) and lane.get("production_auto_promotion") is False, f"{name}: must not auto promote to prod")
+            must(lane.get("observed_no_public_host_ports") is True and lane.get("network_isolation_verified") is False, f"{name}: unsupported isolation claim")
         else:
             must(lane.get("auto_deploy_expected") is False, f"{name}: pinned image autopromotes")
     for r in other:
@@ -64,7 +68,7 @@ def check(data):
     must(names == {"paperclip-mcp", "stronaglowna", "zariszlif-prawne"}, "existing Worker lost")
     must("product-panel" in ids, "product release lane absent")
     core = next((x for x in lanes if x["id"] == "paperclip-core"), None)
-    must(core is not None and core.get("repository") == "paperclipai/paperclip" and core.get("artifact_source_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0", "upstream Paperclip identity incorrect")
+    must(core is not None and core.get("repository") == "miloszspyrka-code/harness-zar-i-szlif" and core.get("artifact_source_ref") == "local/paperclip-review-recovery:4f05e290" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0" and core.get("overlay_source_sha") == "4f05e2904b8663e096bf4f839f25d46767f18899" and core.get("runtime_image_id") == "sha256:ba2bf404be28f2ae5ee8a2a5785944280463f67f84fd52a3b20bda49d9af1855" and core.get("overlay_source_to_runtime_digest_verified") is False, "upstream Paperclip identity incorrect")
     return len(lanes), len(other), len(workers)
 
 def negative_cases(manifest):
@@ -87,7 +91,9 @@ def negative_cases(manifest):
     reject("missing-Worker", lambda x: x["cloudflare_workers"].pop())
     reject("invented-Worker-source", lambda x: x["cloudflare_workers"][0].update(source_provenance_verified=True))
     reject("wrong-upstream-repo", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-core").update(repository="miloszspyrka-code/paperclip"))
-    print("PASS: 11 fail-closed structural regressions (not live deploy/rollback tests)")
+    reject("auto-canary-to-production", lambda x: next(a for a in x["lanes"] if a["id"] == "hermes-gateway-git-release-candidate").update(production_auto_promotion=True))
+    reject("false-overlay-source-attestation", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-core").update(overlay_source_to_runtime_digest_verified=True))
+    print("PASS: 13 fail-closed structural regressions (not live deploy/rollback tests)")
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
