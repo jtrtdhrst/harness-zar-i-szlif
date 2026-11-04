@@ -1,5 +1,5 @@
 diff --git a/packages/adapters/hermes/src/gateway/server/execute.test.ts b/packages/adapters/hermes/src/gateway/server/execute.test.ts
-index 3fed82032..61b81b2f1 100644
+index 3fed82032..2de782e6f 100644
 --- a/packages/adapters/hermes/src/gateway/server/execute.test.ts
 +++ b/packages/adapters/hermes/src/gateway/server/execute.test.ts
 @@ -82,7 +82,7 @@ describe("parseSseFramesForTest", () => {
@@ -11,7 +11,7 @@ index 3fed82032..61b81b2f1 100644
      const fetchMock = vi.fn();
      vi.stubGlobal("fetch", fetchMock);
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key" });
-@@ -102,6 +102,79 @@ describe("execute", () => {
+@@ -102,6 +102,107 @@ describe("execute", () => {
      expect(ctx.onDispatch).not.toHaveBeenCalled();
    });
  
@@ -45,7 +45,6 @@ index 3fed82032..61b81b2f1 100644
 +    expect(result.exitCode).toBe(0);
 +    const createCall = (fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit?]>)
 +      .find(([input]) => String(input).endsWith("/v1/runs"));
-+    expect(String(createCall?.[0])).toBe("https://hermes.example/p/cho/v1/runs");
 +    expect(createCall?.[1]?.headers).toMatchObject({
 +      "X-Paperclip-Run-Id": ctx.runId,
 +      "Idempotency-Key": ctx.runId,
@@ -67,6 +66,35 @@ index 3fed82032..61b81b2f1 100644
 +    expect(logs).not.toContain(token);
 +    expect(payload.input).not.toContain(token);
 +    expect(JSON.stringify(result)).not.toContain(token);
++  });
++
++  it.each([
++    "https://hermes.example/p/cho",
++    "https://hermes.example/p/cho/v1",
++    "https://hermes.example/p/cho/v1/",
++  ])("uses exactly one v1 segment on named profile endpoint: %s", async (apiBaseUrl) => {
++    const ctx = makeCtx({
++      apiBaseUrl,
++      apiKey: "synthetic-profile-key",
++      sessionKeyStrategy: "run",
++    });
++    ctx.runId = "00000000-0000-4000-8000-000000000001";
++    ctx.runtimeMcp = {
++      getServers: () => [{
++        name: "paperclip",
++        url: "https://mcp.example/mcp",
++        token: "synthetic-secret-no-logs",
++        connectionId: "conn-1",
++      }],
++    };
++    const requested: string[] = [];
++    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
++      requested.push(String(url));
++      return new Response(JSON.stringify({ run_id: "run-hermes-test", status: "completed", output: "ok" }), { status: 200 });
++    }));
++    await execute(ctx);
++    expect(requested[0]).toBe("https://hermes.example/p/cho/v1/runs");
++    expect(requested.every((url) => !url.includes("/v1/v1/"))).toBe(true);
 +  });
 +
 +  it("does not allow payloadTemplate to forge a grant", async () => {
@@ -92,7 +120,7 @@ index 3fed82032..61b81b2f1 100644
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key", timeoutSec: 5 });
      const deltas = ["Hello", " there\n", "world",
 diff --git a/packages/adapters/hermes/src/gateway/server/execute.ts b/packages/adapters/hermes/src/gateway/server/execute.ts
-index 74f2e2f25..748a9c455 100644
+index 74f2e2f25..cbfabe760 100644
 --- a/packages/adapters/hermes/src/gateway/server/execute.ts
 +++ b/packages/adapters/hermes/src/gateway/server/execute.ts
 @@ -134,6 +134,7 @@ const CRITICAL_HEADERS = new Set([
@@ -103,20 +131,18 @@ index 74f2e2f25..748a9c455 100644
  ]);
  
  const SENSITIVE_KEY_PATTERN =
-@@ -193,11 +194,11 @@ function normalizeBaseUrl(value: string): URL | null {
-     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-     const normalizedPath = url.pathname.replace(/\/+$/, "") || "/";
-     if (
-       url.port === DEFAULT_HERMES_DASHBOARD_PORT &&
-       HERMES_DASHBOARD_API_PATHS.has(normalizedPath)
-     ) {
+@@ -199,6 +200,10 @@ function normalizeBaseUrl(value: string): URL | null {
        url.pathname = "/api";
      } else {
--      url.pathname = url.pathname.replace(/\/+$/, "");
-+      url.pathname = /^\/p\/[a-z][a-z0-9-]*\/v1$/.test(normalizedPath) ? normalizedPath.slice(0, -3) : normalizedPath;
+       url.pathname = url.pathname.replace(/\/+$/, "");
++      // Accept either /p/<role> or /p/<role>/v1 as the API base (append /v1 only once).
++      if (/\/p\/[a-z][a-z0-9-]*\/v1$/.test(url.pathname)) {
++        url.pathname = url.pathname.slice(0, -3);
++      }
      }
      url.search = "";
-@@ -328,6 +329,7 @@ function buildHeaders(input: {
+     url.hash = "";
+@@ -328,6 +333,7 @@ function buildHeaders(input: {
      Accept: input.accept,
      ...(input.contentType ? { "Content-Type": input.contentType } : {}),
      "Idempotency-Key": input.runId,
@@ -124,7 +150,7 @@ index 74f2e2f25..748a9c455 100644
      ...(input.sessionKey ? { "X-Hermes-Session-Key": input.sessionKey } : {}),
    };
  }
-@@ -936,15 +938,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
+@@ -936,15 +942,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
      };
    }
  
@@ -159,7 +185,7 @@ index 74f2e2f25..748a9c455 100644
      };
    }
  
-@@ -981,8 +998,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
+@@ -981,8 +1002,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
      sessionKey,
      runHeaders.Authorization,
      runHeaders["X-Hermes-Session-Key"],
