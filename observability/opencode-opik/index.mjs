@@ -11,9 +11,21 @@ const PROJECT = AGENT_ID ? `paperclip-${AGENT_ID.slice(0, 8)}` : "paperclip-runs
 
 // Privacy-by-default: tools emit only structured status/timing, never arguments,
 // results, error text, or auth material. No environment toggle can re-enable raw capture.
+// Exact native tool names only. Dynamic identifiers (MCP, plugins, user tools)
+// are reduced to fixed categories so a token-shaped tool name cannot leak.
+const SAFE_NATIVE_TOOL_NAMES = new Set([
+  "read", "write", "edit", "bash", "grep", "glob", "list", "task",
+  "webfetch", "apply_patch", "question", "skill", "todo", "shell",
+  "patch", "notebookedit", "lsp",
+]);
 function normalizedToolName(value) {
-  const name = String(value ?? "");
-  return /^[A-Za-z][A-Za-z0-9_.:-]{0,119}$/.test(name) ? name : "unknown_tool";
+  const name = typeof value === "string" ? value : "";
+  if (SAFE_NATIVE_TOOL_NAMES.has(name)) return name;
+  if (name.startsWith("mcp__")) return "mcp_tool";
+  if (name.startsWith("paperclip_")) return "paperclip_tool";
+  if (name.startsWith("hindsight_")) return "hindsight_tool";
+  if (name.startsWith("github_")) return "github_tool";
+  return "unknown_tool";
 }
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Do not log URLs, payloads, headers or credentials. A failed request must not

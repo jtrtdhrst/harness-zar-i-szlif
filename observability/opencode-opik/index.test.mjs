@@ -54,11 +54,11 @@ test('incomplete assistant and user messages must not emit generation spans', as
 });
 
 test('tool traces still emitted after instrumenting model generations', async () => {
-  const input={tool:'test_tool',args:{id:'x'}};
+  const input={tool:'read',args:{id:'x'}};
   await plugin['tool.execute.before'](input,{});
   await plugin['tool.execute.after'](input,{output:{ok:true}});
   await flush();
-  const toolSpans = calls.filter(c => c.url.endsWith('/spans') && c.body.name === 'test_tool');
+  const toolSpans = calls.filter(c => c.url.endsWith('/spans') && c.body.name === 'read');
   assert.equal(toolSpans.length,1);
   assert.equal(toolSpans[0].body.type,'tool','Opik tool spans must be typed for downstream metrics');
 });
@@ -101,7 +101,7 @@ test('Opik root trace retains source and billing provenance', async () => {
 
 test('privacy gate: tool arguments and output never leave agent, even with capture env enabled', async () => {
   process.env.OPIK_CAPTURE_TOOL_PAYLOADS = 'true';
-  const input = {tool:'privacy_probe',args:{
+  const input = {tool:'read',args:{
     auth:'Bearer TOOL_ARGS_PRIVATE_987',nested:{privateNote:'USER_CONTENT_PRIVATE_654'},
   }};
   const before = calls.length;
@@ -116,7 +116,7 @@ test('privacy gate: tool arguments and output never leave agent, even with captu
                         'TOOL_RESPONSE_PRIVATE_321','SECRETS_PRIVATE_000']) {
     assert.ok(!serialized.includes(secret), 'payload leakage: '+secret);
   }
-  assert.deepEqual(emitted[0].body.input,{tool:'privacy_probe'});
+  assert.deepEqual(emitted[0].body.input,{tool:'read'});
   assert.equal(emitted[0].body.output.status,'completed');
   assert.equal(typeof emitted[0].body.output.duration_ms,'number');
   delete process.env.OPIK_CAPTURE_TOOL_PAYLOADS;
@@ -130,4 +130,31 @@ test('unsafe dynamic tool name is replaced with an unclassified identifier', asy
   assert.equal(matches.length,1);
   assert.equal(matches[0].body.output.status,'error');
   assert.ok(!JSON.stringify(matches[0].body).includes('PRIVATE_BLOB_'));
+});
+
+test('token-shaped identifiers and dynamic MCP names are never emitted verbatim', async () => {
+  const cases = [
+    ['sk_live_ABC123456789abcdef', 'unknown_tool'],
+    ['ghp_0123456789ABCDEFGHIJKLMN', 'unknown_tool'],
+    ['CANARY_TOKEN_IDENTIFIER_999999', 'unknown_tool'],
+    ['mcp__PC__fakeTokenNamed_ABC987654', 'mcp_tool'],
+    ['paperclip_tokenValueABC123456', 'paperclip_tool'],
+    ['hindsight_privateBankKey_987654', 'hindsight_tool'],
+    ['github_secretSource12345', 'github_tool'],
+    ['some_valid_but_untrusted_tool_name', 'unknown_tool'],
+  ];
+  for (const [name,expected] of cases) {
+    const before=calls.length;
+    const input={tool:name,args:{secret:'SYNTHETIC_ARG_NEVER_LOG'}};
+    await plugin['tool.execute.before'](input,{});
+    await plugin['tool.execute.after'](input,{output:'SYNTHETIC_RESPONSE_NEVER_LOG'});
+    const sent=calls.slice(before).filter(c=>c.body.type==='tool');
+    assert.equal(sent.length,1);
+    assert.equal(sent[0].body.name,expected);
+    assert.equal(sent[0].body.input.tool,expected);
+    const payload=JSON.stringify(sent[0].body);
+    assert.ok(!payload.includes(name),'untrusted identifier leaked');
+    assert.ok(!payload.includes('SYNTHETIC_ARG_NEVER_LOG'));
+    assert.ok(!payload.includes('SYNTHETIC_RESPONSE_NEVER_LOG'));
+  }
 });
