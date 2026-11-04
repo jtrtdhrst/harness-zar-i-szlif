@@ -40,18 +40,21 @@ class RolloutTest(unittest.TestCase):
     def test_apply_readback_rollback_all_roles(self):
         journal = self.root / rollout.JOURNAL_DIR
         self.assertEqual(rollout.status(self.root)["pristine"], 14)
-        owners = {role: (p.stat().st_uid, p.stat().st_gid, p.stat().st_mode & 0o777)\n                  for role, p in rollout.source_paths(self.root).items()}
+        owners = {role: (p.stat().st_uid, p.stat().st_gid, p.stat().st_mode & 0o777)
+                  for role, p in rollout.source_paths(self.root).items()}
         result = rollout.apply(self.root, journal)
         self.assertEqual(result["roles_patched"], 14)
         self.assertEqual(rollout.status(self.root)["patched"], 14)
         self.assertTrue(rollout.status(self.root)["consistent"])
-        self.assertEqual(owners, {role: (p.stat().st_uid, p.stat().st_gid, p.stat().st_mode & 0o777)\n                                  for role, p in rollout.source_paths(self.root).items()})
+        self.assertEqual(owners, {role: (p.stat().st_uid, p.stat().st_gid, p.stat().st_mode & 0o777)
+                                  for role, p in rollout.source_paths(self.root).items()})
         self.assertTrue(all(p.read_bytes() == self.patched
                             for p in rollout.source_paths(self.root).values()))
         restored = rollout.rollback(self.root, journal, result["batch_id"])
         self.assertEqual(restored["restored"], 14)
         self.assertEqual(rollout.status(self.root)["pristine"], 14)
-        self.assertEqual(owners, {role: (p.stat().st_uid, p.stat().st_gid, p.stat().st_mode & 0o777)\n                                  for role, p in rollout.source_paths(self.root).items()})
+        self.assertEqual(owners, {role: (p.stat().st_uid, p.stat().st_gid, p.stat().st_mode & 0o777)
+                                  for role, p in rollout.source_paths(self.root).items()})
         self.assertTrue(all(p.read_bytes() == self.original
                             for p in rollout.source_paths(self.root).values()))
 
