@@ -59,6 +59,29 @@ def _paperclip_thread_id(task_id: str, session_id: str) -> str:
 
 '''
 
+MODE_HELPER = '''
+def _configured_hindsight_mode(plugin_file: str, role: str) -> str:
+    """Classify mode from profile-owned Hindsight config without leaking credentials.
+
+    This reports configured routing, not proof of a successful memory operation.
+    Never infer cloud/local mode from a bank ID or profile label.
+    """
+    if not role:
+        return ""
+    try:
+        target = Path(plugin_file).parents[2] / "hindsight" / "config.json"
+        if target.is_symlink() or not target.is_file() or target.stat().st_size > 16384:
+            return ""
+        source = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(source, dict) or source.get("bank_id") != "hermes-" + role:
+            return ""
+        mode = source.get("mode")
+        return mode if mode in {"cloud", "local_external", "local_embedded"} else ""
+    except (OSError, ValueError, TypeError):
+        return ""
+
+'''
+
 def transform(original: str) -> str:
     """Pure, pinned transformation; preserves existing trace create/upsert lifecycle."""
     def replace_once(s: str, old: str, new: str) -> str:
@@ -67,9 +90,9 @@ def transform(original: str) -> str:
         return s.replace(old, new, 1)
 
     code = replace_once(original, IMPORT_ANCHOR,
-                        IMPORT_ANCHOR + "from pathlib import Path\nimport uuid\n")
+                        IMPORT_ANCHOR + "from pathlib import Path\nimport uuid\nimport json\n")
     code = replace_once(code, "\ndef start_root_trace(\n",
-                        "\n" + ROLE_HELPER + THREAD_HELPER + "def start_root_trace(\n")
+                        "\n" + ROLE_HELPER + THREAD_HELPER + MODE_HELPER + "def start_root_trace(\n")
     code = replace_once(code, "    metadata = {\n",
                         "    role = _verified_role_from_plugin_path(__file__)\n"
                         "    metadata = {\n")
@@ -81,6 +104,9 @@ def transform(original: str) -> str:
                         '    if role:\n'
                         '        metadata["agent_role"] = role\n'
                         '        metadata["memory_bank"] = f"hermes-{role}"\n'
+        '        memory_mode = _configured_hindsight_mode(__file__, role)\n'
+        '        if memory_mode:\n'
+        '            metadata["memory_backend"] = memory_mode\n'
                         '    # Build the create payload once and keep it:')
     # Keep historical CLI/API conversation threading intact; a verified Paperclip
     # per-run task_id from the Gateway receiver becomes the Opik thread key.
