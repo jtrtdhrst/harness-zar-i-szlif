@@ -10,6 +10,7 @@ LABEL org.opencontainers.image.source="https://github.com/miloszspyrka-code/harn
 COPY integrations/paperclip-core-review-recovery/overlay.patch /tmp/paperclip-review-recovery.patch
 COPY integrations/paperclip-core-review-recovery/execution-blocker-undispatched.test.ts /app/server/src/services/execution-blocker-undispatched.test.ts
 COPY integrations/hermes-paperclip/paperclip-core-overlay/overlay.patch /tmp/hermes-adapter.patch
+COPY integrations/hermes-paperclip/paperclip-core-overlay/adapter-runmcp-tests.patch /tmp/hermes-adapter-tests.patch
 
 # Apply BOTH source patches; fail closed if either upstream code or expected
 # resulting bytes changed. Keep the native review state machine untouched.
@@ -21,8 +22,10 @@ RUN set -eux; \
     git apply /tmp/paperclip-review-recovery.patch; \
     git apply --check /tmp/hermes-adapter.patch; \
     git apply /tmp/hermes-adapter.patch; \
+    git apply --check /tmp/hermes-adapter-tests.patch; \
+    git apply /tmp/hermes-adapter-tests.patch; \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"; \
-    test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "ad69e65cf4827dcc46d33110d80511ce7e09d07030e1e19a2a8a7e3e0c44b249"
+    test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "c4b152fdc355216979d3029d86fcd71b5a369af0a7db94f2623484551dcf51b7"
 
 # The same image must satisfy the Core recovery and Hermes adapter suites,
 # TypeScript checks and compiled Core runtime. No fake green health-only build.
