@@ -377,20 +377,35 @@ describe("eligibility & DAG", () => {
 
   it("does not count unbound or foreign-agent live runs as successful checkout", async () => {
     const badRun = "88888888-8888-4888-8888-888888888888";
-    const { calls } = mockFetchRoutes([
-      { match: "/live-runs", body: [{ id: badRun, status: "queued", agentId: OWNER, issueId: ISSUE }] },
-      { match: "/documents?includeSystem=true", body: [] },
-      { match: "/diagnostics/blockers", body: { blockers: [] } },
-      { match: "/heartbeat-runs/", body: { id: badRun, status: "queued", agentId: AGENT } },
-      { match: "/checkout", body: { woke: true, runId: badRun } },
-      { match: "/approvals", body: [] },
-      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "todo", assigneeAgentId: AGENT, executionState: null } },
-    ]);
+    let checkedOut = false;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const request = init ?? {};
+      calls.push({ url: u, init: request });
+      if (u.endsWith("/live-runs")) return mockJsonResponse(checkedOut
+        ? [{ id: badRun, status: "queued", agentId: OWNER, issueId: ISSUE }]
+        : []);
+      if (u.endsWith("/documents?includeSystem=true")) return mockJsonResponse([]);
+      if (u.endsWith("/diagnostics/blockers")) return mockJsonResponse({ blockers: [] });
+      if (u.endsWith("/checkout") && request.method === "POST") {
+        checkedOut = true;
+        return mockJsonResponse({ woke: true, runId: badRun });
+      }
+      // The run lookup also lacks the issueId, so neither source may prove a scoped wake.
+      if (u.includes("/heartbeat-runs/" + badRun)) return mockJsonResponse({ id: badRun, status: "queued", agentId: AGENT });
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse({
+        id: ISSUE, status: "todo", assigneeAgentId: AGENT, executionState: null,
+      });
+      return mockJsonResponse(null);
+    }));
     const out = JSON.parse((await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE })).content[0]?.text ?? "{}");
     expect(out.woke).toBe(false);
     expect(out.verified).toBe(false);
     expect(out.observedRun).toBeNull();
-    expect(calls.some((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toBe(true);
+    expect(checkedOut).toBe(true);
+    expect(calls.filter((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toHaveLength(1);
   });
 
   it("computes blockedBy add/remove as one atomic PATCH", async () => {
