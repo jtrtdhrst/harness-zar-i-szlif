@@ -1747,7 +1747,9 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         const body = parseOptionalJson(jsonBody);
         enforceTaskAssignmentPolicy(method, apiPath, body);
         // Do not let the generic API tool bypass governed native question admission.
-        if (method.toUpperCase() === "POST" && /^\\/issues\\/[^/]+\\/interactions\\/?$/.test(apiPath)) {
+        const interactionSegments = apiPath.split("?", 1)[0].split("/").filter(Boolean);
+        if (method.toUpperCase() === "POST" && interactionSegments.length === 3 &&
+            interactionSegments[0] === "issues" && interactionSegments[2] === "interactions") {
           if (body && typeof body === "object" && !Array.isArray(body)) {
             const interaction = body as Record<string, unknown>;
             assertIssueQuestionGoverned(String(interaction.kind ?? ""), interaction);
