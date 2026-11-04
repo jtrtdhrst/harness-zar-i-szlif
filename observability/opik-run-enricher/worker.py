@@ -103,9 +103,18 @@ def span_names(opik,project,trace_id):
   names.update(x.get("name") for x in d.get("content",[]))
   if page*100>=d.get("total",0):break
  return names
-def identity(run,name):return str(uuid.uuid5(NAMESPACE,run+"/"+name+"/1"))
-def emit(opik,project,trace,run,agent,name,output,metadata,start,end):
- body={"spans":[{"id":identity(run,name),"project_name":project,"trace_id":trace,
+def identity(run,name,trace_started):
+ stamp=datetime.fromisoformat(trace_started.replace("Z","+00:00"))
+ if stamp.tzinfo is None:raise ValueError("timezone_required")
+ milliseconds=int(stamp.timestamp()*1000)
+ if not 0<=milliseconds<2**48:raise ValueError("invalid_timestamp")
+ octets=bytearray(hashlib.sha256((run+"/"+name+"/1").encode()).digest()[:16])
+ octets[:6]=milliseconds.to_bytes(6,"big")
+ octets[6]=(octets[6]&15)|112
+ octets[8]=(octets[8]&63)|128
+ return str(uuid.UUID(bytes=bytes(octets)))
+def emit(opik,project,trace,run,agent,name,output,metadata,start,end,id_time=None):
+ body={"spans":[{"id":identity(run,name,id_time or start),"project_name":project,"trace_id":trace,
   "name":name,"type":"general","start_time":start,"end_time":end,
   "input":{"run_id":run},"output":output,
   "metadata":{"paperclip_run_id":run,"agent_id":agent,**metadata}}]}
@@ -146,7 +155,7 @@ def enrich(log,agent,run,opik,hindsight,cache):
    emit(opik,project,trace["id"],run,agent,"hindsight.bank.stats_snapshot",snapshot,
     {"evidence":"private_hindsight_stats_only","bank_id":bank,
      "bank_used_in_this_run":"unverified","memory_contents_exported":False,
-     "snapshot_at":at},at,at)
+     "snapshot_at":at},at,at,trace["start_time"])
    added+=1
  return added
 def cycle(root,opik,hindsight,quiet,age_hours):

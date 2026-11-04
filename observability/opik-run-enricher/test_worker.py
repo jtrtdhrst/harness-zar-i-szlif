@@ -59,6 +59,7 @@ class Tests(unittest.TestCase):
     self.assertEqual(w.enrich(file,agent,run,"http://backend-test:8080","",{}),0)
     out.assert_not_called()
  def test_stable_ids(self):
-  self.assertEqual(w.identity("x","paperclip.run.audit_summary"),w.identity("x","paperclip.run.audit_summary"))
-  self.assertNotEqual(w.identity("x","paperclip.run.audit_summary"),w.identity("x","hindsight.bank.stats_snapshot"))
+  self.assertEqual(w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z"),w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z"))
+  self.assertNotEqual(w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z"),w.identity("x","hindsight.bank.stats_snapshot","2026-11-04T20:00:00Z"))
+  self.assertEqual(__import__("uuid").UUID(w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z")).version,7)
 if __name__=="__main__":unittest.main()
