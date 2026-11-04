@@ -125,6 +125,33 @@ class RunMcpScopeTests(unittest.TestCase):
         self.assertFalse(native.active)
         self.assertFalse(authority._local_editor_mcp)
 
+    def test_same_profile_simultaneous_runs_are_isolated(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        with native.installed():
+            with borrowed_run_tools(authority, grant("cho", "run-1"),
+                                    authenticated_profile="cho", run_id="run-1") as first:
+                with borrowed_run_tools(authority, grant("cho", "run-2"),
+                                        authenticated_profile="cho", run_id="run-2") as second:
+                    self.assertNotEqual(first, second)
+                    self.assertEqual(set(native.active), {first, second})
+                    self.assertNotEqual(native.events[0][2], native.events[1][2])
+                self.assertEqual(set(native.active), {first})
+            self.assertFalse(native.active)
+
+    def test_cancellation_cleans_up_session_registry(self):
+        import asyncio
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        with native.installed():
+            with self.assertRaises(asyncio.CancelledError):
+                with borrowed_run_tools(authority, grant("cho", "run-cancel"),
+                                        authenticated_profile="cho", run_id="run-cancel") as scope:
+                    authority._local_editor_mcp[scope] = "transient"
+                    raise asyncio.CancelledError()
+        self.assertFalse(native.active)
+        self.assertFalse(authority._local_editor_mcp)
+
 
 if __name__ == "__main__":
     unittest.main()
