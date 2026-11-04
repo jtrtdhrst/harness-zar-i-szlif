@@ -11,7 +11,40 @@ index 3fed82032..2de782e6f 100644
      const fetchMock = vi.fn();
      vi.stubGlobal("fetch", fetchMock);
      const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key" });
-@@ -102,6 +102,107 @@ describe("execute", () => {
+@@ -102,6 +102,143 @@ describe("execute", () => {
++  it("rejects cross-origin 307/308 redirects without forwarding run-scoped grants", async () => {
++    for (const status of [307, 308]) {
++      const token = "synthetic-private-grant";
++      const ctx = makeCtx({
++        apiBaseUrl: "https://hermes.example/p/cho",
++        apiKey: "synthetic-profile-key",
++        sessionKeyStrategy: "run",
++      });
++      ctx.runId = "00000000-0000-4000-8000-000000000001";
++      ctx.runtimeMcp = {
++        getServers: () => [{ name: "Wiki", url: "https://mcp.example/mcp", token, connectionId: "c-1" }],
++      };
++      const destination = "https://attacker.example/steal";
++      const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
++        expect(init?.redirect).toBe("error");
++        if (init?.redirect !== "error") {
++          throw new Error("Redirects must be disabled before sending the grant");
++        }
++        // Model the browser fetch contract: redirect:error rejects on HTTP redirects.
++        throw new TypeError(`Redirect disallowed: ${status} to ${destination}`);
++      });
++      vi.stubGlobal("fetch", fetchMock);
++      const result = await execute(ctx);
++      expect(result.exitCode).not.toBe(0);
++      expect(fetchMock).toHaveBeenCalledTimes(1);
++      expect(String(fetchMock.mock.calls[0][0])).toBe("https://hermes.example/p/cho/v1/runs");
++      expect(JSON.stringify(result)).not.toContain(token);
++      expect(JSON.stringify(result)).not.toContain(destination);
++      vi.unstubAllGlobals();
++    }
++  });
++
+
      expect(ctx.onDispatch).not.toHaveBeenCalled();
    });
  
@@ -150,6 +183,21 @@ index 74f2e2f25..cbfabe760 100644
      ...(input.sessionKey ? { "X-Hermes-Session-Key": input.sessionKey } : {}),
    };
  }
+@@ -442,7 +448,7 @@ async function fetchJson(input: RequestInfo | URL, init: RequestInit): Promise<unknown> {
+   let response: Response;
+   try {
+-    response = await fetch(input, init);
++    response = await fetch(input, { ...init, redirect: "error" });
+   } catch (err) {
+     const fetchErr = new Error(`Hermes gateway request failed: ${fetchFailureMessage(err)}`) as HermesHttpError;
+     fetchErr.code = "hermes_gateway_connect_failed";
+@@ -655,6 +661,7 @@
+       const response = await fetch(apiUrl(input.baseUrl, `/v1/runs/${encodeURIComponent(input.state.runId)}/events`), {
+         method: "GET",
+         headers: input.headers,
++        redirect: "error",
+         signal: input.signal,
+       });
 @@ -936,15 +942,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
      };
    }
