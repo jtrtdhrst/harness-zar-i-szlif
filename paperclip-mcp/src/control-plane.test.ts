@@ -408,6 +408,26 @@ describe("eligibility & DAG", () => {
     expect(calls.filter((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toHaveLength(1);
   });
 
+  it("repair removes DONE but retains CANCELLED relational blockers", async () => {
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [
+        { id: "done", status: "done", isUnresolved: false },
+        { id: "cancelled", status: "cancelled", isUnresolved: true },
+      ] } },
+      { match: `/issues/${ISSUE}`, body: {
+        id: ISSUE, status: "blocked", blockedByIssueIds: ["done", "cancelled"],
+        assigneeAgentId: AGENT,
+      } },
+    ]);
+    await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    const patches = calls.filter((call) => call.init.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(JSON.parse(String(patches[0]?.init.body)).blockedByIssueIds).toEqual(["cancelled"]);
+    expect(patches.some((call) => JSON.parse(String(call.init.body)).status === "todo")).toBe(false);
+  });
+
   it("computes blockedBy add/remove as one atomic PATCH", async () => {
     const { calls } = mockFetchRoutes([
       { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "blocked", blockedByIssueIds: ["b1", "b2"] } },
