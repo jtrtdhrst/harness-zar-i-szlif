@@ -72,3 +72,16 @@ selfhost retain, separate session exact recall and cross-bank denial; Opik
 thread_id and task_id with the SAME real Paperclip run UUID; reviewed merge,
 GitHub-to-Coolify exact SHA/digest, rollback and cohort-by-cohort verification.
 No Core edits, Cloud data deletion or mass agent cutover permitted.
+
+## Audited native run-scope positive controls — 2026-11-04
+
+The source-pinned candidate image was rebuilt from current receiver code, not reused from an older image:
+
+- GitHub receiver PR #36 candidate revision `965ad5a77bcea3a9fd837c628fda21c27c0ba915`.
+- Docker image (isolated, NOT production): `hermes-gateway-runmcp-candidate:965ad5a`, image ID `sha256:afb7651ccd0a41f82483c1784cee3d6eb79fbbabbcb7e2cf57f0e7ab5ade6e51`.
+- Image `/opt/hermes/gateway/run_mcp.py` SHA-256 `b9fcbaed6f1ac385cc5497438514a2aa2b7ce01c1d2cc5457215d3a8aaccf80a` matches the actual GitHub source.
+- `python3 -m py_compile` and image import of modified Hermes `_RunLaunch` **PASS**.
+- New `tests/test_run_mcp_scope.py` supplies 5 native-registry seam tests: positive scoped registration and cleanup, concurrent role/run isolation, wrong-profile admission denial, missing-discovery rejection, cleanup under agent exception. Combined with 7 grant/auth tests: **12/12 PASS**, repeated using the newly built image in `--network none` with synthetic test credentials.
+- **Not real external MCP E2E:** the scope tests mock only the native `_borrowed` registry boundary; no real Paperclip-issued bearer, real Wiki call, or correlated Opik Hermes trace is asserted. No production container or profile was altered.
+
+The release still requires independent CTO approval of native KOMAA-1564 plus actual named-profile secret binding, real short-lived Paperclip bearer, per-call deny controls, and Git-backed Coolify rollout with recorded image/commit digests. At the time of the run, `paperclipListPendingReviews` reported KOMAA-1564 wedged=true, while `paperclipResolveReviewWedge(route)` returned an authoritative 409 no status mutation; do not substitute a fake reviewer decision.
