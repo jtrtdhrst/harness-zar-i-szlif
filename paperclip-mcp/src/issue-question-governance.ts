@@ -23,6 +23,10 @@ const EDITORIAL_PURPOSE =
 const OPERATIONAL_PURPOSE =
   /\b(?:which|what|where|how|choose|pick|select|decide|authorize|approve|should|can|could)\b.{0,100}\b(?:sign\s*in|log\s*in|connect|access|reach|use|run|deploy|release|build|host|mount|provision|route|source|workspace|worktree|repository|repo|branch|gateway|receiver|runtime|environment|credential|token|key|permission|grant|identity|machine|server|service|blocker|dependency|implementation|architecture|path|worktree|PR\s*#?\d*)\b/i;
 
+// Editorial wording cannot exempt an explicit infrastructure action.
+const EXPLICIT_DEPLOY_ACTION =
+  /\b(?:deploy|release|merge|push|build|mount|provision|restart|migrate|install|route)\b.{0,80}\b(?:production|server|cluster|gateway|runtime|workspace|worktree|branch|repository|repo|environment|service|endpoint|host)\b/i;
+
 export function assertIssueQuestionGoverned(
   kind: string,
   input: unknown,
@@ -42,7 +46,8 @@ export function assertIssueQuestionGoverned(
   };
   collect(input);
   if (PRIVILEGED_SUBJECT.test(strings.join("\n")) ||
-      strings.some(text => OPERATIONAL_PURPOSE.test(text) && !EDITORIAL_PURPOSE.test(text))) {
+      strings.some(text => OPERATIONAL_PURPOSE.test(text) &&
+        (!EDITORIAL_PURPOSE.test(text) || EXPLICIT_DEPLOY_ACTION.test(text)))) {
     throw new Error(TECHNICAL_QUESTION_DENIED);
   }
 }

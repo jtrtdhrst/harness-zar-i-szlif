@@ -79,6 +79,20 @@ describe("issue questions are not a credential or technical escalation channel",
       payload: form("Which Paperclip description reads better?", ["Which server should we deploy?", "Shorter wording"]),
     })).toThrow(TECHNICAL_QUESTION_DENIED);
   });
+  it("rejects editorial camouflage of an explicit production action", () => {
+    for (const prompt of [
+      "Which description should we deploy to production?",
+      "Which title should we merge into the main branch?",
+      "Which copy should we release to the server?",
+    ]) {
+      expect(() => assertIssueQuestionGoverned("ask_user_questions", {
+        payload: form(prompt, ["Option A", "Option B"]),
+      })).toThrow(TECHNICAL_QUESTION_DENIED);
+    }
+    expect(() => assertIssueQuestionGoverned("ask_user_questions", {
+      payload: form("Which title reads better for the production release notes?", ["Concise", "Descriptive"]),
+    })).not.toThrow();
+  });
   it("rejects both confirmation tool paths before HTTP write", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
