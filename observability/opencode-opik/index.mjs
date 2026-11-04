@@ -214,6 +214,15 @@ const OpikObservability = async () => {
           output: { result: cap(redact(output?.output ?? output ?? null)), duration_ms: end - start },
           metadata: {
             paperclip_run_id: RUN_ID, agent_id: AGENT_ID || null,
-            task_id: TASK_ID || null, compa
+            task_id: TASK_ID || null, company_id: COMPANY_ID || null,
+            tool_status: output?.error ? "error" : "completed",
+          },
+        });
+      } catch { console.error("[opik-observability] tool_after_failed"); }
+    },
+  };
+};
 
-... [373 characters truncated]
+function parseArgs(s) { try { return { args: JSON.parse(s ?? "{}") }; } catch { return { args_raw: (s ?? "").slice(0, 4000) }; } }
+export default OpikObservability;
+
