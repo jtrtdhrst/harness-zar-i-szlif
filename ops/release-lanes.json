@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "owner": "CHO",
+  "contract": "Per-service reviewed release provenance; integration branch is not necessarily the production branch",
+  "lanes": [
+    {
+      "id": "product-panel",
+      "environment": "production",
+      "mode": "git_promoted",
+      "repository": "miloszspyrka-code/zar-i-szlif",
+      "integration_ref": "main",
+      "release_ref": "ci-approved",
+      "coolify_kind": "application",
+      "coolify_uuid": "k0vwdsjazxguvgmh4qixjgxn",
+      "ci_workflow": ".github/workflows/product-ci.yml",
+      "production_readback": "https://panel.zariszlif.pl/__release.json",
+      "exact_sha_required": true,
+      "review_required": true,
+      "observed_baseline": "2026-11-04: main=ci-approved=deployed=7322f946a5a395db29fa95d14da1ea9037e30d7c"
+    },
+    {
+      "id": "hermes-gateway-canary",
+      "environment": "canary",
+      "mode": "git_canary_manual",
+      "repository": "miloszspyrka-code/harness-zar-i-szlif",
+      "candidate_ref": "KOMAA-1512-receiver-20261104",
+      "coolify_kind": "application",
+      "coolify_uuid": "yh20mb2rurecnmn60t5vfc3s",
+      "auto_deploy_expected": false,
+      "review_required": true,
+      "production_readback": null,
+      "exact_sha_required": true,
+      "observed_baseline": "2026-11-04: private healthy canary; not production; reviewed cutover pending"
+    },
+    {
+      "id": "hermes-gateway",
+      "environment": "production",
+      "mode": "manual_pinned",
+      "repository": "miloszspyrka-code/harness-zar-i-szlif",
+      "coolify_kind": "application",
+      "coolify_uuid": "2sganhxhhnioiqh4an9g2f4k",
+      "auto_deploy_expected": false,
+      "review_required": true,
+      "production_readback": null,
+      "exact_sha_required": true,
+      "observed_baseline": "2026-11-04: degraded:unhealthy; Coolify Git metadata is NOT source provenance; no cohort cutover"
+    },
+    {
+      "id": "paperclip-core",
+      "environment": "production",
+      "mode": "upstream_pinned",
+      "repository": "miloszspyrka-code/paperclip",
+      "coolify_kind": "service",
+      "coolify_uuid": "2omzqpy8dxgmhuwfbzo7bvvv",
+      "auto_deploy_expected": false,
+      "review_required": true,
+      "production_readback": "https://paperclip.kompaszbiorek.pl/api/health",
+      "exact_sha_required": true,
+      "observed_baseline": "2026-11-04: running image ghcr.io/paperclipai/paperclip:2026.1023.0; /api/health reports commit 1b4c8038"
+    },
+    {
+      "id": "paperclip-mcp",
+      "environment": "production",
+      "mode": "manual_pinned",
+      "repository": "miloszspyrka-code/harness-zar-i-szlif",
+      "coolify_kind": "service",
+      "coolify_uuid": "gevr1m6rdj4t4fbhcjvqv8gg",
+      "auto_deploy_expected": false,
+      "review_required": true,
+      "production_readback": "https://paperclip-mcp.zariszlif.pl",
+      "exact_sha_required": true,
+      "observed_baseline": "2026-11-04: local image paperclip-mcp:gitops-active; live MCP verified; source/build commit equivalence requires independent proof"
+    },
+    {
+      "id": "comfy-mcp",
+      "environment": "production",
+      "mode": "manual_pinned",
+      "repository": "miloszspyrka-code/harness-zar-i-szlif",
+      "coolify_kind": "service",
+      "coolify_uuid": "kkhfw0napmeaqewgdirwhc1h",
+      "auto_deploy_expected": false,
+      "review_required": true,
+      "production_readback": "https://mcp-comfy.kompaszbiorek.pl/mcp",
+      "exact_sha_required": true,
+      "observed_baseline": "2026-11-04: local image local/comfyui-mcp:0.52.206-chatfiles7; running healthy; deployment provenance not verified"
+    }
+  ]
+}
