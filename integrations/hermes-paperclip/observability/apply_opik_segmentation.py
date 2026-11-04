@@ -43,6 +43,22 @@ _KNOWN_OPIK_ROLES = frozenset(%r)
 
 ''' % (tuple(sorted(KNOWN_ROLES)),)
 
+THREAD_HELPER = '''
+def _paperclip_thread_id(task_id: str, session_id: str) -> str:
+    """Correlate only canonical Paperclip UUID-shaped task IDs; not authentication."""
+    prefix = "paperclip:run:"
+    if not isinstance(task_id, str) or not task_id.startswith(prefix):
+        return session_id
+    try:
+        value = task_id[len(prefix):]
+        if str(uuid.UUID(value)) != value:
+            return session_id
+    except (ValueError, TypeError):
+        return session_id
+    return task_id
+
+'''
+
 def transform(original: str) -> str:
     """Pure, pinned transformation; preserves existing trace create/upsert lifecycle."""
     def replace_once(s: str, old: str, new: str) -> str:
@@ -51,9 +67,9 @@ def transform(original: str) -> str:
         return s.replace(old, new, 1)
 
     code = replace_once(original, IMPORT_ANCHOR,
-                        IMPORT_ANCHOR + "from pathlib import Path\n")
+                        IMPORT_ANCHOR + "from pathlib import Path\nimport uuid\n")
     code = replace_once(code, "\ndef start_root_trace(\n",
-                        "\n" + ROLE_HELPER + "def start_root_trace(\n")
+                        "\n" + ROLE_HELPER + THREAD_HELPER + "def start_root_trace(\n")
     code = replace_once(code, "    metadata = {\n",
                         "    role = _verified_role_from_plugin_path(__file__)\n"
                         "    metadata = {\n")
@@ -69,8 +85,7 @@ def transform(original: str) -> str:
     # Keep historical CLI/API conversation threading intact; a verified Paperclip
     # per-run task_id from the Gateway receiver becomes the Opik thread key.
     code = replace_once(code, '"thread_id": session_id or None,',
-                        '"thread_id": (task_id if task_id.startswith("paperclip:run:") '
-                        'else session_id) or None,')
+                        '"thread_id": _paperclip_thread_id(task_id, session_id) or None,')
     code = replace_once(code, KWARGS_ANCHOR,
                         '        "tags": tags() + (["agent:" + role] if role else []),\n')
     ast.parse(code)
