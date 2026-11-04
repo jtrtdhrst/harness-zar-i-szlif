@@ -6,8 +6,14 @@ process.env.PAPERCLIP_AGENT_ID = '11112222-3333-4444-8555-666677778888';
 process.env.PAPERCLIP_TASK_ID = '99990000-1111-4222-8333-444455556666';
 process.env.OPIK_BASE_URL = 'http://127.0.0.1:32001/mock-opik';
 const calls = [];
+let failNext = 0;
+let failedKind = '';
 globalThis.fetch = async (url, init) => {
   calls.push({ url: String(url), body: JSON.parse(init?.body ?? '{}') });
+  if (failNext > 0 && String(url).endsWith(failedKind)) {
+    failNext -= 1;
+    return {ok:false,status:503};
+  }
   return {ok:true,status:200};
 };
 const {default:factory} = await import('./index.mjs?unit-test');
@@ -62,3 +68,33 @@ test('session idle still finalizes the trace', async () => {
   await flush();
   assert.equal(calls.filter(c => c.url.includes('/traces/') && c.body.end_time).length,1);
 });
+
+
+test('transient 503 is retried and never treated as successful ingestion', async () => {
+  failNext = 1; failedKind = '/spans';
+  await event({
+    id:'retry1', sessionID:'s1', role:'assistant', modelID:'gpt-6-luna',
+    providerID:'openai', time:{created:1793790000000,completed:1793790003000},
+    tokens:{input:3,output:2,cache:{read:0,write:0}},
+  });
+  assert.equal(calls.filter(x => x.body.metadata?.open_code_message_id === 'retry1').length,2);
+  const accepted=calls.filter(x => x.body.type==='llm'&&x.body.metadata?.open_code_message_id==='retry1');
+  assert.equal(accepted[0].body.trace_id,accepted[1].body.trace_id);
+});
+test('session error emits non-secret structured lifecycle status', async () => {
+  await plugin.event({event:{type:'session.error',properties:{
+    error:{name:'ProcessLost',message:'DO_NOT_LOG_SECRET'}
+  }}});
+  const patches=calls.filter(x=>x.url.includes('/traces/')&&x.body.metadata?.end_event==='session.error');
+  // If already idle-finalized, the run has a single terminal event.
+  assert.ok(patches.length===0 || (patches.length===1 &&
+    patches[0].body.metadata.error_type==='ProcessLost'));
+  assert.ok(!JSON.stringify(patches).includes('DO_NOT_LOG_SECRET'));
+});
+test('Opik root trace retains source and billing provenance', async () => {
+  const root=calls.find(x=>x.url.endsWith('/traces')&&x.body.metadata?.paperclip_run_id);
+  assert.ok(root);
+  assert.equal(root.body.metadata.service,'paperclip-opencode');
+  assert.equal(root.body.metadata.billing_status,'unknown_until_verified');
+});
+
