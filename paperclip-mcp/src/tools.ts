@@ -1136,7 +1136,8 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
           const reviewerId = reviewer?.type === "agent" && typeof reviewer.agentId === "string"
             ? reviewer.agentId : null;
           if (before.status !== "in_review" || execution?.status !== "pending" ||
-              execution?.currentStageType !== "review" || !reviewerId ||
+              execution?.currentStageType !== "review" ||
+              typeof execution?.currentStageId !== "string" || !execution.currentStageId || !reviewerId ||
               (agentId !== null && agentId !== undefined && agentId !== reviewerId)) {
             throw new Error("native_reviewer_recovery_denied: foreign reviewer or non-pending review");
           }
@@ -1167,16 +1168,34 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
                 ["queued", "running"].includes(String((item as Record<string, unknown>).status ?? "")))
             : null;
           const after = await client.requestJson<Record<string, unknown>>("GET", path).catch(() => null);
+          const afterState = after?.executionState && typeof after.executionState === "object" &&
+            !Array.isArray(after.executionState)
+            ? after.executionState as Record<string, unknown> : null;
+          const afterParticipant = afterState?.currentParticipant &&
+            typeof afterState.currentParticipant === "object" &&
+            !Array.isArray(afterState.currentParticipant)
+            ? afterState.currentParticipant as Record<string, unknown> : null;
+          const stageUnchanged = Boolean(
+            after?.id === before.id &&
+            afterState?.status === "pending" &&
+            afterState.currentStageId === execution.currentStageId &&
+            afterState.currentStageType === "review" &&
+            afterParticipant?.type === "agent" &&
+            afterParticipant.agentId === reviewerId,
+          );
+          const verified = Boolean(matching && stageUnchanged);
           return {
-            reviewerRecovery: true, woke: Boolean(matching), verified: Boolean(matching),
-            issueId: before.id, agentId: reviewerId, observedRun: matching ?? null,
+            reviewerRecovery: true, woke: verified, verified,
+            staleTransition: !stageUnchanged,
+            issueId: before.id, agentId: reviewerId,
+            observedRun: verified ? matching : null,
             nativeCheckoutAccepted: Boolean(checkout),
-            statusDrift: after?.status !== "in_review",
+            statusDrift: stageUnchanged && after?.status !== "in_review",
             committedStatus: after?.status ?? null,
-            pendingReviewPreserved: Boolean(after?.executionState &&
-              typeof after.executionState === "object" &&
-              (after.executionState as Record<string, unknown>).status === "pending"),
-            note: "Only a first-class participant review decision can finish this review; never infer approval from checkout.",
+            pendingReviewPreserved: stageUnchanged,
+            note: stageUnchanged
+              ? "Only a first-class participant review decision can finish this review; never infer approval from checkout."
+              : "Stale reviewer transition: stage or participant changed after native checkout. No valid reviewer handoff is asserted.",
           };
         }
         return client.requestJson("POST", path + "/checkout", {
