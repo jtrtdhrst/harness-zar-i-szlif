@@ -201,7 +201,6 @@ async function relationalLiveBlockerIds(
   const live: string[] = [];
   for (const b of diag.blockers) {
     if (!isRecord(b) || typeof b.id !== "string" || !b.id) continue;
-    const st = typeof b.status === "string" ? b.status : "";
     if (isUnresolvedDependency(b)) live.push(b.id);
   }
   return { live: [...new Set(live)], unavailable: false, truncated: diag.truncated === true };
@@ -3061,14 +3060,8 @@ function operatorCompositeTools(client: PaperclipApiClient): ControlPlaneToolDef
         ]);
         const hold = blockingHold(holdView);
         const blockerList: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : [];
-        const liveBlockers = blockerList.filter((b) => {
-          const st = isRecord(b) ? String(b.status ?? "") : "";
-          return isUnresolvedDependency(b);
-        });
-        const doneBlockers = blockerList.filter((b) => {
-          const st = isRecord(b) ? String(b.status ?? "") : "";
-          return !isUnresolvedDependency(b);
-        });
+        const liveBlockers = blockerList.filter(isUnresolvedDependency);
+        const doneBlockers = blockerList.filter((b) => !isUnresolvedDependency(b));
         const descriptor = isRecord(before.unblockDescriptor) ? before.unblockDescriptor : null;
         const status = issueStatusOf(before);
         let classification = "invalid_blocked";
@@ -3777,10 +3770,7 @@ async function getExecutionStateCompat(client: PaperclipApiClient, issueId: stri
   let unresolvedBlockerCount: number | null = null;
   if (blockedByRaw === null) warnings.push("blockedBy projection absent on issue record; unresolvedBlockerCount unverified");
   else if (blockedByRaw.every((b) => isRecord(b))) {
-    unresolvedBlockerCount = blockedByRaw.filter((b) => {
-      const st = String((b as Record<string, unknown>).status ?? "");
-      return isUnresolvedDependency(b);
-    }).length;
+    unresolvedBlockerCount = blockedByRaw.filter(isUnresolvedDependency).length;
   } else {
     unresolvedBlockerCount = blockedByRaw.length;
     warnings.push("blockedBy entries lack status shape; treated as unresolved (conservative)");
