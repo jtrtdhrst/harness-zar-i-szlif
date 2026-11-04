@@ -1,5 +1,9 @@
 # Hermes ↔ Paperclip — infrastructure E2E harness
 
+> **Current documentation and status (2026-11-04):** [OPERATIONS-STATUS.md](OPERATIONS-STATUS.md) is the canonical, version-controlled source for adapter/receiver architecture, scoped MCP credential contract, current evidence ledger, test matrix, release and rollback. Component implementation notes: [Gateway receiver](gateway/README.md), [Paperclip adapter overlay](paperclip-core-overlay/README.md). The [Wiki page](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36) and issue descriptions are navigation/evidence, not alternative release approvals.
+>
+> **This README contains historical 2026-11-01–02 pilot findings and its original checklist.** Do not use its retired `Hermes Test` / `Delivery & Release Manager` references, dated numbers, or standalone pilot smoke tests as current production instructions. Current rollout covers 14 active roles, controlled by CHO with independent CTO review. The H01 adapter security source is approved, but the authenticated Paperclip-issued H02/H05 E2E, Hindsight/Opik correlation, artifact promotion, and production cohort release are **not approved by that source decision**. Re-read native Paperclip issue status, exact GitHub PR HEAD and production readback before acting.
+
 **Repository:** `harness-zar-i-szlif`  
 **Owner:** Paperclip project `04 · Operations / Hermes-Paperclip E2E`  
 **Coolify:** `Hermes - Paperclip Sync` (standalone read-only check service)  
@@ -12,13 +16,15 @@ Paperclip is the **control plane** (tasks, approvals, published Wiki and skills)
 ## Safety boundaries
 
 - Do not disable authentication, forward vault secrets into logs, share keys across profiles, copy files from other agents, expose private admin routes or publish diagnostics publicly.
-- Do not re-enable company-wide watchdogs, cron, routines, heartbeats, or GitHub Actions.
-- Each task runs on an isolated git worktree derived from `main`, with branch identity traceable to its Paperclip issue; one writer per branch.
-- Only the `Hermes Test` agent and the bounded integration scope may be mutated during the initial acceptance. No prod cutover until independent review.
+- Do not enable unattended production rollout, company-wide watchdogs or scheduler changes as a workaround. Existing GitHub Actions for validation/CI are permitted; they do not themselves authorize deploy or cutover.
+- Use an isolated, issue-owned git worktree from the issue-authorized base (not necessarily `main`); one writer per branch. Use exact approved SHA/digest for release.
+- Only the independently approved canary/cohort may be migrated after its own real issuer-bound E2E. Do not activate the retired `Hermes Test` or `Delivery & Release Manager` agents; keep all other agent settings unchanged until accepted.
 - Watchdog is native and attached **only** to the test epic. It monitors stopped subtree work, not a polling replacement; can escalate but never self-approve or automatically merge.
 - Preserve Coolify's existing Gateway and sync-project deployments until rollback/readback acceptance.
 
-## Definition of Done (all required, none implied by a green healthcheck)
+## Historical 2026-11-01 pilot checklist (superseded — NOT the current Definition of Done)
+
+For today's release acceptance use the [live gates and evidence matrix](OPERATIONS-STATUS.md#6-the-remaining-e2e-acceptance-matrix-evidence-not-assumptions) instead of the numbered pilot checks below. Historical agent names and credentials below describe the 2026-11-01–02 experiment only.
 
 1. A **dedicated** Hermes `hermes-test` API key exists and is stored as an encrypted Paperclip `secret_ref`. The Paperclip adapter points to `/p/hermes-test`. A real authenticated profile request succeeds; default/wrong key is rejected. No value is printed in evidence.
 2. Paperclip Tool Connection's Bearer is valid for its configured MCP host; **actual `tools/call`** for a page in `wiki/agents/ceo/AGENTS.md` succeeds in a Paperclip-issued Hermes Test run. `initialize` and `tools/list` do not count as E2E.
@@ -26,7 +32,7 @@ Paperclip is the **control plane** (tasks, approvals, published Wiki and skills)
 4. The Hermes `hindsight` provider retains and later recalls a synthetic marker in the `hermes-hermes-test` bank. Control bank `hermes-ceo` must not return it.
 5. Opik records a **correlated** trace for that same Paperclip run, with model, tool spans and token usage. Synthetic unrelated traces do not count.
 6. Paperclip run ID, Tool Gateway invocation ID, Opik trace ID, named profile ID, published skill version, deployed digest/SHA, smoke status and rollback check are captured in one evidence JSON.
-7. Independent CTO review of scope/security + independent Delivery & Release Manager acceptance of reproducible deployment; no self-review. All dependencies resolved, no live run or untracked changes, then issue closure.
+7. Historical review requirement: independent CTO source/security review and separate release acceptance. The old Delivery & Release Manager role is retired; CHO now owns release approval/orchestration. Use the current runbook for the actual gates, rather than this pilot checklist.
 8. Documentation, scripts and tests are committed to a feature branch and PR; `main` changes only after review and explicit production approval.
 
 ## How to run tests
