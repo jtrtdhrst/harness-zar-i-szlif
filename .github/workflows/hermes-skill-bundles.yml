@@ -9,7 +9,7 @@ on:
       - '.github/workflows/hermes-skill-bundles.yml'
   push:
     branches:
-      - 'fix/hermes-gateway-isolation-20261102'
+      - main
     paths:
       - 'integrations/hermes-paperclip/roles/**'
       - 'integrations/hermes-paperclip/wiki/**'
