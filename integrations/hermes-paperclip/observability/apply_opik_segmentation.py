@@ -103,9 +103,9 @@ def transform(original: str) -> str:
     code = replace_once(code, "    # Build the create payload once and keep it:",
                         '    if role:\n'
                         '        metadata["agent_role"] = role\n'
-                        '        metadata["memory_bank"] = f"hermes-{role}"\n'
-        '        memory_mode = _configured_hindsight_mode(__file__, role)\n'
+                                '        memory_mode = _configured_hindsight_mode(__file__, role)\n'
         '        if memory_mode:\n'
+        '            metadata["memory_bank"] = f"hermes-{role}"\n'
         '            metadata["memory_backend"] = memory_mode\n'
                         '    # Build the create payload once and keep it:')
     # Keep historical CLI/API conversation threading intact; a verified Paperclip
