@@ -66,6 +66,11 @@ def transform(original: str) -> str:
                         '        metadata["agent_role"] = role\n'
                         '        metadata["memory_bank"] = f"hermes-{role}"\n'
                         '    # Build the create payload once and keep it:')
+    # Keep historical CLI/API conversation threading intact; a verified Paperclip
+    # per-run task_id from the Gateway receiver becomes the Opik thread key.
+    code = replace_once(code, '"thread_id": session_id or None,',
+                        '"thread_id": (task_id if task_id.startswith("paperclip:run:") '
+                        'else session_id) or None,')
     code = replace_once(code, KWARGS_ANCHOR,
                         '        "tags": tags() + (["agent:" + role] if role else []),\n')
     ast.parse(code)
