@@ -142,7 +142,7 @@ const OpikObservability = async () => {
         if (key) calls.delete(key);
         const end = new Date(); const start = new Date(prev?.start || Date.now());
         post("/v1/private/spans", {
-          id: uuidv7(), trace_id: r.traceId, project_name: PROJECT, name: tool, type: "general",
+          id: uuidv7(), trace_id: r.traceId, project_name: PROJECT, name: tool, type: "tool",
           start_time: start.toISOString(), end_time: end.toISOString(),
           input: parseArgs(prev?.args), output: { result: cap(redact(output?.output ?? output ?? null)), duration_ms: end - start },
           metadata: { paperclip_run_id: RUN_ID, agent_id: AGENT_ID || null, task_id: TASK_ID || null },
