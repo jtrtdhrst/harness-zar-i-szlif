@@ -180,9 +180,9 @@ def main():
  root=Path(os.environ.get("PAPERCLIP_LOG_ROOT","/paperclip-logs"))
  opik=os.environ.get("OPIK_INTERNAL_BASE","http://backend-s7a4rwqbij7w4fxlnauriblo:8080")
  hindsight=os.environ.get("HINDSIGHT_INTERNAL_BASE","")
- if not (opik.startswith("http://backend-") and opik.endswith(":8080")):
+ if opik!="http://backend-s7a4rwqbij7w4fxlnauriblo:8080":
   raise SystemExit("unsafe_opik_target")
- if hindsight and not (hindsight.startswith("http://hindsight-admin-") and hindsight.endswith(":8888")):
+ if hindsight and hindsight!="http://hindsight-admin-hjda7ckq5z4luhd1vpdepi0r:8888":
   raise SystemExit("unsafe_hindsight_target")
  while True:
   try:print(json.dumps(cycle(root,opik,hindsight,args.quiet_seconds,args.age_hours)),flush=True)

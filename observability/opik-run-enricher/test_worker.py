@@ -62,4 +62,14 @@ class Tests(unittest.TestCase):
   self.assertEqual(w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z"),w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z"))
   self.assertNotEqual(w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z"),w.identity("x","hindsight.bank.stats_snapshot","2026-11-04T20:00:00Z"))
   self.assertEqual(__import__("uuid").UUID(w.identity("x","paperclip.run.audit_summary","2026-11-04T20:00:00Z")).version,7)
+
+ def test_exact_internal_targets(self):
+  with patch.dict(os.environ,{"OPIK_INTERNAL_BASE":"http://backend-attacker:8080"}):
+   with patch("sys.argv",["worker.py","--once"]):
+    with self.assertRaisesRegex(SystemExit,"unsafe_opik_target"):w.main()
+  with patch.dict(os.environ,{"OPIK_INTERNAL_BASE":"http://backend-s7a4rwqbij7w4fxlnauriblo:8080",
+   "HINDSIGHT_INTERNAL_BASE":"http://hindsight-admin-malicious:8888"}):
+   with patch("sys.argv",["worker.py","--once"]):
+    with self.assertRaisesRegex(SystemExit,"unsafe_hindsight_target"):w.main()
+
 if __name__=="__main__":unittest.main()
