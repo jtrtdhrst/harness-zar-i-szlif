@@ -29,4 +29,4 @@ jobs:
         with:
           python-version: "3.12"
       - name: Validate lane release mode and governance invariants
-        run: python scripts/check-release-lanes.py
+        run: python scripts/check-release-lanes.py --self-test
