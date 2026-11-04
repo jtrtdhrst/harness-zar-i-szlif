@@ -821,19 +821,28 @@ async function getEligibility(client: PaperclipApiClient, issueId: string): Prom
   }
   const status = issueStatusOf(issue);
   const blockerList: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : blockedByIdsOf(issue);
+  // Diagnostics preserve satisfied relations for audit, but DONE edges are not execution blockers.
+  // Unknown/cancelled relations remain blocking (fail closed).
+  const unresolvedBlockers = blockerList.filter((blocker) => {
+    if (!isRecord(blocker)) return true;
+    if (blocker.isUnresolved === true) return true;
+    if (blocker.isUnresolved === false) return false;
+    if (blocker.isDependencyReady === true) return false;
+    return blocker.status !== "done";
+  });
   const liveList: unknown[] = Array.isArray(liveRuns) ? liveRuns : [];
   const reasons: string[] = [];
   // KOMAA-841: a status label is not proof of a leased heartbeat run.
   // Never classify review-pending or stale in_progress as runnable.
   const executionState = isRecord(issue.executionState) ? issue.executionState : null;
-  if (status === "blocked" && blockerList.length === 0 && !hold) reasons.push("blocked_but_zero_blockers");
+  if (status === "blocked" && unresolvedBlockers.length === 0 && !hold) reasons.push("blocked_but_zero_blockers");
   if (status === "blocked") reasons.push("status_blocked");
   if (status === "in_review") reasons.push("review_pending");
   if (isNativeReviewPending(status, executionState) && status !== "in_review") reasons.push("review_stage_pending");
   if (hasFalseInProgress(status, liveList)) reasons.push("false_progress_no_issue_run");
   if (status === "in_progress" && confirmedIssueBoundRuns(liveList).length > 0) reasons.push("already_running_issue");
   if (status !== "todo" && status !== "backlog" && status !== "in_progress" && status !== "in_review" && status !== "blocked" && status !== "done" && status !== "cancelled") reasons.push("not_executable_status");
-  if (blockerList.length > 0) reasons.push(`blocked_by_${blockerList.length}`);
+  if (unresolvedBlockers.length > 0) reasons.push(`blocked_by_${unresolvedBlockers.length}`);
   if (hold) reasons.push("execution_hold");
   if (status === "done" || status === "cancelled") reasons.push(`terminal_${status}`);
   if (status === "done" && liveList.length > 0) reasons.push("done_with_live_runs");
@@ -841,7 +850,7 @@ async function getEligibility(client: PaperclipApiClient, issueId: string): Prom
   const executable = reasons.length === 0;
   return {
     issueId, status, executable, reasons,
-    blockerCount: blockerList.length, blockers: blockerList,
+    blockerCount: unresolvedBlockers.length, blockers: unresolvedBlockers,
     executionHold: hold,
     executionHoldGate: holdView
       ? { kind: holdView.kind, gateIssueId: holdView.gateIssueId, gateIdentifier: holdView.gateIdentifier, expired: holdView.expired, manualOnly: holdView.manualOnly }
@@ -2906,7 +2915,11 @@ async function reconcileFalseInProgress(
   const active = Array.isArray(live) ? live.filter(runIsActive) : [];
   if (active.length > 0) return { reconciled: false, status, reason: "live_run_present", issue };
   if (blockingHold(holdView)) return { reconciled: false, status, reason: "execution_hold", issue };
-  if (issue.reviewAttention !== undefined && issue.reviewAttention !== null) {
+  // A normalized `{ state: "none" }` is no review attention; do not strand rework.
+  // Unknown attention forms and actual pending reviews still block reconciliation.
+  const attention = issue.reviewAttention;
+  if (isNativeReviewPending(status, issue.executionState) ||
+      (attention !== undefined && attention !== null && (!isRecord(attention) || attention.state !== "none"))) {
     return { reconciled: false, status, reason: "review_attention_present", issue };
   }
   if (isRecord(issue.scheduledRetry)) return { reconciled: false, status, reason: "scheduled_retry_present", issue };
