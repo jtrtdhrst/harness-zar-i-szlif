@@ -12,9 +12,19 @@
 3. **Production Coolify + process + traces + issuer audit** determine what actually runs. An isolated image or HTTP 200 health check does not prove an authorized Paperclip run.
 4. **No secrets** in Markdown, Git objects, prompts, stdout/stderr, error objects, traces, test fixtures based on real tokens, or issue/PR comments. Only redact/aggregate results. This document never authorizes copying production keys.
 
-This runbook is the single current integration-state entrypoint. Source-specific details remain in
-[`gateway/README.md`](gateway/README.md) and
-[`paperclip-core-overlay/README.md`](paperclip-core-overlay/README.md).
+This runbook is the **single current integration-state entrypoint** (an evidence snapshot, not a substitute for live readback). Documentation ownership and use:
+
+| Document | Purpose | Release authority |
+| --- | --- | --- |
+| **This `OPERATIONS-STATUS.md`** | Source map, identity/security contract, current evidence baseline, acceptance matrix, rollback and release procedure | Checklist only: requires native CTO/CHO decisions and live production evidence |
+| [`gateway/README.md`](gateway/README.md) | Version-pinned Hermes API receiver, private run-scoped session registry, implementation and test entrypoints | Component specification; never production approval |
+| [`paperclip-core-overlay/README.md`](paperclip-core-overlay/README.md) | Paperclip adapter patch for the pinned image, upstream/Core boundary, build and TypeScript/Vitest evidence | Component specification; never production approval |
+| [`README.md`](README.md) | 2026-11-01–02 harness/pilot results and retired Hermes Test evidence | **Historical only**; its old checklist is superseded |
+| [`GATEWAY_PRODUCTION_READINESS_2026-11-02.md`](GATEWAY_PRODUCTION_READINESS_2026-11-02.md) | Earlier Gateway/profile operational baseline | **Historical only**; its readiness and PR references are dated |
+| Paperclip Wiki: `wiki/concepts/hermes-paperclip-run-scoped-e2e.md` | Discover this Git-tracked runbook through Paperclip Wiki/issue context | Discovery pointer; do not fork the runbook into Wiki |
+
+**Publication rule:** PR #36 contains this documentation together with candidate code. Do not merge that PR merely to publish docs, or infer production readiness from a documentation merge. If docs must be published independently, CHO owns a reviewed documentation-only promotion that cannot carry unapproved adapter/runtime code. Until then, the PR branch is the version-controlled documentation location. Recheck HEAD/CI and native CTO/CHO approval after each commit.
+
 The PR history is retained as evidence; obsolete local SHA snapshots are not the current state.
 
 ## 2. Source map: keep the two adapter patch baselines distinct
