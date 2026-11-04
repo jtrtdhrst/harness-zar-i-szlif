@@ -265,6 +265,7 @@ describe("eligibility & DAG", () => {
     for (const blocker of [
       { id: "pending", status: "in_progress", isUnresolved: true },
       { id: "cancelled", status: "cancelled", isUnresolved: true },
+      { id: "cancelled-projection", status: "cancelled", isUnresolved: false, isDependencyReady: true },
       { id: "unknown", status: "unknown" },
     ]) {
       eligibilityMocks("todo", [blocker], []);
