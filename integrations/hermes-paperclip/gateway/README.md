@@ -1,12 +1,20 @@
 # Hermes Gateway build and Paperclip per-run MCP receiver candidate
 
+**Canonical current status, evidence and end-to-end operations:**
+[Hermes operations and E2E runbook](../OPERATIONS-STATUS.md).
+H01 adapter/security source review was independently approved by CTO on
+2026-11-04 for source commit `792598741832c31d91d74c8de9e787639944d13e`.
+This is **not** approval for Hermes release or agent migration.
+
+
 Source of truth: miloszspyrka-code/harness-zar-i-szlif. Base image:
 nousresearch/hermes-agent:v0.22.5, upstream source commit
 bf0203a794a07aac3ff764972ab9087baa4e4f4e.
 
-Coolify production contract (after review): branch main, build context
-/integrations/hermes-paperclip/gateway, Dockerfile /Dockerfile,
-watch path integrations/hermes-paperclip/gateway/**, health
+Coolify candidate build contract: use the **per-service reviewed promotion policy**
+(PR #41 merged), not an assumed globally forced `main` branch. Build context
+`/integrations/hermes-paperclip/gateway`, Dockerfile `/Dockerfile`,
+watch path `integrations/hermes-paperclip/gateway/**`, health
 GET http://127.0.0.1:8642/health. Persistent /opt/data and existing profile keys
 remain managed by Coolify. No secrets in the image or Git.
 
@@ -63,10 +71,16 @@ admission bound, not a substitution for the issuer's token expiry.
 - Isolated Docker build and Python compilation: PASS.
 - Local isolated container module import, HTTP health 200: PASS.
 - Unauthenticated POST returned 401; authenticated malformed/null grant 403.
-- Adapter Vitest 104/104 and TypeScript PASS in independent Paperclip worktree.
+- **Historical** adapter Vitest 104/104 and TypeScript PASS in earlier worktree.
+- **Current approved H01 source**: Vitest 114/114, adapter TypeScript PASS,
+  `git diff --check` PASS; pinned image Vitest 108/108, adapter TypeScript
+  PASS; source SHA-256 exact match; 3/3 code-HEAD GitHub CI SUCCESS.
+- A real local HTTP 307/308 redirect regression using **synthetic** bearer
+  produced zero redirected-target calls and zero detected token disclosures.
+  These checks do **not** prove a real Paperclip-issued token path.
 
-BLOCKED for production until: independent CTO/CHO source review; real
-Paperclip-issued token and named profile authentication; native Named MCP
+BLOCKED for production **despite the completed independent H01 CTO source review**:
+real Paperclip-issued token and named profile authentication; native Named MCP
 Wiki + Skills read with positive and negative run/agent authorization; Hindsight
 selfhost retain, separate session exact recall and cross-bank denial; Opik
 thread_id and task_id with the SAME real Paperclip run UUID; reviewed merge,
@@ -84,4 +98,11 @@ The source-pinned candidate image was rebuilt from current receiver code, not re
 - New `tests/test_run_mcp_scope.py` supplies 5 native-registry seam tests: positive scoped registration and cleanup, concurrent role/run isolation, wrong-profile admission denial, missing-discovery rejection, cleanup under agent exception. Combined with 7 grant/auth tests: **12/12 PASS**, repeated using the newly built image in `--network none` with synthetic test credentials.
 - **Not real external MCP E2E:** the scope tests mock only the native `_borrowed` registry boundary; no real Paperclip-issued bearer, real Wiki call, or correlated Opik Hermes trace is asserted. No production container or profile was altered.
 
-The release still requires independent CTO approval of native KOMAA-1564 plus actual named-profile secret binding, real short-lived Paperclip bearer, per-call deny controls, and Git-backed Coolify rollout with recorded image/commit digests. At the time of the run, `paperclipListPendingReviews` reported KOMAA-1564 wedged=true, while `paperclipResolveReviewWedge(route)` returned an authoritative 409 no status mutation; do not substitute a fake reviewer decision.
+**Historical note only:** this earlier candidate had a wedged reviewer and
+missing H01 approval. That condition was resolved: Paperclip issue
+`KOMAA-1564` is `done` with independent first-class CTO approval at
+2026-11-04 19:14 UTC. H02/H05, the real issuer-bound Wiki/Skills test,
+negative grant lifecycle tests, Hindsight cross-bank checks, same-run Opik,
+GitHub/Coolify digest promotion and rollback **remain separate release gates**.
+The authoritative, ordered checks and evidence requirements are in the
+[operations runbook](../OPERATIONS-STATUS.md).
