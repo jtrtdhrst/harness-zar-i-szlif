@@ -63,7 +63,7 @@ def github_api(path, method="get", body=None):
         # Only non-force, exact validated ref advancement is supported.
         if not isinstance(body, dict) or set(body) != {"sha", "force"} or not SHA.fullmatch(str(body.get("sha"))) or body.get("force") is not False or path != "/repos/" + REPO + "/git/refs/heads/" + RELEASE_REF:
             raise Denied("invalid_ref_update")
-        php += '$result=$client->patch(' + path_literal + ', ' + json.dumps(body) + ');'
+        php += '$result=$client->patch(' + path_literal + ', json_decode(' + json.dumps(json.dumps(body)) + ', true));'
     php += 'echo json_encode(["http"=>$result->status(),"data"=>$result->json()]);'
     result = run(["docker", "exec", "coolify", "php", "artisan", "tinker", "--execute=" + php], timeout=40)
     try:
