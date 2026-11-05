@@ -201,6 +201,66 @@ def enrich(log,agent,run,opik,hindsight,cache):
    raise RuntimeError("log_changed")
   summary=parse_events(raw,run,agent)
   if summary["parsed_event_count"]>0:
-   emit(opik,project,t
-
-... [2798 characters truncated]
+   emit(opik,project,trace["id"],run,agent,"paperclip.run.audit_summary",summary,
+    {"evidence":"paperclip_run_ndjson_counts_only",
+     "run_status":"unknown_without_paperclip_status_api",
+     "trace_identity_verified":True,"raw_log_content_exported":False},
+    trace["start_time"],trace["end_time"])
+   added+=1
+ if "paperclip.run.safe_timeline" not in present:
+  raw=log.read_bytes()
+  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
+   raise RuntimeError("log_changed")
+  timeline=safe_timeline(raw,run,agent)
+  if timeline["event_count"]>0:
+   emit(opik,project,trace["id"],run,agent,"paperclip.run.safe_timeline",timeline,
+    {"evidence":"paperclip_pc_obs_whitelist_only",
+     "source_event_count":timeline["event_count"],
+     "provenance":"agent_run_log",
+     "raw_log_content_exported":False},
+    trace["start_time"],trace["end_time"])
+   added+=1
+ if hindsight and "hindsight.bank.stats_snapshot" not in present:
+  bank=BANKS[agent];snapshot=stats(hindsight,bank)
+  if snapshot:
+   at=now()
+   emit(opik,project,trace["id"],run,agent,"hindsight.bank.stats_snapshot",snapshot,
+    {"evidence":"private_hindsight_stats_only","bank_id":bank,
+     "bank_used_in_this_run":"unverified","memory_contents_exported":False,
+     "snapshot_at":at},at,at,trace["start_time"])
+   added+=1
+ return added
+def cycle(root,opik,hindsight,quiet,age_hours):
+ cache={};added,skipped,failed=0,0,0
+ for log,agent,run,_ in candidates(root,quiet,age_hours):
+  try:
+   created=enrich(log,agent,run,opik,hindsight,cache)
+   if created:added+=1
+   else:skipped+=1
+  except Exception as exc:
+   failed+=1
+   print(json.dumps({"event":"error","run_id":run,
+    "error_class":type(exc).__name__}),flush=True)
+ return {"event":"cycle","at":now(),"runs_enriched":added,
+  "runs_skipped":skipped,"runs_failed":failed}
+def main():
+ p=argparse.ArgumentParser()
+ p.add_argument("--once",action="store_true")
+ p.add_argument("--quiet-seconds",type=int,default=55)
+ p.add_argument("--age-hours",type=int,default=4)
+ args=p.parse_args()
+ root=Path(os.environ.get("PAPERCLIP_LOG_ROOT","/paperclip-logs"))
+ opik=os.environ.get("OPIK_INTERNAL_BASE","http://backend-s7a4rwqbij7w4fxlnauriblo:8080")
+ hindsight=os.environ.get("HINDSIGHT_INTERNAL_BASE","")
+ if not (opik.startswith("http://backend-") and opik.endswith(":8080")):
+  raise SystemExit("unsafe_opik_target")
+ if hindsight and not (hindsight.startswith("http://hindsight-admin-") and hindsight.endswith(":8888")):
+  raise SystemExit("unsafe_hindsight_target")
+ while True:
+  try:print(json.dumps(cycle(root,opik,hindsight,args.quiet_seconds,args.age_hours)),flush=True)
+  except Exception as exc:
+   print(json.dumps({"event":"cycle_failed","error_class":type(exc).__name__}),flush=True)
+   if args.once:raise
+  if args.once:break
+  time.sleep(75)
+if __name__=="__main__":main()
