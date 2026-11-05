@@ -3943,6 +3943,34 @@ function deliveryCycleToolsPartA(client: PaperclipApiClient): ControlPlaneToolDe
           }
           if (linkedRuns.length >= 10) break;
         }
+        // Agent-run work products are immutable provenance links even after
+        // their originating runs fall outside the latest company-wide page.
+        // Verify both the run record AND its issue scope before projecting it.
+        const attributedRunIds = [...new Set(
+          (Array.isArray(workProducts) ? workProducts : [])
+            .filter(isRecord)
+            .map((wp) => wp.createdByRunId)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        )].slice(0, 20);
+        for (const runId of attributedRunIds) {
+          if (linkedRuns.some((entry) => isRecord(entry) && entry.runId === runId)) continue;
+          const [rawRun, links] = await Promise.all([
+            getJsonOrNull(client, `/heartbeat-runs/${enc(runId)}`),
+            getJsonOrNull(client, `/heartbeat-runs/${enc(runId)}/issues`),
+          ]);
+          const run = isRecord(rawRun) && isRecord(rawRun.run) ? rawRun.run : rawRun;
+          if (!isRecord(run) || run.id !== runId) continue;
+          const directOwner = run.issueId === issueId;
+          const linkedToIssue = Array.isArray(links) && links.some(
+            (entry) => isRecord(entry) && (entry.issueId === issueId || entry.id === issueId),
+          );
+          if (!directOwner && !linkedToIssue) continue;
+          linkedRuns.push({
+            runId, status: run.status ?? null, agentId: run.agentId ?? null,
+            createdAt: run.createdAt ?? null, finishedAt: run.finishedAt ?? null,
+            errorCode: run.errorCode ?? null, source: "work_product_created_by_run",
+          });
+        }
         const products = (Array.isArray(workProducts) ? workProducts : []).filter(isRecord);
         const formalApprovals = (Array.isArray(approvals) ? approvals : []).filter(isRecord);
         const executionState = isRecord(issue) && isRecord(issue.executionState) ? issue.executionState : null;
