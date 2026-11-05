@@ -1,0 +1,22 @@
+[Unit]
+Description=Paperclip native-reviewed product source -> Coolify release
+Documentation=https://github.com/miloszspyrka-code/harness-zar-i-szlif
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/usr/local/libexec/product_native_promotion.py
+ConditionPathExists=/usr/local/libexec/paperclip_native_release_gate.py
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/local/libexec/product_native_promotion.py
+WorkingDirectory=/
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/paperclip-gitops
+TimeoutStartSec=420
+UMask=0077

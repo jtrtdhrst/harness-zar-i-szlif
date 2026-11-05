@@ -1,0 +1,12 @@
+[Unit]
+Description=Check approved main merge -> ci-approved -> Coolify every 2 minutes
+
+[Timer]
+OnBootSec=120sec
+OnUnitInactiveSec=120sec
+AccuracySec=30sec
+Persistent=true
+Unit=product-native-promotion.service
+
+[Install]
+WantedBy=timers.target
