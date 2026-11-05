@@ -18,7 +18,7 @@ import apply_opik_telemetry_privacy as privacy
 JOURNAL_DIR = ".opik-privacy-rollout"
 PAIR = {
     "lifecycle.py": (privacy.SEGMENTED_LIFECYCLE_SHA256,
-                     "e5c9464e94fcddbd075bc25403829e967936b28214b5ab513f5e9b3298f9471c"),
+                     "0bab28fdcedd348c15eefbbf95b3b98a0151ee5c80ed4dd2e80d3f6ca2a0dfbb"),
     "hooks.py": (privacy.BASE_HOOKS_SHA256,
                  "d4a222be6571c955e901560f7197809bfc984453993c97c22b1d52a071597f08"),
 }
