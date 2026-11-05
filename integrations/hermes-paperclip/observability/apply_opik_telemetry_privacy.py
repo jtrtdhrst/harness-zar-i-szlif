@@ -202,6 +202,11 @@ def transform_segmented_lifecycle(original: str) -> str:
        '        "api_request_id_present": bool(api_request_id),')
     text=replace_once(text, '        "source": "hermes",',
        '        "source": "hermes",\n        "telemetry_privacy": "metadata_only_v1",')
+    text=replace_once(text, '    # Build the create payload once and keep it:',
+       '    if metadata["task_id"]:\n'
+       '        metadata["paperclip_run_id"] = metadata["task_id"][len("paperclip:run:"):]\n'
+       '        metadata["paperclip_run_id_provenance"] = "canonical_task_id_format_only"\n'
+       '    # Build the create payload once and keep it:')
     start='def merge_trace_output(output: Any, state: TraceState) -> Any:\n'
     end='\ndef finish_trace(task_key: str, *, output: Any = None) -> None:\n'
     if text.count(start)!=1 or text.count(end)!=1:
