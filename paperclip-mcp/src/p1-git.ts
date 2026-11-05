@@ -174,6 +174,36 @@ export function evaluateNativePaperclipReview(issue: unknown, prUrl: string, exa
   return { ok: true, code: "ok", message: "Native Paperclip approved review and exact artifact SHA verified" };
 }
 
+/** Persist the exact accepted PR head and the actual merged commit as one receipt.
+ * This closes the native review -> Git merge -> Paperclip work-product gap.
+ * It is a pure verifier: NEVER fabricates or grants review authorization.
+ */
+export function buildNativeMergeReceiptPatch(
+  workProduct: unknown,
+  prUrl: string,
+  headSha: string,
+  mergeSha: string,
+  decisionId: string,
+  mergedAt: string,
+): Record<string, unknown> | null {
+  if (!isRecord(workProduct) || workProduct.type !== "pull_request"
+      || workProduct.provider !== "github" || workProduct.url !== prUrl) return null;
+  const metadata = isRecord(workProduct.metadata) ? workProduct.metadata : null;
+  if (!metadata || metadata.headSha !== headSha) return null;
+  if (![headSha, mergeSha].every((x) => /^[a-f0-9]{40}$/.test(x))) return null;
+  if (!/^[a-f0-9-]{36}$/i.test(decisionId) || !/^\d{4}-\d{2}-\d{2}T/.test(mergedAt)) return null;
+  return {
+    status: "merged",
+    reviewState: "approved",
+    metadata: {
+      ...metadata, headSha, acceptedHeadSha: headSha,
+      paperclipReviewDecisionId: decisionId, mergeCommitSha: mergeSha,
+      mergedAt, nativeReleaseReceipt: true,
+    },
+    summary: "Confirmed GitHub PR merge with native Paperclip independent review; immutable head and merge SHA recorded.",
+  };
+}
+
 // Pin the merge to the head SHA verified a moment earlier so a head push
 // between the gate read and the merge cannot ride in unnoticed.
 export function buildMergeArgv(
@@ -926,17 +956,58 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
         } catch {
           confirmed = {};
         }
+        const mergeSha = isRecord(confirmed.mergeCommit)
+          ? String(confirmed.mergeCommit.oid ?? "")
+          : String(confirmed.mergeCommit ?? "");
+        const mergedAt = String(confirmed.mergedAt ?? "");
+        const mergedVerified = confirmed.state === "MERGED"
+          && /^[0-9a-f]{40}$/.test(mergeSha)
+          && /^\d{4}-\d{2}-\d{2}T/.test(mergedAt);
+        // An external merge might have committed before the confirm read
+        // returned: never claim a complete release when it is unverified.
+        let receiptPersisted = false;
+        let receiptReason = "github_merge_not_confirmed";
+        if (mergedVerified) {
+          try {
+            const products = Array.isArray(issue.workProducts) ? issue.workProducts.filter(isRecord) : [];
+            const matched = products.filter((p) => p.url === exactPrUrl
+              && isRecord(p.metadata) && p.metadata.headSha === headSha
+              && typeof p.id === "string");
+            const decisionId = isRecord(issue.executionState)
+              ? String(issue.executionState.lastDecisionId ?? "") : "";
+            if (matched.length !== 1) {
+              receiptReason = "ambiguous_or_missing_issue_work_product";
+            } else {
+              const patch = buildNativeMergeReceiptPatch(
+                matched[0], exactPrUrl, headSha, mergeSha, decisionId, mergedAt,
+              );
+              if (patch) {
+                await client.requestJson("PATCH", \`/work-products/\${encodeURIComponent(String(matched[0].id))}\`, { body: patch });
+                receiptPersisted = true;
+                receiptReason = "ok";
+              } else {
+                receiptReason = "sha_or_review_receipt_invalid";
+              }
+            }
+          } catch {
+            // DO NOT retry the GitHub merge, leak tokens, or label this DONE:
+            // GH may have committed, while Paperclip receipt needs repair.
+            receiptReason = "paperclip_receipt_persistence_unverified";
+          }
+        }
         const result = {
-          status: "ok",
+          status: mergedVerified && receiptPersisted ? "ok" : "unverified",
           operationId,
           pullRequestNumber,
           expectedHeadSha,
           actualHeadSha: headSha,
           mergedAt: confirmed.mergedAt ?? null,
-          mergeCommit: (confirmed.mergeCommit as Record<string, unknown> | null)?.oid ?? confirmed.mergeCommit ?? null,
+          mergeCommit: mergedVerified ? mergeSha : null,
           state: confirmed.state ?? null,
+          nativeReceiptPersisted: receiptPersisted,
+          receiptReason,
           possiblyCommitted: true,
-          evidenceReference: `ledger:${operationId}`,
+          evidenceReference: \`ledger:\${operationId}\`,
           attribution: mutationCtx,
         };
         if (ledgerKey) await writeLedger(ledgerKey, result);
