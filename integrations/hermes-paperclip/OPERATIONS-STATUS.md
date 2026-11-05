@@ -23,7 +23,7 @@ This runbook is the **single current integration-state entrypoint** (an evidence
 | [`GATEWAY_PRODUCTION_READINESS_2026-11-02.md`](GATEWAY_PRODUCTION_READINESS_2026-11-02.md) | Earlier Gateway/profile operational baseline | **Historical only**; its readiness and PR references are dated |
 | Paperclip Wiki: `wiki/concepts/hermes-paperclip-run-scoped-e2e.md` | Discover this Git-tracked runbook through Paperclip Wiki/issue context | Discovery pointer; do not fork the runbook into Wiki |
 
-**Publication rule:** PR #36 contains this documentation together with candidate code. Do not merge that PR merely to publish docs, or infer production readiness from a documentation merge. If docs must be published independently, CHO owns a reviewed documentation-only promotion that cannot carry unapproved adapter/runtime code. Until then, the PR branch is the version-controlled documentation location. Recheck HEAD/CI and native CTO/CHO approval after each commit.
+**Publication rule:** PR #36 combines reviewed candidate code and its runbook. Updating this branch or merging reviewed source into `main` does not constitute production promotion. Recheck exact HEAD/CI, native independent CTO/CHO approval, immutable image digest, and real issue-bound E2E before any deployment or cutover.
 
 The PR history is retained as evidence; obsolete local SHA snapshots are not the current state.
 

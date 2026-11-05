@@ -1,3 +1,5 @@
+> **Main documentation, not a production-adapter release.** Canonical current source: [OPERATIONS-STATUS.md](OPERATIONS-STATUS.md). Hermes run-scoped receiver and adapter code remain in PR #36 pending independent review and actual production E2E. Retired pilot references below are historical.
+
 # Hermes ↔ Paperclip — infrastructure E2E harness
 
 > **Current documentation and status (2026-11-04):** [OPERATIONS-STATUS.md](OPERATIONS-STATUS.md) is the canonical, version-controlled source for adapter/receiver architecture, scoped MCP credential contract, current evidence ledger, test matrix, release and rollback. Component implementation notes: [Gateway receiver](gateway/README.md), [Paperclip adapter overlay](paperclip-core-overlay/README.md). The Paperclip Wiki page `wiki/concepts/hermes-paperclip-run-scoped-e2e.md` and issue descriptions are navigation/evidence, not alternative release approvals.

@@ -1,3 +1,5 @@
+> **Source is not deployment proof.** Even after merging this overlay into `main`, a separately reviewed build, image digest, live acceptance and rollback proof are mandatory.
+
 # Unified Paperclip Core review-recovery + Hermes adapter image
 
 This image preserves the independently fixed **Paperclip native review blocker**

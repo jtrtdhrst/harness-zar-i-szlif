@@ -4,6 +4,10 @@ This repository owns **infrastructure services and standalone integration MCPs**
 
 **Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The Hermes Gateway receiver and adapter are under review in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
 
+## Hermes adapter documentation (canonical)
+
+The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md), [candidate receiver API contract](integrations/hermes-paperclip/gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md), [Paperclip overlay specification](integrations/hermes-paperclip/paperclip-core-overlay/README.md) and [historical evidence index](integrations/hermes-paperclip/README.md) are maintained on `main`. For work involving Hermes, Paperclip Named MCP, per-run authorization, agent isolation or release, consult this runbook before action and verify the real issue/PR/runtime state. **Docs-only publication does not mean PR #36 code was merged or production is ready.**
+
 ## Service folders
 
 - `plasmic/` — Plasmic self-hosted application
