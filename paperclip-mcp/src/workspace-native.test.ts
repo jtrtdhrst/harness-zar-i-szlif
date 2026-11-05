@@ -128,7 +128,10 @@ describe("run-bound Git delivery tool handlers", () => {
         id: RUN, companyId: COMPANY, agentId: AGENT, status, contextSnapshot: { issueId },
       }), { status: 200 });
       if (url.endsWith(`/execution-workspaces/${WORKSPACE}`)) return new Response(JSON.stringify({
-        id: WORKSPACE, companyId: COMPANY, sourceIssueId: ISSUE, cwd: process.cwd(), branchName: "KOMAA-1465",
+        id: WORKSPACE, companyId: COMPANY, projectId: "77777777-7777-4777-8777-777777777777", sourceIssueId: ISSUE, cwd: process.cwd(), branchName: "KOMAA-1465",
+      }), { status: 200 });
+      if (url.endsWith("/projects/77777777-7777-4777-8777-777777777777")) return new Response(JSON.stringify({
+        codebase: { repoUrl: "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git", defaultRef: "main" },
       }), { status: 200 });
       if (url.endsWith(`/issues/${ISSUE}`)) return new Response(JSON.stringify({
         id: ISSUE, companyId: COMPANY, identifier: "KOMAA-1465", status: "in_progress",
@@ -158,7 +161,8 @@ describe("run-bound Git delivery tool handlers", () => {
         else if (joined.includes("rev-parse HEAD")) stdout = `${head}\n`;
         else if (joined.includes("diff --cached --name-only")) stdout = "src/workspace-native.test.ts\n";
         else if (joined.includes("diff --cached")) stdout = "diff --git a/src/workspace-native.test.ts b/src/workspace-native.test.ts\n+test\n";
-        else if (joined.includes("ls-remote origin KOMAA-1465")) stdout = `${head}\trefs/heads/KOMAA-1465\n`;
+        else if (joined.includes("remote get-url --push origin")) stdout = "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git\n";
+        else if (joined.includes("ls-remote https://github.com/miloszspyrka-code/harness-zar-i-szlif.git refs/heads/KOMAA-1465")) stdout = `${head}\trefs/heads/KOMAA-1465\n`;
         else if (joined.includes("commit -m")) { head = nextHead; stdout = "[KOMAA-1465 bbbbbbb] test\n"; }
         child.stdout.emit("data", Buffer.from(stdout));
         child.emit("close", 0);

@@ -104,6 +104,7 @@ function sha256Hex(text: string): string {
 
 export interface ResolvedWorkspace {
   workspaceId: string;
+  projectId: string | null;
   cwd: string;
   realCwd: string;
   companyId: string;
@@ -164,6 +165,7 @@ export async function resolveWorkspace(
   const realCwd = await fs.realpath(cwd);
   return {
     workspaceId: String(rec.id ?? ref.workspaceId ?? "?"),
+    projectId: typeof rec.projectId === "string" ? rec.projectId : null,
     cwd,
     realCwd,
     companyId: wsCompany,
@@ -407,6 +409,148 @@ export function assertWorkspaceMutationScope(
       remediationOwner: "caller",
       remediation: "Use the run bound to the workspace's issue, or a board key",
     });
+  }
+}
+
+type RepositoryDocPreflight = {
+  issueId: string;
+  agentId: string;
+  runId: string;
+  workspaceId: string;
+  repo: string;
+  repoUrl: string;
+  baseSha: string;
+  readDocs: { path: string; sha256: string }[];
+  targetPaths: string[];
+  releaseLane: string;
+  decision: "PASS" | "STOP";
+};
+
+function repositorySlug(url: string): string | null {
+  const cleaned = url.trim().replace(/\.git$/i, "");
+  const match = cleaned.match(/^https?:\/\/github\.com\/([^/]+\/[^/]+)$/i)
+    ?? cleaned.match(/^git@github\.com:([^/]+\/[^/]+)$/i);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function pathWasAdmitted(path: string, targets: string[]): boolean {
+  return targets.some((target) => target === path || (target.endsWith("/**") && path.startsWith(target.slice(0, -2))));
+}
+
+/**
+ * Admission for MCP repository writes. This verifies the recorded hashes against
+ * current workspace bytes; it cannot prove the agent actually read those bytes.
+ */
+export async function enforceRepositoryDocPreflight(
+  client: PaperclipApiClient,
+  ws: ResolvedWorkspace,
+  ctx: WorkspaceMutationContext,
+  issueId: string | null | undefined,
+  targetPaths: string[] | null,
+): Promise<void> {
+  // Board operations retain the separately audited native administrative path.
+  // Production canaries are selected by immutable issue UUIDs, not by prompt claims.
+  if (ctx.authority === "board") return;
+  const mode = (process.env.PAPERCLIP_DOC_PREFLIGHT_MODE ?? "canary").trim().toLowerCase();
+  if (mode === "off") return;
+  if (mode === "canary") {
+    const selected = (process.env.PAPERCLIP_DOC_PREFLIGHT_CANARY_ISSUES ?? "").split(",").map(v => v.trim()).filter(Boolean);
+    if (!issueId || !selected.includes(issueId)) return;
+  } else if (mode !== "enforce") {
+    throw err("doc_preflight_denied", "Invalid DOC_PREFLIGHT enforcement mode; refusing writes", { remediationOwner: "board" });
+  }
+  if (!issueId || ctx.authority !== "agent-run" || !ctx.agentId || !ctx.runId || ctx.runIssueId !== issueId) {
+    throw err("doc_preflight_denied", "Repository writes require the caller's own live issue-bound run", { remediationOwner: "caller" });
+  }
+  if (ws.sourceIssueId !== issueId || ws.projectId === null) {
+    throw err("doc_preflight_denied", "Repository workspace is not owned by the target issue/project", { remediationOwner: "harness" });
+  }
+
+  const project = await client.requestJson<Record<string, unknown>>("GET", `/projects/${enc(ws.projectId)}`);
+  const codebase = isRecord(project.codebase) ? project.codebase : null;
+  const expectedRepoUrl = typeof codebase?.repoUrl === "string" ? codebase.repoUrl : null;
+  const expectedRepo = expectedRepoUrl ? repositorySlug(expectedRepoUrl) : null;
+  const defaultRef = typeof codebase?.defaultRef === "string" ? codebase.defaultRef : typeof codebase?.repoRef === "string" ? codebase.repoRef : null;
+  if (!expectedRepoUrl || !expectedRepo || !defaultRef || !/^[A-Za-z0-9._/-]{1,128}$/.test(defaultRef) || defaultRef.includes("..")) {
+    throw err("doc_preflight_denied", "Project repository identity or default ref is missing/invalid", { remediationOwner: "board" });
+  }
+  const remote = await runJailedExec({ ws, argv: ["git", "remote", "get-url", "origin"], timeoutSec: 15, outputLimit: 1024 });
+  const normalizeRemote = (value: string) => value.trim().replace(/\.git$/i, "").replace(/\/$/, "").toLowerCase();
+  if (remote.exitCode !== 0 || normalizeRemote(remote.stdout) !== normalizeRemote(expectedRepoUrl)) {
+    throw err("doc_preflight_denied", "Git origin does not match the Paperclip project's canonical repository", { remediationOwner: "harness" });
+  }
+
+  const issue = await client.requestJson<Record<string, unknown>>("GET", `/issues/${enc(issueId)}`);
+  const policy = isRecord(issue.executionPolicy) ? issue.executionPolicy : null;
+  const stages = Array.isArray(policy?.stages) ? policy.stages : [];
+  const independentReview = issue.reviewPolicy !== "anyone" && stages.some((value) => {
+    if (!isRecord(value) || value.type !== "review" || !Array.isArray(value.participants)) return false;
+    return value.participants.some((participant) => isRecord(participant)
+      && ((participant.type === "agent" && typeof participant.agentId === "string" && participant.agentId !== ctx.agentId)
+        || (participant.type === "user" && typeof participant.userId === "string")));
+  });
+  if (!independentReview) {
+    throw err("doc_preflight_denied", "An independent first-class issue reviewer is not configured", { remediationOwner: "CHO" });
+  }
+
+  const commentsValue = await getJsonOrNull(client, `/issues/${enc(issueId)}/comments?limit=500`);
+  const comments = Array.isArray(commentsValue) ? commentsValue : isRecord(commentsValue) && Array.isArray(commentsValue.comments) ? commentsValue.comments : [];
+  let record: RepositoryDocPreflight | null = null;
+  let recordBody = "";
+  for (const comment of [...comments].reverse()) {
+    if (!isRecord(comment) || comment.authorAgentId !== ctx.agentId || comment.createdByRunId !== ctx.runId || typeof comment.body !== "string") continue;
+    const prefix = "DOC_PREFLIGHT v1\n";
+    if (!comment.body.startsWith(prefix)) continue;
+    try {
+      const parsed = JSON.parse(comment.body.slice(prefix.length)) as unknown;
+      if (isRecord(parsed) && parsed.runId === ctx.runId) {
+        record = parsed as unknown as RepositoryDocPreflight;
+        recordBody = comment.body;
+        break;
+      }
+    } catch { /* malformed preflight is ignored; no matching record fails closed */ }
+  }
+  if (!record || scanForSecrets(recordBody).length > 0
+      || record.issueId !== issueId || record.agentId !== ctx.agentId || record.runId !== ctx.runId
+      || record.workspaceId !== ws.workspaceId || record.repo !== expectedRepo || record.repoUrl !== expectedRepoUrl
+      || record.decision !== "PASS" || !/^[0-9a-f]{40}$/i.test(record.baseSha)
+      || !Array.isArray(record.readDocs) || !Array.isArray(record.targetPaths)
+      || typeof record.releaseLane !== "string" || !record.releaseLane) {
+    throw err("doc_preflight_denied", "A valid current-run DOC_PREFLIGHT is missing or does not match this repository/workspace", { remediationOwner: "caller" });
+  }
+  if (record.targetPaths.length === 0 || record.targetPaths.some((path) => typeof path !== "string" || path.length === 0)
+      || (targetPaths !== null && (targetPaths.length === 0 || targetPaths.some((path) => !pathWasAdmitted(path, record!.targetPaths))))) {
+    throw err("doc_preflight_denied", "Requested write paths are outside the DOC_PREFLIGHT targetPaths", { remediationOwner: "caller" });
+  }
+  if (!record.readDocs.every((doc) => isRecord(doc) && typeof doc.path === "string" && typeof doc.sha256 === "string")) {
+    throw err("doc_preflight_denied", "DOC_PREFLIGHT readDocs must contain path/SHA records", { remediationOwner: "caller" });
+  }
+  const readDocs = new Map(record.readDocs.map((doc) => [doc.path, doc.sha256]));
+  if (!readDocs.has("README.md") || !readDocs.has("AGENTS.md")) {
+    throw err("doc_preflight_denied", "DOC_PREFLIGHT must record the root README.md and AGENTS.md (or AGENTS.md as MISSING)", { remediationOwner: "caller" });
+  }
+  for (const [path, expectedSha] of readDocs) {
+    if (expectedSha === "MISSING") {
+      if (await fs.stat(await resolveWorkspacePath(ws, path)).then(() => true).catch(() => false)) {
+        throw err("doc_preflight_denied", `DOC_PREFLIGHT incorrectly records ${path} as MISSING`, { remediationOwner: "caller" });
+      }
+      continue;
+    }
+    if (!/^[0-9a-f]{64}$/i.test(expectedSha)) throw err("doc_preflight_denied", `Invalid document SHA for ${path}`);
+    const absolute = await resolveWorkspacePath(ws, path, { mustExist: true });
+    const actual = sha256Hex(await fs.readFile(absolute, "utf8"));
+    if (actual !== expectedSha.toLowerCase()) throw err("doc_preflight_stale", `DOC_PREFLIGHT document hash is stale for ${path}`, { remediationOwner: "caller" });
+  }
+  const ancestry = await runJailedExec({ ws, argv: ["git", "merge-base", "--is-ancestor", record.baseSha, "HEAD"], timeoutSec: 15, outputLimit: 1024 });
+  if (ancestry.exitCode !== 0) throw err("doc_preflight_stale", "DOC_PREFLIGHT baseSha is not an ancestor of this workspace HEAD", { remediationOwner: "caller" });
+  const currentBase = await runJailedExec({ ws, argv: ["git", "rev-parse", "--verify", `refs/remotes/origin/${defaultRef}`], timeoutSec: 15, outputLimit: 1024 });
+  if (currentBase.exitCode !== 0 || currentBase.stdout.trim() !== record.baseSha) {
+    throw err("doc_preflight_stale", `DOC_PREFLIGHT baseSha is stale against origin/${defaultRef}`, { remediationOwner: "caller" });
+  }
+  const requestedPaths = targetPaths ?? (await runJailedExec({ ws, argv: ["git", "diff", "--name-only", `${record.baseSha}...HEAD`], timeoutSec: 20, outputLimit: 8192 })).stdout
+    .split("\n").map((path) => path.trim()).filter(Boolean);
+  if (requestedPaths.some((path) => !pathWasAdmitted(path, record!.targetPaths))) {
+    throw err("doc_preflight_denied", "Workspace changes since baseSha include paths outside DOC_PREFLIGHT targetPaths", { remediationOwner: "caller" });
   }
 }
 
@@ -932,6 +1076,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, [path]);
         if (issueId) await verifyIssueWritable(client, issueId);
         else if (ws.sourceIssueId) {
           try { await verifyIssueWritable(client, ws.sourceIssueId); } catch { /* workspace-level write without issue scope: allowed */ }
@@ -1029,6 +1174,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, null);
         if (issueId) await verifyIssueWritable(client, issueId);
         assertNoDirectGitPublicationViaExec(argv as string[]);
         await enforceWriteScope(client, { issueId: issueId ?? ws.sourceIssueId, argv: argv as string[], tool: "paperclipWorkspaceExec" });
@@ -1105,6 +1251,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, null);
         let identifier: string | null = null;
         if (issueId) {
           const info = await verifyIssueWritable(client, issueId);
@@ -1144,10 +1291,14 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, files);
         if (issueId) await verifyIssueWritable(client, issueId);
         else if (ws.sourceIssueId) {
           try { await verifyIssueWritable(client, ws.sourceIssueId); } catch { /* workspace-level: allowed */ }
         }
+        const stagedBefore = await runJailedExec({ ws, argv: ["git", "diff", "--cached", "--name-only"], timeoutSec: 15, outputLimit: 8192 });
+        const priorPaths = stagedBefore.stdout.split("\n").map(v => v.trim()).filter(Boolean);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, [...files, ...priorPaths]);
         const writeScope = await enforceWriteScope(client, { issueId: issueId ?? ws.sourceIssueId, paths: files, tool: "paperclipGitCommit" });
         await enforceDeploymentRoot(client, { issueId: issueId ?? ws.sourceIssueId, targetPath: ws.realCwd, workspacePath: ws.realCwd, tool: "paperclipGitCommit" });
         for (const f of files) await resolveWorkspacePath(ws, f, { mustExist: true });
@@ -1163,6 +1314,9 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
             assertPathInScope(writeScope, line, "paperclipGitCommit");
           }
         }
+        const stagedAfter = await runJailedExec({ ws, argv: ["git", "diff", "--cached", "--name-only"], timeoutSec: 15, outputLimit: 8192 });
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId,
+          stagedAfter.stdout.split("\n").map(v => v.trim()).filter(Boolean));
         const cached = await runJailedExec({ ws, argv: ["git", "diff", "--cached"], timeoutSec: 20, outputLimit: 131072 });
         if (cached.stdout.trim().length === 0) throw err("empty_commit", "Nothing staged for the given file list; refusing empty commit");
         const secrets = scanForSecrets(cached.stdout);
@@ -1204,6 +1358,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, null);
         if (issueId) await verifyIssueWritable(client, issueId);
         await enforceDeploymentRoot(client, { issueId: issueId ?? ws.sourceIssueId, targetPath: ws.realCwd, workspacePath: ws.realCwd, tool: "paperclipGitPush" });
         if ((remote ?? "origin") !== "origin") throw err("push_denied", "Only the origin remote is allowlisted");
@@ -1227,11 +1382,23 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
             requiredAction: "Bind an approved GitHub credential for the authorized write principal (company secret or managed GitHub connection); a placeholder token is not a credential",
           });
         }
+        // Reject remote.pushurl or URL rewriting to any unapproved destination.
+        const project = ws.projectId
+          ? await client.requestJson<Record<string, unknown>>("GET", "/projects/" + enc(ws.projectId))
+          : null;
+        const projectCodebase = project && isRecord(project.codebase) ? project.codebase : null;
+        const approvedRepoUrl = typeof projectCodebase?.repoUrl === "string" ? projectCodebase.repoUrl : null;
+        const actualPush = await runJailedExec({ ws, argv: ["git", "remote", "get-url", "--push", "origin"], timeoutSec: 15, outputLimit: 1024 });
+        const actualPushUrl = actualPush.stdout.trim();
+        if (actualPush.exitCode !== 0 || !approvedRepoUrl
+          || !repositorySlug(actualPushUrl) || repositorySlug(actualPushUrl) !== repositorySlug(approvedRepoUrl)) {
+          throw err("push_denied", "Git push destination does not match the project canonical GitHub repository", { remediationOwner: "harness" });
+        }
         const argv = ["git", "push", "origin", target];
         if (allowForce) argv.splice(2, 0, "--force-with-lease");
         const push = await runJailedExec({ ws, argv, timeoutSec: 90, outputLimit: 16384, extraEnv: credentialEnv });
         if (push.exitCode !== 0) throw err("git_failed", `git push failed: ${(push.stdout + push.stderr).slice(0, 800)}`, { remediationOwner: "harness" });
-        const ls = await runJailedExec({ ws, argv: ["git", "ls-remote", "origin", target], timeoutSec: 30, outputLimit: 1024, extraEnv: credentialEnv });
+        const ls = await runJailedExec({ ws, argv: ["git", "ls-remote", actualPushUrl, "refs/heads/" + target], timeoutSec: 30, outputLimit: 1024, extraEnv: credentialEnv });
         const remoteSha = ls.exitCode === 0 ? ls.stdout.trim().split(/\s+/)[0] : null;
         const after = await gitHead(ws);
         const match = Boolean(remoteSha && after.head && remoteSha.startsWith(after.head.slice(0, 12)));
@@ -1266,6 +1433,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         const mutationCtx = await authorizeWorkspaceMutation(client, { runId: runId ?? null, operatorRunId: operatorRunId ?? null });
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, null);
         if (issueId) await verifyIssueWritable(client, issueId);
         const trackingIssue = issueId ?? ws.sourceIssueId;
         if (!trackingIssue) throw err("review_evidence_unlinked", "PR creation requires an originating Paperclip issue", { remediationOwner: "CHO" });

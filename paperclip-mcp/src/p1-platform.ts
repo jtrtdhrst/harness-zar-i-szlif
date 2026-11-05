@@ -12,6 +12,7 @@ import {
   redactWorkspaceOutput,
   authorizeWorkspaceMutation,
   assertWorkspaceMutationScope,
+  enforceRepositoryDocPreflight,
   recordWorkspaceMutationAudit,
   type WorkspaceMutationContext,
 } from "./workspace-native.js";
@@ -237,8 +238,10 @@ export function createP1PlatformTools(client: PaperclipApiClient): P1PlatformToo
         }
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+
         if (issueId) await verifyIssueWritable(client, issueId);
         if (unifiedDiff.includes("\0")) throw err("invalid_arguments", "NUL byte in unifiedDiff refused");
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, [path]);
         await enforceWriteScope(client, { issueId: issueId ?? ws.sourceIssueId, paths: [path], tool: "paperclipWorkspaceApplyUnifiedDiff" });
         await enforceDeploymentRoot(client, { issueId: issueId ?? ws.sourceIssueId, targetPath: ws.realCwd, workspacePath: ws.realCwd, tool: "paperclipWorkspaceApplyUnifiedDiff" });
         const secrets = scanForSecrets(unifiedDiff);
@@ -323,7 +326,9 @@ export function createP1PlatformTools(client: PaperclipApiClient): P1PlatformToo
         }
         const ws = await resolveWorkspace(client, { workspaceId: workspaceId ?? null, issueId: issueId ?? null });
         assertWorkspaceMutationScope(mutationCtx, ws, issueId ?? null);
+
         if (issueId) await verifyIssueWritable(client, issueId);
+        await enforceRepositoryDocPreflight(client, ws, mutationCtx, issueId ?? ws.sourceIssueId, (changes ?? []).map((ch) => ch.path));
         await enforceWriteScope(client, { issueId: issueId ?? ws.sourceIssueId, paths: (changes ?? []).map((ch) => ch.path), tool: "paperclipWorkspaceBatchChange" });
         await enforceDeploymentRoot(client, { issueId: issueId ?? ws.sourceIssueId, targetPath: ws.realCwd, workspacePath: ws.realCwd, tool: "paperclipWorkspaceBatchChange" });
         if (expectedHeadSha) {
@@ -530,4 +535,3 @@ export function createP1PlatformTools(client: PaperclipApiClient): P1PlatformToo
     ),
   ];
 }
-
