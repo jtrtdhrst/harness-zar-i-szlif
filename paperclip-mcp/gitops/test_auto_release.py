@@ -110,7 +110,7 @@ class ReleaseSafetyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     m.assess_release_attestation(invalid)
 
-    def test_native_review_requires_immutable_independent_issue_pr_head_binding(self):
+    def test_native_review_evidence_fails_closed_without_trusted_verifier(self):
         evidence={
             "source":"paperclip-first-class-decision", "verified":True, "revoked":False,
             "binding":{"immutable":True,"issue_id":"KOMAA-1602","repository":m.REPO,
@@ -118,8 +118,8 @@ class ReleaseSafetyTests(unittest.TestCase):
             "decision":{"id":"decision-1","outcome":"approved","status":"active",
                         "reviewer_id":"cto-1","executor_id":"engineer-1"},
         }
-        self.assertEqual(m.assess_native_review_evidence(evidence,"KOMAA-1602",25,"a"*40),"decision-1")
         for invalid in [
+            evidence,
             None,
             {**evidence,"verified":False},
             {**evidence,"revoked":True},
@@ -128,6 +128,7 @@ class ReleaseSafetyTests(unittest.TestCase):
             {**evidence,"binding":{**evidence["binding"],"repository":"attacker/repo"}},
             {**evidence,"binding":{**evidence["binding"],"pr_number":26}},
             {**evidence,"binding":{**evidence["binding"],"head_sha":"b"*40}},
+            {**evidence,"binding":{**evidence["binding"],"head_sha":"stale-head"}},
             {**evidence,"decision":{**evidence["decision"],"status":"revoked"}},
             {**evidence,"decision":{**evidence["decision"],"outcome":"changes_requested"}},
             {**evidence,"decision":{**evidence["decision"],"reviewer_id":"engineer-1"}},
@@ -136,6 +137,9 @@ class ReleaseSafetyTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(RuntimeError):
                     m.assess_native_review_evidence(invalid,"KOMAA-1602",25,"a"*40)
+
+        with self.assertRaises(RuntimeError):
+            m.assess_native_review_evidence(evidence,"KOMAA-1564",25,"a"*40)
 
     def test_live_native_review_adapter_denies_without_supported_api(self):
         self.assertIsNone(m.native_review_evidence("KOMAA-1602",25,"a"*40))

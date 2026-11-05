@@ -130,32 +130,8 @@ def assess_release_attestation(data):
     return pr
 
 def assess_native_review_evidence(evidence, issue_id, pr_number, head_sha):
-    """Require an authoritative, immutable Paperclip decision bound to this PR head.
-
-    This envelope is deliberately stricter than issue execution state or a
-    work-product snapshot. Until the service can supply verified immutable
-    decision evidence and the controller has approved read authentication,
-    native_review_evidence() returns None and promotion is denied.
-    """
-    if not isinstance(issue_id, str) or not issue_id or not isinstance(evidence, dict) or evidence.get("source") != "paperclip-first-class-decision":
-        raise RuntimeError("Authoritative Paperclip review decision unavailable")
-    if evidence.get("verified") is not True or evidence.get("revoked") is not False:
-        raise RuntimeError("Paperclip decision is unverified or revoked")
-    binding = evidence.get("binding")
-    decision = evidence.get("decision")
-    if not isinstance(binding, dict) or not isinstance(decision, dict):
-        raise RuntimeError("Paperclip decision evidence malformed")
-    if (binding.get("immutable") is not True or binding.get("issue_id") != issue_id
-            or binding.get("repository") != REPO or binding.get("pr_number") != pr_number
-            or binding.get("head_sha") != head_sha):
-        raise RuntimeError("Paperclip decision is not immutably bound to this issue, repository and PR head")
-    if (decision.get("outcome") != "approved" or decision.get("status") != "active"
-            or not isinstance(decision.get("id"), str) or not decision["id"]
-            or not isinstance(decision.get("reviewer_id"), str) or not decision["reviewer_id"]
-            or not isinstance(decision.get("executor_id"), str)
-            or decision["reviewer_id"] == decision["executor_id"]):
-        raise RuntimeError("An active first-class decision by an independent reviewer is required")
-    return decision["id"]
+    """Deny until a trusted Paperclip response verifier and read auth exist."""
+    raise RuntimeError("Authoritative Paperclip review decision unavailable")
 
 def native_review_evidence(issue_id, pr_number, head_sha):
     """No live Paperclip read adapter is configured; fail closed until one exists."""
