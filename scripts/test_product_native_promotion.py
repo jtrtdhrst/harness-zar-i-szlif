@@ -88,7 +88,7 @@ class ProductPromotionTests(unittest.TestCase):
                     p.checks(SOURCE)
 
     def test_missing_native_gate_fails_closed(self):
-        with patch.object(p.NATIVE_GATE,"is_file",return_value=False):
+        with patch.object(p,"NATIVE_GATE",p.Path("/__missing_paperclip_gate__/none.py")):
             with self.assertRaisesRegex(p.Denied,"native_gate_not_installed"):
                 p.native_approval(12,SOURCE,NEW)
 
