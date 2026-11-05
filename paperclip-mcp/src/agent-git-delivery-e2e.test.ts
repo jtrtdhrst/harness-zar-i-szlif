@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -180,6 +180,7 @@ describe("native agent-run git commit and push contract (local bare remote)", ()
     const push = createWorkspaceNativeTools(fakeClient(f.cwd)).find(x => x.name === "paperclipGitPush")!;
     const response = await push.execute({ workspaceId: WORKSPACE, issueId: ISSUE, runId: RUN });
     expect(response.content[0]!.text).toMatch(/push_denied/i);
+    expect(await readdir(join(f.bare, "refs", "heads"))).toEqual([]);
   });
   it.each([
     ["ended run", "succeeded", ISSUE],
