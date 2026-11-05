@@ -7,6 +7,39 @@ import { join } from "node:path";
 import { createWorkspaceNativeTools } from "./workspace-native.js";
 import { createP1PlatformTools } from "./p1-platform.js";
 
+const approvedTransport = vi.hoisted(() => ({ enabled: false, head: "", calls: [] as string[] }));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const { EventEmitter } = await import("node:events");
+  const { PassThrough } = await import("node:stream");
+  return {
+    ...actual,
+    spawn: ((command: string, args: string[], options: unknown) => {
+      if (approvedTransport.enabled && command === "git" && (args.includes("push") || args.includes("ls-remote"))) {
+        const child = new EventEmitter() as EventEmitter & {
+          stdout: InstanceType<typeof PassThrough>;
+          stderr: InstanceType<typeof PassThrough>;
+          kill: (signal?: string) => boolean;
+        };
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.kill = () => true;
+        const mode = args.includes("push") ? "push" : "ls-remote";
+        approvedTransport.calls.push(mode);
+        queueMicrotask(() => {
+          if (mode === "ls-remote") child.stdout.write(approvedTransport.head + "\trefs/heads/KOMAA-TEST\n");
+          child.stdout.end();
+          child.stderr.end();
+          child.emit("close", 0);
+        });
+        return child as never;
+      }
+      return actual.spawn(command, args, options as never);
+    }) as typeof actual.spawn,
+  };
+});
+
+
 const COMPANY = "11111111-1111-4111-8111-111111111111";
 const AGENT = "ada5390b-b87e-43f3-a250-3657811e7a0c";
 const OTHER = "ff703eba-3c3d-46f0-b265-df0db1101a19";
@@ -17,6 +50,9 @@ const RUN = "66666666-6666-4666-8666-666666666666";
 const cleanupPaths: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  approvedTransport.enabled = false;
+  approvedTransport.head = "";
+  approvedTransport.calls.length = 0;
   await Promise.all(cleanupPaths.splice(0).map(p => rm(p, { recursive: true, force: true })));
 });
 function git(cwd: string, ...args: string[]) {
@@ -105,6 +141,30 @@ describe("native agent-run git commit and push contract (local bare remote)", ()
     const committed = JSON.parse(result.content[0]!.text);
     expect(committed.after.head).toMatch(/^[0-9a-f]{40}$/);
     expect(committed.after.head).not.toBe(committed.before.head);
+  });
+  it("pushes approved canonical GitHub branch and confirms remote SHA with deterministic transport", async () => {
+    const f = await fixture();
+    git(f.cwd, "remote", "set-url", "--push", "origin", "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git");
+    vi.stubEnv("PAPERCLIP_DOC_PREFLIGHT_MODE", "enforce");
+    vi.stubEnv("GH_TOKEN", "ghp_" + "x".repeat(40));
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("PAPERCLIP_WORKSPACE_OPS_LEDGER_DIR", join(f.root, "ledger"));
+    const tools = createWorkspaceNativeTools(fakeClient(f.cwd));
+    const commit = tools.find(x => x.name === "paperclipGitCommit")!;
+    const push = tools.find(x => x.name === "paperclipGitPush")!;
+    const c = await commit.execute({
+      workspaceId: WORKSPACE, issueId: ISSUE, runId: RUN,
+      files: ["mcp/paperclip/delivery.txt"], message: "test: canonical push approved by preflight",
+    });
+    const committed = JSON.parse(c.content[0]!.text);
+    expect(committed.after.head).toMatch(/^[0-9a-f]{40}$/);
+    approvedTransport.enabled = true;
+    approvedTransport.head = committed.after.head;
+    const p = await push.execute({ workspaceId: WORKSPACE, issueId: ISSUE, runId: RUN });
+    const pushed = JSON.parse(p.content[0]!.text);
+    expect(pushed.shaMatch).toBe(true);
+    expect(pushed.remoteSha).toBe(committed.after.head);
+    expect(approvedTransport.calls).toEqual(["push", "ls-remote"]);
   });
   it("rejects a local or redirected Git push destination", async () => {
     const f = await fixture();
