@@ -3,12 +3,21 @@ on:
   pull_request:
     paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
   push:
+    branches: [main]
     paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
+permissions:
+  contents: read
+concurrency:
+  group: opik-enricher-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   safe-telemetry:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
