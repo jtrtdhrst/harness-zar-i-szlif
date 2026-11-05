@@ -173,16 +173,28 @@ def stats(hindsight,bank):
  safe={k:d[k] for k in keys if type(d.get(k))==int}
  finished=(d.get("operations_by_status") or {}).get("completed")
  if type(finished)==int:safe["completed_operations"]=finished
- for section in ("nodes_by_fact_type","links_by_fact_type",
-                 "links_by_link_type","operations_by_status"):
+ # External category names must never be emitted as-is to telemetry:
+ # they could contain credentials, private labels or upstream text.
+ category_allowlist={
+  "nodes_by_fact_type":frozenset(("world","experience","observation")),
+  "links_by_fact_type":frozenset(("world","experience","observation")),
+  "links_by_link_type":frozenset(("semantic","temporal","causal",
+                                 "entity","source","related","derived")),
+  "operations_by_status":frozenset(("pending","running","completed",
+                                    "failed","cancelled")),
+ }
+ for section,allowed in category_allowlist.items():
   source=d.get(section)
   if isinstance(source,dict):
-   allowed={"world","experience","observation"} if section=="nodes_by_fact_type" else None
    values={}
+   unknown_total=0
    for key,value in source.items():
-    if not isinstance(key,str) or len(key)>60:continue
-    if allowed is not None and key not in allowed:continue
-    if type(value)==int and 0<=value<=1000000000:values[key]=value
+    if type(value)!=int or not 0<=value<=1000000000:continue
+    if isinstance(key,str) and key in allowed:
+     values[key]=value
+    else:
+     unknown_total=min(1000000000,unknown_total+value)
+   if unknown_total:values["other"]=unknown_total
    if values:safe[section]=values
  for field in ("last_memory_write_at","last_consolidated_at"):
   value=d.get(field)
