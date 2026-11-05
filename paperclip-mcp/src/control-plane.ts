@@ -3943,30 +3943,66 @@ function deliveryCycleToolsPartA(client: PaperclipApiClient): ControlPlaneToolDe
           }
           if (linkedRuns.length >= 10) break;
         }
+        const products = (Array.isArray(workProducts) ? workProducts : []).filter(isRecord);
+        const formalApprovals = (Array.isArray(approvals) ? approvals : []).filter(isRecord);
+        const executionState = isRecord(issue) && isRecord(issue.executionState) ? issue.executionState : null;
+        // Native Paperclip stage decisions are NOT rows in /issues/:id/approvals.
+        // Surface the real persisted decision without fabricating a Board approval.
+        const nativeDecisionId =
+          isRecord(issue) && issue.status === "done" &&
+          executionState?.status === "completed" &&
+          executionState?.lastDecisionOutcome === "approved" &&
+          typeof executionState.lastDecisionId === "string" &&
+          executionState.lastDecisionId.length > 0
+            ? executionState.lastDecisionId
+            : null;
+        // GitHub work products keep their immutable candidate in metadata.headSha.
+        const shas = new Set(
+          products
+            .map((w) => {
+              const metadata = isRecord(w.metadata) ? w.metadata : null;
+              const value = w.commitSha ?? w.sha ?? metadata?.headSha;
+              return typeof value === "string" ? value : "";
+            })
+            .filter(Boolean),
+        );
+        const formalApprovalShas = formalApprovals
+          .map((a) => a.candidateSha ?? a.sha)
+          .filter((s): s is string => typeof s === "string" && s.length > 0);
+        // A decision ID alone does not prove which SHA was reviewed. Require an
+        // issue work product whose acceptedHeadSha is bound to that exact native
+        // decision, with both merged and review-approved states.
+        const nativeAcceptedShas = nativeDecisionId
+          ? products.flatMap((w) => {
+              const meta = isRecord(w.metadata) ? w.metadata : null;
+              const head = meta?.headSha;
+              return (
+                w.status === "merged" &&
+                w.reviewState === "approved" &&
+                meta?.paperclipReviewDecisionId === nativeDecisionId &&
+                typeof head === "string" &&
+                head.length > 0 &&
+                meta?.acceptedHeadSha === head
+              ) ? [head] : [];
+            })
+          : [];
+        const approvalShas = new Set([...formalApprovalShas, ...nativeAcceptedShas]);
         const gaps: string[] = [];
         if (!issue) gaps.push("issue_not_found");
         if (!workspace) gaps.push("no_execution_workspace");
-        if (!Array.isArray(workProducts) || workProducts.length === 0) gaps.push("no_work_products");
-        if (!Array.isArray(approvals) || approvals.length === 0) gaps.push("no_approvals");
+        if (products.length === 0) gaps.push("no_work_products");
+        if (formalApprovals.length === 0 && !nativeDecisionId) gaps.push("no_approvals");
+        if (nativeDecisionId && nativeAcceptedShas.length === 0 && formalApprovals.length === 0) {
+          gaps.push("native_review_sha_unverified");
+        }
         if (!evidenceDoc) gaps.push("no_acceptance_evidence");
         if (!isRecord(issue) || (issue.status !== "done" && issue.status !== "in_review")) gaps.push("not_accepted_status");
-        // immutable review tuple check: approval should reference the workspace candidate SHA
-        const shas = new Set(
-          (Array.isArray(workProducts) ? workProducts : [])
-            .filter(isRecord)
-            .map((w) => String((w as Record<string, unknown>).commitSha ?? (w as Record<string, unknown>).sha ?? ""))
-            .filter(Boolean),
-        );
-        const approvalShas = new Set(
-          (Array.isArray(approvals) ? approvals : [])
-            .filter(isRecord)
-            .map((a) => String((a as Record<string, unknown>).candidateSha ?? (a as Record<string, unknown>).sha ?? ""))
-            .filter(Boolean),
-        );
         let shaMatch: boolean | null = null;
         if (shas.size > 0 && approvalShas.size > 0) {
           shaMatch = [...approvalShas].some((s) => shas.has(s));
           if (!shaMatch) gaps.push("approval_sha_mismatch");
+        } else if (shas.size > 0 && formalApprovals.length > 0 && approvalShas.size === 0) {
+          gaps.push("approval_sha_unverified");
         }
         return {
           issueId,
@@ -3976,6 +4012,7 @@ function deliveryCycleToolsPartA(client: PaperclipApiClient): ControlPlaneToolDe
           closeReadiness: readiness,
           workProducts,
           approvals,
+          nativeReview: nativeDecisionId ? { decisionId: nativeDecisionId, outcome: "approved", verifiedHeadShas: nativeAcceptedShas } : null,
           acceptanceEvidence: evidenceDoc ? { present: true } : { present: false },
           candidateShas: [...shas],
           approvalShas: [...approvalShas],
