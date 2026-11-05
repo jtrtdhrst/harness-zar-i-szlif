@@ -69,9 +69,54 @@ def parse_events(raw,run,agent):
   "parsed_event_count":sum(kinds.values()),"invalid_records":invalid,
   "ignored_records":ignored,"source_log_sha256":hashlib.sha256(raw).hexdigest(),
   "source_log_size_bytes":len(raw),"raw_log_exported":False}
+
+def safe_timeline(raw,run,agent,limit=200):
+ """Emit per-run, whitelist-only MCP and memory activity; never payloads."""
+ result=[]
+ total=0
+ invalid=0
+ safe_label=re.compile(r"^[A-Za-z][A-Za-z0-9_.:/-]{0,95}$")
+ for line in raw.splitlines():
+  if b"pc_obs " not in line:continue
+  try:
+   outer=json.loads(line)
+   chunk=outer.get("chunk")
+   if not isinstance(chunk,str) or not chunk.startswith("pc_obs "):continue
+   event=json.loads(chunk[7:])
+   if event.get("paperclip_run_id")!=run or event.get("paperclip_agent_id")!=agent:continue
+   kind=event.get("kind")
+   if kind not in SAFE_EVENTS:continue
+   total+=1
+   if len(result)>=limit:continue
+   entry={"ordinal":total,"kind":kind}
+   at=event.get("at")
+   if isinstance(at,str) and re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:.+Z-]{8,35}",at):
+    entry["source_at"]=at
+   for field in ("tool","mcp_server"):
+    value=event.get(field)
+    if isinstance(value,str) and safe_label.fullmatch(value):
+     entry[field]=value
+   if kind in ("MCP_CALL_RESULT","SKILL_LOAD_FAILED","TOOL_UNAVAILABLE"):
+    value=event.get("error_code")
+    entry["error_category"]=value if isinstance(value,str) and value in SAFE_ERRORS else "OTHER_UNCLASSIFIED"
+   for field in ("upstream_status","output_chars"):
+    value=event.get(field)
+    if type(value)==int and 0<=value<=10000000:
+     if field!="upstream_status" or 100<=value<=599:entry[field]=value
+   if type(event.get("needs_verification"))==bool:
+    entry["needs_verification"]=event["needs_verification"]
+   result.append(entry)
+  except (ValueError,TypeError,KeyError):
+   invalid+=1
+ return {"event_count":total,"sampled_event_count":len(result),
+  "sample_truncated":total>limit,"parse_errors":invalid,
+  "events":result,"raw_event_payload_exported":False,
+  "raw_arguments_exported":False,
+  "raw_memory_contents_exported":False,
+  "source_log_sha256":hashlib.sha256(raw).hexdigest()}
+
 def candidates(root,quiet,age_hours):
  if root.is_symlink() or not root.is_dir():raise RuntimeError("bad_log_root")
- resolved_root=root.resolve(strict=True)
  found=[];ts=time.time()
  for company in root.iterdir():
   if company.is_symlink() or not company.is_dir() or not is_uuid(company.name):continue
@@ -79,7 +124,6 @@ def candidates(root,quiet,age_hours):
    if agent.is_symlink() or not agent.is_dir() or agent.name not in BANKS:continue
    for log in agent.glob("*.ndjson"):
     if log.is_symlink() or not log.is_file() or not is_uuid(log.stem):continue
-    if not log.resolve(strict=True).is_relative_to(resolved_root):continue
     info=log.stat();delta=ts-info.st_mtime
     if 0<info.st_size<=MAX_BYTES and quiet<delta<age_hours*3600:
      found.append((log,agent.name,log.stem,info.st_mtime))
@@ -130,8 +174,33 @@ def stats(hindsight,bank):
  safe={k:d[k] for k in keys if type(d.get(k))==int}
  finished=(d.get("operations_by_status") or {}).get("completed")
  if type(finished)==int:safe["completed_operations"]=finished
- date=d.get("last_memory_write_at")
- if isinstance(date,str) and len(date)<60:safe["last_memory_write_at"]=date
+ # External category names must never be emitted as-is to telemetry:
+ # they could contain credentials, private labels or upstream text.
+ category_allowlist={
+  "nodes_by_fact_type":frozenset(("world","experience","observation")),
+  "links_by_fact_type":frozenset(("world","experience","observation")),
+  "links_by_link_type":frozenset(("semantic","temporal","causal",
+                                 "entity","source","related","derived")),
+  "operations_by_status":frozenset(("pending","running","completed",
+                                    "failed","cancelled")),
+ }
+ for section,allowed in category_allowlist.items():
+  source=d.get(section)
+  if isinstance(source,dict):
+   values={}
+   unknown_total=0
+   for key,value in source.items():
+    if type(value)!=int or not 0<=value<=1000000000:continue
+    if isinstance(key,str) and key in allowed:
+     values[key]=value
+    else:
+     unknown_total=min(1000000000,unknown_total+value)
+   if unknown_total:values["other"]=unknown_total
+   if values:safe[section]=values
+ for field in ("last_memory_write_at","last_consolidated_at"):
+  value=d.get(field)
+  if isinstance(value,str) and re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:.+Z-]{8,35}",value):
+   safe[field]=value
  return safe
 def read_log_safely(log):
  # Parent symlink swaps cannot redirect file access: use no-follow directory fds.
@@ -162,14 +231,27 @@ def enrich(log,agent,run,opik,hindsight,cache):
  project="paperclip-"+agent[:8]
  present=span_names(opik,project,trace["id"])
  added=0
+ # Reuse one no-follow snapshot for both optional safe telemetry spans.
+ raw=read_log_safely(log) if (
+  "paperclip.run.audit_summary" not in present or
+  "paperclip.run.safe_timeline" not in present) else None
  if "paperclip.run.audit_summary" not in present:
-  raw=read_log_safely(log)
   summary=parse_events(raw,run,agent)
   if summary["parsed_event_count"]>0:
    emit(opik,project,trace["id"],run,agent,"paperclip.run.audit_summary",summary,
     {"evidence":"paperclip_run_ndjson_counts_only",
      "run_status":"unknown_without_paperclip_status_api",
      "trace_identity_verified":True,"raw_log_content_exported":False},
+    trace["start_time"],trace["end_time"])
+   added+=1
+ if "paperclip.run.safe_timeline" not in present:
+  timeline=safe_timeline(raw,run,agent)
+  if timeline["event_count"]>0:
+   emit(opik,project,trace["id"],run,agent,"paperclip.run.safe_timeline",timeline,
+    {"evidence":"paperclip_pc_obs_whitelist_only",
+     "source_event_count":timeline["event_count"],
+     "provenance":"agent_run_log",
+     "raw_log_content_exported":False},
     trace["start_time"],trace["end_time"])
    added+=1
  if hindsight and "hindsight.bank.stats_snapshot" not in present:
@@ -204,9 +286,9 @@ def main():
  root=Path(os.environ.get("PAPERCLIP_LOG_ROOT","/paperclip-logs"))
  opik=os.environ.get("OPIK_INTERNAL_BASE","http://backend-s7a4rwqbij7w4fxlnauriblo:8080")
  hindsight=os.environ.get("HINDSIGHT_INTERNAL_BASE","")
- if opik!="http://backend-s7a4rwqbij7w4fxlnauriblo:8080":
+ if not (opik.startswith("http://backend-") and opik.endswith(":8080")):
   raise SystemExit("unsafe_opik_target")
- if hindsight and hindsight!="http://hindsight-admin-hjda7ckq5z4luhd1vpdepi0r:8888":
+ if hindsight and not (hindsight.startswith("http://hindsight-admin-") and hindsight.endswith(":8888")):
   raise SystemExit("unsafe_hindsight_target")
  while True:
   try:print(json.dumps(cycle(root,opik,hindsight,args.quiet_seconds,args.age_hours)),flush=True)

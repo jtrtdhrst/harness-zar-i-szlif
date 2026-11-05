@@ -1,5 +1,0 @@
-# Opik Run Enricher
-
-Read-only, source-pinned service to correlate genuine **completed** Paperclip run NDJSON logs and Hindsight **bank stats** to existing Opik traces. It never generates fake runs; no prompt text, tool arguments, MCP tool results, secrets, memory facts or documents exported. Correct join requires exact run UUID plus agent UUID from Opik. Finalization requires trace end_time and a quiet log. Existing named spans are skipped; new IDs are deterministic. Unverified bank use is labelled `unverified`, never presented as proof that Hindsight was accessed in the run. Billing remains unverified unless priced from independent billing evidence.
-
-Run unit tests: `python -m unittest -v test_worker.py`. Only statically known 14 agent/bank mappings are included. Deploy in a single private Coolify service with read-only Paperclip log bind, `coolify` + existing `hindsight-isolated` networks, no ports, Linux UID 1000, read-only container, capability drop, and restricted Opik/Hindsight internal URLs. No new Cloudflare Worker. Verify actual traces through Opik MCP. Source owners: CHO for release; independent CTO reviewer. No connection to raw global memory bank.
