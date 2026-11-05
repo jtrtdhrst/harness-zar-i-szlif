@@ -118,5 +118,21 @@ class ProductPromotionTests(unittest.TestCase):
             with self.assertRaisesRegex(gate.Denied,"invalid_database_container"):
                 gate.read_rows(p.REPO,155,"bad/name")
 
+    def test_patch_payload_is_escaped_json_decoded_as_php_associative_array(self):
+        import json
+        from types import SimpleNamespace
+        observed=[]
+        def fake_run(argv,timeout=30,allow_fail=False):
+            observed.append(argv)
+            return SimpleNamespace(stdout='{"http":200,"data":{}}',returncode=0)
+        body={"sha":NEW,"force":False}
+        with patch.object(p,"run",side_effect=fake_run):
+            p.github_api(f"/repos/{p.REPO}/git/refs/heads/ci-approved",method="patch",body=body)
+        self.assertEqual(len(observed),1)
+        php=observed[0][-1]
+        expected="json_decode(" + json.dumps(json.dumps(body)) + ", true)"
+        self.assertIn(expected,php)
+        self.assertNotIn("patch(" + json.dumps("/repos/"+p.REPO+"/git/refs/heads/ci-approved") + ", {",php)
+
 if __name__=="__main__":
     unittest.main()
