@@ -8,6 +8,8 @@ on:
       - "paperclip-mcp/**"
       - "scripts/paperclip_native_release_gate.py"
       - "scripts/test_paperclip_native_release_gate.py"
+      - "scripts/paperclip_mcp_auto_release.py"
+      - "scripts/test_paperclip_mcp_auto_release.py"
       - ".github/workflows/paperclip-mcp-ci.yml"
   workflow_dispatch:
 
@@ -23,7 +25,7 @@ jobs:
       - name: Build the production-equivalent MCP image
         run: docker build --build-arg PAPERCLIP_BASE=ghcr.io/paperclipai/paperclip:2026.1023.0 --file paperclip-mcp/Dockerfile --tag paperclip-mcp-ci:verified paperclip-mcp
       - name: Verify independent Paperclip release admission and negative cases
-        run: python3 -m unittest discover -s scripts -p test_paperclip_native_release_gate.py -v
+        run: python3 -m unittest discover -s scripts -p 'test_paperclip*.py' -v
       - name: Native Git permissions, review, API and gateway regression
         run: |
           docker run --rm --entrypoint /bin/sh paperclip-mcp-ci:verified -c '
