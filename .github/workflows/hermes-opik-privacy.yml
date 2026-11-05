@@ -1,0 +1,31 @@
+name: Hermes Opik privacy overlay
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/hermes-paperclip/observability/**'
+      - '.github/workflows/hermes-opik-privacy.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/hermes-paperclip/observability/**'
+      - '.github/workflows/hermes-opik-privacy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-pinned-privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax and fail-closed source checks
+        run: |
+          python -m py_compile integrations/hermes-paperclip/observability/apply_opik_telemetry_privacy.py
+          python -m py_compile integrations/hermes-paperclip/observability/privacy_rollout.py
+      - name: Synthetic credentials, memory and tool label privacy tests
+        run: |
+          python -m unittest discover -s integrations/hermes-paperclip/observability/tests -p 'test_opik_privacy_overlay.py' -v
