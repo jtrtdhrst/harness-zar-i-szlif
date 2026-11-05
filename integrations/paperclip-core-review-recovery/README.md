@@ -17,34 +17,47 @@ This patch ONLY suppresses the read-only blocker *projection* when all persisted
 This image repairs only the Core blocker and does not contain the Hermes adapter from PR #36. **It is not the final migration image.** Independent review must approve this low-level policy logic, then build one unified tagged image from the approved main branch including both source patches, with positive and negative E2E proof. Production Paperclip, production Hermes, its 3.2GB volume and 14 opencode_local agents are NOT changed by this PR. Do not directly patch database rows or impersonate CTO to approve the task.
 
 
-## H03 review checkout follow-on (KOMAA-1595; unapproved candidate)
+## H03 independent reviewer checkout and rework repair (KOMAA-1595)
 
-This additive `reviewer-checkout.patch` applies **after** the existing pre-dispatch
-`overlay.patch`; it does not replace or remove that independently merged fix.
-The immutable source is the issue-owned upstream Paperclip worktree commit
-`58bed91e27deba8c9420c7e95d09eb0501cc987c`, based on pinned upstream
-`1b4c803816e82b0265c8422e1a804327a7ed8c54`.
+This additive `reviewer-checkout.patch` applies **after** the existing approved
+pre-dispatch `overlay.patch`. It does not delete or duplicate that patch.
 
-The patch changes only `server/src/services/issues.ts` and the regression
-`server/src/__tests__/issue-stale-execution-lock-routes.test.ts`.
-It preserves `in_review` when the configured reviewer checks out a pending
-review, checks the exact current stage ID/type and policy participant **in the
-atomic database predicate**, and refuses incorrect expected statuses, stale
-stages, approval stages and foreign agents. The Dockerfile checks before/after
-SHA-256 values for both source files and executes bounded route regression
-tests in CI, before server TypeScript compilation.
+**Exact issue-owned source:** upstream Paperclip pinned base
+`1b4c803816e82b0265c8422e1a804327a7ed8c54` to Core candidate
+`78ac75e5178f2036ff01561c096967951f529bb3`. The patch includes five files:
 
-The issue-owned source tests passed **19/19** targeted checkout regressions.
-The separate H03 integration suite completed with exit code zero in an
-isolated rerun; a combined run had one intermittent failure and its independent
-rerun emitted an asynchronous PostgreSQL deadlock warning. A full server
-typecheck was not clean from the source worktree because of missing
-`@paperclipai/paperclip-runner` workspace declaration/build artifacts; a
-later bounded typecheck timed out. **The GitHub Docker build and its native
-CI are required**, and no typecheck PASS is claimed from the worktree.
+- `server/src/services/issues.ts`: fail-closed atomic reviewer admission,
+  exact observed stage ID, configured stage type/agent in executionPolicy,
+  and an explicit FALSE predicate when no authorized checkout status remains.
+- `server/src/routes/issues.ts`: passes the server-observed review-stage
+  snapshot, not a caller-supplied stage or fabricated grant.
+- `server/src/services/heartbeat.ts`: keeps internally authorized
+  resolved-interaction continuation separate from reviewer checkout.
+- `server/src/__tests__/issue-stale-execution-lock-routes.test.ts`:
+  positive admission plus wrong-agent, stale-stage, expected-status,
+  approval-stage, empty-predicate and resumed-interaction cases.
+- `server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts`:
+  independent Core H03 rework and dependency regression coverage.
 
-This is **not** a Hermes authorization release, a Paperclip Core production
-deploy, an Opik trace, or a CHO/CTO first-class approval. No existing PR #36
-or #48 head is altered. Do not switch agents or re-enable the held
-`paperclip-mcp-auto-release.timer` without its own trusted review gate,
-approved source promotion and independent production readback.
+**Verified in the isolated issue-owned Core worktree, exact source SHA above:**
+25 of 25 focused embedded-PostgreSQL tests PASS (no skips), one Vitest
+worker; server `tsc --noEmit` PASS after TypeScript workspace dependency
+build; `git diff --check` PASS. A standalone full runner/Rust binary build
+was not performed on the host (Cargo unavailable). The Dockerfile additionally
+checks source-file SHA-256 **before and after** patch application, refuses
+unknown upstream drift, runs PostgreSQL tests as a non-root user, and fails if
+any of 25 tests are skipped. GitHub CI/Docker build must be verified separately
+at the **final PR head**; historical test passes do not substitute for that.
+
+**Not authorized for release:** `KOMAA-1595` still requires a persisted
+independent CTO first-class approval bound to the exact source SHA.
+Prior CTO `changes_requested` and the native reviewer-participant drift remain
+open; a positive review comment is not an approval. GitHub PR #57 is
+unmerged, and this candidate is not a production deploy. The separate H03 MCP
+control-plane PR #48 and Hermes adapter/gateway PR #36 remain distinct.
+Real Paperclip-issued short-lived per-run Named MCP Wiki/Skills, VAI memory
+isolation/recall, Opik same-run trace, immutable image digest, production
+readback and rollback are all required before Hermes cohort migration.
+The Paperclip MCP auto-release timer is intentionally disabled pending the
+trusted independent review attestation gate in PR #55; never re-enable it on
+the strength of GitHub CI alone.
