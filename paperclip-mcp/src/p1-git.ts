@@ -982,7 +982,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
                 matched[0], exactPrUrl, headSha, mergeSha, decisionId, mergedAt,
               );
               if (patch) {
-                await client.requestJson("PATCH", \`/work-products/\${encodeURIComponent(String(matched[0].id))}\`, { body: patch });
+                await client.requestJson("PATCH", `/work-products/${encodeURIComponent(String(matched[0].id))}`, { body: patch });
                 receiptPersisted = true;
                 receiptReason = "ok";
               } else {
@@ -1007,7 +1007,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           nativeReceiptPersisted: receiptPersisted,
           receiptReason,
           possiblyCommitted: true,
-          evidenceReference: \`ledger:\${operationId}\`,
+          evidenceReference: `ledger:${operationId}`,
           attribution: mutationCtx,
         };
         if (ledgerKey) await writeLedger(ledgerKey, result);
