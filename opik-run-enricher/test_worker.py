@@ -39,4 +39,19 @@ class StatsTests(unittest.TestCase):
    self.assertEqual(safe["nodes_by_fact_type"],{"world":5,"experience":7})
    self.assertNotIn("SECRET",json.dumps(safe))
   finally:worker.api=original
+ def test_untrusted_category_names_never_exported(self):
+  original=worker.api
+  worker.api=lambda *args: {
+   "links_by_fact_type":{"world":2,"PRIVATE_BEARER_SECRET":11},
+   "links_by_link_type":{"semantic":3,"secret_credential_value":7},
+   "operations_by_status":{"completed":5,"unknown_token_name":8}}
+  try:
+   safe=worker.stats("http://allowed","hermes-cho")
+   self.assertEqual(safe["links_by_fact_type"],{"world":2,"other":11})
+   self.assertEqual(safe["links_by_link_type"],{"semantic":3,"other":7})
+   self.assertEqual(safe["operations_by_status"],{"completed":5,"other":8})
+   self.assertNotIn("SECRET",json.dumps(safe))
+   self.assertNotIn("credential",json.dumps(safe))
+   self.assertNotIn("token_name",json.dumps(safe))
+  finally:worker.api=original
 if __name__=="__main__":unittest.main()
