@@ -1688,3 +1688,46 @@ describe("delivery lineage native review SHA integrity", () => {
     expect(result.lineageValid).toBe(false);
   });
 });
+
+
+describe("delivery lineage originating run provenance", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  async function projectRun(runIssueId: string) {
+    mockFetchRoutes([
+      { match: `/issues/${ISSUE}/heartbeat-context`, body: { currentExecutionWorkspace: { id: WS } } },
+      { match: `/issues/${ISSUE}/work-products`, body: [{
+        id: "p1", type: "pull_request", status: "ready_for_review",
+        createdByRunId: RUN, metadata: { headSha: "c".repeat(40) },
+      }] },
+      { match: `/issues/${ISSUE}/approvals`, body: [] },
+      { match: `/issues/${ISSUE}/live-runs`, body: [] },
+      { match: `/issues/${ISSUE}/active-run`, body: null },
+      { match: `/issues/${ISSUE}/documents/acceptance-evidence`, body: null },
+      { match: `/execution-workspaces/${WS}/close-readiness`, body: {} },
+      // The company-wide newest runs page no longer contains this issue's run.
+      { match: `/companies/${COMPANY}/heartbeat-runs`, body: [] },
+      { match: `/heartbeat-runs/${RUN}/issues`, body: [] },
+      { match: `/heartbeat-runs/${RUN}`, body: {
+        id: RUN, issueId: runIssueId, agentId: AGENT, status: "succeeded",
+      } },
+      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "in_review" } },
+    ]);
+    const res = await getTool("paperclipGetDeliveryLineage").execute({ issueId: ISSUE, recentRunLimit: 2 });
+    return JSON.parse(res.content[0]?.text ?? "{}") as {
+      runs: { linked: Array<{ runId: string; source: string }> };
+    };
+  }
+
+  it("keeps an actual issue-scoped creator run even if outside the company recent-run window", async () => {
+    const result = await projectRun(ISSUE);
+    expect(result.runs.linked).toContainEqual(expect.objectContaining({
+      runId: RUN, source: "work_product_created_by_run",
+    }));
+  });
+
+  it("rejects cross-issue work-product run attribution even when a runId is present", async () => {
+    const result = await projectRun("99999999-9999-4999-8999-999999999999");
+    expect(result.runs.linked).toEqual([]);
+  });
+});
