@@ -129,6 +129,38 @@ def assess_release_attestation(data):
         raise RuntimeError("A GitHub Actions check is pending, failing or unreadable")
     return pr
 
+def assess_native_review_evidence(evidence, issue_id, pr_number, head_sha):
+    """Require an authoritative, immutable Paperclip decision bound to this PR head.
+
+    This envelope is deliberately stricter than issue execution state or a
+    work-product snapshot. Until the service can supply verified immutable
+    decision evidence and the controller has approved read authentication,
+    native_review_evidence() returns None and promotion is denied.
+    """
+    if not isinstance(issue_id, str) or not issue_id or not isinstance(evidence, dict) or evidence.get("source") != "paperclip-first-class-decision":
+        raise RuntimeError("Authoritative Paperclip review decision unavailable")
+    if evidence.get("verified") is not True or evidence.get("revoked") is not False:
+        raise RuntimeError("Paperclip decision is unverified or revoked")
+    binding = evidence.get("binding")
+    decision = evidence.get("decision")
+    if not isinstance(binding, dict) or not isinstance(decision, dict):
+        raise RuntimeError("Paperclip decision evidence malformed")
+    if (binding.get("immutable") is not True or binding.get("issue_id") != issue_id
+            or binding.get("repository") != REPO or binding.get("pr_number") != pr_number
+            or binding.get("head_sha") != head_sha):
+        raise RuntimeError("Paperclip decision is not immutably bound to this issue, repository and PR head")
+    if (decision.get("outcome") != "approved" or decision.get("status") != "active"
+            or not isinstance(decision.get("id"), str) or not decision["id"]
+            or not isinstance(decision.get("reviewer_id"), str) or not decision["reviewer_id"]
+            or not isinstance(decision.get("executor_id"), str)
+            or decision["reviewer_id"] == decision["executor_id"]):
+        raise RuntimeError("An active first-class decision by an independent reviewer is required")
+    return decision["id"]
+
+def native_review_evidence(issue_id, pr_number, head_sha):
+    """No live Paperclip read adapter is configured; fail closed until one exists."""
+    return None
+
 def verified_pr(sha):
     # The existing Coolify GitHub App reads PR provenance and green CI.
     # CHO/CTO's independent review belongs to Paperclip's native decision
@@ -158,7 +190,8 @@ def verified_pr(sha):
         out = json.loads(r.stdout.strip())
     except (ValueError, json.JSONDecodeError) as err:
         raise RuntimeError("Coolify PR attestation response invalid") from err
-    return assess_release_attestation(out)
+    pr = assess_release_attestation(out)
+    return {"number": pr, "head_sha": out["head_sha"]}
 
 def get_container_id():
     r = run(["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=" + PROJECT_ID,
@@ -314,8 +347,10 @@ def process(plan=False):
             print(json.dumps({"result":"not_a_paperclip_mcp_change","sha":remote,"changed_paths_count":len(changed)}))
             return 0
         pr = verified_pr(remote)
+        assess_native_review_evidence(native_review_evidence(os.environ.get("PAPERCLIP_RELEASE_ISSUE_ID"), pr["number"], pr["head_sha"]),
+                                      os.environ.get("PAPERCLIP_RELEASE_ISSUE_ID"), pr["number"], pr["head_sha"])
         if plan:
-            print(json.dumps({"result":"ready","sha":remote,"merged_pr":pr,"affected_paths_count":len(watched)}))
+            print(json.dumps({"result":"ready","sha":remote,"merged_pr":pr["number"],"affected_paths_count":len(watched)}))
             return 0
         failure = state.get("failed_release") or {}
         if failure.get("sha") == remote and time.time() - failure.get("time",0) < 600:
@@ -348,13 +383,13 @@ def process(plan=False):
             "deployed_sha":remote,
             "deployed_image_id":image_id,
             "previous_image_id":old["image_id"],
-            "merged_pr":pr,
+            "merged_pr":pr["number"],
             "last_successful_release":datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "failed_release":None,
         })
         save_state(state)
         print(json.dumps({"result":"deployed","source_sha":remote,
-                          "merged_pr":pr,"image_id":image_id,"healthy":result["health"]}))
+                          "merged_pr":pr["number"],"image_id":image_id,"healthy":result["health"]}))
         return 0
     finally:
         run(["docker", "exec", CORE, "rm", "-rf", path], allow_fail=True)

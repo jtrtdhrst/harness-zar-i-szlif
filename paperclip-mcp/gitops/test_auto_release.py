@@ -110,6 +110,39 @@ class ReleaseSafetyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     m.assess_release_attestation(invalid)
 
+    def test_native_review_requires_immutable_independent_issue_pr_head_binding(self):
+        evidence={
+            "source":"paperclip-first-class-decision", "verified":True, "revoked":False,
+            "binding":{"immutable":True,"issue_id":"KOMAA-1602","repository":m.REPO,
+                       "pr_number":25,"head_sha":"a"*40},
+            "decision":{"id":"decision-1","outcome":"approved","status":"active",
+                        "reviewer_id":"cto-1","executor_id":"engineer-1"},
+        }
+        self.assertEqual(m.assess_native_review_evidence(evidence,"KOMAA-1602",25,"a"*40),"decision-1")
+        for invalid in [
+            None,
+            {**evidence,"verified":False},
+            {**evidence,"revoked":True},
+            {**evidence,"binding":{**evidence["binding"],"immutable":False}},
+            {**evidence,"binding":{**evidence["binding"],"issue_id":"KOMAA-1564"}},
+            {**evidence,"binding":{**evidence["binding"],"repository":"attacker/repo"}},
+            {**evidence,"binding":{**evidence["binding"],"pr_number":26}},
+            {**evidence,"binding":{**evidence["binding"],"head_sha":"b"*40}},
+            {**evidence,"decision":{**evidence["decision"],"status":"revoked"}},
+            {**evidence,"decision":{**evidence["decision"],"outcome":"changes_requested"}},
+            {**evidence,"decision":{**evidence["decision"],"reviewer_id":"engineer-1"}},
+            {**evidence,"decision":{**evidence["decision"],"id":None}},
+        ]:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    m.assess_native_review_evidence(invalid,"KOMAA-1602",25,"a"*40)
+
+    def test_live_native_review_adapter_denies_without_supported_api(self):
+        self.assertIsNone(m.native_review_evidence("KOMAA-1602",25,"a"*40))
+        with self.assertRaisesRegex(RuntimeError,"Authoritative Paperclip review decision unavailable"):
+            m.assess_native_review_evidence(m.native_review_evidence("KOMAA-1602",25,"a"*40),
+                                            "KOMAA-1602",25,"a"*40)
+
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")
         self.assertEqual(m.SERVICE,"paperclip-mcp")
