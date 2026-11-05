@@ -190,6 +190,54 @@ def transform_hooks(original: str) -> str:
 
 def transform_segmented_lifecycle(original: str) -> str:
     text=replace_once(original,'trace_input = extract_last_user_message(messages)',
-       't
+       'trace_input = {"message_count": len(messages) if isinstance(messages,(tuple,list)) else 0,\n'
+       '                   "content_redacted": True}')
+    text=replace_once(text, '"name": trace_name_from_messages(messages) or "Hermes turn",',
+       '"name": "Hermes turn",')
+    text=replace_once(text, '        "task_id": task_id,',
+       '        "task_id": _paperclip_thread_id(task_id, "") or None,')
+    text=replace_once(text, '        "turn_id": turn_id,',
+       '        "turn_id_present": bool(turn_id),')
+    text=replace_once(text, '        "api_request_id": api_request_id,',
+       '        "api_request_id_present": bool(api_request_id),')
+    text=replace_once(text, '        "source": "hermes",',
+       '        "source": "hermes",\n        "telemetry_privacy": "metadata_only_v1",')
+    start='def merge_trace_output(output: Any, state: TraceState) -> Any:\n'
+    end='\ndef finish_trace(task_key: str, *, output: Any = None) -> None:\n'
+    if text.count(start)!=1 or text.count(end)!=1:
+        raise ValueError("source anchor drift in root finalization")
+    i=text.index(start);j=text.index(end)
+    text=text[:i]+'''def merge_trace_output(output: Any, state: TraceState) -> Any:
+    """Never export the assistant message or tool results from root traces."""
+    return {"content_redacted": True, "output_present": output is not None,
+            "tool_call_count": len(state.turn_tool_calls), "raw_payload_exported": False}
 
-... [2695 characters truncated]
+'''+text[j:]
+    ast.parse(text)
+    return text
+
+def prepare(lifecycle_file: Path, hooks_file: Path) -> tuple[str, str]:
+    for p in (lifecycle_file,hooks_file):
+        if p.is_symlink() or not p.is_file():
+            raise ValueError("unsafe plugin source path")
+    lifecycle=lifecycle_file.read_bytes()
+    hooks=hooks_file.read_bytes()
+    if hashlib.sha256(lifecycle).hexdigest()!=SEGMENTED_LIFECYCLE_SHA256:
+        raise ValueError("segmented lifecycle SHA mismatch; no changes applied")
+    if hashlib.sha256(hooks).hexdigest()!=BASE_HOOKS_SHA256:
+        raise ValueError("pristine hooks SHA mismatch; no changes applied")
+    return transform_segmented_lifecycle(lifecycle.decode()),transform_hooks(hooks.decode())
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument("lifecycle_file",type=Path)
+    p.add_argument("hooks_file",type=Path)
+    p.add_argument("--check",action="store_true")
+    args=p.parse_args()
+    lifecycle,hooks=prepare(args.lifecycle_file,args.hooks_file)
+    if not args.check:
+        raise SystemExit("direct file writes disabled; use audited privacy_rollout.py")
+    print("privacy overlay valid: metadata-only, source pinned (read-only)")
+
+if __name__=="__main__":
+    main()
