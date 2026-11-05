@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, evaluateRestCheckRuns, scopedGhEnv } from "./p1-git.js";
+import { buildMergeArgv, buildNativeMergeReceiptPatch, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, evaluateRestCheckRuns, scopedGhEnv } from "./p1-git.js";
 import type { PaperclipApiClient } from "./client.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -272,5 +272,51 @@ describe("GitHub App credential projection into noninteractive gh", () => {
     expect(projected === null || (typeof projected.GH_TOKEN === "string"
       && projected.GH_TOKEN === projected.GITHUB_TOKEN
       && projected.GH_PROMPT_DISABLED === "1")).toBe(true);
+  });
+});
+
+
+describe("native Git merge receipt durability", () => {
+  const repo = "miloszspyrka-code/harness-zar-i-szlif";
+  const url = `https://github.com/${repo}/pull/56`;
+  const head = "a".repeat(40);
+  const merge = "b".repeat(40);
+  const decision = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const when = "2026-11-05T17:00:00Z";
+  const wp = {
+    id: "wp-id",
+    type: "pull_request", provider: "github", url,
+    status: "ready_for_review", reviewState: "needs_board_review",
+    metadata: { headSha: head, branch: "KOMAA-1609", baseBranch: "e2e/git-merge-gate-20261105" },
+    createdByRunId: "original-run-id",
+  };
+
+  it("persists exactly the verified, independently accepted candidate and merge SHA", () => {
+    const patch = buildNativeMergeReceiptPatch(wp, url, head, merge, decision, when);
+    expect(patch).toMatchObject({
+      status: "merged",
+      reviewState: "approved",
+      metadata: {
+        headSha: head, acceptedHeadSha: head, paperclipReviewDecisionId: decision,
+        mergeCommitSha: merge, mergedAt: when, nativeReleaseReceipt: true,
+        branch: "KOMAA-1609",
+      },
+    });
+    expect(wp.metadata).not.toHaveProperty("acceptedHeadSha");
+  });
+
+  it("fails closed for wrong SHA, foreign PR, missing approval or unreadable merge evidence", () => {
+    const deny: Array<[unknown, string, string, string, string, string]> = [
+      [wp, url, "c".repeat(40), merge, decision, when],
+      [wp, "https://github.com/miloszspyrka-code/zar-i-szlif/pull/155", head, merge, decision, when],
+      [wp, url, head, "invalid", decision, when],
+      [wp, url, head, merge, "not-approved", when],
+      [wp, url, head, merge, decision, "not-a-timestamp"],
+      [{ ...wp, metadata: null }, url, head, merge, decision, when],
+      [null, url, head, merge, decision, when],
+    ];
+    for (const entry of deny) {
+      expect(buildNativeMergeReceiptPatch(...entry)).toBeNull();
+    }
   });
 });
