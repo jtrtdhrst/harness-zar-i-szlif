@@ -1597,3 +1597,94 @@ describe("paperclipGetRuntimePreflight workspace isolation (KOMAA-468)", () => {
     expect(identifierPayload.workspaceIsolation?.ownerIssueId).toBe(ISSUE);
   });
 });
+
+
+describe("delivery lineage native review SHA integrity", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  const candidateSha = "a".repeat(40);
+  const reviewedSha = "b".repeat(40);
+  const nativeDecisionId = "88888888-8888-4888-8888-888888888888";
+
+  async function runLineage(options: {
+    decision?: "approved" | "changes_requested";
+    acceptedHeadSha?: string;
+    workProductStatus?: string;
+    reviewState?: string;
+    formalApprovals?: unknown[];
+    evidence?: boolean;
+  } = {}) {
+    const metadata: Record<string, string> = { headSha: candidateSha };
+    if (options.acceptedHeadSha !== undefined) {
+      metadata.acceptedHeadSha = options.acceptedHeadSha;
+      metadata.paperclipReviewDecisionId = nativeDecisionId;
+    }
+    mockFetchRoutes([
+      { match: `/issues/${ISSUE}/heartbeat-context`, body: { currentExecutionWorkspace: { id: WS } } },
+      { match: `/issues/${ISSUE}/work-products`, body: [{
+        id: "wp1", type: "pull_request", status: options.workProductStatus ?? "merged",
+        reviewState: options.reviewState ?? "approved", metadata,
+      }] },
+      { match: `/issues/${ISSUE}/approvals`, body: options.formalApprovals ?? [] },
+      { match: `/issues/${ISSUE}/live-runs`, body: [] },
+      { match: `/issues/${ISSUE}/active-run`, body: null },
+      { match: `/issues/${ISSUE}/documents/acceptance-evidence`, body: options.evidence === false ? null : { body: "verified acceptance" } },
+      { match: `/execution-workspaces/${WS}/close-readiness`, body: {} },
+      { match: `/companies/${COMPANY}/heartbeat-runs`, body: [] },
+      { match: `/issues/${ISSUE}`, body: {
+        id: ISSUE, status: "done",
+        executionState: {
+          status: "completed",
+          lastDecisionOutcome: options.decision ?? "approved",
+          lastDecisionId: nativeDecisionId,
+        },
+      } },
+    ]);
+    const res = await getTool("paperclipGetDeliveryLineage").execute({ issueId: ISSUE, recentRunLimit: 2 });
+    return JSON.parse(res.content[0]?.text ?? "{}") as {
+      lineageValid: boolean;
+      gaps: string[];
+      candidateShas: string[];
+      approvalShas: string[];
+      shaMatch: boolean | null;
+      nativeReview: { decisionId: string; verifiedHeadShas: string[] } | null;
+    };
+  }
+
+  it("recognizes a real native approved decision only with exact accepted work-product SHA", async () => {
+    const result = await runLineage({ acceptedHeadSha: candidateSha });
+    expect(result.nativeReview?.decisionId).toBe(nativeDecisionId);
+    expect(result.nativeReview?.verifiedHeadShas).toEqual([candidateSha]);
+    expect(result.candidateShas).toEqual([candidateSha]);
+    expect(result.approvalShas).toEqual([candidateSha]);
+    expect(result.shaMatch).toBe(true);
+    expect(result.gaps).toEqual([]);
+    expect(result.lineageValid).toBe(true);
+  });
+
+  it("fails closed on a changed candidate after a native approval", async () => {
+    const result = await runLineage({ acceptedHeadSha: reviewedSha });
+    expect(result.candidateShas).toEqual([candidateSha]);
+    expect(result.approvalShas).toEqual([]);
+    expect(result.nativeReview?.verifiedHeadShas).toEqual([]);
+    expect(result.gaps).toContain("native_review_sha_unverified");
+    expect(result.lineageValid).toBe(false);
+  });
+
+  it("never treats a changes-requested stage as native approval", async () => {
+    const result = await runLineage({
+      decision: "changes_requested", acceptedHeadSha: candidateSha, evidence: false,
+    });
+    expect(result.nativeReview).toBeNull();
+    expect(result.approvalShas).toEqual([]);
+    expect(result.gaps).toContain("no_approvals");
+    expect(result.gaps).toContain("no_acceptance_evidence");
+    expect(result.lineageValid).toBe(false);
+  });
+
+  it("rejects formal approvals without immutable candidate SHA linkage", async () => {
+    const result = await runLineage({ decision: "changes_requested", formalApprovals: [{ id: "formal1", status: "approved" }] });
+    expect(result.gaps).toContain("approval_sha_unverified");
+    expect(result.lineageValid).toBe(false);
+  });
+});
