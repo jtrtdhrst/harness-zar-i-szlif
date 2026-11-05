@@ -1,0 +1,20 @@
+name: Opik run enricher checks
+on:
+  pull_request:
+    paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
+  push:
+    paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
+jobs:
+  safe-telemetry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python3 -m unittest -q test_worker
+        working-directory: opik-run-enricher
+      - run: python3 -m py_compile worker.py
+        working-directory: opik-run-enricher
+      - run: docker build --tag opik-enricher-candidate:ci .
+        working-directory: opik-run-enricher
