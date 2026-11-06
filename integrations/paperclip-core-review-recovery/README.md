@@ -73,3 +73,33 @@ The additive `reconciliation-overlay.patch` is **strictly gated** to this precis
 **Production readback:** Coolify Paperclip Core healthy, HTTP 200, zero restarts. After release, native Paperclip MCP confirmed `KOMAA-1512` issue-scoped CHO run `89300c74-ddf5-4813-a8a5-a95c99dbfe3e`, and both `checkoutRunId` and `executionRunId` matched. This is a proven issue-bound execution recovery, **not** evidence of completed Hermes/VAI/Opik E2E or a first-class final independent review.
 
 **Rollback:** previous healthy image `local/paperclip-core-h03-candidate:56204bc9` / `sha256:ea292ecf0230fcf1429430df604c2c5cc0d398ac67fb9f254b28b92199f234bd`, and saved exact Coolify compose state in `/opt/paperclip-releases/core-h03-reconciliation-20261106/docker-compose.before.yml`. No direct database record changes or permission bypass were used to resolve the no-replay hold. Do not migrate the 14 Hermes profiles on this evidence alone.
+
+## Recovery of a dropped review wake after implementor lease release (2026-11-06)
+
+A reproduced live failure occurred independently for Product `KOMAA-1616` and
+Harness `KOMAA-1617`: the coder entered `in_review` but the normal
+`execution_review_requested` wake for CTO/CHO was recorded as
+`execution_reconciliation_required` while the coder's workspace lease was
+still being released. Later, zero runtime leases remained, the reviewer was
+`idle/ready`, and yet there was no reviewer run or review decision. Existing
+reconciliation skipped pending reviewers with **no previous reviewer run**.
+
+The additional `review-wake-recovery.patch` preserves the exact server-issued
+skipped wake (stage ID, stage type, reviewer ID), requires the live stage to
+remain pending, requires absence of any execution blocker, and queues **one
+normal authorized reviewer wake** with an exact-stage idempotency key. It never
+marks a task approved, changes code-owner roles, or replays an old stage.
+
+Evidence: isolated disposable image `local/paperclip-review-recovery:4f05e290`,
+actual embedded-PostgreSQL Vitest: **two selected positive/negative cases
+passed**, no failed case; 400 unrelated tests in the large recovery test file
+were intentionally filtered out. The patch was also replayed against the
+original pinned image bytes using `git apply --check`, `git apply`, and
+byte-for-byte comparison. The new Dockerfile layer pins original/patched
+SHA-256 and runs those focused regression cases in CI.
+
+**Release is NOT approved by these tests.** Native first-class CTO review
+for the Core change remains necessary, the image must be built from the
+merged reviewed source, and production E2E still requires a reviewer run,
+a genuine decision, exact-SHA deployment and rollback. No Paperclip MCP was
+used for diagnosis or this patch.
