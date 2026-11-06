@@ -153,5 +153,52 @@ class RunMcpScopeTests(unittest.TestCase):
         self.assertFalse(authority._local_editor_mcp)
 
 
+    def test_run_tools_become_visible_only_during_own_agent_run(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        agent = types.SimpleNamespace(enabled_toolsets=["skills", "mcp-wiki_fs"], disabled_toolsets=[])
+        original = list(agent.enabled_toolsets)
+        with native.installed():
+            with borrowed_run_tools(authority, grant("cho", "run-binding"),
+                                    authenticated_profile="cho", run_id="run-binding", agent=agent):
+                bound = [x for x in agent.enabled_toolsets if x not in original]
+                self.assertEqual(len(bound), 1)
+                self.assertTrue(bound[0].startswith("mcp-isolated_paperclip-run_cho_run-binding"))
+                self.assertEqual(agent.enabled_toolsets[:len(original)], original)
+            self.assertEqual(agent.enabled_toolsets, original)
+        self.assertFalse(native.active)
+
+    def test_agent_disabled_run_mcp_toolset_fails_closed(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        scope = "paperclip-run:cho:run-denied"
+        denied = "mcp-" + native.names(scope, [{"name": "paperclip"}])[0]
+        agent = types.SimpleNamespace(enabled_toolsets=["skills"], disabled_toolsets=[denied])
+        with native.installed():
+            with self.assertRaises(InvalidRunGrant):
+                with borrowed_run_tools(authority, grant("cho", "run-denied"),
+                                        authenticated_profile="cho", run_id="run-denied", agent=agent):
+                    self.fail("forbidden toolset must not be exposed")
+            self.assertEqual(agent.enabled_toolsets, ["skills"])
+        self.assertFalse(native.active)
+
+    def test_concurrent_agents_do_not_inherit_borrowed_toolsets(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        first = types.SimpleNamespace(enabled_toolsets=["skills"], disabled_toolsets=[])
+        second = types.SimpleNamespace(enabled_toolsets=["skills"], disabled_toolsets=[])
+        with native.installed():
+            with borrowed_run_tools(authority, grant("cho", "run-one"),
+                                    authenticated_profile="cho", run_id="run-one", agent=first):
+                with borrowed_run_tools(authority, grant("cho", "run-two"),
+                                        authenticated_profile="cho", run_id="run-two", agent=second):
+                    self.assertEqual(len(first.enabled_toolsets), 2)
+                    self.assertEqual(len(second.enabled_toolsets), 2)
+                    self.assertNotEqual(first.enabled_toolsets[1], second.enabled_toolsets[1])
+                self.assertEqual(second.enabled_toolsets, ["skills"])
+                self.assertEqual(len(first.enabled_toolsets), 2)
+            self.assertEqual(first.enabled_toolsets, ["skills"])
+        self.assertFalse(native.active)
+
 if __name__ == "__main__":
     unittest.main()
