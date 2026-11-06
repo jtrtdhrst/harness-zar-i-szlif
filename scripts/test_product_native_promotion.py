@@ -134,5 +134,37 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertIn(expected,php)
         self.assertNotIn("patch(" + json.dumps("/repos/"+p.REPO+"/git/refs/heads/ci-approved") + ", {",php)
 
+    def test_pending_readback_recovers_after_previous_timeout(self):
+        state={"status":"readback_failed_rollback_required","pending_sha":NEW,"previous_sha":OLD}
+        with patch.object(p,"read_state",return_value=state),\
+             patch.object(p,"ref",side_effect=[NEW,NEW]),\
+             patch.object(p,"live_release",side_effect=[OLD,NEW]),\
+             patch.object(p,"save") as save:
+            result=p.process()
+        self.assertEqual(result["result"],"deployed_after_retry")
+        self.assertEqual(result["sha"],NEW)
+        self.assertEqual(save.call_args[0][0]["status"],"healthy")
+
+    def test_pending_readback_never_rewinds_ref_and_fails_closed(self):
+        state={"status":"readback_failed_rollback_required","pending_sha":NEW,"previous_sha":OLD}
+        with patch.object(p,"read_state",return_value=state),\
+             patch.object(p,"ref",side_effect=[NEW,NEW]),\
+             patch.object(p,"live_release",return_value=OLD),\
+             patch.object(p,"READBACK_ATTEMPTS",2),\
+             patch.object(p.time,"sleep"),\
+             patch.object(p,"github_api",side_effect=AssertionError("no write")):
+            with self.assertRaisesRegex(p.Denied,"deployment_readback_failed_rollback_required"):
+                p.process()
+
+    def test_stale_pending_state_is_cleared_when_live_matches(self):
+        state={"status":"readback_failed_rollback_required","pending_sha":MID,"previous_sha":OLD}
+        with patch.object(p,"read_state",return_value=state),\
+             patch.object(p,"ref",side_effect=[NEW,NEW]),\
+             patch.object(p,"live_release",return_value=NEW),\
+             patch.object(p,"save") as save:
+            result=p.process()
+        self.assertEqual(result["result"],"already_released")
+        self.assertEqual(save.call_args[0][0],{"last_deployed_sha":NEW,"status":"healthy"})
+
 if __name__=="__main__":
     unittest.main()

@@ -8,9 +8,9 @@ Approved **source commit and immutable image digest** (or Cloudflare version ID)
 
 ### Working product lane: preserve
 
-`zar-i-szlif/main` → Product CI `validate-product` → fast-forward-only `ci-approved` → Coolify webhook → `https://panel.zariszlif.pl/__release.json` readback matching the exact SHA.
+`zar-i-szlif/main` → Product CI `validate-product` (validation only, never promotes) → independent native Paperclip review of the merged PR → Ubuntu `product-native-promotion` controller → forward-only exact-SHA `ci-approved` → Coolify → `https://panel.zariszlif.pl/__release.json` readback matching the exact SHA.
 
-Real evidence from 2026-11-04: GitHub `main=ci-approved` and finished Coolify deployment = `7322f946a5a395db29fa95d14da1ea9037e30d7c`, production release readback same SHA, `/healthz` HTTP 200. Preserve `main` as *integration* branch and `ci-approved` as *release* branch for this service only. Do not directly deploy feature branches. The workflow's `promote-release` uses `needs: validate-product` and `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`; it pushes only fast-forward (no force).
+Real evidence from 2026-11-04: GitHub `main=ci-approved` and finished Coolify deployment = `7322f946a5a395db29fa95d14da1ea9037e30d7c`, production release readback same SHA, `/healthz` HTTP 200. Preserve `main` as *integration* branch and `ci-approved` as *release* branch for this service only. Do not directly deploy feature branches. Product PR #156 removed the old `promote-release`/`verify-production` jobs; **GitHub Actions no longer advances `ci-approved`** and that job must not be restored. The only authorized writer is the versioned Ubuntu controller (`scripts/product_native_promotion.py`), which verifies every merged main PR, the native Paperclip decision and exact CI before a non-force ref update, then waits up to 15 minutes for the exact public SHA readback and resumes an in-flight deployment after a timeout instead of rewinding `ci-approved`.
 
 ### Manual pinned-image release lane for unverified Coolify services
 

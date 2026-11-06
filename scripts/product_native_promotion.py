@@ -26,6 +26,10 @@ NATIVE_GATE = Path("/usr/local/libexec/paperclip_native_release_gate.py")
 PUBLIC_RELEASE = "https://panel.zariszlif.pl/__release.json"
 PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 SHA = re.compile(r"^[a-f0-9]{40}$")
+# Coolify builds routinely exceed the old 4 min window (2026-11-06 incident).
+# Keep this below the systemd TimeoutStartSec.
+READBACK_ATTEMPTS = 90
+READBACK_INTERVAL = 10
 
 
 class Denied(Exception):
@@ -196,13 +200,51 @@ def save(data):
     os.replace(tmp, STATE)
 
 
+def read_state():
+    try:
+        data = json.loads(STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def wait_for_live(target):
+    for _ in range(READBACK_ATTEMPTS):
+        try:
+            if live_release() == target:
+                return True
+        except Denied:
+            pass
+        time.sleep(READBACK_INTERVAL)
+    return False
+
+
 def process(plan=False):
     current = ref("main")
     release = ref(RELEASE_REF)
     live = live_release()
+
+    # Resume a deployment this controller already started but could not observe
+    # inside the old timeout. Never force-rewind ci-approved; only keep waiting
+    # for the exact SHA that is already the release ref.
+    pending = read_state()
+    if (live != release and current == release
+            and pending.get("status") == "readback_failed_rollback_required"
+            and pending.get("pending_sha") == release):
+        if wait_for_live(release):
+            save({"last_deployed_sha": release,
+                  "previous_sha": pending.get("previous_sha"),
+                  "release_prs": pending.get("release_prs", []),
+                  "status": "healthy"})
+            return {"result": "deployed_after_retry", "sha": release,
+                    "prior": pending.get("previous_sha"), "healthy": True}
+        raise Denied("deployment_readback_failed_rollback_required")
+
     if live != release:
         raise Denied("production_not_at_current_release_ref")
     if current == release:
+        if pending.get("status") not in (None, "healthy"):
+            save({"last_deployed_sha": release, "status": "healthy"})
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
@@ -218,15 +260,10 @@ def process(plan=False):
     # Coolify already autodeploys only from ci-approved. Await exact artifact,
     # but never force-rewind a Git ref on failure; preserve evidence for safe
     # image rollback through Coolify's managed rollback facility.
-    for _ in range(24):
-        try:
-            if live_release() == current:
-                save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
-                return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
-        except Denied:
-            pass
-        time.sleep(10)
-    save({"pending_sha":current,"previous_sha":release,"status":"readback_failed_rollback_required"})
+    if wait_for_live(current):
+        save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
+        return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
+    save({"pending_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"readback_failed_rollback_required"})
     raise Denied("deployment_readback_failed_rollback_required")
 
 
