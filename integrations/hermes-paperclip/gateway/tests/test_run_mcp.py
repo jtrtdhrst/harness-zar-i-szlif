@@ -123,6 +123,35 @@ class RunMcpGrantTests(unittest.TestCase):
                 validate_grant(grant, authenticated_profile="cho",
                                run_id="run-1", now=self.now)
 
+    def test_fixed_rejection_codes_never_log_tokens_or_external_urls(self):
+        from unittest.mock import patch
+        invalid = {**self.grant, "servers": [
+            {"name": "paperclip", "url": "https://evil.example/mcp?private=neverlog",
+             "token": "opaque-very-secret-marker"}
+        ]}
+        with self.assertLogs("gateway.run_mcp", level="WARNING") as logs:
+            with self.assertRaisesRegex(InvalidRunGrant, "^invalid run MCP grant$"):
+                validate_grant(invalid, authenticated_profile="cho", run_id="run-1", now=self.now)
+        events = " ".join(logs.output)
+        self.assertIn("run_mcp_denied reason=server_url", events)
+        self.assertNotIn("secret-marker", events)
+        self.assertNotIn("evil.example", events)
+        self.assertNotIn("neverlog", events)
+
+    def test_rejection_categories_preserve_existing_denial_contract(self):
+        from unittest.mock import patch
+        tests = (
+            ({**self.grant, "profile": "cto"}, "profile_mismatch"),
+            ({**self.grant, "scopes": ["wiki:write"]}, "scopes"),
+            ({**self.grant, "expires_at": "2026-11-03T10:00:00Z"}, "expiry"),
+        )
+        for bad, reason in tests:
+            with self.subTest(reason=reason):
+                with self.assertLogs("gateway.run_mcp", level="WARNING") as logs:
+                    with self.assertRaisesRegex(InvalidRunGrant, "^invalid run MCP grant$"):
+                        validate_grant(bad, authenticated_profile="cho", run_id="run-1", now=self.now)
+                self.assertIn("run_mcp_denied reason=" + reason, " ".join(logs.output))
+
     def test_operator_can_disable_all_external_run_mcp_destinations(self):
         import os
         from unittest.mock import patch
