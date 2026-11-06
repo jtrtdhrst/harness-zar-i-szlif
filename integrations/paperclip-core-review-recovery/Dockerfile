@@ -35,8 +35,8 @@ RUN test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' 
 
 # Fail closed unless the exact Core source matches the reviewed production base.
 # A definitive Hermes /v1/runs auth denial must not manufacture a legacy recovery hold.
-COPY integrations/paperclip-core-review-recovery/legacy-auth-admission.patch /tmp/paperclip-legacy-auth-admission.patch
-COPY integrations/paperclip-core-review-recovery/legacy-auth-admission.integration.test.ts /app/server/src/services/legacy-auth-admission.integration.test.ts
+COPY legacy-auth-admission.patch /tmp/paperclip-legacy-auth-admission.patch
+COPY legacy-auth-admission.integration.test.ts /app/server/src/services/legacy-auth-admission.integration.test.ts
 RUN test "$(sha256sum /app/server/src/services/legacy-execution-recovery.ts | cut -d' ' -f1)" = "dd5997b5f46e58d6033b7144c4ebbcd45afbea83adaa2b59e5c761ef1856de5c" && \
     cd /app && git apply --check /tmp/paperclip-legacy-auth-admission.patch && \
     git apply /tmp/paperclip-legacy-auth-admission.patch && \
