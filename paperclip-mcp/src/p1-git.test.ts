@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, scopedGhEnv } from "./p1-git.js";
+import { syncMergedPrWorkProduct, buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, scopedGhEnv } from "./p1-git.js";
 import type { PaperclipApiClient } from "./client.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -253,5 +253,72 @@ describe("GitHub App credential projection into noninteractive gh", () => {
     expect(projected === null || (typeof projected.GH_TOKEN === "string"
       && projected.GH_TOKEN === projected.GITHUB_TOKEN
       && projected.GH_PROMPT_DISABLED === "1")).toBe(true);
+  });
+});
+
+
+describe("post-merge work-product provenance and replay safety (P27)", () => {
+  const headSha = "a".repeat(40);
+  const mergeSha = "b".repeat(40);
+  const decisionId = "123e4567-e89b-42d3-a456-426614174000";
+  const url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/33";
+  const issue = {
+    status: "done", reviewPolicy: "not_creator",
+    executionState: { status: "completed", lastDecisionOutcome: "approved", lastDecisionId: decisionId,
+      completedStageIds: ["stage"], returnAssignee: { type: "agent", agentId: "owner" } },
+    executionPolicy: { stages: [{ id: "stage", type: "review",
+      participants: [{ type: "agent", agentId: "reviewer" }], approvalsNeeded: 1 }] },
+    workProducts: [{ id: "wp-33", type: "pull_request", provider: "github", url, metadata: { headSha } }],
+  };
+  const wp = () => ({ id: "wp-33", type: "pull_request", provider: "github", url,
+    status: "ready_for_review", reviewState: "needs_board_review",
+    metadata: { headSha, unrelated: "preserved" } });
+
+  it("writes status=merged and binds accepted head, decision and merge SHA while preserving unrelated metadata", async () => {
+    const client = { requestJson: vi.fn(async (method: string, path: string, options?: { body?: Record<string, unknown> }) => {
+      if (method === "GET") return [wp()];
+      expect(method).toBe("PATCH");
+      expect(path).toBe("/work-products/wp-33");
+      const patch = options?.body as Record<string, unknown>;
+      expect(patch).toMatchObject({ status: "merged", reviewState: "approved",
+        metadata: { headSha, unrelated: "preserved", acceptedHeadSha: headSha,
+          paperclipReviewDecisionId: decisionId, mergeCommitSha: mergeSha } });
+      return { ...wp(), ...patch, id: "wp-33" };
+    }) } as unknown as PaperclipApiClient;
+    const synced = await syncMergedPrWorkProduct(client, issue, "KOMAA-1559", url, headSha, mergeSha);
+    expect(synced).toEqual({ workProductId: "wp-33", acceptedHeadSha: headSha,
+      paperclipReviewDecisionId: decisionId, mergeCommitSha: mergeSha });
+    expect((client.requestJson as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+  });
+
+  it("does not PATCH a fully synchronized merged PR again", async () => {
+    const complete = { ...wp(), status: "merged", reviewState: "approved",
+      metadata: { headSha, acceptedHeadSha: headSha, paperclipReviewDecisionId: decisionId, mergeCommitSha: mergeSha } };
+    const read = vi.fn(async () => [complete]);
+    await syncMergedPrWorkProduct({ requestJson: read } as unknown as PaperclipApiClient, issue, "KOMAA-1559", url, headSha, mergeSha);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies stale SHA, conflicting provenance, missing review, or ambiguous PR links before PATCH", async () => {
+    for (const [candidateIssue, records, sha, merge] of [
+      [issue, [{ ...wp(), metadata: { headSha: "c".repeat(40) } }], headSha, mergeSha],
+      [issue, [{ ...wp(), metadata: { headSha, acceptedHeadSha: "c".repeat(40) } }], headSha, mergeSha],
+      [issue, [wp(), { ...wp(), id: "duplicate" }], headSha, mergeSha],
+      [{ ...issue, status: "in_review" }, [wp()], headSha, mergeSha],
+      [issue, [wp()], headSha, "short"],
+    ] as const) {
+      const read = vi.fn(async () => records);
+      await expect(syncMergedPrWorkProduct(
+        { requestJson: read } as unknown as PaperclipApiClient, candidateIssue, "KOMAA-1559", url, sha, merge
+      )).rejects.toThrow();
+      expect(read.mock.calls.every((call: unknown[]) => call[0] === "GET")).toBe(true);
+    }
+  });
+
+  it("fails closed when PATCH response does not prove the committed metadata", async () => {
+    const read = vi.fn(async (method: string) => method === "GET" ? [wp()] : { ...wp(), status: "merged" });
+    await expect(syncMergedPrWorkProduct(
+      { requestJson: read } as unknown as PaperclipApiClient, issue, "KOMAA-1559", url, headSha, mergeSha,
+    )).rejects.toThrow(/did not confirm/);
   });
 });
