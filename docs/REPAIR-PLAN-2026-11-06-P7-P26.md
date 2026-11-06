@@ -30,7 +30,8 @@ Najważniejsze otwarte blokery:
   (general + dedicated) i podwójny katalog. 13/14 agentów nadal na `opencode_local`.
 - **P13** — produkcyjny Hermes działa z HEAD otwartego PR #74; CTO dał
   `CHANGES_REQUESTED` za współdzielony stan narzędzi, poprawka `81fa3ae` czeka na re-review.
-- **P17/P18** — odczyt projektów Opik przez MCP zawodzi; brak pozytywnego E2E OAuth.
+- **P17/P18** — wewnętrzny odczyt Opik przez MCP naprawiony (`:8081`, 16 projektów);
+  publiczny OAuth i pełny trace pozostają do potwierdzenia.
 - **P25/P26** — push z runu **działa** (PR #158), ale runy raportują `githubAuthenticationMode=host`,
   brak managed identity, a autor commita to bot `miloszspyrka-code`, nie tożsamość agenta.
   CTO ma dodatkowo per-agent override `!gh auth git-credential`, który w kontenerze bez
@@ -77,7 +78,7 @@ Pozycje przeklasyfikowane po debugu:
 | P14 | 13/14 agentów opencode_local | migracja zatrzymana na 1/14 | OPEN (zależne) | P1 |
 | P15 | stage=agent, participant=user | **celowa eskalacja po 3 rundach** | MISDIAGNOSED | P2 |
 | P16 | 748 recovery / 966 runów | backfill legacy + bieżące recovery | OPEN (metryka) | P2 |
-| P17 | Opik MCP „tool failed internally” | CF Access 403 na wewnętrznym proxy; klient `oauth:false` | OPEN (fix opisany) | P1 |
+| P17 | Opik MCP „tool failed internally” | CF Access 403 na wewnętrznym proxy | FIXED internal :8081; public OAuth → P18 | P1 |
 | P18 | brak pozytywnego E2E OAuth Opik | brak service tokenu; guard wymaga `email` | OPEN (blokada polityki) | P1 |
 | P19 | brak korelacji run→trace→span | run 36dbd bez trace; `model=unknown` 77/87 | OPEN | P1 |
 | P20 | 4 PR Opik otwarte | tylko #53 wdrożony; #52←#39 | OPEN | P1 |
@@ -441,15 +442,20 @@ Przyczyna:
   `health_status=failed`, „OAuth credentials have expired”, `last_success 2026-11-01
   19:39Z`, scopes `[]` (brak `offline_access` → brak refresh).
 
-Naprawa (minimalna, bez zmian w Core):
+Naprawa (wdrożona 2026-11-06):
 
-1. Dodać w nginx **wewnętrzny listener** (np. `:8081`) bez `auth_request`, osiągalny tylko
-   w sieci Docker; skierować `opencode.jsonc` Paperclipa na niego. Publiczny `:8080`
-   zostaje z CF Access.
-   Alternatywa: guard akceptuje rotowany token wewnętrzny tylko dla RFC1918.
-2. Reconnect publicznego połączenia OAuth po stronie człowieka (patrz P18) albo dodać
-   obsługę CF service tokenów.
-3. Smoke: `list projects` (16), `read trace`, `tools/list` z kontenera Paperclipa.
+1. Dodano w nginx **wewnętrzny listener `:8081`** bez `auth_request`, dostępny tylko
+   z sieci Docker (`allow 172.19.0.0/16`, `192.168.176.0/20`, `127.0.0.1`, `deny all`).
+   Publiczny `:8080` z Cloudflare Access pozostał bez zmian.
+   Plik: `/home/opencode/projects/opik/mcp-proxy.conf` (backup
+   `.bak-20261106-internal`), `nginx -t` + reload OK.
+2. Config Paperclipa `/paperclip/.config/opencode/opencode.jsonc` wskazuje teraz
+   `http://proxy-egasedqaofxnzcqppuxi805h:8081/mcp` (backup
+   `.bak-20261106-opik-internal`).
+3. Test z kontenera Paperclipa: `initialize` → HTTP 200 (`opik-mcp 1.30.0`);
+   `tools/call list entity_type=project` → **16 projektów**. Ścieżka wewnętrzna działa.
+4. Publiczne połączenie `tool_connections` „Opik MCP — E2E read-only” nadal ma wygasły
+   OAuth — to P18, osobna sprawa.
 
 ### P18 — pozytywny E2E OAuth (blokada polityki, nie awaria)
 
@@ -681,7 +687,8 @@ w remote, PR i `/__release.json`.
   dedicated naprawiony. Nie udało się wykonać ważnego canary — heartbeat-invoke odrzuca
   run bez issue/profilu. Test wymaga realnego issue-runu. Tłumaczenie nazw tool gateway
   nie zostało naprawione (warstwa Core/MCP gateway).
-- P17: nie zmieniano nginx/guard ani configu Opik; podano minimalny fix.
+- P17: wewnętrzny listener `:8081` i config Paperclipa wdrożone; `list project` zwraca
+  16 projektów. Publiczna ścieżka OAuth nietknięta (P18).
 - P18: pozytywny OAuth wymaga interaktywnego logowania człowieka; nie wykonano.
 - P19/P20/P21: nie mergowano PR Opik ani nie deployowano enrichera.
 - P22/P23/P24: nie zmieniano Hindsight; luka wewnętrznego `:8888` pozostaje otwarta,
