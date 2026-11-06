@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 import os
 import re
+import logging
 
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
@@ -69,6 +70,13 @@ class InvalidRunGrant(ValueError):
     """An invalid or unsafe run-scoped MCP request; message contains no input data."""
 
 
+# Operational telemetry uses only fixed, source-controlled codes. Never log
+# envelope fields, URLs, role/run identifiers, bearer contents or headers.
+def _reject(reason: str) -> None:
+    logging.getLogger("gateway.run_mcp").warning("run_mcp_denied reason=%s", reason)
+    raise InvalidRunGrant
+
+
 def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
                    now: datetime | None = None) -> tuple[list[dict], str]:
     """Validate bounded identity metadata and produce private stdio/http MCP specs.
@@ -81,34 +89,36 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
             "version", "company_id", "agent_id", "issue_id", "run_id", "profile",
             "scopes", "expires_at", "servers",
         }:
-            raise InvalidRunGrant
+            _reject("envelope_shape")
         if envelope["version"] != 1 or envelope["run_id"] != run_id:
-            raise InvalidRunGrant
+            _reject("version_or_run")
         for key in ("company_id", "agent_id", "issue_id", "run_id"):
             if not isinstance(envelope[key], str) or not _ID.fullmatch(envelope[key]):
-                raise InvalidRunGrant
+                _reject("identity_fields")
         if envelope["profile"] != authenticated_profile:
-            raise InvalidRunGrant
+            _reject("profile_mismatch")
         scopes = envelope["scopes"]
         if not isinstance(scopes, list) or not scopes or not set(scopes) <= _ALLOWED_SCOPES:
-            raise InvalidRunGrant
+            _reject("scopes")
         expiry = datetime.fromisoformat(envelope["expires_at"].replace("Z", "+00:00"))
         if expiry.tzinfo is None or expiry <= (now or datetime.now(timezone.utc)):
-            raise InvalidRunGrant
+            _reject("expiry")
         servers = envelope["servers"]
         if not isinstance(servers, list) or not 1 <= len(servers) <= 16:
-            raise InvalidRunGrant
+            _reject("server_count")
         specs = []
         names = set()
         for server in servers:
             if not isinstance(server, dict) or set(server) != {"name", "url", "token"}:
-                raise InvalidRunGrant
+                _reject("server_fields")
             name, url, token = server["name"], server["url"], server["token"]
-            if (not isinstance(name, str) or not _ID.fullmatch(name) or name in names
-                    or not _allowed_mcp_url(url)
-                    or not isinstance(token, str) or not token or len(token) > 8192
+            if not isinstance(name, str) or not _ID.fullmatch(name) or name in names:
+                _reject("server_name")
+            if not _allowed_mcp_url(url):
+                _reject("server_url")
+            if (not isinstance(token, str) or not token or len(token) > 8192
                     or any(not ch.isascii() or not ch.isprintable() or ch.isspace() for ch in token)):
-                raise InvalidRunGrant
+                _reject("server_token")
             names.add(name)
             specs.append({"type": "http", "name": name, "url": url,
                           # Fail closed on cross-origin redirects and unsupported SSE fallback.
@@ -116,7 +126,12 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
                           "headers": [{"name": "Authorization", "value": f"Bearer {token}"}]})
         # Scope keys are unique per run and profile; tool names and connections cannot cross runs.
         return specs, f"paperclip-run:{authenticated_profile}:{run_id}"
-    except (KeyError, TypeError, ValueError, AttributeError):
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        # A parsing/type error is reported with a fixed code only. Expected
+        # _reject() paths already emitted their fixed category; do not log
+        # exception text, because it could include untrusted input.
+        if not isinstance(exc, InvalidRunGrant):
+            logging.getLogger("gateway.run_mcp").warning("run_mcp_denied reason=parse_error")
         raise InvalidRunGrant("invalid run MCP grant") from None
 
 
