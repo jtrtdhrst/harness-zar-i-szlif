@@ -305,9 +305,10 @@ Test: wymuszony run z blokerem musi zakończyć się `blocked` i nie zmienić is
 
 ### Naprawa
 
-1. Zostawić **jedno** połączenie Paperclip MCP na agenta: usunąć dedicated profile
-   (albo general z bindingów company) i ponownie wygenerować katalog; nie dopuszczać do
-   dwóch profili wskazujących ten sam URL.
+1. Najpierw naprawić tłumaczenie nazw w tool gateway (główne); dopiero potem redukować
+   do jednego profilu Paperclip MCP. **Nie usuwać dedicated bez testu**: próba usunięcia
+   bindingów zostawiła 41 narzędzi (app-gallery), więc bindingi przywrócono. Docelowo
+   jeden profil z pełnym katalogiem 200 narzędzi, nie dwa.
 2. Naprawić tłumaczenie nazw w tool gateway: nazwa `mcp.<app>-<conn>:<tool>` musi być
    rozwiązywana do surowego `<tool>` przed wywołaniem upstream. To warstwa Core/MCP
    gateway — zgłosić wykonawcy, nie patchować Core.
