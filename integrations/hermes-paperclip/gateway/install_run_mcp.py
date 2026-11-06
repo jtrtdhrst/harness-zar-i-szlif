@@ -89,7 +89,7 @@ def patch_source(original: str) -> str:
         "                from gateway.run_mcp import borrowed_run_tools\n"
         "                grant_scope = borrowed_run_tools(\n"
         "                    _api_server, run.paperclip_run_mcp,\n"
-        "                    authenticated_profile=str(run.request_profile or \"\"), run_id=run.paperclip_run_id)\n"
+        "                    authenticated_profile=str(run.request_profile or \"\"), run_id=run.paperclip_run_id, agent=agent)\n"
         "            # Scoped MCP connections are torn down on success, error, and worker cancellation.\n"
         "            with grant_scope:\n"
         "                r = agent.run_conversation(\n"
