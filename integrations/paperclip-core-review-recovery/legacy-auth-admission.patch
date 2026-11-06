@@ -1,0 +1,129 @@
+diff --git a/server/src/services/legacy-execution-recovery.ts b/server/src/services/legacy-execution-recovery.ts
+--- a/server/src/services/legacy-execution-recovery.ts
++++ b/server/src/services/legacy-execution-recovery.ts
+@@ -16,6 +16,28 @@
+ 
+ type Run = typeof heartbeatRuns.$inferSelect;
+ export const LEGACY_RECOVERY_CAUSE = "legacy_execution_requires_reconciliation";
++
++/**
++ * Explicit Hermes create-run auth rejection has no remote run to reconcile.
++ * Timeouts, transport failures and any post-create error remain uncertain.
++ */
++function confirmedHermesCreateAuthDenial(
++  run: Pick<Run, "runtimeMode" | "status" | "errorCode" | "resultJson">,
++): boolean {
++  const evidence = run.resultJson?.connectionFailure as Record<string, unknown> | undefined;
++  return Boolean(
++    run.runtimeMode === "legacy" &&
++    run.status === "failed" &&
++    run.errorCode === "hermes_gateway_auth_failed" &&
++    evidence?.schemaVersion === 1 &&
++    evidence.provider === "hermes_gateway" &&
++    evidence.operation === "create_run" &&
++    evidence.reason === "authentication_failed" &&
++    !run.resultJson?.run_id &&
++    !run.resultJson?.externalRunId &&
++    !run.resultJson?.executionRecovery
++  );
++}
+ 
+ /** Error families describe availability, not whether earlier actions happened. */
+ export function legacyExecutionNeedsReconciliation(
+@@ -50,6 +72,7 @@
+   // that the bootstrap evidence proves never started. Keep unknown outcomes held.
+   if ((run.errorCode === "workspace_git_scan_timeout" || run.errorCode === "workspace_git_scan_saturated") &&
+       evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false) return false;
++  if (confirmedHermesCreateAuthDenial(run)) return false;
+   if (executionFailureRetryCount(run) >= 2) return true;
+   return !(
+     evidence?.kind === "bootstrap" && evidence.providerWorkStarted === false
+@@ -134,7 +157,48 @@
+     const needsRecovery = input.recordRestoreFailureOnly
+       ? retainedLeaseIds.length > 0 || hasRequiredWorkspaceRecovery(updated.resultJson)
+       : !input.reconcileIfNeeded || await legacyExecutionNeedsReconciliationWithEvidence(tx as unknown as Db, updated);
+-    if (!needsRecovery) return updated;
++    if (!needsRecovery) {
++      // An unambiguously rejected Hermes run is a configuration blocker, not
++      // uncertain work to reconcile. Only release the failed run's own lease.
++      // A newer issue run, changed assignee or review stage is never altered.
++      if (!input.recordRestoreFailureOnly &&
++          confirmedHermesCreateAuthDenial(updated) &&
++          task?.status === "in_progress" &&
++          task.assigneeAgentId === updated.agentId &&
++          task.executionRunId === run.id &&
++          (task.checkoutRunId === null || task.checkoutRunId === run.id)) {
++        const now = new Date();
++        const [blocked] = await tx.update(issues).set({
++          status: "blocked",
++          statusVersion: sql`coalesce(${issues.statusVersion}, 0) + 1`,
++          unblockDescriptor: {
++            owner: { agentId: updated.agentId },
++            action: "Hermes rejected POST /v1/runs before creating a remote run. Repair the profile API_SERVER_KEY secret binding, verify the authenticated gateway route, then use native Paperclip reconciliation and a new issue-bound wake.",
++          },
++          checkoutRunId: null,
++          executionRunId: null,
++          executionAgentNameKey: null,
++          executionLockedAt: null,
++          blockedTransitionAt: now,
++          blockedOwnerNotifiedAt: null,
++          updatedAt: now,
++        }).where(and(
++          eq(issues.id, task.id),
++          eq(issues.companyId, updated.companyId),
++          eq(issues.status, "in_progress"),
++          eq(issues.assigneeAgentId, updated.agentId),
++          eq(issues.executionRunId, run.id),
++          or(isNull(issues.checkoutRunId), eq(issues.checkoutRunId, run.id)),
++        )).returning({ id: issues.id });
++        if (blocked) await logActivity(tx as unknown as Db, {
++          companyId: updated.companyId, actorType: "system", actorId: "system",
++          action: "issue.provider_admission_denied", entityType: "issue",
++          entityId: task.id, runId: run.id,
++          details: { provider: "hermes_gateway", code: updated.errorCode, phase: "create_run" },
++        });
++      }
++      return updated;
++    }
+     if (!input.recordRestoreFailureOnly && task?.executionRunId === run.id)
+       await tx
+         .update(issues)
+diff --git a/server/src/services/legacy-execution-recovery.test.ts b/server/src/services/legacy-execution-recovery.test.ts
+--- a/server/src/services/legacy-execution-recovery.test.ts
++++ b/server/src/services/legacy-execution-recovery.test.ts
+@@ -107,3 +107,35 @@
+     { resultJson: { ...run.resultJson, workspaceRestoreFailure: "restore_unsafe_archive" } },
+   ]) expect(isPreDispatchReviewWait({ ...run, ...patch })).toBe(false);
+ });
++
++
++it("does not invent uncertain provider work from a confirmed Hermes create-run auth denial", () => {
++  const failed = {
++    runtimeMode: "legacy", status: "failed", errorCode: "hermes_gateway_auth_failed",
++    scheduledRetryReason: "transient_failure", scheduledRetryAttempt: 8,
++    resultJson: { connectionFailure: {
++      schemaVersion: 1, provider: "hermes_gateway",
++      operation: "create_run", reason: "authentication_failed",
++    } },
++  };
++  expect(legacyExecutionNeedsReconciliation(failed)).toBe(false);
++  expect(legacyExecutionNeedsReconciliation({ ...failed, scheduledRetryAttempt: 0 })).toBe(false);
++
++  // An exact provider-created run or post-create denial is not proof of
++  // no dispatch. Keep all such cases on the conservative recovery path.
++  for (const resultJson of [
++    {},
++    { connectionFailure: { ...failed.resultJson.connectionFailure, operation: "get_run" } },
++    { connectionFailure: { ...failed.resultJson.connectionFailure, reason: "connection_timeout" } },
++    { connectionFailure: { ...failed.resultJson.connectionFailure, schemaVersion: 2 } },
++    { connectionFailure: { ...failed.resultJson.connectionFailure, provider: "other" } },
++    { connectionFailure: failed.resultJson.connectionFailure, run_id: "remote-started" },
++    { connectionFailure: failed.resultJson.connectionFailure,
++      executionRecovery: { kind: "running", providerWorkStarted: true } },
++  ]) {
++    expect(legacyExecutionNeedsReconciliation({ ...failed, resultJson })).toBe(true);
++  }
++  expect(legacyExecutionNeedsReconciliation({ ...failed, status: "timed_out" })).toBe(true);
++  expect(legacyExecutionNeedsReconciliation({ ...failed, status: "cancelled" })).toBe(true);
++  expect(legacyExecutionNeedsReconciliation({ ...failed, errorCode: "process_lost" })).toBe(true);
++});
