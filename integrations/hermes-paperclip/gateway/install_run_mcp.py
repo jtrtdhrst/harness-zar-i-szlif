@@ -30,6 +30,8 @@ def patch_source(original: str) -> str:
         "        return _json_error(_openai_error, \"Invalid JSON object\", status=400)\n"
         "    # Strip private credentials before any room, prompt, history or status processing.\n"
         "    paperclip_run_mcp_supplied = \"paperclip_run_mcp\" in body\n"
+        "    import logging as _run_mcp_logging\n"
+        "    _run_mcp_logging.getLogger(\"gateway.run_mcp\").warning(\"run_mcp_admission supplied=%s server_count=%d\", paperclip_run_mcp_supplied, len(body.get(\"paperclip_run_mcp\", {}).get(\"servers\", [])) if isinstance(body.get(\"paperclip_run_mcp\"), dict) else 0)\n"
         "    paperclip_run_mcp = body.pop(\"paperclip_run_mcp\", None)\n"
         "    paperclip_run_id = request.headers.get(\"X-Paperclip-Run-Id\", \"\")\n"
         "    if paperclip_run_mcp_supplied:\n"
