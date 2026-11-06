@@ -45,7 +45,7 @@ def workflow_covers_root(path, root_name):
             if re.match(r"    paths\s*:", part):
                 in_paths = True
                 # Also handle YAML inline lists: paths: ['svc/**', 'other/**'].
-                patterns.extend(re.findall(r"[\\"']([^\\"']+)[\\"']", part))
+                patterns.extend(re.findall(r"[\"']([^\"']+)[\"']", part))
                 continue
             if re.match(r"    [\w-]+\s*:", part):
                 in_paths = False
