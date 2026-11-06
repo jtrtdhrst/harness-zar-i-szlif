@@ -64,6 +64,55 @@ class RunMcpGrantTests(unittest.TestCase):
                 validate_grant(grant, authenticated_profile="cho",
                                run_id="run-1", now=self.now)
 
+    def test_paperclip_native_issuer_run_gateway_and_core_tool_endpoints(self):
+        """Only Paperclip's exact host and server-minted gateway IDs are admitted."""
+        urls = (
+            "https://paperclip.kompaszbiorek.pl/mcp/gateways/gw_" + "a" * 32,
+            "https://paperclip.kompaszbiorek.pl/api/mcp/project-tools",
+            "https://paperclip.kompaszbiorek.pl/mcp/runtime-tools",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                grant = {**self.grant, "servers": [{"name": "paperclip", "url": url, "token": "opaque"}]}
+                specs, scope = validate_grant(grant, authenticated_profile="cho", run_id="run-1", now=self.now)
+                self.assertEqual(specs[0]["url"], url)
+                self.assertTrue(specs[0]["strict_redirect_headers"])
+                self.assertEqual(scope, "paperclip-run:cho:run-1")
+
+    def test_native_issuer_urls_deny_cross_origin_redirect_and_path_variants(self):
+        base = "https://paperclip.kompaszbiorek.pl"
+        gateway = base + "/mcp/gateways/gw_" + "a" * 32
+        rejected = (
+            gateway + "?to=evil", gateway + "#ignore", gateway + "/..",
+            base + "/mcp/gateways/gw_" + "z" * 32,
+            base + "/mcp/gateways/gw_" + "a" * 31,
+            base + "/mcp/gateways/../gw_" + "a" * 32,
+            base + "/mcp/gateways/gw_%61" + "a" * 31,
+            base + "/api/mcp/project-tools/../secrets",
+            base + "/api/mcp/project-tools/",
+            base + "/mcp/gateway", base + "/api/secrets", base + "/mcp",
+            "https://paperclip.kompaszbiorek.pl.evil.example/mcp/gateways/gw_" + "a" * 32,
+            "https://attacker@paperclip.kompaszbiorek.pl/mcp/gateways/gw_" + "a" * 32,
+            "https://paperclip.kompaszbiorek.pl:8443/mcp/gateways/gw_" + "a" * 32,
+            "http://paperclip.kompaszbiorek.pl/mcp/gateways/gw_" + "a" * 32,
+        )
+        for url in rejected:
+            with self.subTest(url=url), self.assertRaises(InvalidRunGrant):
+                validate_grant({**self.grant, "servers": [
+                    {"name": "paperclip", "url": url, "token": "opaque"}
+                ]}, authenticated_profile="cho", run_id="run-1", now=self.now)
+
+    def test_operator_kill_switch_blocks_native_core_urls_too(self):
+        import os
+        from unittest.mock import patch
+        native = {**self.grant, "servers": [{
+            "name": "paperclip", "url": "https://paperclip.kompaszbiorek.pl/mcp/gateways/gw_" + "a" * 32,
+            "token": "opaque",
+        }]}
+        with patch.dict(os.environ, {"HERMES_PAPERCLIP_MCP_URLS": ""}):
+            with self.assertRaises(InvalidRunGrant):
+                validate_grant(native, authenticated_profile="cho", run_id="run-1", now=self.now)
+
     def test_bearer_header_injection_and_whitespace_are_rejected(self):
         for bearer in ("token" + chr(13) + chr(10) + "X-Forged: yes", "token value", "token" + chr(9) + "value", "sketch" + chr(10)):
             grant = {**self.grant, "servers": [
