@@ -24,6 +24,17 @@ RUN test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "b5
     test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "6ce316dc1329f1d58d721994f409a30a0fc730691b93d43abf30a94f2bb41879" && \
     test "$(sha256sum /app/server/src/__tests__/issue-stale-execution-lock-routes.test.ts | cut -d' ' -f1)" = "664ba301371d061fcd585d9aba572a3fcb8d4d1cbc578fd20be58d3d3d162bf8" && \
     test "$(sha256sum /app/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts | cut -d' ' -f1)" = "6c3b400e8ea1c8e69a7966d21ff01397b0825d9b6a9a07e61588f8a339b5b552"
+# The lost stage-wake repair is additive to H03, not a replacement for
+# independently validated native reviewer admission. Pin both original and
+# patched exact bytes; reject upstream drift rather than silently ship.
+COPY review-wake-recovery.patch /tmp/paperclip-review-wake-recovery.patch
+RUN test "$(sha256sum /app/server/src/services/recovery/service.ts | cut -d' ' -f1)" = "c414df876e7df64e701a752513db8e5cf7365589294d50da0e1396788a9207db" && \
+    test "$(sha256sum /app/server/src/__tests__/heartbeat-process-recovery.test.ts | cut -d' ' -f1)" = "963edc495d0a0a3919827446190252251949439f43a9c7801aea43516208f8a2" && \
+    cd /app && git apply --check /tmp/paperclip-review-wake-recovery.patch && \
+    git apply /tmp/paperclip-review-wake-recovery.patch && \
+    test "$(sha256sum /app/server/src/services/recovery/service.ts | cut -d' ' -f1)" = "c5cb54e80a0b43bb5278c43fb345b9811b417ef83a34eb74c6f3c4eb902d35ad" && \
+    test "$(sha256sum /app/server/src/__tests__/heartbeat-process-recovery.test.ts | cut -d' ' -f1)" = "339f5a3ac1dc39b59261dfced6e42b48050d90b58454fad9724388e94c3c7522"
+
 # PostgreSQL integration tests must ACTUALLY execute: Vitest's all-skipped exit 0
 # is not acceptable. Run under the existing non-root node account.
 USER node
@@ -32,6 +43,13 @@ RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
     server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts \
     --reporter=json --outputFile=/tmp/paperclip-h03-tests.json --maxWorkers=1 && \
     node -e "const r=require('/tmp/paperclip-h03-tests.json');if(r.numPassedTests!==25||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('H03 expected 25 real passing tests, zero skipped or failed');"
+# These are precisely two focused PostgreSQL cases selected out of a
+# larger regression suite. Do not claim the unrelated skipped cases passed.
+RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
+    server/src/__tests__/heartbeat-process-recovery.test.ts \
+    -t "replays the exact lost reviewer wake|does not replay a skipped wake" \
+    --reporter=json --outputFile=/tmp/paperclip-review-wake-tests.json --maxWorkers=1 && \
+    node -e "const r=require('/tmp/paperclip-review-wake-tests.json');if(r.numPassedTests!==2||r.numFailedTests!==0)throw Error('Review wake expected exactly 2 focused passing tests');"
 USER root
 RUN cd /app && NO_COLOR=1 pnpm exec vitest run server/src/services/execution-blocker-undispatched.test.ts --reporter=default
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc --noEmit
