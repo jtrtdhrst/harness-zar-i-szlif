@@ -110,42 +110,61 @@ class ReleaseSafetyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     m.assess_release_attestation(invalid)
 
-    def test_native_review_evidence_fails_closed_without_trusted_verifier(self):
-        evidence={
-            "source":"paperclip-first-class-decision", "verified":True, "revoked":False,
-            "binding":{"immutable":True,"issue_id":"KOMAA-1602","repository":m.REPO,
-                       "pr_number":25,"head_sha":"a"*40},
-            "decision":{"id":"decision-1","outcome":"approved","status":"active",
-                        "reviewer_id":"cto-1","executor_id":"engineer-1"},
-        }
-        for invalid in [
-            evidence,
-            None,
-            {**evidence,"verified":False},
-            {**evidence,"revoked":True},
-            {**evidence,"binding":{**evidence["binding"],"immutable":False}},
-            {**evidence,"binding":{**evidence["binding"],"issue_id":"KOMAA-1564"}},
-            {**evidence,"binding":{**evidence["binding"],"repository":"attacker/repo"}},
-            {**evidence,"binding":{**evidence["binding"],"pr_number":26}},
-            {**evidence,"binding":{**evidence["binding"],"head_sha":"b"*40}},
-            {**evidence,"binding":{**evidence["binding"],"head_sha":"stale-head"}},
-            {**evidence,"decision":{**evidence["decision"],"status":"revoked"}},
-            {**evidence,"decision":{**evidence["decision"],"outcome":"changes_requested"}},
-            {**evidence,"decision":{**evidence["decision"],"reviewer_id":"engineer-1"}},
-            {**evidence,"decision":{**evidence["decision"],"id":None}},
-        ]:
-            with self.subTest(invalid=invalid):
-                with self.assertRaises(RuntimeError):
-                    m.assess_native_review_evidence(invalid,"KOMAA-1602",25,"a"*40)
+    def test_native_result_requires_first_class_identity_and_exact_sha(self):
+        valid={"verified":True,"repository":m.REPO,"pr":25,"head_sha":"a"*40,
+               "merge_sha":"b"*40, **{k:"12345678-1234-4234-8234-123456789abc"
+               for k in ("issue_id","decision_id","reviewer_agent_id","source_run_id")}}
+        self.assertIn("decision_id",m.validate_native_review_result(valid,25,"a"*40,"b"*40))
+        for changed in ({"verified":False},{"repository":"other/repo"},{"pr":26},
+                        {"head_sha":"c"*40},{"merge_sha":"d"*40},{"decision_id":None},
+                        {"source_run_id":"not-a-uuid"},{"reviewer_agent_id":None}):
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(RuntimeError,"identity/SHA mismatch"):
+                    m.validate_native_review_result({**valid,**changed},25,"a"*40,"b"*40)
 
-        with self.assertRaises(RuntimeError):
-            m.assess_native_review_evidence(evidence,"KOMAA-1564",25,"a"*40)
+    def test_native_verifier_executes_only_root_owned_fixed_script(self):
+        valid={"verified":True,"repository":m.REPO,"pr":25,"head_sha":"a"*40,
+               "merge_sha":"b"*40, **{k:"12345678-1234-4234-8234-123456789abc"
+               for k in ("issue_id","decision_id","reviewer_agent_id","source_run_id")}}
+        from unittest.mock import MagicMock
+        good=MagicMock()
+        good.lstat.return_value=SimpleNamespace(st_mode=0o100755,st_uid=0)
+        good.__str__.return_value="/usr/local/libexec/paperclip_native_release_gate.py"
+        with patch.object(m,"NATIVE_GATE",good),patch.object(m,"run",return_value=SimpleNamespace(returncode=0,stdout=json.dumps(valid))) as call:
+            m.verify_native_review(25,"a"*40,"b"*40)
+            args=call.call_args.args[0]
+            self.assertIn("--merge-sha",args)
+            self.assertNotIn("--issue-id",args)
+            self.assertNotIn("--review-approved",args)
+        with patch.object(m,"NATIVE_GATE",good),patch.object(m,"run",return_value=SimpleNamespace(returncode=1,stdout=json.dumps(valid))):
+            with self.assertRaisesRegex(RuntimeError,"independent review denied"):
+                m.verify_native_review(25,"a"*40,"b"*40)
+        for mode,uid in ((0o120777,0),(0o100777,0),(0o100755,1000)):
+            good.lstat.return_value=SimpleNamespace(st_mode=mode,st_uid=uid)
+            with patch.object(m,"NATIVE_GATE",good), self.assertRaisesRegex(RuntimeError,"ownership/mode invalid"):
+                m.verify_native_review(25,"a"*40,"b"*40)
+        good.lstat.side_effect=FileNotFoundError()
+        with patch.object(m,"NATIVE_GATE",good), self.assertRaisesRegex(RuntimeError,"not installed"):
+            m.verify_native_review(25,"a"*40,"b"*40)
 
-    def test_live_native_review_adapter_denies_without_supported_api(self):
-        self.assertIsNone(m.native_review_evidence("KOMAA-1602",25,"a"*40))
-        with self.assertRaisesRegex(RuntimeError,"Authoritative Paperclip review decision unavailable"):
-            m.assess_native_review_evidence(m.native_review_evidence("KOMAA-1602",25,"a"*40),
-                                            "KOMAA-1602",25,"a"*40)
+    def test_all_mcp_merges_need_independent_exact_sha_approval(self):
+        first="1"*40; second="2"*40; previous="0"*40
+        def fake_docker(*a,**kw):
+            if "rev-list" in a:return first+"\n"+second
+            if "show" in a:return previous+" "+("9"*40)
+            if "diff" in a:return ("paperclip-mcp/src/safe.ts" if a[-1]==first else "docs/README.md")
+            raise AssertionError(a)
+        with patch.object(m,"docker_core",side_effect=fake_docker),patch.object(m,"verified_pr",return_value={"number":25,"head_sha":"a"*40}) as gh,patch.object(m,"verify_native_review",return_value={"decision_id":"x"}) as native:
+            got=m.verify_reviewed_history("/repo",previous,second)
+        self.assertEqual(len(got),1)
+        self.assertEqual(got[0]["merge_sha"],first)
+        gh.assert_called_once_with(first)
+        native.assert_called_once_with(25,"a"*40,first)
+        with patch.object(m,"docker_core",side_effect=lambda *a,**kw: ("1"*40 if "rev-list" in a else previous)):
+            with self.assertRaises(RuntimeError):
+                m.verify_reviewed_history("/repo",previous,first)
+        with self.assertRaisesRegex(RuntimeError,"Missing immutable prior"):
+            m.verify_reviewed_history("/repo",None,second)
 
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")
