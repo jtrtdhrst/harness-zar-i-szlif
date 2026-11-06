@@ -9,7 +9,7 @@
 // (runJailedExec) with GIT_TERMINAL_PROMPT=0 so git/gh can never prompt.
 
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import type { PaperclipApiClient } from "./client.js";
@@ -154,6 +154,61 @@ export function evaluateNativePaperclipReview(issue: unknown, prUrl: string, exa
   });
   if (!matched) return deny("Linked issue PR work product is absent or its pinned SHA differs from the live PR head");
   return { ok: true, code: "ok", message: "Native Paperclip approved review and exact artifact SHA verified" };
+}
+
+
+/** Write back an already verified GitHub merge to exactly one independently
+ * reviewed Paperclip PR artifact. This is NOT a release/deployment approval.
+ * Replays are idempotent; conflicting provenance always fails closed.
+ */
+export async function syncMergedPrWorkProduct(
+  client: PaperclipApiClient,
+  issue: unknown,
+  issueId: string,
+  prUrl: string,
+  headSha: string,
+  mergeCommitSha: string,
+): Promise<{ workProductId: string; acceptedHeadSha: string; paperclipReviewDecisionId: string; mergeCommitSha: string }> {
+  const review = evaluateNativePaperclipReview(issue, prUrl, headSha);
+  if (!review.ok) throw err("review_unverified", review.message);
+  if (!/^[a-f0-9]{40}$/i.test(mergeCommitSha)) throw err("merge_readback_unverified", "Full merge commit SHA is required");
+  const execution = isRecord(issue) && isRecord(issue.executionState) ? issue.executionState : null;
+  const decisionId = execution?.lastDecisionId;
+  if (typeof decisionId !== "string" || !/^[0-9a-f-]{36}$/i.test(decisionId)) {
+    throw err("review_unverified", "First-class review decision id unavailable");
+  }
+  const all = await client.requestJson<unknown>("GET", `/issues/${encodeURIComponent(issueId)}/work-products`);
+  if (!Array.isArray(all)) throw err("merge_writeback_unverified", "Issue work-product readback is not a list");
+  const matching = all.filter((value): value is Record<string, unknown> =>
+    isRecord(value) && value.type === "pull_request" && value.provider === "github" && value.url === prUrl);
+  if (matching.length !== 1 || typeof matching[0].id !== "string") {
+    throw err("merge_writeback_unverified", "Expected exactly one issue-bound PR work product");
+  }
+  const artifact = matching[0];
+  const existing = isRecord(artifact.metadata) ? artifact.metadata : {};
+  const expected = { acceptedHeadSha: headSha, paperclipReviewDecisionId: decisionId, mergeCommitSha };
+  if (typeof existing.headSha !== "string" || existing.headSha.toLowerCase() !== headSha.toLowerCase()) {
+    throw err("version_conflict", "Linked PR work-product head SHA is stale");
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    if (existing[key] != null && existing[key] !== value) {
+      throw err("version_conflict", "Existing merged PR provenance disagrees with independently verified evidence");
+    }
+  }
+  if (["closed", "archived", "failed", "changes_requested"].includes(String(artifact.status))) {
+    throw err("merge_writeback_unverified", "PR work product is in an incompatible state");
+  }
+  const matchesMetadata = Object.entries(expected).every(([key, value]) => existing[key] === value);
+  if (artifact.status !== "merged" || artifact.reviewState !== "approved" || !matchesMetadata) {
+    const changed = await client.requestJson<unknown>("PATCH", `/work-products/${encodeURIComponent(artifact.id)}`, {
+      body: { status: "merged", reviewState: "approved", metadata: { ...existing, ...expected } },
+    });
+    if (!isRecord(changed) || changed.id !== artifact.id || changed.status !== "merged" || changed.reviewState !== "approved"
+        || !isRecord(changed.metadata) || !Object.entries(expected).every(([key, value]) => changed.metadata[key] === value)) {
+      throw err("merge_writeback_unverified", "Work-product PATCH did not confirm merged SHA and review lineage");
+    }
+  }
+  return { workProductId: artifact.id, ...expected };
 }
 
 // Pin the merge to the head SHA verified a moment earlier so a head push
@@ -797,10 +852,28 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           );
         }
         const operationId = randomUUID();
-        const ledgerKey = idempotencyKey ? `merge-${idempotencyKey}` : null;
-        if (ledgerKey) {
-          const prior = await readLedger(ledgerKey);
-          if (prior) return { ...(prior as object), replayed: true };
+        const effectiveIssueId = issueId ?? ws.sourceIssueId;
+        if (!effectiveIssueId) {
+          throw err("review_unverified", "No Paperclip issue bound to this PR/workspace", { remediationOwner: "CHO" });
+        }
+        // Durable replay key even when no optional idempotencyKey was supplied.
+        const ledgerKey = `merge-${createHash("sha256").update(JSON.stringify([
+          ws.workspaceId, effectiveIssueId, repository ?? "", pullRequestNumber, expectedHeadSha, idempotencyKey ?? "",
+        ])).digest("hex")}`;
+        const prior = await readLedger(ledgerKey);
+        if (prior) {
+          if (prior.issueId !== effectiveIssueId || prior.pullRequestNumber !== pullRequestNumber
+              || prior.expectedHeadSha !== expectedHeadSha || typeof prior.prUrl !== "string"
+              || typeof prior.actualHeadSha !== "string" || typeof prior.mergeCommitSha !== "string") {
+            throw err("merge_writeback_unverified", "Existing merge ledger cannot be reconciled safely");
+          }
+          if (prior.workProductSyncState === "confirmed") return { ...prior, replayed: true };
+          const currentIssue = await client.requestJson<unknown>("GET", `/issues/${encodeURIComponent(effectiveIssueId)}`);
+          const synced = await syncMergedPrWorkProduct(
+            client, currentIssue, effectiveIssueId, prior.prUrl, prior.actualHeadSha, prior.mergeCommitSha);
+          const completed = { ...prior, ...synced, status: "ok", workProductSyncState: "confirmed" };
+          await writeLedger(ledgerKey, completed);
+          return { ...completed, replayed: true };
         }
         const repoFlag = (repository ? ["--repo", repository] : []) as string[];
         const view = (await runJailedExec({
@@ -824,10 +897,6 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           throw err(gate.code, `Merge refused for #${pullRequestNumber}: ${gate.message}.`, {
             remediationOwner: gate.code === "unverified" ? "CTO" : "operator",
           });
-        }
-        const effectiveIssueId = issueId ?? ws.sourceIssueId;
-        if (!effectiveIssueId) {
-          throw err("review_unverified", "No Paperclip issue bound to this PR/workspace; native review cannot be verified", { remediationOwner: "CHO" });
         }
         const exactPrUrl = String(meta.url ?? "");
         const issue = await client.requestJson<Record<string, unknown>>("GET", `/issues/${encodeURIComponent(effectiveIssueId)}`);
@@ -886,21 +955,39 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
         } catch {
           confirmed = {};
         }
-        const result = {
-          status: "ok",
-          operationId,
-          pullRequestNumber,
-          expectedHeadSha,
-          actualHeadSha: headSha,
-          mergedAt: confirmed.mergedAt ?? null,
-          mergeCommit: (confirmed.mergeCommit as Record<string, unknown> | null)?.oid ?? confirmed.mergeCommit ?? null,
-          state: confirmed.state ?? null,
-          possiblyCommitted: true,
-          evidenceReference: `ledger:${operationId}`,
+        const commit = isRecord(confirmed.mergeCommit) ? confirmed.mergeCommit.oid : confirmed.mergeCommit;
+        if (Number(confirm.exitCode ?? 1) !== 0 || confirmed.state !== "MERGED"
+            || !confirmed.mergedAt || typeof commit !== "string" || !/^[a-f0-9]{40}$/i.test(commit)) {
+          throw err("merge_readback_unverified", "GitHub merge may have committed, but exact merge SHA readback failed", {
+            possiblyCommitted: true, remediationOwner: "CHO",
+          });
+        }
+        const pending = {
+          status: "merge_writeback_pending",
+          operationId, issueId: effectiveIssueId, prUrl: exactPrUrl,
+          pullRequestNumber, expectedHeadSha, actualHeadSha: headSha,
+          mergedAt: confirmed.mergedAt, mergeCommit: commit, mergeCommitSha: commit,
+          state: confirmed.state, workProductSyncState: "pending",
+          possiblyCommitted: true, evidenceReference: `ledger:${ledgerKey}`,
           attribution: mutationCtx,
         };
-        if (ledgerKey) await writeLedger(ledgerKey, result);
-        await recordWorkspaceMutationAudit(mutationCtx, ws, { action: "git.mergePR", pullRequestNumber, mergeCommit: result.mergeCommit, operationId });
+        // Persist GitHub's confirmed result FIRST. If Paperclip PATCH fails,
+        // a retry reconciles the work product WITHOUT another GitHub merge.
+        await writeLedger(ledgerKey, pending);
+        let synced;
+        try {
+          synced = await syncMergedPrWorkProduct(client, issue, effectiveIssueId, exactPrUrl, headSha, commit);
+        } catch {
+          throw err("merge_writeback_unverified",
+            "GitHub merge confirmed, but Paperclip work product is not synchronized; retry with identical inputs", {
+              possiblyCommitted: true, evidenceReference: `ledger:${ledgerKey}`, remediationOwner: "CHO",
+            });
+        }
+        const result = { ...pending, ...synced, status: "ok", workProductSyncState: "confirmed" };
+        await writeLedger(ledgerKey, result);
+        await recordWorkspaceMutationAudit(mutationCtx, ws, {
+          action: "git.mergePR", pullRequestNumber, mergeCommit: commit, operationId,
+        });
         return result;
       },
     ),
