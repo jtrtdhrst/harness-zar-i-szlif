@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { syncMergedPrWorkProduct, buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, scopedGhEnv } from "./p1-git.js";
+import { assertMergedPrLedgerReadback, syncMergedPrWorkProduct, buildMergeArgv, createP1GitTools, deriveGitPermissions, evaluateMergeGate, evaluateNativePaperclipReview, evaluatePrChecks, scopedGhEnv } from "./p1-git.js";
 import type { PaperclipApiClient } from "./client.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -320,5 +320,53 @@ describe("post-merge work-product provenance and replay safety (P27)", () => {
     await expect(syncMergedPrWorkProduct(
       { requestJson: read } as unknown as PaperclipApiClient, issue, "KOMAA-1559", url, headSha, mergeSha,
     )).rejects.toThrow(/did not confirm/);
+  });
+});
+
+
+describe("P27 merge ledger replay requires fresh exact GitHub readback", () => {
+  const head = "a".repeat(40), merge = "b".repeat(40);
+  const url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/33";
+  const expected = { issueId: "KOMAA-1559", repository: "miloszspyrka-code/harness-zar-i-szlif",
+    pullRequestNumber: 33, expectedHeadSha: head };
+  const prior = { status: "merge_writeback_pending", issueId: expected.issueId, prUrl: url,
+    pullRequestNumber: 33, expectedHeadSha: head, actualHeadSha: head,
+    mergeCommitSha: merge, mergeCommit: merge, workProductSyncState: "pending" };
+  const remote = { state: "MERGED", mergedAt: "2026-11-06T22:00:00Z", url,
+    headRefOid: head, mergeCommit: { oid: merge } };
+
+  it("allows a replay only with freshly matching merge identity", () => {
+    expect(() => assertMergedPrLedgerReadback(prior, expected, remote)).not.toThrow();
+    expect(() => assertMergedPrLedgerReadback(
+      { ...prior, workProductSyncState: "confirmed" }, expected, remote,
+    )).not.toThrow();
+  });
+
+  it("fails closed on stale or mismatched head SHA, issue or PR URL", () => {
+    const cases = [
+      [{ ...prior, actualHeadSha: "c".repeat(40) }, expected, remote],
+      [{ ...prior, expectedHeadSha: "c".repeat(40) }, expected, remote],
+      [{ ...prior, issueId: "KOMAA-OTHER" }, expected, remote],
+      [{ ...prior, prUrl: "https://github.com/miloszspyrka-code/zar-i-szlif/pull/33" }, expected, remote],
+      [{ ...prior, prUrl: "https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/34" }, expected, remote],
+      [prior, { ...expected, repository: "miloszspyrka-code/zar-i-szlif" }, remote],
+      [{ ...prior, mergeCommitSha: "c".repeat(40) }, expected, remote],
+      [prior, expected, { ...remote, mergeCommit: { oid: "c".repeat(40) } }],
+      [prior, expected, { ...remote, state: "OPEN" }],
+      [prior, expected, { ...remote, url: "https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/34" }],
+      [prior, expected, { ...remote, headRefOid: "c".repeat(40) }],
+      [prior, expected, { ...remote, mergedAt: null }],
+    ] as const;
+    for (const [ledger, input, github] of cases) {
+      expect(() => assertMergedPrLedgerReadback(ledger, input, github)).toThrow();
+    }
+  });
+
+  it("rejects short/unverified expected SHA and missing or forged merge evidence", () => {
+    expect(() => assertMergedPrLedgerReadback(prior,
+      { ...expected, expectedHeadSha: "aaaa" }, remote)).toThrow();
+    expect(() => assertMergedPrLedgerReadback(
+      { ...prior, mergeCommit: null }, expected, remote)).toThrow();
+    expect(() => assertMergedPrLedgerReadback(prior, expected, { ...remote, mergeCommit: null })).toThrow();
   });
 });
