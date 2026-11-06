@@ -29,8 +29,12 @@ Najważniejsze otwarte blokery:
 - **P13** — produkcyjny Hermes działa z HEAD otwartego PR #74, nie z merge commita gałęzi
   release.
 - **P17/P18** — odczyt projektów Opik przez MCP zawodzi; brak pozytywnego E2E OAuth.
-- **P25/P26** — realne runy CTO/CHO używają `githubAuthenticationMode=host`, a w kontenerze
-  Paperclipa nie ma poświadczenia `gh`; brak dowodu commita z tożsamością runa.
+- **P25/P26** — push z runu **działa** (PR #158), ale runy raportują `githubAuthenticationMode=host`,
+  brak managed identity, a autor commita to bot `miloszspyrka-code`, nie tożsamość agenta.
+  CTO ma dodatkowo per-agent override `!gh auth git-credential`, który w kontenerze bez
+  `gh` zawodzi.
+- **P23** — izolacja banków Hindsight istnieje tylko w Caddy; core `:8888` przyjmuje
+  żądania bez auth i zwraca wszystkie 15 banków. Brak backupu wolumenu DB.
 - **P7 (produkt)** — PR #153 jest gotowy, ale nie może wejść bez natywnej akceptacji, bo
   kontroler P8 weryfikuje **każdy** merge na `main`.
 
@@ -70,16 +74,16 @@ Pozycje przeklasyfikowane po debugu:
 | P14 | 13/14 agentów opencode_local | migracja zatrzymana na 1/14 | OPEN (zależne) | P1 |
 | P15 | stage=agent, participant=user | **celowa eskalacja po 3 rundach** | MISDIAGNOSED | P2 |
 | P16 | 748 recovery / 966 runów | backfill legacy + bieżące recovery | OPEN (metryka) | P2 |
-| P17 | Opik MCP „tool failed internally” | do potwierdzenia (raport w toku) | OPEN | P1 |
-| P18 | brak pozytywnego E2E OAuth Opik | test negatywny ≠ test pozytywny | OPEN | P1 |
-| P19 | brak korelacji run→trace→span | model/cost null, thread_id nie mapowany | OPEN | P1 |
-| P20 | 4 PR Opik otwarte | zależność #52←#39 | OPEN | P1 |
-| P21 | enricher nie dowodzi retain/recall | snapshot statystyk ≠ span | OPEN | P2 |
+| P17 | Opik MCP „tool failed internally” | CF Access 403 na wewnętrznym proxy; klient `oauth:false` | OPEN (fix opisany) | P1 |
+| P18 | brak pozytywnego E2E OAuth Opik | brak service tokenu; guard wymaga `email` | OPEN (blokada polityki) | P1 |
+| P19 | brak korelacji run→trace→span | run 36dbd bez trace; `model=unknown` 77/87 | OPEN | P1 |
+| P20 | 4 PR Opik otwarte | tylko #53 wdrożony; #52←#39 | OPEN | P1 |
+| P21 | enricher nie dowodzi retain/recall | 96 wzbogaconych; brak `thread_id`/span retain | OPEN | P2 |
 | P22 | 15 banków, ui-qa=0 | brak porównania źródła | OPEN | P1 |
 | P23 | brak testów izolacji 14 profili | tylko pojedyncze dowody | OPEN | P0 |
 | P24 | `latest-slim` bez digestu | brak pinowania obrazu | OPEN | P2 |
-| P25 | `githubAuthenticationMode=host` | brak managed GitHub App w runie | OPEN | P0 |
-| P26 | brak E2E commita z tożsamością | historyczny `Author identity unknown` | OPEN | P1 |
+| P25 | `githubAuthenticationMode=host` | brak managed GitHub identity; push działa przez helper App | OPEN (tożsamość) | P1 |
+| P26 | historyczny `Author identity unknown` | **brak awarii** — PR #158 dowodzi commita+push; autor = bot | FIXED funkcjonalnie / OPEN atrybucja | P2 |
 
 ## 3. P8 — kontroler promocji (FIXED)
 
@@ -180,6 +184,11 @@ Następny realny run Designera (przez Paperclip) musi zalogować:
 `Hindsight initialized: mode=local_external, api_url=http://hindsight-mcp-…, bank=hermes-designer`
 oraz wykonać retain i recall bez 402.
 
+Uwaga z próby E2E: gołe `POST /p/designer/v1/runs` (nawet z `session_id` i
+`X-Hermes-Session-Key`) **nie inicjalizuje providera pamięci** — brak logu Hindsight i brak
+402. To dowodzi tylko, że stateless API nie jest ścieżką, której używa Paperclip; nie
+zamyka P9. Akceptacja wymaga runu z Paperclipa (adapter `hermes_gateway`).
+
 ### Ryzyko
 
 - `hermes update` / reinstalacja pluginu może nadpisać lokalny patch. Trzeba to naprawić
@@ -247,8 +256,11 @@ Test: wymuszony run z blokerem musi zakończyć się `blocked` i nie zmienić is
   (`MCP server 'wiki_fs' is not connected`), brak issue read/comment/status/checkout/resolve.
 - API Paperclipa raportuje 197 narzędzi, 167 wykonywalnych — projekcja do sesji Hermes jest
   niepełna.
-- PR **#71** (`expose run-scoped Paperclip Named MCP tools`) i **#73**
-  (`expose Paperclip runtime tools as native per-run Hermes`) są otwarte.
+- Gałąź `release/hermes-gateway-20261106-h02` zawiera scalony **PR #70** (native run-scoped
+  MCP tools); prod #74 dokłada `install_run_mcp.py` (+10 linii).
+- PR **#71** (`expose run-scoped Paperclip Named MCP tools`, `mergeable=false/dirty`,
+  konflikt z `main`) i **#73** (`expose Paperclip runtime tools as native per-run Hermes`)
+  są otwarte.
 - Produkcja (P13) to HEAD PR #74, który nie zawiera #73.
 
 ### Naprawa
@@ -268,23 +280,35 @@ odczyt + komentarz + zmianę statusu issue.
 
 ### Dowód
 
-- Prod `2sganhxhhnioiqh4an9g2f4k`: tag `a793aa243484…` = HEAD PR **#74** (otwarty).
-- Candidate `hut52do8…`: `40bae449980e…` = HEAD PR **#71**.
-- Canary `yh20mb2…`: `e6558590e063…`.
-- Gałąź docelowa PR #74: `release/hermes-gateway-20261106-h02` (do potwierdzenia w raporcie
-  Coolify, sekcja 12).
+- Prod `2sganhxhhnioiqh4an9g2f4k` (`hermes-gateway`): obraz
+  `a793aa2434845bf7f02d72eadba532e56beb721e` = **HEAD otwartego PR #74**.
+- Coolify app prod ma `git_branch = fix/hermes-runmcp-tool-projection-20261106`
+  (gałąź funkcjonalna, nie release), `git_commit_sha` puste, brak obrazu z rejestru —
+  build lokalny tagowany SHA.
+- Oczekiwana gałąź `release/hermes-gateway-20261106-h02` ma tip `b64d1d31…`;
+  `compare/release...a793aa2` = **diverged, ahead 2 / behind 1**, różnica tylko
+  `integrations/hermes-paperclip/gateway/install_run_mcp.py` (+10).
+- Deploye prod: `a793aa2` 18:12, `6be5104` 18:01, `663e63b` 17:47 — wszystkie
+  `is_webhook=false` (manual/API), nie webhook z gałęzi.
+- Candidate `hut52do8…` = `40bae449…` (PR #71, `mergeable=false/dirty`, konflikt z `main`).
+- Canary `e6558590…` = tip `fix/hermes-runmcp-authority-20261106`, **bez PR**.
+- PR #74: 1 plik, +10/−0, `mergeable=true/clean`, **brak CI i review**; opis twierdzi E2E
+  na tym SAMYM SHA — czyli kod z niezatwierdzonego PR jest już na produkcji.
+- Obrazy nie mają etykiet repo/commit; jedynym provenance jest tag SHA + compose labels.
 
 ### Naprawa
 
-1. PR #74 musi zostać zrecenzowany i **scalony** do gałęzi release; prod ma być budowany
-   z merge SHA, nie z HEAD PR.
-2. Coolify: produkcja śledzi tylko `release/*` (albo pinowany digest), PR-head deploy
-   dozwolony wyłącznie dla canary.
-3. Po wdrożeniu odczytać etykietę/digest obrazu i potwierdzić, że odpowiada merge SHA.
-4. Dodać guard w CI/ops: jeśli obraz prod ma etykietę `pullRequestId != 0`, deploy jest
-   odrzucany.
+1. Review PR #74 (1 plik, +10) i **scalić do `release/hermes-gateway-20261106-h02`**.
+2. Ustawić Coolify prod `git_branch = release/hermes-gateway-20261106-h02` (albo pinowany
+   digest obrazu zbudowanego z merge SHA).
+3. Zbudować i wdrożyć z merge SHA; odczytać tag/digest i potwierdzić zgodność.
+4. Canary zostaje jedynym miejscem deployu z gałęzi funkcjonalnych/PR.
+5. Guard w ops: jeśli `coolify.pullRequestId != 0` albo gałąź prod nie jest `release/*`,
+   deploy jest odrzucany.
 
-Test: `docker inspect` prod pokazuje merge SHA gałęzi release; PR #74 pozostaje historią.
+Test: `docker inspect` prod pokazuje merge SHA gałęzi release; PR #74 zamknięty jako
+scalony; canary nadal na `e655859…` (lub nowszym) i nie jest prod.
+
 
 ## 9. P14 — migracja 14 agentów
 
@@ -346,37 +370,77 @@ Naprawa metryki i procesu:
 
 ## 12. P17–P21 — Opik
 
-### P17 — MCP „tool failed internally”
+### P17 — MCP „tool failed internally” (root cause potwierdzony)
 
-Do potwierdzenia w raporcie infrastrukturalnym (kontenery zdrowe: backend 2.2.121,
-MCP 3.0.7, access-guard, enricher). Plan:
+Topologia: realny upstream to `opik-mcp-egasedqaofxnzcqppuxi805h` (192.168.176.3),
+przed nim `proxy-egased…` (nginx :8080) i `access-guard-egased…` (:8088). Kontener
+`mcp-egased…` jest nieużywanym duplikatem.
 
-1. Odtworzyć `tools/list` i `tools/call` wewnątrz sieci, z tym samym tokenem co klient.
-2. Zebrać log MCP w momencie błędu (status upstreamu, nagłówki, projekt).
-3. Rozdzielić: błąd narzędzia (handler) vs błąd upstreamu (401/403/500) vs zły URL API.
-4. Naprawić handler/konfigurację; dodać test `list_projects` + `read_trace` do smoke.
+Przyczyna:
 
-### P18 — pozytywny E2E OAuth
+- `opik-mcp` przyjmuje dowolny niepusty bearer i nie wymaga klucza (Opik OSS).
+  `initialize` + `tools/call list project` zwraca **16 projektów**; API Opik
+  `…/api/v1/private/projects` → 200.
+- Nginx `location /` **zawsze** wykonuje `auth_request /__access_verify`; guard wymaga
+  ważnego Cloudflare Access JWT z claimem `email`. Brak JWT → **403** i MCP nigdy nie
+  jest wołany (jego log w tym czasie jest pusty).
+- Config Paperclipa `/paperclip/.config/opencode/opencode.jsonc` ma:
+  `"opik": { "url": "http://proxy-egased…:8080/mcp", "oauth": false }`.
+  Klient nie wysyła JWT i nie uruchamia OAuth → każde wywołanie to 403.
+- W logu nginx: **42 × 403** z UA `opencode/1.19.3`, źródło `172.19.0.17` = kontener
+  Paperclipa. To dokładnie „The tool failed internally”.
+- Niezależnie: połączenie `tool_connections` „Opik MCP — E2E read-only” ma
+  `health_status=failed`, „OAuth credentials have expired”, `last_success 2026-11-01
+  19:39Z`, scopes `[]` (brak `offline_access` → brak refresh).
 
-Wymagane: realny użytkownik po Cloudflare Access Managed OAuth wykonuje
-`tools/list`, `tools/call`, odczyt projektu i konkretnego trace. Same testy negatywne
-(brak JWT, zły aud) nie zamykają P18. PR #51 jest już scalony — opis KOMAA-1605 wymaga
-aktualizacji.
+Naprawa (minimalna, bez zmian w Core):
+
+1. Dodać w nginx **wewnętrzny listener** (np. `:8081`) bez `auth_request`, osiągalny tylko
+   w sieci Docker; skierować `opencode.jsonc` Paperclipa na niego. Publiczny `:8080`
+   zostaje z CF Access.
+   Alternatywa: guard akceptuje rotowany token wewnętrzny tylko dla RFC1918.
+2. Reconnect publicznego połączenia OAuth po stronie człowieka (patrz P18) albo dodać
+   obsługę CF service tokenów.
+3. Smoke: `list projects` (16), `read trace`, `tools/list` z kontenera Paperclipa.
+
+### P18 — pozytywny E2E OAuth (blokada polityki, nie awaria)
+
+- Publiczny well-known zwraca poprawne metadane CF Access Managed OAuth
+  (`authorization/token/registration`, PKCE S256).
+- **Nie istnieje żaden użyteczny service token** dla Opik; guard wymaga claimu `email`,
+  więc token service (common_name) zostałby odrzucony. Jedyne działające poświadczenie to
+  interaktywne logowanie człowieka w Cloudflare Access.
+- Zatem pozytywny E2E (`tools/list`, `tools/call`, odczyt projektu i trace) **musi**
+  wykonać człowiek w przeglądarce albo trzeba rozszerzyć guard o service tokeny.
+- PR #51 scalony 2026-11-05 19:55; opis KOMAA-1605 nadal wymienia go jako otwarty —
+  zaktualizować.
 
 ### P19/P20/P21 — korelacja i koszt
 
-- Run `36dbd258…`: 316 276 tokenów wejściowych, 8 415 wyjściowych, `model=unknown`,
-  `costUsd=null`, `costStatus=unpriced`, `usageByModel=null`.
-- PR #39 (segmentacja ról/Hindsight), #45 (LLM usage/cache/spany), #49 (kanoniczny
-  eksporter/NDJSON), #52 (metadane Hindsight/LLM + migracja; baza #39) — otwarte;
-  #53 scalony.
-- Enricher: `runs_enriched=0/1`, `runs_skipped≈73–85`, `runs_failed=0` — skipped nie jest
-  błędem, ale nie dowodzi retain/recall.
+- Run `36dbd258…`: 316 276 / 8 415 tokenów, `model=unknown`, `costUsd=null`,
+  `costStatus=unpriced`, `usageByModel=null`; **brak trace w Opik** (projekt
+  `paperclip-a9de363c` ma 5 trace’ów, ostatni 12:24Z; run start 19:24Z).
+- `cost_events` 30 dni: `hermes_gateway` 87 zdarzeń, **87 unpriced, 0 kosztu**, model
+  `unknown` w 77/87; `openai` 2201 zdarzeń `gpt-6-luna` raportowane jako **0.0**;
+  tylko `opencode-go` ma realne koszty (deepseek 6,89 ¢, muse 3,21 ¢).
+- Spany LLM w Opik mają usage (prompt/completion/cache/reasoning), `paperclip_run_id`,
+  `agent_id`, `provider`, `provider_reported_cost_usd`, ale **brak `model`**
+  i `total_estimated_cost=null`.
+- Enricher (obraz = PR #53, `7110929…`): 1154 cykle, **96 wzbogaconych**, 12 błędów
+  (4 unikalne runy, `HTTPError`), ~35 698 skipped. Korelacja po
+  `metadata.paperclip_run_id` + `metadata.agent_id`; **brak `thread_id`** i brak
+  `hermes_run_id`.
+- PR: #39 open (30 ahead/166 behind), #45 open (15/166), #49 open (9/131), #52 open
+  (base = #39, 39/166), #53 merged i wdrożony. Tylko #53 jest na produkcji.
 
-Kolejność: #39 → #52, #45, #49; deploy enrichera z merge SHA; dodać do runu:
-`paperclip_run_id`, `hermes_run_id`, `opik_thread_id`, `trace_id`, `model`, `cost`.
-Test akceptacyjny: jeden pełny run ma wszystkie identyfikatory i co najmniej jeden span
-retain oraz recall Hindsight.
+Kolejność: #39 → #52, #45, #49; deploy enrichera z merge SHA; uzupełnić:
+`paperclip_run_id`, `hermes_run_id`, `opik_thread_id` (= `paperclip_run_id`),
+`model`, `cost`; dodać cennik dla `openai`/`hermes_gateway` albo oznaczyć
+`unpriced` jawnie w UI.
+
+Test akceptacyjny: jeden pełny run ma wszystkie 4 identyfikatory, `model`, koszt
+(liczony lub jawnie `unpriced`) oraz co najmniej jeden span retain i recall Hindsight.
+
 
 ## 13. P22–P24 — Hindsight / Vectorize
 
@@ -468,50 +532,66 @@ Do wdrożenia:
   więc nie blokuje to P9).
 
 
-## 14. P25/P26 — GitHub App i tożsamość commita
+## 14. P25/P26 — GitHub auth i tożsamość commita
 
-### P25 — auth w runach
+### P25 — auth w runach (częściowo misdiagnosed)
 
 Dowód:
 
-- `context_snapshot.githubAuthenticationMode = "host"` na **wszystkich 4009 runach od
-  2026-10-01** (CTO, CHO i inne) — to jedyna wartość w danych.
-- W kontenerze Paperclipa: `gh auth status` → **not logged in**; brak `/paperclip/.config/gh`,
-  brak `GITHUB_*`/`GH_*`; `HOME=/paperclip`, uid 0.
-- Na hoście root też nie jest zalogowany; `ubuntu` jest zalogowany do `github.com`
-  (konto `miloszspyrka-code`, scopes `gist, read:org, repo, workflow`), ale runy nie
-  działają jako `ubuntu`.
-- Dwa historyczne połączenia GitHub zostały zarchiwizowane; brak aktywnych grantów dla
-  agentów; izolowany Git kończył się kodem 128.
+- `heartbeat_runs.context_snapshot.githubAuthenticationMode`: **host = 4009**,
+  managed = 0, null = 5135; ostatnie 3 dni: host 602, managed 0.
+  Dozwolone wartości to tylko `host|managed` — nie ma trybu `github-app`.
+- `run_identity_contexts.github` (1990/4932) =
+  `{"reason":"No GitHub identity connected","source":"personal","status":"absent"}`.
+- **Push jednak działa**: Engineer run `efd2f8b0-1bc1-4f82-9b31-8ee3acdc3ac9`
+  (KOMAA-1628) wykonał `git commit` + `git push origin KOMAA-1628`, SHA
+  `c0ac4f1f9e3bc0e900acfba39702767170735063` → PR **#158** → merge
+  `98cd058155…` (obecny live).
+- Mechanizm: w kontenerze Core jest globalny helper
+  `credential.https://github.com.helper=!/paperclip/github-auth-bin/core-git-credential-app`,
+  który używa instalacyjnego tokenu GitHub App. Timer
+  `paperclip-github-app-refresh.timer` (enabled/active, co 20 min) odświeża token dla
+  App `5398752` / installation `173456397`, repo `harness-zar-i-szlif` + `zar-i-szlif`,
+  perms `contents:write, pull_requests:write, metadata:read, checks:read`.
+- Autor commita to `miloszspyrka-code <233741877+miloszspyrka-code@users.noreply.github.com>`
+  (bot), nie tożsamość agenta/runu.
+- CTO ma per-agent `GIT_CONFIG_VALUE_0="!gh auth git-credential"`, a w kontenerze nie ma
+  zalogowanego `gh` — to realny błąd tylko dla tego agenta.
 
-To wyjaśnia, dlaczego centralny MCP widzi repo, a run nie może wykonać git.
-Plan:
+Naprawa:
 
-1. Wymusić managed GitHub App installation auth dla workspace/runs; usunąć fallback do
-   `host`.
-2. Zweryfikować, że run dostaje instalacyjny token o zakresie tylko do potrzebnego repo.
-3. Dodać do runu pole `githubAuthenticationMode` z wartością `github-app-installation`
-   i test negatywny: brak grantu = run `blocked`, nie cichy fallback.
-4. E2E: run tworzy commit, push, PR; odczytać SHA z GitHub.
+1. Skonfigurować managed GitHub identity (`githubSelection.configured`), aby runy
+   raportowały `managed` i miały wpis w `run_identity_contexts`, zamiast polegać na
+   globalnym helperze i trybie `host`.
+2. Usunąć per-agent override `!gh auth git-credential` z CTO; użyć helpera App.
+3. Zdecydować politykę autora commita: bot App (dziś) czy tożsamość agenta. Jeśli agent,
+   ustawiać `user.name`/`user.email` per run i weryfikować w GitHub.
+4. Test negatywny: brak grantu/installation → run `blocked`, nie cichy fallback do hosta.
 
-### P26 — commit author
+### P26 — commit author (FIXED funkcjonalnie)
 
-Wymagane: realny commit z `user.name`/`user.email` tożsamości agenta, `remoteSha`,
-push, PR i odczyt tego samego SHA. Historia `GIT_FAILED: Author identity unknown`
-nie może być uznana za zamkniętą bez tego testu.
+Historyczny `GIT_FAILED: Author identity unknown` **nie występuje** w dzisiejszych runach:
+wszystkie znalezione wystąpienia to tekst promptów zadaniowych, nie błąd runtime.
+Dowodem domknięcia jest PR #158 (commit `c0ac4f1f`, push, merge, deploy).
+
+Pozostaje polityka atrybucji: commit ma autora bota, nie agenta. Test akceptacyjny:
+commit z runu ma `author` równy uzgodnionej tożsamości (bot lub agent) i ten sam SHA
+w remote, PR i `/__release.json`.
 
 ## 15. Kolejność wdrożeń (jedna ścieżka)
 
 1. **P8** — zrobione; czeka na następny realny merge.
 2. **P9/P12** — zrobione; potwierdzić logiem następnego runu Designera.
-3. **P13** — merge PR #74 do release, rebuild prod z merge SHA, guard na PR-head.
-4. **P11** — merge #71/#73, preflight narzędzi, E2E.
+3. **P13** — merge PR #74 do release, przełączyć Coolify prod na `release/*`, rebuild
+   z merge SHA, guard na PR-head.
+4. **P11** — merge/rebase #71 i #73, preflight narzędzi, E2E na nowym prod.
 5. **P15** — decyzja człowieka na KOMAA-1594/1615 (nie SQL).
 6. **P7** — review + merge PR #153 po natywnej akceptacji.
-7. **P25/P26** — managed GitHub App + E2E commit.
+7. **P25** — managed GitHub identity, usunięcie override CTO, polityka autora; P26
+   funkcjonalnie domknięte PR #158, została tylko atrybucja.
 8. **P17/P18** — Opik MCP fix + pozytywny OAuth E2E.
 9. **P19/P20/P21** — PR #39→#52, #45, #49; deploy enrichera; korelacja.
-10. **P22/P23/P24** — kompletność, izolacja, digest.
+10. **P22/P23/P24** — kompletność, izolacja core, digest, backup.
 11. **P14** — migracja agentów pojedynczo po wszystkich bramkach.
 
 ## 16. Testy akceptacyjne (minimalny zestaw E2E)
@@ -540,7 +620,16 @@ nie może być uznana za zamkniętą bez tego testu.
 
 ## 18. Czego nie zweryfikowano
 
-- Brak realnego runu Designera po patchu Hindsight (tylko resolver + bezpośredni HTTP).
-- Brak nowego merge produktu po naprawie P8 (tylko no-op).
-- P17–P24: dane z raportów w toku; sekcje oznaczone „do potwierdzenia”.
-- Nie zmieniano Paperclip Core ani nie wykonano żadnego SQL-poza-odczytem.
+- Brak realnego runu Designera po patchu Hindsight. Resolver 14/14 i bezpośredni
+  retain/recall 200 są potwierdzone, ale stateless `/p/designer/v1/runs` nie inicjalizuje
+  providera pamięci. Akceptacja = następny run Paperclipa.
+- Brak nowego merge produktu po naprawie P8 (tylko no-op `already_released`).
+- P13: nie zmieniano gałęzi Coolify ani nie deployowano; to wymaga review PR #74.
+- P17: nie zmieniano nginx/guard ani configu Opik; podano minimalny fix.
+- P18: pozytywny OAuth wymaga interaktywnego logowania człowieka; nie wykonano.
+- P19/P20/P21: nie mergowano PR Opik ani nie deployowano enrichera.
+- P22/P23/P24: nie zmieniano Hindsight; luka nieautoryzowanego `:8888` pozostaje otwarta.
+- P25/P26: nie zmieniano managed identity ani autora commita; push działa (PR #158).
+- Nie zmieniano Paperclip Core. Wszystkie odczyty DB były `SELECT`; jedyne zapisy to
+  plik kontrolera, drop-in systemd i pliki pluginów Hindsight.
+
