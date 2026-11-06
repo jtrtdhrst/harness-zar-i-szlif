@@ -137,7 +137,7 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
 
 @contextmanager
 def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_id: str,
-                       cwd: str = "."):
+                       agent=None, cwd: str = "."):
     """Borrow ephemeral MCP connections in Hermes' native scoped registry."""
     from gateway.session_local_mcp import _borrowed, _server_names
 
@@ -148,7 +148,26 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
         with _borrowed(authority, scope, servers, names, cwd, partial=False) as discovered:
             if len(discovered[1]) != len(servers):
                 raise InvalidRunGrant("run MCP connection unavailable")
-            yield scope
+            # Discovery alone is not sufficient: the model's deferred tool
+            # search is filtered by the per-agent enabled_toolsets snapshot.
+            # AIAgent is created separately for each /v1/runs dispatch.
+            before = None
+            try:
+                if agent is not None:
+                    before = getattr(agent, "enabled_toolsets", None)
+                    if not isinstance(before, list) or not discovered[0]:
+                        raise InvalidRunGrant("run MCP tools not visible to agent")
+                    borrowed_toolsets = [f"mcp-{names[i]}" for i in sorted(discovered[1])]
+                    denied = set(getattr(agent, "disabled_toolsets", None) or ())
+                    if ("no_mcp" in before or "no_mcp" in denied
+                            or "mcp-*" in denied or denied.intersection(borrowed_toolsets)):
+                        raise InvalidRunGrant("run MCP tools forbidden by agent policy")
+                    agent.enabled_toolsets = [*before, *(t for t in borrowed_toolsets if t not in before)]
+                yield scope
+            finally:
+                if agent is not None and before is not None:
+                    # Return the AIAgent to its exact configured tool selection.
+                    agent.enabled_toolsets = before
     finally:
         # _borrowed disconnects the last borrower; clear local references too.
         borrowed = getattr(authority, "_local_editor_mcp", None)
