@@ -63,6 +63,26 @@ class FakeNativeRegistry:
             yield
 
 
+@contextmanager
+def stub_agent_refresh(*, expose=True):
+    """Fake only the agent snapshot publication; native scope boundary remains real."""
+    pkg = types.ModuleType("tools")
+    pkg.__path__ = []
+    module = types.ModuleType("tools.mcp_tool_agent")
+
+    def refresh(agent, *, enabled_override, quiet_mode=True, content_aware=False):
+        agent.enabled_toolsets = list(enabled_override)
+        available = set(agent.initial_names)
+        if expose and any(item.startswith("mcp-") for item in enabled_override):
+            available.add("tool_a")
+        agent.valid_tool_names = available
+        return available
+
+    module.refresh_agent_mcp_tools = refresh
+    with patch.dict(sys.modules, {"tools": pkg, "tools.mcp_tool_agent": module}):
+        yield
+
+
 class RunMcpScopeTests(unittest.TestCase):
     def test_positive_discovery_and_cleanup(self):
         native = FakeNativeRegistry()
@@ -151,6 +171,68 @@ class RunMcpScopeTests(unittest.TestCase):
                     raise asyncio.CancelledError()
         self.assertFalse(native.active)
         self.assertFalse(authority._local_editor_mcp)
+
+
+    def test_agent_sees_native_tools_only_during_own_run(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        agent = types.SimpleNamespace(enabled_toolsets=["memory", "web"],
+                                      valid_tool_names={"baseline"}, initial_names={"baseline"})
+        with native.installed(), stub_agent_refresh():
+            with borrowed_run_tools(authority, grant("designer", "run-positive"),
+                                    authenticated_profile="designer", run_id="run-positive",
+                                    agent=agent) as scope:
+                self.assertIn("tool_a", agent.valid_tool_names)
+                self.assertIn("mcp-", str(agent.enabled_toolsets))
+                self.assertEqual(scope, "paperclip-run:designer:run-positive")
+            self.assertEqual(agent.enabled_toolsets, ["memory", "web"])
+            self.assertEqual(agent.valid_tool_names, {"baseline"})
+        self.assertFalse(native.active)
+        self.assertFalse(authority._local_editor_mcp)
+
+    def test_agent_fails_closed_when_inventory_does_not_publish(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        agent = types.SimpleNamespace(enabled_toolsets=["web"],
+                                      valid_tool_names={"baseline"}, initial_names={"baseline"})
+        with native.installed(), stub_agent_refresh(expose=False):
+            with self.assertRaises(InvalidRunGrant):
+                with borrowed_run_tools(authority, grant("cto", "run-invisible"),
+                                        authenticated_profile="cto", run_id="run-invisible",
+                                        agent=agent):
+                    self.fail("invisible native tools cannot admit the run")
+        self.assertEqual(agent.enabled_toolsets, ["web"])
+        self.assertEqual(agent.valid_tool_names, {"baseline"})
+        self.assertFalse(native.active)
+
+    def test_agent_exception_unwinds_dynamic_tool_selection(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        agent = types.SimpleNamespace(enabled_toolsets=["web"],
+                                      valid_tool_names={"baseline"}, initial_names={"baseline"})
+        with native.installed(), stub_agent_refresh():
+            with self.assertRaisesRegex(RuntimeError, "synthetic failure"):
+                with borrowed_run_tools(authority, grant("cto", "run-error"),
+                                        authenticated_profile="cto", run_id="run-error",
+                                        agent=agent):
+                    self.assertIn("tool_a", agent.valid_tool_names)
+                    raise RuntimeError("synthetic failure")
+        self.assertEqual(agent.enabled_toolsets, ["web"])
+        self.assertEqual(agent.valid_tool_names, {"baseline"})
+        self.assertFalse(native.active)
+
+    def test_missing_agent_toolset_fails_closed_without_profile_mutation(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        agent = types.SimpleNamespace(enabled_toolsets=None, valid_tool_names={"baseline"})
+        with native.installed(), stub_agent_refresh():
+            with self.assertRaises(InvalidRunGrant):
+                with borrowed_run_tools(authority, grant("cto", "run-unbound"),
+                                        authenticated_profile="cto", run_id="run-unbound",
+                                        agent=agent):
+                    self.fail("missing tool selection cannot expand the profile")
+        self.assertIsNone(agent.enabled_toolsets)
+        self.assertFalse(native.active)
 
 
 if __name__ == "__main__":
