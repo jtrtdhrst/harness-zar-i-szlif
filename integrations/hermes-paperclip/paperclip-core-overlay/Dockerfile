@@ -11,6 +11,8 @@ COPY integrations/paperclip-core-review-recovery/overlay.patch /tmp/paperclip-re
 COPY integrations/paperclip-core-review-recovery/execution-blocker-undispatched.test.ts /app/server/src/services/execution-blocker-undispatched.test.ts
 COPY integrations/hermes-paperclip/paperclip-core-overlay/overlay.patch /tmp/hermes-adapter.patch
 COPY integrations/hermes-paperclip/paperclip-core-overlay/adapter-runmcp-tests.patch /tmp/hermes-adapter-tests.patch
+COPY integrations/hermes-paperclip/paperclip-core-overlay/model-routing.patch /tmp/hermes-model-routing.patch
+COPY integrations/hermes-paperclip/paperclip-core-overlay/model-routing-tests.patch /tmp/hermes-model-routing-tests.patch
 
 # Apply BOTH source patches; fail closed if either upstream code or expected
 # resulting bytes changed. Keep the native review state machine untouched.
@@ -24,6 +26,11 @@ RUN set -eux; \
     git apply /tmp/hermes-adapter.patch; \
     git apply --check /tmp/hermes-adapter-tests.patch; \
     git apply /tmp/hermes-adapter-tests.patch; \
+    test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "c30d88b557b7c443b76ff52e77cff93fdea1427eae030cdc65563cc850d2b051"
+    git apply --check /tmp/hermes-model-routing.patch; \
+    git apply /tmp/hermes-model-routing.patch; \
+    git apply --check /tmp/hermes-model-routing-tests.patch; \
+    git apply /tmp/hermes-model-routing-tests.patch; \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"; \
     test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "977e6ecfc457c330b8bc59e020456ca3361aebe877b065d4878573cd3cae0578"
 
