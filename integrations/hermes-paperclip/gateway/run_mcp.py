@@ -136,8 +136,73 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
 
 
 @contextmanager
+def _project_scoped_tools(agent, schemas):
+    """Rebuild the run-local model tool inventory after MCP discovery.
+
+    Hermes initializes agent.tools before the run-grant registry is borrowed.
+    Registration alone cannot expose those MCP tools to the model or to the
+    progressive tool_search catalog. Restore all snapshots on grant exit.
+    """
+    import model_tools
+    from tools.registry import registry
+
+    original_tools = agent.tools
+    original_names = agent.valid_tool_names
+    original_enabled = agent.enabled_toolsets
+    original_generation = getattr(agent, "_tool_snapshot_generation", None)
+    scoped_names = set(schemas)
+    scoped_toolsets = {
+        registry.get_toolset_for_tool(name) for name in scoped_names
+    } - {None, ""}
+    if not scoped_names or not scoped_toolsets:
+        raise InvalidRunGrant("run MCP projection unavailable")
+
+    if original_enabled is None:
+        default_raw = model_tools.get_tool_definitions(
+            enabled_toolsets=None, disabled_toolsets=agent.disabled_toolsets,
+            quiet_mode=True, skip_tool_search_assembly=True,
+        )
+        default_sets = {
+            registry.get_toolset_for_tool(item["function"]["name"])
+            for item in default_raw
+        } - {None, ""}
+        enabled = sorted(default_sets | scoped_toolsets)
+    else:
+        enabled = sorted(set(original_enabled) | scoped_toolsets)
+
+    raw = model_tools.get_tool_definitions(
+        enabled_toolsets=enabled, disabled_toolsets=agent.disabled_toolsets,
+        quiet_mode=True, skip_tool_search_assembly=True,
+    )
+    raw_names = {item["function"]["name"] for item in raw}
+    if not scoped_names.issubset(raw_names):
+        raise InvalidRunGrant("run MCP projection denied by tool policy")
+
+    projected = model_tools.get_tool_definitions(
+        enabled_toolsets=enabled, disabled_toolsets=agent.disabled_toolsets,
+        quiet_mode=True,
+    )
+    projected_names = {item["function"]["name"] for item in projected}
+    projected.extend(
+        item for item in (original_tools or [])
+        if item["function"]["name"] not in projected_names
+    )
+    try:
+        agent.enabled_toolsets = enabled
+        agent.tools = projected
+        agent.valid_tool_names = {item["function"]["name"] for item in projected}
+        agent._tool_snapshot_generation = registry._generation
+        yield
+    finally:
+        agent.tools = original_tools
+        agent.valid_tool_names = original_names
+        agent.enabled_toolsets = original_enabled
+        agent._tool_snapshot_generation = original_generation
+
+
+@contextmanager
 def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_id: str,
-                       cwd: str = "."):
+                       cwd: str = ".", agent=None):
     """Borrow ephemeral MCP connections in Hermes' native scoped registry."""
     from gateway.session_local_mcp import _borrowed, _server_names
 
@@ -148,7 +213,11 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
         with _borrowed(authority, scope, servers, names, cwd, partial=False) as discovered:
             if len(discovered[1]) != len(servers):
                 raise InvalidRunGrant("run MCP connection unavailable")
-            yield scope
+            if agent is None:
+                yield scope
+            else:
+                with _project_scoped_tools(agent, discovered[0]):
+                    yield scope
     finally:
         # _borrowed disconnects the last borrower; clear local references too.
         borrowed = getattr(authority, "_local_editor_mcp", None)
