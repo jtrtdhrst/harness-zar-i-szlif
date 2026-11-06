@@ -178,11 +178,15 @@ def verify_reviewed_history(repo_path, previous, remote):
         if not validate_sha(merge_sha):
             raise RuntimeError("Invalid release history SHA")
         parents = docker_core("git", "-C", repo_path, "show", "-s", "--format=%P", merge_sha).split()
-        if len(parents) != 2 or any(not validate_sha(p) for p in parents):
-            raise RuntimeError("Direct/squash commit on release path is not approved")
+        if not parents or any(not validate_sha(p) for p in parents):
+            raise RuntimeError("Invalid release history ancestry")
         files = docker_core("git", "-C", repo_path, "diff", "--name-only", parents[0], merge_sha).splitlines()
         if not any(is_component_change(file) for file in files):
             continue
+        # An unrelated direct/squash commit must not wedge the MCP-only release
+        # lane. Once the MCP source is touched, require a real merged PR.
+        if len(parents) != 2:
+            raise RuntimeError("Direct/squash commit on release path is not approved")
         pr = verified_pr(merge_sha)
         evidence = verify_native_review(pr["number"], pr["head_sha"], merge_sha)
         reviewed.append({**pr, "merge_sha": merge_sha, "decision_id": evidence["decision_id"]})

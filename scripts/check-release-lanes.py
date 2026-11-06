@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import re
 from pathlib import Path
 
 def check(data):
@@ -30,6 +31,8 @@ def check(data):
         must(lane.get("mode") in allowed, f"{name}: wrong mode")
         must(isinstance(lane.get("repository"), str) and "/" in lane["repository"], f"{name}: source missing")
         must(lane.get("review_required") is True and lane.get("exact_sha_required") is True, f"{name}: missing review/provenance gate")
+        expected_reviewer = "CTO" if lane["repository"] == "miloszspyrka-code/zar-i-szlif" else "CHO"
+        must(lane.get("reviewer_role") == expected_reviewer, f"{name}: wrong review owner")
         must(bool(lane.get("observed_baseline")), f"{name}: missing observed baseline")
         if lane["mode"] == "git_promoted":
             must(lane["environment"] == "production", "canary cannot be promoted")
@@ -50,6 +53,7 @@ def check(data):
         must(r.get("release_route") in ("coolify_reviewed_digest_manual", "inactive_no_promotion"), f"{name}: unsafe release route")
         must(r.get("promotion_state") == "hold" and r.get("evidence_state") == "open", f"{name}: false attestation")
         must(r.get("auto_deploy_expected") is False and r.get("review_required") is True, f"{name}: unreviewed/automatic release")
+        must(r.get("reviewer_role") == "CHO" and "CHO + CTO" not in str(r.get("release_contract", "")), f"{name}: duplicate/wrong Harness review")
         must(r.get("exact_image_digest_required") is True and r.get("source_commit_required_when_source_built") is True, f"{name}: source/digest mismatch unguarded")
         must(all(r.get(k) for k in ("observed_status", "observed_image_ref", "release_contract")), f"{name}: missing evidence/contract")
         uuids.add(uuid)
@@ -63,12 +67,17 @@ def check(data):
         names.add(name)
         must(w.get("release_route") == "cloudflare_reviewed_version_manual", f"{name}: unsafe Worker release")
         must(w.get("promotion_state") == "hold" and w.get("auto_deploy_expected") is False and w.get("review_required") is True, f"{name}: unsafe Worker promotion")
+        must(w.get("reviewer_role") == "CHO", f"{name}: wrong Worker release reviewer")
         must(w.get("source_provenance_verified") is False, f"{name}: invented source provenance")
         must(all(w.get(k) for k in ("deployment_id", "version_id", "deployment_at", "release_contract")), f"{name}: missing Worker version/rollback route")
     must(names == {"paperclip-mcp", "stronaglowna", "zariszlif-prawne"}, "existing Worker lost")
     must("product-panel" in ids, "product release lane absent")
     core = next((x for x in lanes if x["id"] == "paperclip-core"), None)
-    must(core is not None and core.get("repository") == "miloszspyrka-code/harness-zar-i-szlif" and core.get("artifact_source_ref") == "local/paperclip-review-recovery:4f05e290" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0" and core.get("overlay_source_sha") == "4f05e2904b8663e096bf4f839f25d46767f18899" and core.get("runtime_image_id") == "sha256:ba2bf404be28f2ae5ee8a2a5785944280463f67f84fd52a3b20bda49d9af1855" and core.get("overlay_source_to_runtime_digest_verified") is False, "upstream Paperclip identity incorrect")
+    must(core is not None and core.get("repository") == "miloszspyrka-code/harness-zar-i-szlif" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0", "upstream Paperclip identity incorrect")
+    must(re.fullmatch(r"[0-9a-f]{40}", str(core.get("overlay_source_sha", ""))) is not None, "missing immutable Core overlay SHA")
+    must(re.fullmatch(r"sha256:[0-9a-f]{64}", str(core.get("runtime_image_id", ""))) is not None, "missing immutable Core runtime image digest")
+    must(str(core.get("artifact_source_ref", "")).startswith("local/paperclip-core-h03-candidate:"), "Paperclip Core runtime source reference incorrect")
+    must(core.get("overlay_source_to_runtime_digest_verified") is False, "unverified source/digest attestation claimed")
     return len(lanes), len(other), len(workers)
 
 def negative_cases(manifest):
@@ -93,7 +102,10 @@ def negative_cases(manifest):
     reject("wrong-upstream-repo", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-core").update(repository="miloszspyrka-code/paperclip"))
     reject("auto-canary-to-production", lambda x: next(a for a in x["lanes"] if a["id"] == "hermes-gateway-git-release-candidate").update(production_auto_promotion=True))
     reject("false-overlay-source-attestation", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-core").update(overlay_source_to_runtime_digest_verified=True))
-    print("PASS: 13 fail-closed structural regressions (not live deploy/rollback tests)")
+    reject("wrong-product-reviewer", lambda x: next(a for a in x["lanes"] if a["id"] == "product-panel").update(reviewer_role="CHO"))
+    reject("wrong-harness-reviewer", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-mcp").update(reviewer_role="CTO"))
+    reject("duplicate-reviewers-for-manual-MCP", lambda x: next(a for a in x["other_resources"] if a["id"] == "opik-mcp").update(release_contract="CHO + CTO approved digest"))
+    print("PASS: 16 fail-closed structural regressions (not live deploy/rollback tests)")
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
@@ -104,3 +116,16 @@ if __name__ == "__main__":
     print(f"PASS: {a} release lanes + {b} Coolify hold/inactive resources + {c} existing Workers (dated structural inventory)")
     if options.self_test:
         negative_cases(manifest)
+
+    # Use the already-enabled release-lanes-policy workflow. The GitHub App
+    # cannot create/update a new .github/workflows file without workflows scope.
+    # These checks run in the existing workflow's --self-test invocation.
+    from check_service_coverage import check as check_service_coverage
+    from unittest import TestLoader, TextTestRunner
+    classified, targeted = check_service_coverage()
+    print(f"PASS: {classified} root folders classified, {targeted} targeted CI roots")
+    if options.self_test:
+        suite = TestLoader().discover("scripts", pattern="test_check_service_coverage.py")
+        result = TextTestRunner(verbosity=2).run(suite)
+        if not result.wasSuccessful():
+            raise SystemExit(1)

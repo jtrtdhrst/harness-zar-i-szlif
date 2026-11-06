@@ -166,6 +166,50 @@ class ReleaseSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"Missing immutable prior"):
             m.verify_reviewed_history("/repo",None,second)
 
+    def test_unrelated_single_parent_history_does_not_block_mcp_release(self):
+        previous = "0" * 40
+        component = "1" * 40
+        docs_only = "2" * 40
+
+        def fake_docker(*args, **kwargs):
+            if "rev-list" in args:
+                return component + "\n" + docs_only
+            if "show" in args:
+                return previous + " " + "9" * 40 if args[-1] == component else component
+            if "diff" in args:
+                return "paperclip-mcp/src/safe.ts" if args[-1] == component else "docs/README.md"
+            raise AssertionError(args)
+
+        with patch.object(m, "docker_core", side_effect=fake_docker), \
+             patch.object(m, "verified_pr", return_value={"number": 25, "head_sha": "a" * 40}) as pr, \
+             patch.object(m, "verify_native_review", return_value={"decision_id": "genuine"}) as native:
+            verified = m.verify_reviewed_history("/repo", previous, docs_only)
+        self.assertEqual(len(verified), 1)
+        self.assertEqual(verified[0]["merge_sha"], component)
+        pr.assert_called_once_with(component)
+        native.assert_called_once_with(25, "a" * 40, component)
+
+    def test_mcp_source_direct_commit_still_fails_closed(self):
+        previous = "0" * 40
+        direct = "1" * 40
+
+        def fake_docker(*args, **kwargs):
+            if "rev-list" in args:
+                return direct
+            if "show" in args:
+                return previous
+            if "diff" in args:
+                return "paperclip-mcp/src/safe.ts"
+            raise AssertionError(args)
+
+        with patch.object(m, "docker_core", side_effect=fake_docker), \
+             patch.object(m, "verified_pr") as pr, \
+             patch.object(m, "verify_native_review") as native:
+            with self.assertRaisesRegex(RuntimeError, "Direct/squash commit"):
+                m.verify_reviewed_history("/repo", previous, direct)
+        pr.assert_not_called()
+        native.assert_not_called()
+
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")
         self.assertEqual(m.SERVICE,"paperclip-mcp")
