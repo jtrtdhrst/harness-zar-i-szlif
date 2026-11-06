@@ -201,8 +201,7 @@ async function relationalLiveBlockerIds(
   const live: string[] = [];
   for (const b of diag.blockers) {
     if (!isRecord(b) || typeof b.id !== "string" || !b.id) continue;
-    const st = typeof b.status === "string" ? b.status : "";
-    if (st !== "done" && st !== "cancelled") live.push(b.id);
+    if (isUnresolvedDependency(b)) live.push(b.id);
   }
   return { live: [...new Set(live)], unavailable: false, truncated: diag.truncated === true };
 }
@@ -707,7 +706,7 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
           }),
           getJsonOrNull(client, `/issues/${enc(issueId)}/live-runs`),
         ]);
-        const blockerCount = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers.length : 0;
+        const blockerCount = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers.filter(isUnresolvedDependency).length : 0;
         const liveCount = Array.isArray(liveRuns) ? liveRuns.length : 0;
         const hold = blockingHold(holdView);
         const status = issueStatusOf(issue);
@@ -738,7 +737,14 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
             reason: "Eligibility preflight failed (blocked/hold). Pass force:true to override (recorded), or clear the hold/blockers first.",
           };
         }
-        const resolvedAgent = agentId ?? (typeof issue.assigneeAgentId === "string" ? issue.assigneeAgentId : null) ?? client.defaults.agentId;
+        const returnAssignee = workflow?.status === "changes_requested" && isRecord(workflow.returnAssignee)
+          ? workflow.returnAssignee : null;
+        const requiredExecutor = returnAssignee?.type === "agent" && typeof returnAssignee.agentId === "string"
+          ? returnAssignee.agentId : null;
+        if (requiredExecutor && agentId && agentId !== requiredExecutor) {
+          return { woke: false, verified: true, issueId, status, reason: "changes_requested_return_assignee_mismatch", requiredExecutor };
+        }
+        const resolvedAgent = requiredExecutor ?? agentId ?? (typeof issue.assigneeAgentId === "string" ? issue.assigneeAgentId : null) ?? client.defaults.agentId;
         if (!resolvedAgent) throw new Error("No agent to wake: pass agentId or ensure the issue has an assigneeAgentId");
         const checkout = await client.requestJson<Record<string, unknown>>("POST", `/issues/${enc(issueId)}/checkout`, {
           body: { agentId: resolvedAgent, expectedStatuses: expectedStatuses ?? ["todo", "backlog", "blocked"] },
@@ -747,7 +753,7 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
         // KOMAA-1415: a 200 checkout is not proof of a wake. Confirm an
         // issue-bound queued/running run actually exists; otherwise report
         // woke:false and reconcile the false in_progress instead of leaving it.
-        const observed = await observeIssueBoundRun(client, issueId, checkout);
+        const observed = await observeIssueBoundRun(client, issueId, resolvedAgent, checkout);
         if (!observed.observed) {
           const reconcile = await reconcileFalseInProgress(client, issueId, auth).catch((error) => ({
             reconciled: false, status: null, reason: error instanceof Error ? error.message : String(error), issue: null,
@@ -792,6 +798,12 @@ function runTools(client: PaperclipApiClient): ControlPlaneToolDefinition[] {
 // ---------------------------------------------------------------------------
 // Eligibility, reconcile, holds, DAG, bulk
 // ---------------------------------------------------------------------------
+// A cancelled, unknown or contradictory dependency never satisfies a release gate.
+function isUnresolvedDependency(blocker: unknown): boolean {
+  if (!isRecord(blocker)) return true;
+  return blocker.status !== "done" || blocker.isUnresolved === true || blocker.isDependencyReady === false;
+}
+
 async function getEligibility(client: PaperclipApiClient, issueId: string): Promise<Record<string, unknown>> {
   const [issue, blockers, wakes, liveRuns, activeRun, runs, holdView] = await Promise.all([
     getJsonOrNull(client, `/issues/${enc(issueId)}`),
@@ -821,19 +833,22 @@ async function getEligibility(client: PaperclipApiClient, issueId: string): Prom
   }
   const status = issueStatusOf(issue);
   const blockerList: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : blockedByIdsOf(issue);
+  // Diagnostics preserve satisfied relations for audit, but DONE edges are not execution blockers.
+  // Unknown/cancelled relations remain blocking (fail closed).
+  const unresolvedBlockers = blockerList.filter(isUnresolvedDependency);
   const liveList: unknown[] = Array.isArray(liveRuns) ? liveRuns : [];
   const reasons: string[] = [];
   // KOMAA-841: a status label is not proof of a leased heartbeat run.
   // Never classify review-pending or stale in_progress as runnable.
   const executionState = isRecord(issue.executionState) ? issue.executionState : null;
-  if (status === "blocked" && blockerList.length === 0 && !hold) reasons.push("blocked_but_zero_blockers");
+  if (status === "blocked" && unresolvedBlockers.length === 0 && !hold) reasons.push("blocked_but_zero_blockers");
   if (status === "blocked") reasons.push("status_blocked");
   if (status === "in_review") reasons.push("review_pending");
   if (isNativeReviewPending(status, executionState) && status !== "in_review") reasons.push("review_stage_pending");
   if (hasFalseInProgress(status, liveList)) reasons.push("false_progress_no_issue_run");
   if (status === "in_progress" && confirmedIssueBoundRuns(liveList).length > 0) reasons.push("already_running_issue");
   if (status !== "todo" && status !== "backlog" && status !== "in_progress" && status !== "in_review" && status !== "blocked" && status !== "done" && status !== "cancelled") reasons.push("not_executable_status");
-  if (blockerList.length > 0) reasons.push(`blocked_by_${blockerList.length}`);
+  if (unresolvedBlockers.length > 0) reasons.push(`blocked_by_${unresolvedBlockers.length}`);
   if (hold) reasons.push("execution_hold");
   if (status === "done" || status === "cancelled") reasons.push(`terminal_${status}`);
   if (status === "done" && liveList.length > 0) reasons.push("done_with_live_runs");
@@ -841,7 +856,7 @@ async function getEligibility(client: PaperclipApiClient, issueId: string): Prom
   const executable = reasons.length === 0;
   return {
     issueId, status, executable, reasons,
-    blockerCount: blockerList.length, blockers: blockerList,
+    blockerCount: unresolvedBlockers.length, blockers: unresolvedBlockers,
     executionHold: hold,
     executionHoldGate: holdView
       ? { kind: holdView.kind, gateIssueId: holdView.gateIssueId, gateIdentifier: holdView.gateIdentifier, expired: holdView.expired, manualOnly: holdView.manualOnly }
@@ -1224,7 +1239,7 @@ function eligibilityTools(client: PaperclipApiClient): ControlPlaneToolDefinitio
             anomalies.push({ kind: "blocked_zero_blockers", issueId: v.id });
           }
           for (const b of v.blockers) {
-            if ((b.status === "done" || b.status === "cancelled") && v.status === "blocked") {
+            if (!isUnresolvedDependency(b) && v.status === "blocked") {
               anomalies.push({ kind: "done_dependency", issueId: v.id, blockerId: b.id, blockerStatus: b.status });
             }
           }
@@ -2837,6 +2852,7 @@ function runTimestamp(run: Record<string, unknown>): number {
 async function observeIssueBoundRun(
   client: PaperclipApiClient,
   issueId: string,
+  expectedAgentId: string,
   checkoutResponse?: unknown,
   options: { attempts?: number; delayMs?: number } = {},
 ): Promise<{ observed: boolean; run: Record<string, unknown> | null; source: string | null; attempts: number }> {
@@ -2845,7 +2861,8 @@ async function observeIssueBoundRun(
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const live = await getJsonOrNull(client, `/issues/${enc(issueId)}/live-runs`);
     const active = Array.isArray(live) ? live.filter(runIsActive) : [];
-    const bound = active.find((r) => !isRecord(r) || r.issueId === undefined || String(r.issueId) === issueId);
+    // Missing issue/agent identity is not proof of a real scoped execution.
+    const bound = active.find((r) => isRecord(r) && r.issueId === issueId && r.agentId === expectedAgentId);
     if (isRecord(bound)) return { observed: true, run: bound, source: "live-runs", attempts: attempt };
 
     const issue = await getJsonOrNull(client, `/issues/${enc(issueId)}`);
@@ -2859,8 +2876,7 @@ async function observeIssueBoundRun(
       for (const runId of new Set(candidates)) {
         const run = await getJsonOrNull(client, `/heartbeat-runs/${enc(runId)}`);
         if (isRecord(run) && runIsActive(run)) {
-          const boundIssue = typeof run.issueId === "string" ? run.issueId : null;
-          if (boundIssue === null || boundIssue === issueId) {
+          if (run.issueId === issueId && run.agentId === expectedAgentId) {
             return { observed: true, run, source: "heartbeat-run", attempts: attempt };
           }
         }
@@ -2906,7 +2922,11 @@ async function reconcileFalseInProgress(
   const active = Array.isArray(live) ? live.filter(runIsActive) : [];
   if (active.length > 0) return { reconciled: false, status, reason: "live_run_present", issue };
   if (blockingHold(holdView)) return { reconciled: false, status, reason: "execution_hold", issue };
-  if (issue.reviewAttention !== undefined && issue.reviewAttention !== null) {
+  // A normalized `{ state: "none" }` is no review attention; do not strand rework.
+  // Unknown attention forms and actual pending reviews still block reconciliation.
+  const attention = issue.reviewAttention;
+  if (isNativeReviewPending(status, issue.executionState) ||
+      (attention !== undefined && attention !== null && (!isRecord(attention) || attention.state !== "none"))) {
     return { reconciled: false, status, reason: "review_attention_present", issue };
   }
   if (isRecord(issue.scheduledRetry)) return { reconciled: false, status, reason: "scheduled_retry_present", issue };
@@ -2942,11 +2962,15 @@ async function checkoutWake(
   auth: { operatorRunId?: string; runId?: string },
 ): Promise<Record<string, unknown>> {
   const issue = await client.requestJson<Record<string, unknown>>("GET", `/issues/${enc(issueId)}`);
-  const agent = typeof issue.assigneeAgentId === "string" && issue.assigneeAgentId
-    ? issue.assigneeAgentId
-    : client.defaults.agentId;
-  if (!agent) return { woke: false, issueId, reason: "no assigneeAgentId and no session agent" };
   const workflow = isRecord(issue.executionState) ? issue.executionState : null;
+  const returnAssignee = workflow?.status === "changes_requested" && isRecord(workflow.returnAssignee)
+    ? workflow.returnAssignee : null;
+  const agent = returnAssignee?.type === "agent" && typeof returnAssignee.agentId === "string"
+    ? returnAssignee.agentId
+    : typeof issue.assigneeAgentId === "string" && issue.assigneeAgentId
+      ? issue.assigneeAgentId
+      : client.defaults.agentId;
+  if (!agent) return { woke: false, issueId, reason: "no assigneeAgentId and no session agent" };
   const status = issueStatusOf(issue);
   const checkoutGate = allowNativeCheckout(status, workflow, null);
   if (!checkoutGate.allowed) {
@@ -2962,7 +2986,7 @@ async function checkoutWake(
       body: { agentId: agent, expectedStatuses: ["todo", "backlog"] },
       ...auth,
     });
-    const observed = await observeIssueBoundRun(client, issueId, checkout);
+    const observed = await observeIssueBoundRun(client, issueId, agent, checkout);
     if (!observed.observed) {
       return {
         woke: false, verified: false, issueId, agentId: agent, checkoutAccepted: true,
@@ -3036,14 +3060,8 @@ function operatorCompositeTools(client: PaperclipApiClient): ControlPlaneToolDef
         ]);
         const hold = blockingHold(holdView);
         const blockerList: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : [];
-        const liveBlockers = blockerList.filter((b) => {
-          const st = isRecord(b) ? String(b.status ?? "") : "";
-          return st !== "done" && st !== "cancelled";
-        });
-        const doneBlockers = blockerList.filter((b) => {
-          const st = isRecord(b) ? String(b.status ?? "") : "";
-          return st === "done" || st === "cancelled";
-        });
+        const liveBlockers = blockerList.filter(isUnresolvedDependency);
+        const doneBlockers = blockerList.filter((b) => !isUnresolvedDependency(b));
         const descriptor = isRecord(before.unblockDescriptor) ? before.unblockDescriptor : null;
         const status = issueStatusOf(before);
         let classification = "invalid_blocked";
@@ -3188,14 +3206,14 @@ function operatorCompositeTools(client: PaperclipApiClient): ControlPlaneToolDef
         // 4. done-blocker edges
         const blockers = await getJsonOrNull(client, `/issues/${enc(issueId)}/diagnostics/blockers`);
         const blist: unknown[] = isRecord(blockers) && Array.isArray(blockers.blockers) ? blockers.blockers : [];
-        const hasDone = blist.some((b) => isRecord(b) && (b.status === "done" || b.status === "cancelled"));
+        const hasDone = blist.some((b) => isRecord(b) && !isUnresolvedDependency(b));
         if (hasDone && apply) {
           // KOMAA-874: surviving set is relational; skip when truncated.
           if (!isRecord(blockers) || blockers.truncated === true) {
             actions.push({ action: "removed_done_blocker_edges_skipped", reason: "relational_truncated" });
           } else {
             const next = blist
-              .filter((b) => isRecord(b) && b.status !== "done" && b.status !== "cancelled")
+              .filter((b) => isRecord(b) && isUnresolvedDependency(b))
               .map((b) => (isRecord(b) && typeof b.id === "string" ? b.id as string : "")).filter(Boolean);
             after = await client.requestJson("PATCH", `/issues/${enc(issueId)}`, {
               body: { blockedByIssueIds: [...new Set(next)].sort() },
@@ -3752,10 +3770,7 @@ async function getExecutionStateCompat(client: PaperclipApiClient, issueId: stri
   let unresolvedBlockerCount: number | null = null;
   if (blockedByRaw === null) warnings.push("blockedBy projection absent on issue record; unresolvedBlockerCount unverified");
   else if (blockedByRaw.every((b) => isRecord(b))) {
-    unresolvedBlockerCount = blockedByRaw.filter((b) => {
-      const st = String((b as Record<string, unknown>).status ?? "");
-      return !(st === "done" || st === "cancelled");
-    }).length;
+    unresolvedBlockerCount = blockedByRaw.filter(isUnresolvedDependency).length;
   } else {
     unresolvedBlockerCount = blockedByRaw.length;
     warnings.push("blockedBy entries lack status shape; treated as unresolved (conservative)");
@@ -4318,7 +4333,7 @@ async function execCycleAction(
       const diag0 = await getJsonOrNull(client, `/issues/${enc(issueId)}/diagnostics/blockers`);
       const bl0: unknown[] = isRecord(diag0) && Array.isArray(diag0.blockers) ? diag0.blockers : [];
       const next0 = bl0
-        .filter((b) => isRecord(b) && b.status !== "done" && b.status !== "cancelled")
+        .filter((b) => isRecord(b) && isUnresolvedDependency(b))
         .map((b) => (isRecord(b) && typeof b.id === "string" ? b.id as string : "")).filter(Boolean);
       if (isRecord(diag0) && diag0.truncated === true) {
         return { ok: false, detail: { skipped: true, reason: "relational blockers truncated; refusing edge rewrite" } };
@@ -4719,7 +4734,7 @@ function deliveryCycleToolsPartB(client: PaperclipApiClient): ControlPlaneToolDe
                   const diag = await getJsonOrNull(client, `/issues/${enc(issueId)}/diagnostics/blockers`);
                   const blist: unknown[] = isRecord(diag) && Array.isArray(diag.blockers) ? diag.blockers : [];
                   const doneIds = new Set(
-                    blist.filter((b) => isRecord(b) && (b.status === "done" || b.status === "cancelled"))
+                    blist.filter((b) => isRecord(b) && !isUnresolvedDependency(b))
                       .map((b) => (isRecord(b) && typeof b.id === "string" ? b.id as string : "")).filter(Boolean),
                   );
                   const r = await execCycleAction(client, { kind: "unblock_wake", issueId, reason: "cycle deliver", params: { removeBlockerIds: [...doneIds] } }, auth);

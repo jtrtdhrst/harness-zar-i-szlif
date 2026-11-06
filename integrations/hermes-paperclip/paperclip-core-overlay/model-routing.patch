@@ -1,0 +1,21 @@
+diff --git a/packages/adapters/hermes/src/gateway/server/execute.ts b/packages/adapters/hermes/src/gateway/server/execute.ts
+index 9774372..77b9a8b 100644
+--- a/packages/adapters/hermes/src/gateway/server/execute.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.ts
+@@ -1006,6 +1006,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
+     ...mcpServers.map((server) => server.token),
+   ]);
+   const body = buildRunBody(ctx, sessionKey);
++  // The agent's existing Paperclip model is authoritative. A named Hermes
++  // profile may still advertise the gateway's global default (GPT Luna), so
++  // relying on that default would silently reroute DeepSeek agents.
++  const configuredModel = nonEmpty(ctx.config.model);
++  if (configuredModel) {
++    const qualified = /^([a-zA-Z0-9._-]+)\/(.+)$/.exec(configuredModel);
++    const provider = nonEmpty(ctx.config.provider) ?? qualified?.[1];
++    body.model = qualified?.[2] ?? configuredModel;
++    if (provider) body.provider = provider === "openai" ? "openai-codex" : provider;
++  }
+   // Never accept an administrator-provided runtime grant from payloadTemplate.
+   delete body.paperclip_run_mcp;
+   if (mcpServers.length > 0) {

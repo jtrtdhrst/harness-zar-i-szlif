@@ -62,6 +62,17 @@ The Paperclip MCP auto-release timer is intentionally disabled pending the
 trusted independent review attestation gate in PR #55; never re-enable it on
 the strength of GitHub CI alone.
 
+## Legacy changes_requested hold reconciler (2026-11-06)
+
+A resolved `issue_recovery_actions` record retained `automaticRecovery.replay="blocked"` for a legacy `legacy_disposition_repair_suppressed` run (`2ba4171b-4421-40d2-877f-9ed629f082bd`) which had no process PID, no process start, no external run, no logs, and only lifecycle events. On `KOMAA-1512`, this stale read-only projection prevented all new issue-scoped execution despite a formal independent CTO `changes_requested` decision and an unblocked dependency graph.
+
+The additive `reconciliation-overlay.patch` is **strictly gated** to this precise non-dispatched legacy failure class, resolved recovery, status `todo|in_progress`, an existing formal `changes_requested` decision, and an owner different from the cancelled legacy run. It retains all recovery history and reviewer decisions. Any provider event, process marker, nonempty logs, mismatch, active action, or different cancellation signature retains the no-replay hold.
+
+**VPS source/build:** `/opt/paperclip-releases/core-h03-reconciliation-20261106/`. Built `local/paperclip-core-h03-reconciliation:20261106` from local pinned H03 candidate, digest `sha256:d282c854c6ec4d2f9adaa95461595e94cce5dc0774706c07eb948a3bdd44c569`; **32/32 unit/integration tests**, zero skipped, TypeScript noEmit and emitted server dist passed. The corresponding GitHub Dockerfile integrates the additive patch after both previous overlays; its own CI must independently pass before treating the Git commit as a build attestation.
+
+**Production readback:** Coolify Paperclip Core healthy, HTTP 200, zero restarts. After release, native Paperclip MCP confirmed `KOMAA-1512` issue-scoped CHO run `89300c74-ddf5-4813-a8a5-a95c99dbfe3e`, and both `checkoutRunId` and `executionRunId` matched. This is a proven issue-bound execution recovery, **not** evidence of completed Hermes/VAI/Opik E2E or a first-class final independent review.
+
+**Rollback:** previous healthy image `local/paperclip-core-h03-candidate:56204bc9` / `sha256:ea292ecf0230fcf1429430df604c2c5cc0d398ac67fb9f254b28b92199f234bd`, and saved exact Coolify compose state in `/opt/paperclip-releases/core-h03-reconciliation-20261106/docker-compose.before.yml`. No direct database record changes or permission bypass were used to resolve the no-replay hold. Do not migrate the 14 Hermes profiles on this evidence alone.
 
 ## Recovery of a dropped review wake after implementor lease release (2026-11-06)
 

@@ -24,6 +24,15 @@ RUN test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "b5
     test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "6ce316dc1329f1d58d721994f409a30a0fc730691b93d43abf30a94f2bb41879" && \
     test "$(sha256sum /app/server/src/__tests__/issue-stale-execution-lock-routes.test.ts | cut -d' ' -f1)" = "664ba301371d061fcd585d9aba572a3fcb8d4d1cbc578fd20be58d3d3d162bf8" && \
     test "$(sha256sum /app/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts | cut -d' ' -f1)" = "6c3b400e8ea1c8e69a7966d21ff01397b0825d9b6a9a07e61588f8a339b5b552"
+# Verified issue-scoped H02 legacy disposition recovery. Source is pinned to
+# the exact preceding PR43-overlay SHA; unknown drift stops the build.
+COPY reconciliation-overlay.patch /tmp/paperclip-reconciliation-overlay.patch
+COPY execution-blocker-rework.test.ts /app/server/src/services/execution-blocker-rework.test.ts
+RUN test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d" && \
+    cd /app && git apply --check /tmp/paperclip-reconciliation-overlay.patch && \
+    git apply /tmp/paperclip-reconciliation-overlay.patch && \
+    test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "7ec285484ef6664321e9b2e6aba73eb2c0254554db703328f5a02d6169a960a0"
+
 # The lost stage-wake repair is additive to H03, not a replacement for
 # independently validated native reviewer admission. Pin both original and
 # patched exact bytes; reject upstream drift rather than silently ship.
@@ -41,8 +50,10 @@ USER node
 RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
     server/src/__tests__/issue-stale-execution-lock-routes.test.ts \
     server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts \
+    server/src/services/execution-blocker-undispatched.test.ts \
+    server/src/services/execution-blocker-rework.test.ts \
     --reporter=json --outputFile=/tmp/paperclip-h03-tests.json --maxWorkers=1 && \
-    node -e "const r=require('/tmp/paperclip-h03-tests.json');if(r.numPassedTests!==25||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('H03 expected 25 real passing tests, zero skipped or failed');"
+    node -e "const r=require('/tmp/paperclip-h03-tests.json');if(r.numPassedTests!==32||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('H03 expected 32 real passing tests, zero skipped or failed');"
 # These are precisely two focused PostgreSQL cases selected out of a
 # larger regression suite. Do not claim the unrelated skipped cases passed.
 RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
@@ -51,11 +62,11 @@ RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
     --reporter=json --outputFile=/tmp/paperclip-review-wake-tests.json --maxWorkers=1 && \
     node -e "const r=require('/tmp/paperclip-review-wake-tests.json');if(r.numPassedTests!==2||r.numFailedTests!==0)throw Error('Review wake expected exactly 2 focused passing tests');"
 USER root
-RUN cd /app && NO_COLOR=1 pnpm exec vitest run server/src/services/execution-blocker-undispatched.test.ts --reporter=default
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc --noEmit
 # The pinned runtime already contains compiled runner/vendor assets. Rebuilding
 # unrelated Rust runner binaries requires cargo absent from the production base.
 # Emit only the changed TypeScript server module and verify that it is present.
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc && \
     test -s /app/server/dist/services/execution-blocker.js && \
-    grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js
+    grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js && \
+    grep -q 'safeAbortedLegacyReworkHandoff' /app/server/dist/services/execution-blocker.js

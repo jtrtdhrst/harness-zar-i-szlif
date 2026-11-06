@@ -1,0 +1,87 @@
+diff --git a/server/src/services/execution-blocker.ts b/server/src/services/execution-blocker.ts
+--- a/server/src/services/execution-blocker.ts
++++ b/server/src/services/execution-blocker.ts
+@@ -81,9 +81,67 @@
+   );
+ }
+ 
++
++/**
++ * A legacy disposition-repair attempt may have been cancelled before any
++ * process/provider dispatch, yet leave a resolved, no-replay recovery hold.
++ * Release only the READ-ONLY hold projection for a new, formally recorded
++ * changes_requested round routed to a DIFFERENT owner. The historic recovery
++ * record is retained; any runtime/process/provider/event evidence fails closed.
++ */
++export function safeAbortedLegacyReworkHandoff(input: {
++  actionStatus: string;
++  actionCause: string;
++  noReplayMarker: unknown;
++  issueStatus: string | undefined;
++  currentAssigneeAgentId: string | null | undefined;
++  sourceIssueId: string;
++  executionState: {
++    status?: string;
++    lastDecisionId?: string | null;
++    lastDecisionOutcome?: string | null;
++    returnAssignee?: { type?: string; agentId?: string | null } | null;
++  } | null | undefined;
++  run: Parameters<typeof safeUndispatchedReviewHandoff>[0]["run"];
++}): boolean {
++  const { run, executionState: state } = input;
++  const cancelled = run?.resultJson?.cancellation;
++  const reason = cancelled && typeof cancelled === "object"
++    ? (cancelled as Record<string, unknown>).reason : null;
++  return Boolean(
++    input.actionStatus === "resolved" &&
++    input.actionCause === "legacy_execution_requires_reconciliation" &&
++    input.noReplayMarker === "blocked" &&
++    (input.issueStatus === "todo" || input.issueStatus === "in_progress") &&
++    input.currentAssigneeAgentId &&
++    state?.status === "changes_requested" &&
++    state.lastDecisionOutcome === "changes_requested" &&
++    state.lastDecisionId &&
++    state.returnAssignee?.type === "agent" &&
++    state.returnAssignee.agentId === input.currentAssigneeAgentId &&
++    run &&
++    run.agentId !== input.currentAssigneeAgentId &&
++    run.status === "cancelled" &&
++    run.errorCode === "legacy_disposition_repair_suppressed" &&
++    run.scopeKind === "issue" &&
++    run.contextSnapshot?.issueId === input.sourceIssueId &&
++    run.runtimeModeResolvedAt !== null &&
++    run.processPid === null &&
++    run.processGroupId === null &&
++    run.processStartedAt === null &&
++    run.externalRunId === null &&
++    run.runnerInstanceId === null &&
++    run.nativeSessionId === null &&
++    run.driverKind === null &&
++    (run.logBytes === null || Number(run.logBytes) === 0) &&
++    reason === "Execution stopped without a recorded cancellation request: Disposition repair suppressed: recorded_disposition"
++  );
++}
++
+ export async function getExecutionBlocker(db: Db, companyId: string, issueId: string, options?: { conversationResetCommentId?: string | null }): Promise<ExecutionBlocker | null> {
+   const [conversation] = await db.select({ agentId: issues.conversationAgentId,
+     boundaryId: issues.conversationBoundaryCommentId, status: issues.status,
++    executionState: issues.executionState,
+     assigneeAgentId: issues.assigneeAgentId }).from(issues).where(and(
+     eq(issues.companyId, companyId), eq(issues.id, issueId),
+   )).limit(1);
+@@ -137,6 +195,15 @@
+     issueStatus: conversation?.status,
+     currentAssigneeAgentId: conversation?.assigneeAgentId,
+     sourceIssueId: issueId,
++    run,
++  }) || safeAbortedLegacyReworkHandoff({
++    actionStatus: action.status,
++    actionCause: action.cause,
++    noReplayMarker: (action.evidence.automaticRecovery as { replay?: unknown } | undefined)?.replay,
++    issueStatus: conversation?.status,
++    currentAssigneeAgentId: conversation?.assigneeAgentId,
++    sourceIssueId: issueId,
++    executionState: conversation?.executionState,
+     run,
+   })) {
+     const [providerEvent] = await db.select({ id: heartbeatRunEvents.id })

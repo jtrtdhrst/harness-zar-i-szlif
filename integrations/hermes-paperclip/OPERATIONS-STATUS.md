@@ -1,5 +1,3 @@
-> **Documentation-only main publication.** The source architecture, tests, hashes and admission/release gates below describe a candidate from [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36) unless explicitly called historical production evidence. Publishing this document in `main` does not publish the adapter code or certify Hermes production readiness. For any command referring to receiver/overlay source, check out exact, reviewed PR code SHA; do not run it from `main` and assume matching files exist.
-
 # Hermes ↔ Paperclip — source, security, E2E and release runbook
 
 **Document owner:** Harness Engineer (implementation); CTO (independent source/security review); CHO (DAG, promotion and production release).
@@ -19,13 +17,13 @@ This runbook is the **single current integration-state entrypoint** (an evidence
 | Document | Purpose | Release authority |
 | --- | --- | --- |
 | **This `OPERATIONS-STATUS.md`** | Source map, identity/security contract, current evidence baseline, acceptance matrix, rollback and release procedure | Checklist only: requires native CTO/CHO decisions and live production evidence |
-| [`gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md`](gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md) | Version-pinned Hermes API receiver, private run-scoped session registry, implementation and test entrypoints | Component specification; never production approval |
+| [`gateway/README.md`](gateway/README.md) | Version-pinned Hermes API receiver, private run-scoped session registry, implementation and test entrypoints | Component specification; never production approval |
 | [`paperclip-core-overlay/README.md`](paperclip-core-overlay/README.md) | Paperclip adapter patch for the pinned image, upstream/Core boundary, build and TypeScript/Vitest evidence | Component specification; never production approval |
 | [`README.md`](README.md) | 2026-11-01–02 harness/pilot results and retired Hermes Test evidence | **Historical only**; its old checklist is superseded |
 | [`GATEWAY_PRODUCTION_READINESS_2026-11-02.md`](GATEWAY_PRODUCTION_READINESS_2026-11-02.md) | Earlier Gateway/profile operational baseline | **Historical only**; its readiness and PR references are dated |
 | Paperclip Wiki: `wiki/concepts/hermes-paperclip-run-scoped-e2e.md` | Discover this Git-tracked runbook through Paperclip Wiki/issue context | Discovery pointer; do not fork the runbook into Wiki |
 
-**Publication rule:** This runbook is independently published to `main` as *documentation only*. Adapter, Hermes runtime receiver, patches, tests, Dockerfiles and workflows remain candidate material in PR #36 and are **not** assumed to exist in `main`. This documentation promotion does **not** authorize PR #36 merge, production deployment or agent cutover. Recheck actual code PR HEAD, its exact-SHA CI and independent native CTO/CHO review before any code promotion.
+**Publication rule:** PR #36 combines reviewed candidate code and its runbook. Updating this branch or merging reviewed source into `main` does not constitute production promotion. Recheck exact HEAD/CI, native independent CTO/CHO approval, immutable image digest, and real issue-bound E2E before any deployment or cutover.
 
 The PR history is retained as evidence; obsolete local SHA snapshots are not the current state.
 
@@ -34,10 +32,10 @@ The PR history is retained as evidence; obsolete local SHA snapshots are not the
 | Component | Exact source or path | Purpose |
 | --- | --- | --- |
 | Paperclip adapter worktree | Paperclip issue `KOMAA-1564`; branch `KOMAA-1564`; approved commit `792598741832c31d91d74c8de9e787639944d13e` | Implement in `packages/adapters/hermes/**` only; never push to `paperclipai/paperclip` main |
-| **Paperclip overlay candidate (PR #36; NOT in `main`)** | `paperclip-core-overlay/overlay.patch` plus `adapter-runmcp-tests.patch` | Applies to pinned `ghcr.io/paperclipai/paperclip:2026.1023.0`, with independently merged native Core review recovery from PR #43 |
+| **Deployable Paperclip overlay** | `paperclip-core-overlay/overlay.patch` plus `adapter-runmcp-tests.patch` | Applies to pinned `ghcr.io/paperclipai/paperclip:2026.1023.0`, with independently merged native Core review recovery from PR #43 |
 | Historical adapter candidate | `gateway/adapter-runmcp.patch` | Diff relative to earlier adapter source `4d90f3bc8`; **NOT applicable as the deploy patch against the pinned image** |
-| Image assembly (PR #36 candidate only, not published in `main`) | `paperclip-core-overlay/Dockerfile` and workflow `.github/workflows/hermes-paperclip-adapter-overlay.yml` | Root-repository Docker build context, source hashes before/after both patches, focused tests/typechecks, compiled server runtime |
-| Hermes receiver (PR #36 candidate only, not published in `main`) | `gateway/install_run_mcp.py`, `gateway/run_mcp.py`, `gateway/Dockerfile` | Pinned Hermes v0.22.5 source, private run-scoped MCP receiver, admission/cleanup and profile-bound routing |
+| Image assembly | `paperclip-core-overlay/Dockerfile` and workflow `.github/workflows/hermes-paperclip-adapter-overlay.yml` | Root-repository Docker build context, source hashes before/after both patches, focused tests/typechecks, compiled server runtime |
+| Hermes receiver | `gateway/install_run_mcp.py`, `gateway/run_mcp.py`, `gateway/Dockerfile` | Pinned Hermes v0.22.5 source, private run-scoped MCP receiver, admission/cleanup and profile-bound routing |
 | Native Core fix | `integrations/paperclip-core-review-recovery/overlay.patch` | Existing PR #43 (merged); preserve exactly; do not reimplement in the Hermes adapter |
 | Opik role segmentation | PR #39 (open at baseline) | Must be independently reviewed and verified before relying on its production claims |
 | Service promotion policy | PR #41 (merged at baseline) | Per-service explicit promotion; do **not** globally assume every merged `main` change automatically deploys |

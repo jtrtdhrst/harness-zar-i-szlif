@@ -1,4 +1,4 @@
-> **Documentation only in main.** The code/patches described below remain in unmerged PR #36. The `paperclip-core-overlay` folder in `main` is not a deployable image just because this README exists. Review and build the exact candidate code SHA before any promotion.
+> **Source is not deployment proof.** Even after merging this overlay into `main`, a separately reviewed build, image digest, live acceptance and rollback proof are mandatory.
 
 # Unified Paperclip Core review-recovery + Hermes adapter image
 
