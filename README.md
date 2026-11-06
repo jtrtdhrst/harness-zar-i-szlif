@@ -2,7 +2,7 @@
 
 This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Every active infrastructure service owns a root folder.
 
-**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The canonical Hermes candidate Dockerfile is at `integrations/hermes-paperclip/gateway/Dockerfile` in this repository. A successfully built candidate **does not** mean the production Gateway is Git-backed or Hermes agents are migrated. Historical source-binding PR #6 was closed without merge; the source-pinned run-scoped MCP receiver is in PR #36 and its strict E2E gate is in PR #28.
+**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The Hermes Gateway receiver and adapter are under review in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
 
 ## Hermes adapter documentation (canonical)
 
@@ -13,6 +13,7 @@ The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-papercl
 - `plasmic/` — Plasmic self-hosted application
 - `plasmic-mcp/` — Plasmic MCP
 - `paperclip-mcp/` — Paperclip MCP
+- `integrations/hermes-paperclip/` — source-pinned Hermes Gateway receiver, Paperclip adapter and [runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md)
 - `comfyui-mcp/` — ComfyUI engine + MCP (independently versioned image builds; verify each active deployment)
 - `mantic-mcp/` — Mantic MCP
 - `emailens-mcp/` — Emailens MCP bridge
@@ -34,6 +35,8 @@ Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` 
 ## Source ownership and candidate build layout — not a production deployment claim
 
 **Source owner:** `miloszspyrka-code/harness-zar-i-szlif`. `main` is an integration branch, **not** a universal production release ref. Existing infrastructure MCP services include image-only/upstream-pinned Coolify resources. A folder, Dockerfile or green GitHub Action alone does not prove automatic deployment. Promote an exact reviewed image/ref per service only after its own Git-backed canary, health, authenticated MCP test, immutable digest, runtime readback and rollback. Current per-service policies and observed baselines are tracked in [release-lane PR #41](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/41); review/merge and live acceptance remain separate.
+
+The **unified Paperclip Core + Hermes adapter candidate** deliberately uses the repository-root build context to apply pinned Core review-recovery and Hermes adapter overlays together. This special case does not imply a general rule to deploy other infrastructure MCPs from the repo root. Only a reviewed, tested source SHA may be promoted; the 14-agent migration remains gated by real Wiki/Skills, Hindsight, Opik and rollback validation.
 
 The table below is a **candidate source layout** for independently verified service bindings, not an assertion that every production resource already builds from Git. Do not point general-purpose infrastructure MCPs to `zar-i-szlif` or the repo root. The **product MCP** belongs exclusively in the separate product repository.
 

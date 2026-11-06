@@ -1,0 +1,50 @@
+diff --git a/packages/adapters/hermes/src/gateway/server/execute.test.ts b/packages/adapters/hermes/src/gateway/server/execute.test.ts
+index 2fb1491..21e4f03 100644
+--- a/packages/adapters/hermes/src/gateway/server/execute.test.ts
++++ b/packages/adapters/hermes/src/gateway/server/execute.test.ts
+@@ -1196,3 +1196,45 @@ describe("run-scoped Hermes redirect security", () => {
+     expect(called).toContain(base + "/test-run");
+     expect(called.every((url) => url.startsWith(base) && !url.includes("/v1/v1/"))).toBe(true);
+   });
++
++// Regression: preserved Paperclip models must not silently fall back to the
++// Hermes gateway's global model when a named profile has a different default.
++describe("Paperclip model-preserving Hermes routing", () => {
++  it.each([
++    ["openai/gpt-6-luna", "gpt-6-luna", "openai-codex"],
++    ["opencode-go/deepseek-v4.1-flash", "deepseek-v4.1-flash", "opencode-go"],
++  ])("forwards %s as %s via %s", async (agentModel, expectedModel, expectedProvider) => {
++    const ctx = makeCtx({
++      apiBaseUrl: "http://127.0.0.1:8642",
++      apiKey: "synthetic-only",
++      model: agentModel,
++      payloadTemplate: { model: "incorrect-global-model", provider: "incorrect-provider" },
++      timeoutSec: 4,
++      pollIntervalMs: 250,
++      eventReconnectMs: 250,
++    });
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
++      const u = String(url);
++      if (u.endsWith("/v1/runs")) {
++        return new Response(JSON.stringify({ run_id: "model-smoke-run", status: "started" }), { status: 202 });
++      }
++      if (u.endsWith("/events")) return new Response("stream retry", { status: 503 });
++      if (u.endsWith("/v1/runs/model-smoke-run")) {
++        return new Response(JSON.stringify({ status: "completed", output: "model-ok" }), { status: 200 });
++      }
++      throw new Error("Unexpected Hermes URL in model routing regression");
++    });
++    vi.stubGlobal("fetch", fetchMock);
++    try {
++      const result = await execute(ctx);
++      expect(result.exitCode).toBe(0);
++      const create = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/v1/runs"));
++      const body = JSON.parse(String(create?.[1]?.body));
++      expect(body.model).toBe(expectedModel);
++      expect(body.provider).toBe(expectedProvider);
++      expect(body.paperclip_run_mcp).toBeUndefined();
++    } finally {
++      vi.unstubAllGlobals();
++    }
++  });
++});
