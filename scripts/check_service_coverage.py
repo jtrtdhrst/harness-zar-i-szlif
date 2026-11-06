@@ -52,9 +52,7 @@ def workflow_covers_root(path, root_name):
             if in_paths:
                 patterns.extend(re.findall(r"[\"']([^\"']+)[\"']", part))
         return any(
-            pattern == f"{root_name}/**"
-            or pattern == f"{root_name}/**/*"
-            or pattern.startswith(f"{root_name}/")
+            pattern in {f"{root_name}/**", f"{root_name}/**/*"}
             for pattern in patterns
         )
     return False

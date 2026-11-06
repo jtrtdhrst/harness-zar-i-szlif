@@ -58,6 +58,12 @@ class ServiceCoverageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "does not path-filter"):
                 check(root, config)
 
+    def test_rejects_narrow_descendant_path_as_root_coverage(self):
+        temp, root, config = self.fixture({"mode": "workflow", "workflows": [".github/workflows/test.yml"]}, "name: test\non:\n  pull_request:\n    paths:\n      - \"svc/only-this-file.py\"\n")
+        with temp:
+            with self.assertRaisesRegex(ValueError, "does not path-filter"):
+                check(root, config)
+
     def test_rejects_manual_only_without_reason(self):
         temp, root, config = self.fixture({"mode": "manual_only", "reason": ""})
         with temp:
