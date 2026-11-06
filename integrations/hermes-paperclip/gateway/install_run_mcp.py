@@ -77,6 +77,14 @@ def patch_source(original: str) -> str:
         "                if selected_session_id and not paperclip_run_mcp_supplied else None)\n")
 
     once(
+        "    if admitted is None and getattr(self.gateway_runner, 'session_authority', None) is not None:\n",
+        "    # Run-scoped Paperclip MCP grants require the isolated worker, never the\n"
+        "    # session-authority admission path (observe_api_turn bypasses\n"
+        "    # _run_agent_sync and would silently omit ephemeral MCP tools).\n"
+        "    if (admitted is None and not paperclip_run_mcp_supplied\n"
+        "            and getattr(self.gateway_runner, 'session_authority', None) is not None):\n")
+
+    once(
         "    effective_task_id = session_id or run.run_id\n",
         "    effective_task_id = (f\"paperclip:run:{run.paperclip_run_id}\" if run.paperclip_run_mcp is not None\n"
         "                         else (session_id or run.run_id))\n")
