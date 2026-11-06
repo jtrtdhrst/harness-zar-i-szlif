@@ -144,10 +144,12 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
     servers, scope = validate_grant(envelope, authenticated_profile=authenticated_profile,
                                     run_id=run_id)
     names = _server_names(scope, servers)
-    logging.info("paperclip_run_mcp admitted run=%s profile=%s server_count=%d", run_id, authenticated_profile, len(servers))
+    if os.environ.get("HERMES_RUN_MCP_DIAGNOSTICS") == "1":
+        logging.warning("paperclip_run_mcp admitted run=%s profile=%s server_count=%d", run_id, authenticated_profile, len(servers))
     try:
         with _borrowed(authority, scope, servers, names, cwd, partial=False) as discovered:
-            logging.info("paperclip_run_mcp discovery run=%s connected=%d schemas=%d", run_id, len(discovered[1]), len(discovered[0]))
+            if os.environ.get("HERMES_RUN_MCP_DIAGNOSTICS") == "1":
+                logging.warning("paperclip_run_mcp discovery run=%s connected=%d schemas=%d", run_id, len(discovered[1]), len(discovered[0]))
             if len(discovered[1]) != len(servers):
                 raise InvalidRunGrant("run MCP connection unavailable")
             # Discovery alone is not sufficient: the model's deferred tool
@@ -188,7 +190,8 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
                         refreshed = [t for t in refreshed if t.get("function", {}).get("name") not in drops]
                         agent.tools = refreshed
                         agent.valid_tool_names = {t["function"]["name"] for t in refreshed}
-                        logging.info("paperclip_run_mcp snapshot run=%s raw=%d schemas=%d visible=%d scoped_count=%d", run_id, len(raw or []), len(exposed), len(agent.valid_tool_names), len(borrowed_toolsets))
+                        if os.environ.get("HERMES_RUN_MCP_DIAGNOSTICS") == "1":
+                            logging.warning("paperclip_run_mcp snapshot run=%s raw=%d schemas=%d visible=%d scoped_count=%d", run_id, len(raw or []), len(exposed), len(agent.valid_tool_names), len(borrowed_toolsets))
                 yield scope
             finally:
                 if agent is not None:
