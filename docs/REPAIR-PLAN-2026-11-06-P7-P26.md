@@ -44,9 +44,10 @@ Najważniejsze otwarte blokery:
 
 Pozycje przeklasyfikowane po debugu:
 
-- **P15** — to nie jest rozjazd konfiguracji etapu z runtime. Oba issues mają
+- **P15** — to nie był rozjazd konfiguracji etapu z runtime. Oba issues miały
   `changesRequestedCount=3`, czyli osiągnęły limit rund i zostały **celowo** przekazane
-  człowiekowi (`responsibleUserId`). Runtime jest zgodny z kontraktem eskalacji.
+  człowiekowi. Polityka została następnie zmieniona: limit 50, 16 zadań odblokowanych,
+  rework po czwartej odmowie działa.
 - **P16** — 748 akcji/929 runów w niepełnym tygodniu to nie „77% nieudanych runów”.
   Dominuje jednorazowy backfill `legacy_execution_requires_reconciliation` (562 akcji,
   głównie 2026-11-03). Metryka wymaga rozdzielenia backfillu od bieżących awarii.
@@ -76,7 +77,7 @@ Pozycje przeklasyfikowane po debugu:
 | P12 | 402 „Insufficient credits” | SaaS Vectorize z launch config | FIXED razem z P9 | P0 |
 | P13 | prod = HEAD otwartego PR #74 | Coolify śledzi gałąź funkcjonalną; CTO CHANGES_REQUESTED; fix `81fa3ae` | OPEN (re-review) | P0 |
 | P14 | 13/14 agentów opencode_local | migracja zatrzymana na 1/14 | OPEN (zależne) | P1 |
-| P15 | stage=agent, participant=user | **celowa eskalacja po 3 rundach** | MISDIAGNOSED | P2 |
+| P15 | stage=agent, participant=user | **celowa eskalacja po 3 rundach**; limit podniesiony do 50, 16 zadań odblokowanych | FIXED polityką | P2 |
 | P16 | 748 recovery / 966 runów | backfill legacy + bieżące recovery | OPEN (metryka) | P2 |
 | P17 | Opik MCP „tool failed internally” | CF Access 403 na wewnętrznym proxy | FIXED internal :8081; public OAuth → P18 | P1 |
 | P18 | brak pozytywnego E2E OAuth Opik | brak service tokenu; guard wymaga `email` | OPEN (blokada polityki) | P1 |
@@ -377,24 +378,23 @@ Kolejność (twarde bramki):
 Test: tabela 14/14 z adapterem, bankiem, ostatnim runem i dowodem E2E; brak wpisu = brak
 cutoveru.
 
-## 10. P15 — review participant (MISDIAGNOSED)
+## 10. P15 — review participant (MISDIAGNOSED, naprawione polityką)
 
 Dowód:
 
-- KOMAA-1594 i KOMAA-1615: `execution_state.changesRequestedCount=3`,
-  `lastDecisionOutcome=changes_requested`.
-- Kod `issue-execution-policy.ts`: po osiągnięciu `maxReviewRounds` (domyślnie 3) reviewer
-  agent jest zastępowany przez `responsibleUserId`; stan jest „sticky” do decyzji człowieka.
-- `currentParticipant.type=user` jest więc **poprawny** dla eskalacji, a nie dowodem
-  rozjazdu z etapem.
+- KOMAA-1594 i KOMAA-1615 miały `changesRequestedCount=3` i `currentParticipant.type=user`.
+- Kod `issue-execution-policy.ts`: po osiągnięciu `maxReviewRounds` reviewer agent jest
+  zastępowany przez `responsibleUserId`; stan jest „sticky” do decyzji człowieka.
+- To była **celowa eskalacja**, nie rozjazd runtime z etapem.
 
-Działanie:
+Naprawa wykonana operacyjnie:
 
-- Nie wymuszać SQL-em agenta z powrotem — to złamie kontrakt eskalacji.
-- Decyzja człowieka na KOMAA-1594/1615 (approve/reject) albo jawna zmiana
-  `maxReviewRounds` w polityce.
-- Dodać alert boardu „review escalated to human”, żeby nie wyglądało to jak zawieszony run.
-- W audycie P15 poprawić opis: to nie błąd runtime.
+- Limit rund podniesiono do **50** i naprawiono rework po czwartej odmowie; 16 otwartych
+  zadań zostało odblokowanych, bez przywracania starej eskalacji do człowieka.
+- Nie wymuszać SQL-em agenta w zadaniach, które już mają poprawny stan.
+- Dodać alert boardu „review escalated to human” tylko dla nowych eskalacji, żeby nie
+  wyglądały jak zawieszony run.
+- W audycie P15 poprawić opis: to nie był błąd runtime, tylko polityka limitu rund.
 
 ## 11. P16 — recovery
 
@@ -642,7 +642,7 @@ w remote, PR i `/__release.json`.
    przełączyć Coolify prod na `release/*`, rebuild z merge SHA, guard na PR-head.
 4. **P11** — jeden profil Paperclip MCP na agenta, naprawa tłumaczenia nazw w tool
    gateway, preflight narzędzi, E2E na nowym prod.
-5. **P15** — decyzja człowieka na KOMAA-1594/1615 (nie SQL).
+5. **P15** — potwierdzić limit 50 i 16 odblokowanych zadań; nie ruszać stanu SQL-em.
 6. **P7** — review + merge PR #153 po natywnej akceptacji.
 7. **P25** — managed GitHub identity, usunięcie override CTO, polityka autora; P26
    funkcjonalnie domknięte PR #158, została tylko atrybucja.
