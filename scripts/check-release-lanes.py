@@ -104,3 +104,16 @@ if __name__ == "__main__":
     print(f"PASS: {a} release lanes + {b} Coolify hold/inactive resources + {c} existing Workers (dated structural inventory)")
     if options.self_test:
         negative_cases(manifest)
+
+    # Use the already-enabled release-lanes-policy workflow. The GitHub App
+    # cannot create/update a new .github/workflows file without workflows scope.
+    # These checks run in the existing workflow's --self-test invocation.
+    from check_service_coverage import check as check_service_coverage
+    from unittest import TestLoader, TextTestRunner
+    classified, targeted = check_service_coverage()
+    print(f"PASS: {classified} root folders classified, {targeted} targeted CI roots")
+    if options.self_test:
+        suite = TestLoader().discover("scripts", pattern="test_check_service_coverage.py")
+        result = TextTestRunner(verbosity=2).run(suite)
+        if not result.wasSuccessful():
+            raise SystemExit(1)
