@@ -1,0 +1,24 @@
+--- a/server/src/adapters/registry.ts
++++ b/server/src/adapters/registry.ts
+@@ -817,7 +817,9 @@
+ 
+ const hermesGatewayAdapter: ServerAdapterModule = {
+   ...createHermesGatewayServerAdapter(),
+-  runtimeToolDelivery: "invocation_context",
++  // Hermes /v1/runs consumes short-lived Paperclip MCP connections through
++  // native per-run grants, NOT a prompt-only invocation context.
++  runtimeToolDelivery: "native_mcp",
+ };
+ 
+ const hermesLocalAdapter: ServerAdapterModule = {
+--- a/server/src/adapters/registry.test.ts
++++ b/server/src/adapters/registry.test.ts
+@@ -69,7 +69,7 @@
+     ["cursor", "environment"],
+     ["gemini_local", "environment"],
+     ["grok_local", "environment"],
+-    ["hermes_gateway", "invocation_context"],
++    ["hermes_gateway", "native_mcp"],
+     ["hermes_local", "environment"],
+     ["kimi_local", "environment"],
+     ["openclaw_gateway", "invocation_context"],
