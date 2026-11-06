@@ -1,0 +1,935 @@
+diff --git a/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts b/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts
+new file mode 100644
+index 000000000..c70609c9f
+--- /dev/null
++++ b/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts
+@@ -0,0 +1,538 @@
++import { randomUUID } from "node:crypto";
++import express from "express";
++import request from "supertest";
++import { and, eq, sql } from "drizzle-orm";
++import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
++import {
++  agentWakeupRequests,
++  agents,
++  authUsers,
++  companies,
++  createDb,
++  heartbeatRuns,
++  issueExecutionDecisions,
++  issueRelations,
++  issues,
++} from "@paperclipai/db";
++import {
++  registerServerAdapter,
++  unregisterServerAdapter,
++} from "../adapters/index.js";
++import { errorHandler } from "../middleware/index.js";
++import { issueRoutes } from "../routes/issues.js";
++import { heartbeatService } from "../services/heartbeat.js";
++import { issueService } from "../services/issues.js";
++import {
++  getEmbeddedPostgresTestSupport,
++  startEmbeddedPostgresTestDatabase,
++} from "./helpers/embedded-postgres.js";
++
++const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
++const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
++
++if (!embeddedPostgresSupport.supported) {
++  console.warn(
++    `Skipping H03 false-progress/rework regression on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
++  );
++}
++
++const adapterType = "h03_rework_test";
++
++describeEmbeddedPostgres("H03 false-progress rework dispatch", () => {
++  let db!: ReturnType<typeof createDb>;
++  let heartbeat: ReturnType<typeof heartbeatService>;
++  let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
++
++  const previousInWorktree = process.env.PAPERCLIP_IN_WORKTREE;
++
++  let releaseExecution: () => void = () => undefined;
++  let executionGate: Promise<void> = Promise.resolve();
++
++  beforeEach(() => {
++    executionGate = new Promise<void>((resolve) => { releaseExecution = resolve; });
++  });
++
++  beforeAll(async () => {
++    // The route builds its own heartbeat service from process.env. Preview
++    // worktrees suppress run execution by default; this suite needs the real
++    // dispatch path so it can observe the issue-bound executor run.
++    delete process.env.PAPERCLIP_IN_WORKTREE;
++    temporary = await startEmbeddedPostgresTestDatabase("paperclip-h03-rework-");
++    db = createDb(temporary.connectionString);
++    heartbeat = heartbeatService(db, { runtimeEnv: {} });
++    registerServerAdapter({
++      type: adapterType,
++      supportsLocalAgentJwt: false,
++      execute: async () => {
++        await executionGate;
++        return {
++          exitCode: 0,
++          signal: null,
++          timedOut: false,
++          sessionId: randomUUID(),
++          resultJson: {},
++        };
++      },
++      testEnvironment: async () => ({
++        adapterType,
++        status: "pass",
++        checks: [],
++        testedAt: new Date().toISOString(),
++      }),
++    });
++  }, 30_000);
++
++  afterEach(async () => {
++    releaseExecution();
++    await heartbeat.drainActiveRunExecutions().catch(() => undefined);
++    // Every test uses a fresh company/issue UUID inside this disposable DB.
++    // Heartbeat work can materialize company-skills rows; deleting the parent
++    // company while queued work is still finalizing creates FK violations.
++    // The embedded test database is removed in afterAll.
++  });
++
++  afterAll(async () => {
++    await heartbeat?.drainActiveRunExecutions().catch(() => undefined);
++    unregisterServerAdapter(adapterType);
++    if (previousInWorktree === undefined) delete process.env.PAPERCLIP_IN_WORKTREE;
++    else process.env.PAPERCLIP_IN_WORKTREE = previousInWorktree;
++    await temporary?.cleanup();
++  });
++
++  const responsibleUserIdByCompany = new Map<string, string>();
++
++  async function seedCompany(prefix: string) {
++    const companyId = randomUUID();
++    const executorAgentId = randomUUID();
++    const reviewerAgentId = randomUUID();
++    const peerAgentId = randomUUID();
++    responsibleUserIdByCompany.set(companyId, `${prefix.toLowerCase()}-owner`);
++    await db.insert(authUsers).values({
++      id: `${prefix.toLowerCase()}-owner`,
++      name: `${prefix} Owner`,
++      email: `${prefix.toLowerCase()}-owner@example.test`,
++      createdAt: new Date(),
++      updatedAt: new Date(),
++    });
++    await db.insert(companies).values({
++      id: companyId,
++      name: `${prefix} Company`,
++      issuePrefix: prefix,
++      requireBoardApprovalForNewAgents: false,
++    });
++    await db.insert(agents).values([
++      {
++        id: executorAgentId,
++        companyId,
++        name: `${prefix} Executor`,
++        role: "engineer",
++        status: "idle",
++        adapterType,
++        adapterConfig: {},
++        runtimeConfig: {},
++        permissions: {},
++      },
++      {
++        id: reviewerAgentId,
++        companyId,
++        name: `${prefix} Reviewer`,
++        role: "engineer",
++        status: "idle",
++        adapterType,
++        adapterConfig: {},
++        runtimeConfig: {},
++        permissions: {},
++      },
++      {
++        id: peerAgentId,
++        companyId,
++        name: `${prefix} Peer`,
++        role: "engineer",
++        status: "idle",
++        adapterType,
++        adapterConfig: {},
++        runtimeConfig: {},
++        permissions: {},
++      },
++    ]);
++    return { companyId, executorAgentId, reviewerAgentId, peerAgentId };
++  }
++
++  async function seedIssue(input: {
++    companyId: string;
++    identifier: string;
++    status: string;
++    assigneeAgentId: string;
++    executionPolicy?: Record<string, unknown> | null;
++    executionState?: Record<string, unknown> | null;
++  }) {
++    const issueId = randomUUID();
++    await db.insert(issues).values({
++      id: issueId,
++      companyId: input.companyId,
++      identifier: input.identifier,
++      title: input.identifier,
++      status: input.status,
++      priority: "medium",
++      assigneeAgentId: input.assigneeAgentId,
++      responsibleUserId: responsibleUserIdByCompany.get(input.companyId) ?? null,
++      issueNumber: null,
++      executionPolicy: input.executionPolicy ?? null,
++      executionState: input.executionState ?? null,
++    });
++    return issueId;
++  }
++
++  async function seedRun(input: {
++    companyId: string;
++    agentId: string;
++    issueId: string;
++    status?: string;
++  }) {
++    const runId = randomUUID();
++    await db.insert(heartbeatRuns).values({
++      id: runId,
++      companyId: input.companyId,
++      agentId: input.agentId,
++      invocationSource: "assignment",
++      triggerDetail: "system",
++      status: input.status ?? "running",
++      contextSnapshot: { issueId: input.issueId, wakeReason: "issue_assigned" },
++    });
++    return runId;
++  }
++
++  function agentActor(companyId: string, agentId: string, runId: string) {
++    return {
++      type: "agent",
++      source: "agent_key",
++      companyId,
++      agentId,
++      runId,
++    };
++  }
++
++  function app(actor: Record<string, unknown>) {
++    const testApp = express();
++    testApp.use(express.json());
++    testApp.use((req, _res, next) => {
++      (req as any).actor = actor;
++      next();
++    });
++    testApp.use("/api", issueRoutes(db, {} as any));
++    testApp.use(errorHandler);
++    return testApp;
++  }
++
++  function patchIssue(input: {
++    actor: Record<string, unknown>;
++    issueId: string;
++    body: Record<string, unknown>;
++  }) {
++    return request(app(input.actor))
++      .patch(`/api/issues/${input.issueId}`)
++      .send(input.body);
++  }
++
++  function waitFor<T>(fn: () => Promise<T | null | undefined>, timeoutMs = 15_000) {
++    const started = Date.now();
++    return (async () => {
++      for (;;) {
++        const value = await fn();
++        if (value) return value;
++        if (Date.now() - started > timeoutMs) {
++          throw new Error("Timed out waiting for expected native state");
++        }
++        await new Promise((resolve) => setTimeout(resolve, 100));
++      }
++    })();
++  }
++
++  it("keeps the DONE blocker edge while excluding it from unresolved eligibility", async () => {
++    const seeded = await seedCompany("DONE");
++    const blockerId = await seedIssue({
++      companyId: seeded.companyId,
++      identifier: "DONE-1",
++      status: "done",
++      assigneeAgentId: seeded.executorAgentId,
++    });
++    const dependentId = await seedIssue({
++      companyId: seeded.companyId,
++      identifier: "DONE-2",
++      status: "todo",
++      assigneeAgentId: seeded.executorAgentId,
++    });
++    await db.insert(issueRelations).values({
++      companyId: seeded.companyId,
++      issueId: blockerId,
++      relatedIssueId: dependentId,
++      type: "blocks",
++    });
++
++    const svc = issueService(db);
++    const readiness = await svc.getDependencyReadiness(dependentId);
++    expect(readiness.blockerIssueIds).toEqual([blockerId]);
++    expect(readiness.unresolvedBlockerIssueIds).toEqual([]);
++    expect(readiness.isDependencyReady).toBe(true);
++
++    const checkoutRunId = await seedRun({
++      companyId: seeded.companyId,
++      agentId: seeded.executorAgentId,
++      issueId: dependentId,
++      status: "queued",
++    });
++    const checkedOut = await svc.checkout(
++      dependentId,
++      seeded.executorAgentId,
++      ["todo"],
++      checkoutRunId,
++    );
++    expect(checkedOut?.status).toBe("in_progress");
++
++    const [edge] = await db
++      .select({ id: issueRelations.id })
++      .from(issueRelations)
++      .where(eq(issueRelations.relatedIssueId, dependentId));
++    expect(edge?.id).toBeTruthy();
++  });
++
++  it("still denies cancelled and unresolved blocker relations (negative control)", async () => {
++    const seeded = await seedCompany("NEG");
++    const svc = issueService(db);
++
++    for (const [index, blockerStatus] of ["cancelled", "in_progress", "blocked"].entries()) {
++      const blockerId = await seedIssue({
++        companyId: seeded.companyId,
++        identifier: `NEG-B${index}`,
++        status: blockerStatus,
++        assigneeAgentId: seeded.executorAgentId,
++      });
++      const dependentId = await seedIssue({
++        companyId: seeded.companyId,
++        identifier: `NEG-D${index}`,
++        status: "todo",
++        assigneeAgentId: seeded.executorAgentId,
++      });
++      await db.insert(issueRelations).values({
++        companyId: seeded.companyId,
++        issueId: blockerId,
++        relatedIssueId: dependentId,
++        type: "blocks",
++      });
++
++      const readiness = await svc.getDependencyReadiness(dependentId);
++      expect(readiness.isDependencyReady).toBe(false);
++      expect(readiness.unresolvedBlockerIssueIds).toContain(blockerId);
++      await expect(
++        svc.checkout(dependentId, seeded.executorAgentId, ["todo", "blocked"], randomUUID()),
++      ).rejects.toMatchObject({ status: 422 });
++    }
++  });
++
++  it("dispatches a real issue-bound executor run on changes_requested and persists both decisions", async () => {
++    const seeded = await seedCompany("RWK");
++    const stageId = randomUUID();
++    const issueId = await seedIssue({
++      companyId: seeded.companyId,
++      identifier: "RWK-1",
++      status: "in_review",
++      assigneeAgentId: seeded.reviewerAgentId,
++      executionPolicy: {
++        mode: "normal",
++        commentRequired: true,
++        stages: [
++          {
++            id: stageId,
++            type: "review",
++            approvalsNeeded: 1,
++            participants: [{ id: randomUUID(), type: "agent", agentId: seeded.reviewerAgentId }],
++          },
++        ],
++      },
++      executionState: {
++        status: "pending",
++        currentStageId: stageId,
++        currentStageIndex: 0,
++        currentStageType: "review",
++        currentParticipant: { type: "agent", agentId: seeded.reviewerAgentId },
++        returnAssignee: { type: "agent", agentId: seeded.executorAgentId },
++        reviewRequest: null,
++        completedStageIds: [],
++        lastDecisionId: null,
++        lastDecisionOutcome: null,
++        changesRequestedCount: 0,
++      },
++    });
++    const reviewerRunId = await seedRun({
++      companyId: seeded.companyId,
++      agentId: seeded.reviewerAgentId,
++      issueId,
++    });
++    const changes = await patchIssue({
++      actor: agentActor(seeded.companyId, seeded.reviewerAgentId, reviewerRunId),
++      issueId,
++      body: { status: "in_progress", comment: "Needs another pass." },
++    });
++    expect(changes.status, JSON.stringify(changes.body)).toBe(200);
++    expect(changes.body).toMatchObject({
++      id: issueId,
++      status: "in_progress",
++      assigneeAgentId: seeded.executorAgentId,
++      executionState: {
++        status: "changes_requested",
++        currentStageId: stageId,
++        lastDecisionOutcome: "changes_requested",
++        returnAssignee: { type: "agent", agentId: seeded.executorAgentId },
++      },
++    });
++
++    const [changesDecision] = await db
++      .select()
++      .from(issueExecutionDecisions)
++      .where(
++        and(
++          eq(issueExecutionDecisions.issueId, issueId),
++          eq(issueExecutionDecisions.outcome, "changes_requested"),
++        ),
++      );
++    expect(changesDecision).toMatchObject({
++      stageId,
++      actorAgentId: seeded.reviewerAgentId,
++      body: "Needs another pass.",
++    });
++
++    const wake = await waitFor(async () => {
++      const [row] = await db
++        .select()
++        .from(agentWakeupRequests)
++        .where(
++          and(
++            eq(agentWakeupRequests.agentId, seeded.executorAgentId),
++            eq(agentWakeupRequests.reason, "execution_changes_requested"),
++            sql`${agentWakeupRequests.payload}->>'issueId' = ${issueId}`,
++          ),
++        );
++      return row ?? null;
++    });
++    expect(wake.payload).toMatchObject({ issueId, mutation: "update" });
++
++    const executorRun = await waitFor(async () => {
++      const [row] = await db
++        .select()
++        .from(heartbeatRuns)
++        .where(
++          and(
++            eq(heartbeatRuns.agentId, seeded.executorAgentId),
++            sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issueId}`,
++          ),
++        );
++      return row ?? null;
++    });
++    expect(executorRun.id).toBeTruthy();
++    expect(["queued", "running"]).toContain(executorRun.status);
++    expect(executorRun.wakeupRequestId).toBe(wake.id);
++
++    // The executor's issue-bound run can adopt the unowned checkout and resubmit.
++    const resubmit = await patchIssue({
++      actor: agentActor(seeded.companyId, seeded.executorAgentId, executorRun.id),
++      issueId,
++      body: { status: "in_review", comment: "Addressed the review feedback." },
++    });
++    expect(resubmit.status, JSON.stringify(resubmit.body)).toBe(200);
++    expect(resubmit.body).toMatchObject({
++      id: issueId,
++      status: "in_review",
++      assigneeAgentId: seeded.reviewerAgentId,
++      executionState: {
++        status: "pending",
++        currentStageId: stageId,
++        currentParticipant: { type: "agent", agentId: seeded.reviewerAgentId },
++        returnAssignee: { type: "agent", agentId: seeded.executorAgentId },
++      },
++    });
++
++    const reviewerApprovalRunId = await seedRun({
++      companyId: seeded.companyId,
++      agentId: seeded.reviewerAgentId,
++      issueId,
++    });
++    const approved = await patchIssue({
++      actor: agentActor(seeded.companyId, seeded.reviewerAgentId, reviewerApprovalRunId),
++      issueId,
++      body: { status: "done", comment: "Approved after rework." },
++    });
++    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
++    expect(approved.body).toMatchObject({ id: issueId, status: "done" });
++
++    const decisions = await db
++      .select()
++      .from(issueExecutionDecisions)
++      .where(eq(issueExecutionDecisions.issueId, issueId))
++      .orderBy(issueExecutionDecisions.createdAt, issueExecutionDecisions.id);
++    expect(decisions.map((decision) => decision.outcome)).toEqual([
++      "changes_requested",
++      "approved",
++    ]);
++    expect(decisions[1]).toMatchObject({
++      actorAgentId: seeded.reviewerAgentId,
++      body: "Approved after rework.",
++    });
++
++    await heartbeat.cancelRun(executorRun.id, "test cleanup").catch(() => undefined);
++    releaseExecution();
++  }, 60_000);
++
++  it("rejects a non-participant advancing the review stage (negative control)", async () => {
++    const seeded = await seedCompany("AUTH");
++    const stageId = randomUUID();
++    const issueId = await seedIssue({
++      companyId: seeded.companyId,
++      identifier: "AUTH-1",
++      status: "in_review",
++      assigneeAgentId: seeded.reviewerAgentId,
++      executionPolicy: {
++        mode: "normal",
++        commentRequired: true,
++        stages: [
++          {
++            id: stageId,
++            type: "review",
++            approvalsNeeded: 1,
++            participants: [{ id: randomUUID(), type: "agent", agentId: seeded.reviewerAgentId }],
++          },
++        ],
++      },
++      executionState: {
++        status: "pending",
++        currentStageId: stageId,
++        currentStageIndex: 0,
++        currentStageType: "review",
++        currentParticipant: { type: "agent", agentId: seeded.reviewerAgentId },
++        returnAssignee: { type: "agent", agentId: seeded.executorAgentId },
++        reviewRequest: null,
++        completedStageIds: [],
++        lastDecisionId: null,
++        lastDecisionOutcome: null,
++        changesRequestedCount: 0,
++      },
++    });
++    const peerRunId = await seedRun({
++      companyId: seeded.companyId,
++      agentId: seeded.peerAgentId,
++      issueId,
++    });
++
++    const res = await patchIssue({
++      actor: agentActor(seeded.companyId, seeded.peerAgentId, peerRunId),
++      issueId,
++      body: { status: "in_progress", comment: "Not my review." },
++    });
++    expect(res.status).toBe(422);
++    expect(res.body.error).toContain("Only the active reviewer");
++    const decisions = await db
++      .select()
++      .from(issueExecutionDecisions)
++      .where(eq(issueExecutionDecisions.issueId, issueId));
++    expect(decisions).toEqual([]);
++  });
++});
+diff --git a/server/src/__tests__/issue-stale-execution-lock-routes.test.ts b/server/src/__tests__/issue-stale-execution-lock-routes.test.ts
+index 887b48226..79debf232 100644
+--- a/server/src/__tests__/issue-stale-execution-lock-routes.test.ts
++++ b/server/src/__tests__/issue-stale-execution-lock-routes.test.ts
+@@ -21,6 +21,7 @@ import {
+ } from "./helpers/embedded-postgres.js";
+ import { errorHandler } from "../middleware/index.js";
+ import { issueRoutes } from "../routes/issues.js";
++import { issueService } from "../services/issues.js";
+ 
+ const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
+ const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
+@@ -442,6 +443,248 @@ describeEmbeddedPostgres("stale issue execution lock routes", () => {
+     expect(checkoutActivity).toHaveLength(0);
+   });
+ 
++  it("keeps a pending review in_review when its configured reviewer checks out", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    await db.update(heartbeatRuns)
++      .set({ contextSnapshot: { issueId } })
++      .where(eq(heartbeatRuns.id, currentRunId));
++    await db.insert(issues).values({
++      id: issueId,
++      companyId,
++      title: "Pending reviewer checkout",
++      status: "in_review",
++      priority: "high",
++      assigneeAgentId: agentId,
++      executionPolicy: {
++        mode: "normal",
++        stages: [{ id: "review-stage", type: "review", approvalsNeeded: 1,
++          participants: [{ type: "agent", agentId: agentId }] }],
++        commentRequired: true,
++      },
++      executionState: {
++        status: "pending",
++        currentStageId: "review-stage",
++        currentStageType: "review",
++        currentParticipant: { type: "agent", agentId },
++      },
++    });
++
++    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
++      .post(`/api/issues/${issueId}/checkout`)
++      .send({ agentId, expectedStatuses: ["in_review"] });
++
++    expect(res.status, JSON.stringify(res.body)).toBe(200);
++    expect(res.body).toMatchObject({
++      status: "in_review",
++      executionState: {
++        status: "pending",
++        currentStageId: "review-stage",
++        currentParticipant: { type: "agent", agentId },
++      },
++    });
++    expect(res.body.checkoutRunId).toBe(currentRunId);
++    expect(res.body.executionRunId).toBe(currentRunId);
++  });
++
++  it("does not let a non-participant checkout a pending review", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    const otherReviewerId = randomUUID();
++    await db.insert(issues).values({
++      id: issueId,
++      companyId,
++      title: "Wrong reviewer checkout",
++      status: "in_review",
++      priority: "high",
++      assigneeAgentId: agentId,
++      executionPolicy: {
++        mode: "normal",
++        stages: [{ id: "review-stage", type: "review", approvalsNeeded: 1,
++          participants: [{ type: "agent", agentId: otherReviewerId }] }],
++        commentRequired: true,
++      },
++      executionState: {
++        status: "pending",
++        currentStageId: "review-stage",
++        currentStageType: "review",
++        currentParticipant: { type: "agent", agentId: otherReviewerId },
++      },
++    });
++
++    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
++      .post(`/api/issues/${issueId}/checkout`)
++      .send({ agentId, expectedStatuses: ["in_review"] });
++
++    expect(res.status, JSON.stringify(res.body)).toBe(409);
++    const row = await db
++      .select({ status: issues.status, executionState: issues.executionState, checkoutRunId: issues.checkoutRunId })
++      .from(issues)
++      .where(eq(issues.id, issueId))
++      .then((rows) => rows[0]);
++    expect(row).toMatchObject({
++      status: "in_review",
++      executionState: { status: "pending", currentStageId: "review-stage" },
++      checkoutRunId: null,
++    });
++  });
++
++  it("rejects a reviewer checkout when expected status excludes in_review", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    await db.update(heartbeatRuns)
++      .set({ contextSnapshot: { issueId } })
++      .where(eq(heartbeatRuns.id, currentRunId));
++    await db.insert(issues).values({
++      id: issueId, companyId, title: "rejects a reviewer checkout when expected status excludes in_review",
++      status: "in_review", priority: "high", assigneeAgentId: agentId,
++      executionPolicy: {
++        mode: "normal",
++        stages: [{ id: "review-stage", type: "review", approvalsNeeded: 1,
++          participants: [{ type: "agent", agentId: agentId }] }],
++        commentRequired: true,
++      },
++      executionState: {
++        status: "pending", currentStageId: "review-stage",
++        currentStageType: "review",
++        currentParticipant: { type: "agent", agentId },
++      },
++    });
++    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
++      .post(`/api/issues/${issueId}/checkout`)
++      .send({ agentId, expectedStatuses: ["todo"] });
++    expect(res.status, JSON.stringify(res.body)).toBe(409);
++    const row = await db.select({
++      status: issues.status, executionState: issues.executionState,
++      checkoutRunId: issues.checkoutRunId, executionRunId: issues.executionRunId,
++    }).from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
++    expect(row).toMatchObject({
++      status: "in_review", checkoutRunId: null, executionRunId: null,
++      executionState: { status: "pending", currentStageId: "review-stage" },
++    });
++  });
++
++  it("rejects a stale review stage even for the configured agent", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    await db.update(heartbeatRuns)
++      .set({ contextSnapshot: { issueId } })
++      .where(eq(heartbeatRuns.id, currentRunId));
++    await db.insert(issues).values({
++      id: issueId, companyId, title: "rejects a stale review stage even for the configured agent",
++      status: "in_review", priority: "high", assigneeAgentId: agentId,
++      executionPolicy: {
++        mode: "normal",
++        stages: [{ id: "current-stage", type: "review", approvalsNeeded: 1,
++          participants: [{ type: "agent", agentId: agentId }] }],
++        commentRequired: true,
++      },
++      executionState: {
++        status: "pending", currentStageId: "stale-stage",
++        currentStageType: "review",
++        currentParticipant: { type: "agent", agentId },
++      },
++    });
++    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
++      .post(`/api/issues/${issueId}/checkout`)
++      .send({ agentId, expectedStatuses: ["in_review"] });
++    expect(res.status, JSON.stringify(res.body)).toBe(409);
++    const row = await db.select({
++      status: issues.status, executionState: issues.executionState,
++      checkoutRunId: issues.checkoutRunId, executionRunId: issues.executionRunId,
++    }).from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
++    expect(row).toMatchObject({
++      status: "in_review", checkoutRunId: null, executionRunId: null,
++      executionState: { status: "pending", currentStageId: "stale-stage" },
++    });
++  });
++
++  it("rejects approval-stage checkout through review admission", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    await db.update(heartbeatRuns)
++      .set({ contextSnapshot: { issueId } })
++      .where(eq(heartbeatRuns.id, currentRunId));
++    await db.insert(issues).values({
++      id: issueId, companyId, title: "rejects approval-stage checkout through review admission",
++      status: "in_review", priority: "high", assigneeAgentId: agentId,
++      executionPolicy: {
++        mode: "normal",
++        stages: [{ id: "approval-stage", type: "approval", approvalsNeeded: 1,
++          participants: [{ type: "agent", agentId: agentId }] }],
++        commentRequired: true,
++      },
++      executionState: {
++        status: "pending", currentStageId: "approval-stage",
++        currentStageType: "approval",
++        currentParticipant: { type: "agent", agentId },
++      },
++    });
++    const res = await request(createApp(agentActor(companyId, agentId, currentRunId)))
++      .post(`/api/issues/${issueId}/checkout`)
++      .send({ agentId, expectedStatuses: ["in_review"] });
++    expect(res.status, JSON.stringify(res.body)).toBe(409);
++    const row = await db.select({
++      status: issues.status, executionState: issues.executionState,
++      checkoutRunId: issues.checkoutRunId, executionRunId: issues.executionRunId,
++    }).from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0]);
++    expect(row).toMatchObject({
++      status: "in_review", checkoutRunId: null, executionRunId: null,
++      executionState: { status: "pending", currentStageId: "approval-stage" },
++    });
++  });
++
++  it("rejects an outdated reviewer stage snapshot even for the same authorized agent", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    await db.insert(issues).values({
++      id: issueId, companyId, title: "Atomic reviewer stage snapshot mismatch",
++      status: "in_review", priority: "high", assigneeAgentId: agentId,
++      executionPolicy: {
++        mode: "normal",
++        stages: [{ id: "current-stage", type: "review", approvalsNeeded: 1,
++          participants: [{ type: "agent", agentId }] }],
++        commentRequired: true,
++      },
++      executionState: {
++        status: "pending", currentStageId: "current-stage",
++        currentStageType: "review", currentParticipant: { type: "agent", agentId },
++      },
++    });
++    const service = issueService(db);
++    await expect(service.checkout(
++      issueId, agentId, ["in_review"], currentRunId,
++      { kind: "reviewer", expectedStageId: "outdated-stage" },
++    )).rejects.toMatchObject({ status: 409 });
++    const [row] = await db.select({
++      status: issues.status, checkoutRunId: issues.checkoutRunId,
++      executionRunId: issues.executionRunId,
++    }).from(issues).where(eq(issues.id, issueId));
++    expect(row).toMatchObject({
++      status: "in_review", checkoutRunId: null, executionRunId: null,
++    });
++  });
++
++  it("resumes a resolved interaction without granting ordinary reviewer checkout", async () => {
++    const { companyId, agentId, currentRunId } = await seedCompanyAgentAndRuns();
++    const issueId = randomUUID();
++    await db.insert(issues).values({
++      id: issueId, companyId, title: "Resolved interaction continuation",
++      status: "in_review", priority: "high", assigneeAgentId: agentId,
++    });
++    const service = issueService(db);
++    await expect(service.checkout(
++      issueId, agentId, ["in_review"], currentRunId,
++    )).rejects.toMatchObject({ status: 409 });
++    const resumed = await service.checkout(
++      issueId, agentId, ["in_review"], currentRunId,
++      { kind: "resolved_interaction" },
++    );
++    expect(resumed?.status).toBe("in_progress");
++    expect(resumed?.checkoutRunId).toBe(currentRunId);
++    expect(resumed?.executionRunId).toBe(currentRunId);
++  });
++
+   it("restricts admin force-release to board users with company access and writes an audit event", async () => {
+     const { companyId, agentId, failedRunId, currentRunId } = await seedCompanyAgentAndRuns();
+     const issueId = randomUUID();
+diff --git a/server/src/routes/issues.ts b/server/src/routes/issues.ts
+index bce1dd027..3b67fa63a 100644
+--- a/server/src/routes/issues.ts
++++ b/server/src/routes/issues.ts
+@@ -15938,6 +15938,12 @@ export function issueRoutes(
+           req.body.agentId,
+           req.body.expectedStatuses,
+           checkoutRunId,
++          issue.status === "in_review" &&
++          issue.executionState?.status === "pending" &&
++          issue.executionState?.currentStageType === "review" &&
++          typeof issue.executionState.currentStageId === "string"
++            ? { kind: "reviewer", expectedStageId: issue.executionState.currentStageId }
++            : null,
+         );
+       } catch (error) {
+         if (isUniqueViolation(error, "issues_open_routine_execution_uq")) {
+diff --git a/server/src/services/heartbeat.ts b/server/src/services/heartbeat.ts
+index 4c2cd3da0..1df452532 100644
+--- a/server/src/services/heartbeat.ts
++++ b/server/src/services/heartbeat.ts
+@@ -2257,6 +2257,7 @@ export function heartbeatService(
+             agent.id,
+             [...resolvedInteractionCheckoutExpectedStatuses()],
+             run.id,
++            { kind: "resolved_interaction" },
+           );
+           context[PAPERCLIP_HARNESS_CHECKOUT_KEY] = true;
+         } catch (error) {
+diff --git a/server/src/services/issues.ts b/server/src/services/issues.ts
+index 70af50054..290979bf3 100644
+--- a/server/src/services/issues.ts
++++ b/server/src/services/issues.ts
+@@ -11717,6 +11717,10 @@ export function issueService(db: Db) {
+       agentId: string,
+       expectedStatuses: string[],
+       checkoutRunId: string | null,
++      checkoutMode:
++        | { kind: "reviewer"; expectedStageId: string }
++        | { kind: "resolved_interaction" }
++        | null = null,
+     ) => {
+       const issueCompany = await db
+         .select({ companyId: issues.companyId })
+@@ -11729,6 +11733,46 @@ export function issueService(db: Db) {
+       });
+ 
+       const now = new Date();
++      const nonReviewStatuses = expectedStatuses.filter(
++        (status) => status !== "in_review",
++      );
++      const pendingReviewerCondition = and(
++        eq(issues.status, "in_review"),
++        sql`${issues.executionState}->>'status' = 'pending'`,
++        sql`${issues.executionState}->>'currentStageType' = 'review'`,
++        sql`${issues.executionState}->>'currentStageId' = ${checkoutMode?.kind === "reviewer" ? checkoutMode.expectedStageId : null}`,
++        sql`${issues.executionState}->'currentParticipant'->>'type' = 'agent'`,
++        sql`${issues.executionState}->'currentParticipant'->>'agentId' = ${agentId}`,
++        sql`EXISTS (
++          SELECT 1
++          FROM jsonb_array_elements(COALESCE(${issues.executionPolicy}->'stages', '[]'::jsonb)) AS review_stage
++          WHERE review_stage->>'id' = ${issues.executionState}->>'currentStageId'
++            AND review_stage->>'type' = 'review'
++            AND EXISTS (
++              SELECT 1
++              FROM jsonb_array_elements(COALESCE(review_stage->'participants', '[]'::jsonb)) AS stage_participant
++              WHERE stage_participant->>'type' = 'agent'
++                AND stage_participant->>'agentId' = ${agentId}
++            )
++        )`,
++      );
++      const checkoutStatusConditions: SQL[] = [];
++      if (nonReviewStatuses.length > 0) {
++        checkoutStatusConditions.push(
++          inArray(issues.status, nonReviewStatuses),
++        );
++      }
++      if (expectedStatuses.includes("in_review")) {
++        if (checkoutMode?.kind === "reviewer") {
++          checkoutStatusConditions.push(pendingReviewerCondition!);
++        } else if (checkoutMode?.kind === "resolved_interaction") {
++          checkoutStatusConditions.push(eq(issues.status, "in_review"));
++        }
++      }
++      const checkoutStatusCondition = or(...checkoutStatusConditions) ?? sql`false`;
++      const checkoutStatus = checkoutMode?.kind === "reviewer"
++        ? sql`CASE WHEN ${issues.status} = 'in_review' THEN 'in_review' ELSE 'in_progress' END`
++        : sql`'in_progress'`;
+       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(
+         issueCompany.companyId,
+         id,
+@@ -11803,14 +11847,14 @@ export function issueService(db: Db) {
+           assigneeUserId: null,
+           checkoutRunId,
+           executionRunId: checkoutRunId,
+-          status: "in_progress",
++          status: checkoutStatus,
+           startedAt: now,
+           updatedAt: now,
+         })
+         .where(
+           and(
+             eq(issues.id, id),
+-            inArray(issues.status, expectedStatuses),
++            checkoutStatusCondition,
+             or(isNull(issues.assigneeAgentId), sameRunAssigneeCondition),
+             executionLockCondition,
+           ),
+@@ -11914,10 +11958,10 @@ export function issueService(db: Db) {
+             executionRunId: checkoutRunId,
+             executionAgentNameKey: null,
+             executionLockedAt: now,
+-            status: "in_progress",
++            status: checkoutStatus,
+             updatedAt: now,
+           };
+-          if (current.status !== "in_progress") {
++          if (current.status !== "in_progress" && current.status !== "in_review") {
+             adoptionSet.startedAt = now;
+           }
+           const adopted = await db
+@@ -11926,7 +11970,7 @@ export function issueService(db: Db) {
+             .where(
+               and(
+                 eq(issues.id, id),
+-                inArray(issues.status, expectedStatuses),
++                checkoutStatusCondition,
+                 eq(issues.executionRunId, current.executionRunId),
+                 or(
+                   isNull(issues.assigneeAgentId),

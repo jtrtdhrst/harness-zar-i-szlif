@@ -9,6 +9,30 @@ COPY execution-blocker-undispatched.test.ts /app/server/src/services/execution-b
 RUN test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bccaebea9d6252b1a0f5af0e2b8c669d72a4ce66fdfbbd370ff44a7c99a0d64a" && \
     cd /app && git apply --check /tmp/paperclip-review-recovery.patch && git apply /tmp/paperclip-review-recovery.patch && \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"
+COPY reviewer-checkout.patch /tmp/paperclip-reviewer-checkout.patch
+# H03 Core source: pinned upstream 1b4c803816e82b0265c8422e1a804327a7ed8c54,
+# exact reviewed candidate source 78ac75e5178f2036ff01561c096967951f529bb3.
+# All original and final files must match, or the image build stops.
+RUN test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "b5b3066bd585870c219e50f8fd760a16486fa06c246a4605fcbb9b9185553afe" && \
+    test "$(sha256sum /app/server/src/routes/issues.ts | cut -d' ' -f1)" = "641b3d9cb5e744671527f16129dd78518376dca31616b845ec6b8da99d636d8c" && \
+    test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "f3369d87010af52fa30a69df6cc4f8b0b227d0644aef9a13840bc4604e0c0691" && \
+    test "$(sha256sum /app/server/src/__tests__/issue-stale-execution-lock-routes.test.ts | cut -d' ' -f1)" = "0c592a764ea7eb0b8c49327e6833e3d1d6c8acc76f240ea05c80267d020e0874" && \
+    test ! -e /app/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts && \
+    cd /app && git apply --check /tmp/paperclip-reviewer-checkout.patch && git apply /tmp/paperclip-reviewer-checkout.patch && \
+    test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "1fe74c51a5e93d9323868425b5780273ce8790620787ed34c6c7f98c42d60bc5" && \
+    test "$(sha256sum /app/server/src/routes/issues.ts | cut -d' ' -f1)" = "6631daa3d0ddf679e00d4514b60beef654a5671a06e80855d4bd568f0833e125" && \
+    test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "6ce316dc1329f1d58d721994f409a30a0fc730691b93d43abf30a94f2bb41879" && \
+    test "$(sha256sum /app/server/src/__tests__/issue-stale-execution-lock-routes.test.ts | cut -d' ' -f1)" = "664ba301371d061fcd585d9aba572a3fcb8d4d1cbc578fd20be58d3d3d162bf8" && \
+    test "$(sha256sum /app/server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts | cut -d' ' -f1)" = "6c3b400e8ea1c8e69a7966d21ff01397b0825d9b6a9a07e61588f8a339b5b552"
+# PostgreSQL integration tests must ACTUALLY execute: Vitest's all-skipped exit 0
+# is not acceptable. Run under the existing non-root node account.
+USER node
+RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
+    server/src/__tests__/issue-stale-execution-lock-routes.test.ts \
+    server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts \
+    --reporter=json --outputFile=/tmp/paperclip-h03-tests.json --maxWorkers=1 && \
+    node -e "const r=require('/tmp/paperclip-h03-tests.json');if(r.numPassedTests!==25||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('H03 expected 25 real passing tests, zero skipped or failed');"
+USER root
 RUN cd /app && NO_COLOR=1 pnpm exec vitest run server/src/services/execution-blocker-undispatched.test.ts --reporter=default
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc --noEmit
 # The pinned runtime already contains compiled runner/vendor assets. Rebuilding
