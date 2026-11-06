@@ -17,24 +17,27 @@ Realnie naprawione teraz:
 - **P9/P12** — Hindsight Designera nie używał self-hosted, bo plugin czytał launch-scope
   `/opt/data/hindsight/config.json` (`mode=cloud`, SaaS), a nie profilowy
   `/opt/data/profiles/designer/hindsight/config.json` (`local_external`). Poprawiono resolver
-  w 15 kopiach pluginu; 14/14 profili ładuje własny bank i endpoint MCP. Self-hosted
-  retain/recall zwraca HTTP 200.
+  w 15 kopiach pluginu; 14/14 profili ładuje własny bank i endpoint MCP. Retain/recall
+  potwierdzony dla faktów operacyjnych (5 faktów, recall zwraca „Designer używa DeepSeek
+  przez opencode-go”); syntetyczny canary był odfiltrowany przez ekstraktor (0 faktów).
 - **P7 (część harness)** — `docs/RELEASE-POLICY.md` nadal opisywał usunięty `promote-release`;
   poprawiono w tym PR. Produktowy PR #153 nadal wymaga review (patrz P7).
 
 Najważniejsze otwarte blokery:
 
-- **P11/P14** — Hermes nie ma natywnych narzędzi Paperclip w realnym runie; 13/14 agentów
-  nadal na `opencode_local`. To blokuje migrację.
-- **P13** — produkcyjny Hermes działa z HEAD otwartego PR #74, nie z merge commita gałęzi
-  release.
+- **P11/P14** — Hermes widzi 248 narzędzi, ale `mcp_paperclip__*` kończy się
+  „Tool not found”; są dwa aktywne połączenia Paperclip MCP o tym samym URL
+  (general + dedicated) i podwójny katalog. 13/14 agentów nadal na `opencode_local`.
+- **P13** — produkcyjny Hermes działa z HEAD otwartego PR #74; CTO dał
+  `CHANGES_REQUESTED` za współdzielony stan narzędzi, poprawka `81fa3ae` czeka na re-review.
 - **P17/P18** — odczyt projektów Opik przez MCP zawodzi; brak pozytywnego E2E OAuth.
 - **P25/P26** — push z runu **działa** (PR #158), ale runy raportują `githubAuthenticationMode=host`,
   brak managed identity, a autor commita to bot `miloszspyrka-code`, nie tożsamość agenta.
   CTO ma dodatkowo per-agent override `!gh auth git-credential`, który w kontenerze bez
   `gh` zawodzi.
-- **P23** — izolacja banków Hindsight istnieje tylko w Caddy; core `:8888` przyjmuje
-  żądania bez auth i zwraca wszystkie 15 banków. Brak backupu wolumenu DB.
+- **P23** — izolacja banków Hindsight działa w Caddy, ale core `:8888` ufa każdemu
+  klientowi w swojej sieci Docker (bez auth). Port nie jest publiczny; to luka wewnętrzna,
+  nie wystawienie na Internet. Brak backupu wolumenu DB.
 - **P7 (produkt)** — PR #153 jest gotowy, ale nie może wejść bez natywnej akceptacji, bo
   kontroler P8 weryfikuje **każdy** merge na `main`.
 
@@ -66,11 +69,11 @@ Pozycje przeklasyfikowane po debugu:
 | --- | --- | --- | --- | --- |
 | P7 | dokumentacja opisuje automatyczną promocję przez Actions | stary kontrakt po PR #156; PR #153 czeka | FIXED w harness, OPEN w produkcie | P1 |
 | P8 | timer dead, service failed, `deployment_readback_failed_rollback_required` | 4-min okno readback + brak wznowienia pending | FIXED | P0 |
-| P9 | Hindsight 402 | plugin czyta launch-scope `mode=cloud` | FIXED (config), E2E do potwierdzenia | P0 |
+| P9 | Hindsight 402 | plugin czytał launch-scope `mode=cloud` | FIXED; retain/recall potwierdzony dla faktów operacyjnych | P0 |
 | P10 | `succeeded` + `liveness=blocked` | brak bramki biznesowej na liveness | OPEN | P1 |
-| P11 | 51 narzędzi, brak control-plane Paperclip | projekcja narzędzi per-run; PR #71/#73 otwarte | OPEN | P0 |
+| P11 | 248 narzędzi, `mcp_paperclip__*` → Tool not found | podwójne połączenie Paperclip MCP + tłumaczenie nazw tool gateway | OPEN (fix opisany) | P0 |
 | P12 | 402 „Insufficient credits” | SaaS Vectorize z launch config | FIXED razem z P9 | P0 |
-| P13 | prod = HEAD otwartego PR #74 | Coolify śledzi gałąź/PR zamiast merge release | OPEN | P0 |
+| P13 | prod = HEAD otwartego PR #74 | Coolify śledzi gałąź funkcjonalną; CTO CHANGES_REQUESTED; fix `81fa3ae` | OPEN (re-review) | P0 |
 | P14 | 13/14 agentów opencode_local | migracja zatrzymana na 1/14 | OPEN (zależne) | P1 |
 | P15 | stage=agent, participant=user | **celowa eskalacja po 3 rundach** | MISDIAGNOSED | P2 |
 | P16 | 748 recovery / 966 runów | backfill legacy + bieżące recovery | OPEN (metryka) | P2 |
@@ -80,7 +83,7 @@ Pozycje przeklasyfikowane po debugu:
 | P20 | 4 PR Opik otwarte | tylko #53 wdrożony; #52←#39 | OPEN | P1 |
 | P21 | enricher nie dowodzi retain/recall | 96 wzbogaconych; brak `thread_id`/span retain | OPEN | P2 |
 | P22 | 15 banków, ui-qa=0 | brak porównania źródła | OPEN | P1 |
-| P23 | brak testów izolacji 14 profili | tylko pojedyncze dowody | OPEN | P0 |
+| P23 | izolacja 14 profili | Caddy OK; core ufa sieci Docker; 8888 niepubliczny | OPEN (hardening) | P2 |
 | P24 | `latest-slim` bez digestu | brak pinowania obrazu | OPEN | P2 |
 | P25 | `githubAuthenticationMode=host` | brak managed GitHub identity; push działa przez helper App | OPEN (tożsamość) | P1 |
 | P26 | historyczny `Author identity unknown` | **brak awarii** — PR #158 dowodzi commita+push; autor = bot | FIXED funkcjonalnie / OPEN atrybucja | P2 |
@@ -189,6 +192,28 @@ Uwaga z próby E2E: gołe `POST /p/designer/v1/runs` (nawet z `session_id` i
 402. To dowodzi tylko, że stateless API nie jest ścieżką, której używa Paperclip; nie
 zamyka P9. Akceptacja wymaga runu z Paperclipa (adapter `hermes_gateway`).
 
+### Retain/recall — wynik testu bezpośredniego (2026-11-06 22:40)
+
+- Krótki syntetyczny canary (`designer-memory-canary-… = memory-canary-for-E2E-only`)
+  został przyjęty (`HTTP 200`), ale ekstraktor zwrócił **0 faktów**:
+  `Extract facts: 0 facts, 1 chunks`. Dokument ma 0 chunków i 0 jednostek.
+- Ten sam canary w formie rozmowy i w formie akapitu z słowami „canary/synthetic/E2E”
+  również dał 0 faktów — ekstraktor klasyfikuje takie treści jako nie-memorable.
+- Długi, realistyczny fakt operacyjny (Designer = agent projektowy, model DeepSeek,
+  provider opencode-go, panel na `98cd058`) dał **5 faktów** i 1 chunk.
+- Recall na pytanie „Which model and provider does the Designer agent use?” zwrócił
+  m.in. `Agent Designer używa modelu DeepSeek przez dostawcę opencode-go`,
+  `Designer jest agentem projektowym firmy Zar i Szlif`,
+  `Zespół zweryfikował, że self-hosted Hindsight przechowuje pamięć w banku hermes-designer`.
+
+Wniosek: **retain i recall działają** dla realistycznych faktów. Nieudany test canary to
+problem doboru treści (ekstraktor odfiltrował syntetyk), a nie brak zapisu. Recall zwraca
+też obserwacje o nieudanym wyszukiwaniu, bo plugin zapisał narrację agenta jako
+`observation`; przy `prefer_observations=true` mogą one dominować nad faktem źródłowym.
+
+Do poprawy: nie traktować narracji „nie znalazłem” jako trwałej obserwacji (tag/filtr),
+oraz testować pamięć realistycznym faktem operacyjnym, nie syntetycznym markerem.
+
 ### Ryzyko
 
 - `hermes update` / reinstalacja pluginu może nadpisać lokalny patch. Trzeba to naprawić
@@ -252,29 +277,46 @@ Test: wymuszony run z blokerem musi zakończyć się `blocked` i nie zmienić is
 
 ### Dowód
 
-- Run Designer widział 51 narzędzi: 47 Plasmic/Wiki, 1 `todo`, 3 `wiki_fs`
-  (`MCP server 'wiki_fs' is not connected`), brak issue read/comment/status/checkout/resolve.
+- Run `b93de40e…`: Hermes uruchomił profil `designer` na DeepSeek, odczytał Wiki przez
+  MCP z poprawnym hashem, ale katalog miał **248 narzędzi**.
+- Nazwy: `mcp__editor_paperclip_assigned_268d2fcd__mcp_paperclip__<hash>`. Część
+  `mcp_paperclip__*` kończy się:
+  `MCPError: Tool "mcp.paperclip-mcp-4bbb3d2e:papercliplistruns" not found` oraz
+  `MCPError: Server returned an error response`.
+- W bazie są **dwie aktywne połączenia Paperclip MCP** o tym samym URL
+  `http://paperclip-mcp:3101/mcp`:
+  - `7551d8ac…` „Paperclip MCP”, `transport_config` poprawny, 200 wpisów katalogu;
+  - `4bbb3d2e…` „Paperclip MCP · Hermes Designer dedicated” (utworzone 19:20),
+    `transport_config = {}`, 200 wpisów katalogu.
+- Oba profile są podpięte: general do **company**, dedicated do **company i agenta
+  Designer** → agent widzi podwójny katalog (400 wpisów, po dedupie ~248).
+- Eksperyment: usunięcie bindingów dedicated zostawiło tylko **41 narzędzi**
+  (app-gallery/Plasmic + meta-tools), więc bindingi przywrócono. `transport_config`
+  dedicated naprawiono na `config`.
 - API Paperclipa raportuje 197 narzędzi, 167 wykonywalnych — projekcja do sesji Hermes jest
   niepełna.
 - Gałąź `release/hermes-gateway-20261106-h02` zawiera scalony **PR #70** (native run-scoped
   MCP tools); prod #74 dokłada `install_run_mcp.py` (+10 linii).
-- PR **#71** (`expose run-scoped Paperclip Named MCP tools`, `mergeable=false/dirty`,
-  konflikt z `main`) i **#73** (`expose Paperclip runtime tools as native per-run Hermes`)
-  są otwarte.
-- Produkcja (P13) to HEAD PR #74, który nie zawiera #73.
+- PR **#71** (`mergeable=false/dirty`) i **#73** są otwarte. Produkcja (P13) to HEAD PR #74,
+  który nie zawiera #73.
 
 ### Naprawa
 
-1. Scalić #71/#73 do gałęzi release (po review) — bez tego migracja 13 agentów jest
-   bezcelowa.
-2. Zbudować nowy obraz z merge commita (P13) i wdrożyć jako prod.
-3. Dodać preflight runu: jeśli brakuje którejkolwiek z wymaganych operacji
-   (`issue.read`, `issue.comment`, `issue.status`, `issue.checkout`, `issue.resolve`),
-   run kończy się `blocked` przed wykonaniem pracy.
-4. Dopiero potem migrować agentów pojedynczo (P14), z canary i rollbackiem.
+1. Zostawić **jedno** połączenie Paperclip MCP na agenta: usunąć dedicated profile
+   (albo general z bindingów company) i ponownie wygenerować katalog; nie dopuszczać do
+   dwóch profili wskazujących ten sam URL.
+2. Naprawić tłumaczenie nazw w tool gateway: nazwa `mcp.<app>-<conn>:<tool>` musi być
+   rozwiązywana do surowego `<tool>` przed wywołaniem upstream. To warstwa Core/MCP
+   gateway — zgłosić wykonawcy, nie patchować Core.
+3. Dodać preflight runu: jeśli `mcp_paperclip__*` nie rozwiązuje się do narzędzia
+   upstream, run kończy się `blocked` przed wykonaniem pracy.
+4. Dopiero potem migrować agentów (P14).
 
-Test: realny run Designera ma w `tools/list` wszystkie wymagane operacje i wykonuje
-odczyt + komentarz + zmianę statusu issue.
+Test: realny run Designera ma jeden spójny katalog, a `paperclipListRuns` / issue
+read/comment/status/checkout/resolve kończą się sukcesem, nie „Tool not found”.
+
+Uwaga: heartbeat-invoke nie jest poprawnym canary — adapter odrzuca run bez issue/profilu
+(„Hermes run-scoped MCP requires a named profile…”). Walidacja wymaga realnego issue-runu.
 
 ## 8. P13 — pochodzenie produkcyjnego Hermesa
 
@@ -294,6 +336,12 @@ odczyt + komentarz + zmianę statusu issue.
 - Canary `e6558590…` = tip `fix/hermes-runmcp-authority-20261106`, **bez PR**.
 - PR #74: 1 plik, +10/−0, `mergeable=true/clean`, **brak CI i review**; opis twierdzi E2E
   na tym SAMYM SHA — czyli kod z niezatwierdzonego PR jest już na produkcji.
+- CTO dał **CHANGES_REQUESTED**: `_project_scoped_tools` chwilowo modyfikuje współdzielony
+  stan narzędzi agenta, a testy nie dowodzą izolacji przy równoległych runach, anulowaniu
+  i wyjątkach. To realna luka, nie formalność.
+- **Poprawka wypchnięta do PR #74** (commit `81fa3ae`): per-agent `RLock` trzymany przez
+  cały czas projekcji, test współbieżny, test wyjątku i przywrócenia inwentarza.
+  Wymaga re-review CTO przed merge.
 - Obrazy nie mają etykiet repo/commit; jedynym provenance jest tag SHA + compose labels.
 
 ### Naprawa
@@ -501,16 +549,18 @@ Testy na gatewayu (Caddy, port 8080):
 Pozytywnie: MCP recall po ścieżce CHO zwrócił 5 ID, wszystkie 5 w `hermes-cho`.
 Per-bank MCP nie przyjmuje `bank_id` — nie da się nim wybrać obcego banku.
 
-**Luka bezpieczeństwa (P0/P1):** bezpośrednie `http://hindsight:8888` **nie wymaga
-uwierzytelnienia**. `GET /v1/default/banks` bez auth zwraca wszystkie 15 banków, a recall
-dowolnego banku działa bez tokenu. Izolacja istnieje **tylko w Caddy**. Każdy kontener
-w sieci `hindsight-isolated` (gateway, admin, enricher) może czytać wszystkie banki.
-Port 8888 nie jest opublikowany na hoście, ale to nie jest granica bezpieczeństwa.
+**Luka wewnętrzna (nie publiczna):** `GET http://hindsight:8888/v1/default/banks` bez
+auth zwraca wszystkie 15 banków, a recall dowolnego banku działa bez tokenu. Potwierdzona
+konfiguracja sieci: port **8888 nie jest publikowany na hoście** (`127.0.0.1:8888` nie
+łączy), a kontener Hermes spoza prywatnych sieci Hindsight **nie uzyskał** połączenia
+z backendem. Nie ma dowodu publicznego dostępu do pamięci i nie ma podstaw do wyłączania
+Hindsight. Izolacja banków działa w Caddy; backend ufa każdemu klientowi w swojej sieci
+Docker. To luka wewnętrzna, nie wystawienie na Internet.
 
-Do wdrożenia:
+Do wdrożenia (wzmocnienie, nie incydent):
 
 1. Włączyć auth w Hindsight core (token API / mTLS) albo ograniczyć sieć do niezbędnych
-   kontenerów i usunąć enricher z tej sieci.
+   kontenerów i usunąć z niej enricher.
 2. Admin MCP: token w query stringu jest logowany przez proxy; przenieść do nagłówka,
    ograniczyć narzędzia mutujące, rotować token.
 3. Dodać test: kontener bez uprawnień nie może odczytać banku przez 8888.
@@ -582,9 +632,10 @@ w remote, PR i `/__release.json`.
 
 1. **P8** — zrobione; czeka na następny realny merge.
 2. **P9/P12** — zrobione; potwierdzić logiem następnego runu Designera.
-3. **P13** — merge PR #74 do release, przełączyć Coolify prod na `release/*`, rebuild
-   z merge SHA, guard na PR-head.
-4. **P11** — merge/rebase #71 i #73, preflight narzędzi, E2E na nowym prod.
+3. **P13** — re-review PR #74 po `81fa3ae` (izolacja współbieżna), merge do release,
+   przełączyć Coolify prod na `release/*`, rebuild z merge SHA, guard na PR-head.
+4. **P11** — jeden profil Paperclip MCP na agenta, naprawa tłumaczenia nazw w tool
+   gateway, preflight narzędzi, E2E na nowym prod.
 5. **P15** — decyzja człowieka na KOMAA-1594/1615 (nie SQL).
 6. **P7** — review + merge PR #153 po natywnej akceptacji.
 7. **P25** — managed GitHub identity, usunięcie override CTO, polityka autora; P26
@@ -620,16 +671,23 @@ w remote, PR i `/__release.json`.
 
 ## 18. Czego nie zweryfikowano
 
-- Brak realnego runu Designera po patchu Hindsight. Resolver 14/14 i bezpośredni
-  retain/recall 200 są potwierdzone, ale stateless `/p/designer/v1/runs` nie inicjalizuje
-  providera pamięci. Akceptacja = następny run Paperclipa.
-- Brak nowego merge produktu po naprawie P8 (tylko no-op `already_released`).
-- P13: nie zmieniano gałęzi Coolify ani nie deployowano; to wymaga review PR #74.
+- P9: retain/recall potwierdzony bezpośrednio dla realistycznych faktów operacyjnych;
+  syntetyczny canary został odfiltrowany przez ekstraktor (0 faktów). Brak jeszcze
+  potwierdzenia w realnym runie Paperclipa po restarcie gatewaya.
+- P8: brak nowego merge produktu po naprawie (tylko no-op `already_released`).
+- P13: poprawka `81fa3ae` jest w PR #74, ale nie ma re-review CTO, merge ani deployu.
+  Produkcja nadal na `a793aa2`.
+- P11: potwierdzone dwa połączenia i podwójny katalog; bindingi przywrócone, transport
+  dedicated naprawiony. Nie udało się wykonać ważnego canary — heartbeat-invoke odrzuca
+  run bez issue/profilu. Test wymaga realnego issue-runu. Tłumaczenie nazw tool gateway
+  nie zostało naprawione (warstwa Core/MCP gateway).
 - P17: nie zmieniano nginx/guard ani configu Opik; podano minimalny fix.
 - P18: pozytywny OAuth wymaga interaktywnego logowania człowieka; nie wykonano.
 - P19/P20/P21: nie mergowano PR Opik ani nie deployowano enrichera.
-- P22/P23/P24: nie zmieniano Hindsight; luka nieautoryzowanego `:8888` pozostaje otwarta.
+- P22/P23/P24: nie zmieniano Hindsight; luka wewnętrznego `:8888` pozostaje otwarta,
+  publicznego dostępu nie potwierdzono.
 - P25/P26: nie zmieniano managed identity ani autora commita; push działa (PR #158).
-- Nie zmieniano Paperclip Core. Wszystkie odczyty DB były `SELECT`; jedyne zapisy to
-  plik kontrolera, drop-in systemd i pliki pluginów Hindsight.
+- Nie zmieniano Paperclip Core. Wszystkie odczyty DB były `SELECT` poza kontrolowanymi
+  zapisami danych: przywrócenie bindingów, `transport_config` dedicated, wpisy kontrolera,
+  drop-in systemd i pliki pluginów Hindsight.
 
