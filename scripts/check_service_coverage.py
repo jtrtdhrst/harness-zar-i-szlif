@@ -18,6 +18,46 @@ def workflow_paths(path):
     return patterns
 
 
+def workflow_covers_root(path, root_name):
+    """A CI job must run on every relevant PR update for this root.
+
+    A path-unfiltered pull_request event covers every root. If filtered, only
+    pull_request.paths counts; a push path filter must not mask a PR gap.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines):
+        if line != "  pull_request:":
+            continue
+        block = []
+        for nested in lines[index + 1:]:
+            if nested.strip() and not nested.startswith("    ") and not nested.lstrip().startswith("#"):
+                break
+            block.append(nested)
+        substantive = [part for part in block if part.strip() and not part.lstrip().startswith("#")]
+        if not substantive:
+            return True
+        if any(re.match(r"\s*paths-ignore\s*:", part) for part in substantive):
+            return False
+        # Only paths from this pull_request event, never from push or dispatch.
+        patterns = []
+        in_paths = False
+        for part in substantive:
+            if re.match(r"    paths\s*:", part):
+                in_paths = True
+                continue
+            if re.match(r"    [\w-]+\s*:", part):
+                in_paths = False
+            if in_paths:
+                patterns.extend(re.findall(r"[\"']([^\"']+)[\"']", part))
+        return any(
+            pattern == f"{root_name}/**"
+            or pattern == f"{root_name}/**/*"
+            or pattern.startswith(f"{root_name}/")
+            for pattern in patterns
+        )
+    return False
+
+
 def check(root=ROOT, config_path=CONFIG):
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("schema_version") != 1 or not isinstance(config.get("entries"), dict):
@@ -42,9 +82,8 @@ def check(root=ROOT, config_path=CONFIG):
                 path = root / workflow
                 if not path.is_file():
                     raise ValueError(f"{name}: missing workflow {workflow}")
-                patterns = workflow_paths(path)
-                if not any(pattern == f"{name}/**" or pattern == f"{name}/**/*" or pattern.startswith(f"{name}/") for pattern in patterns):
-                    raise ValueError(f"{name}: {workflow} does not path-filter this root")
+                if not workflow_covers_root(path, name):
+                    raise ValueError(f"{name}: {workflow} does not path-filter this root or cover all pull requests")
         else:
             raise ValueError(f"{name}: unknown coverage mode {mode!r}")
 
