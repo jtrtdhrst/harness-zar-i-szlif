@@ -13,6 +13,9 @@ COPY integrations/hermes-paperclip/paperclip-core-overlay/overlay.patch /tmp/her
 COPY integrations/hermes-paperclip/paperclip-core-overlay/adapter-runmcp-tests.patch /tmp/hermes-adapter-tests.patch
 COPY integrations/hermes-paperclip/paperclip-core-overlay/model-routing.patch /tmp/hermes-model-routing.patch
 COPY integrations/hermes-paperclip/paperclip-core-overlay/model-routing-tests.patch /tmp/hermes-model-routing-tests.patch
+COPY integrations/paperclip-core-review-recovery/reviewer-checkout.patch /tmp/paperclip-reviewer-checkout.patch
+COPY integrations/hermes-paperclip/paperclip-core-overlay/reconciliation-overlay.patch /tmp/h03-reconciliation.patch
+COPY integrations/hermes-paperclip/paperclip-core-overlay/execution-blocker-rework.test.ts /app/server/src/services/execution-blocker-rework.test.ts
 
 # Apply BOTH source patches; fail closed if either upstream code or expected
 # resulting bytes changed. Keep the native review state machine untouched.
@@ -34,14 +37,42 @@ RUN set -eux; \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"; \
     test "$(sha256sum /app/packages/adapters/hermes/src/gateway/server/execute.ts | cut -d' ' -f1)" = "c30d88b557b7c443b76ff52e77cff93fdea1427eae030cdc65563cc850d2b051"
 
-# The same image must satisfy the Core recovery and Hermes adapter suites,
-# TypeScript checks and compiled Core runtime. No fake green health-only build.
-RUN cd /app && pnpm exec vitest run \
+
+# Apply the independently tested reviewer rework fix from PR #57 to this exact
+# Hermes-patched source. These are source attestation hashes from the isolated
+# combined build; fail on drift rather than silently patching different bytes.
+RUN set -eux; \
+    test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "b5b3066bd585870c219e50f8fd760a16486fa06c246a4605fcbb9b9185553afe"; \
+    test "$(sha256sum /app/server/src/routes/issues.ts | cut -d' ' -f1)" = "641b3d9cb5e744671527f16129dd78518376dca31616b845ec6b8da99d636d8c"; \
+    test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "f3369d87010af52fa30a69df6cc4f8b0b227d0644aef9a13840bc4604e0c0691"; \
+    cd /app; git apply --check /tmp/paperclip-reviewer-checkout.patch; \
+    git apply /tmp/paperclip-reviewer-checkout.patch; \
+    test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "1fe74c51a5e93d9323868425b5780273ce8790620787ed34c6c7f98c42d60bc5"; \
+    test "$(sha256sum /app/server/src/routes/issues.ts | cut -d' ' -f1)" = "6631daa3d0ddf679e00d4514b60beef654a5671a06e80855d4bd568f0833e125"; \
+    test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "6ce316dc1329f1d58d721994f409a30a0fc730691b93d43abf30a94f2bb41879"
+
+# H03 legacy cancellation recovery is strictly pre-provider, and only a new
+# CTO changes_requested return-owner run is admitted; historical audit kept.
+RUN set -eux; \
+    test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "bcf4e0c859c21828b7d5a2a705cf1163b35839fee0be581ddfa8c654dcc9e78d"; \
+    cd /app; git apply --check /tmp/h03-reconciliation.patch; \
+    git apply /tmp/h03-reconciliation.patch; \
+    test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "7ec285484ef6664321e9b2e6aba73eb2c0254554db703328f5a02d6169a960a0"
+
+RUN find /app -type d -name .vite-temp -prune -exec chown node:node {} + && \
+    chown node:node /app/server/src/services/execution-blocker-rework.test.ts
+USER node
+RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
+    server/src/services/execution-blocker-rework.test.ts \
     server/src/services/execution-blocker-undispatched.test.ts \
+    server/src/__tests__/issue-stale-execution-lock-routes.test.ts \
+    server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts \
     packages/adapters/hermes/src/gateway/server/execute.test.ts \
-    --reporter=dot
+    --reporter=json --outputFile=/tmp/hermes-h03-full-suite.json --maxWorkers=1 && \
+    node -e "const r=require('/tmp/hermes-h03-full-suite.json');if(r.numPassedTests!==142||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('Expected 142 real tests with zero skip/fail');"
+USER root
 RUN cd /app && pnpm --filter @paperclipai/hermes-paperclip-adapter typecheck && \
-    pnpm --filter @paperclipai/server exec tsc --noEmit
-RUN cd /app && pnpm --filter @paperclipai/server exec tsc && \
-    test -s /app/server/dist/services/execution-blocker.js && \
-    grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js
+    pnpm --filter @paperclipai/server exec tsc --noEmit && \
+    pnpm --filter @paperclipai/server exec tsc && \
+    grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js && \
+    grep -q 'safeAbortedLegacyReworkHandoff' /app/server/dist/services/execution-blocker.js
