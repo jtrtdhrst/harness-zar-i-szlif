@@ -80,6 +80,15 @@ RUN test "$(sha256sum /app/server/src/services/recovery/service.ts | cut -d' ' -
     test "$(sha256sum /app/server/src/services/recovery/service.ts | cut -d' ' -f1)" = "c5cb54e80a0b43bb5278c43fb345b9811b417ef83a34eb74c6f3c4eb902d35ad" && \
     test "$(sha256sum /app/server/src/__tests__/heartbeat-process-recovery.test.ts | cut -d' ' -f1)" = "339f5a3ac1dc39b59261dfced6e42b48050d90b58454fad9724388e94c3c7522"
 
+# Run-scoped Hermes native MCP: never drop Paperclip tools into prompt-only context.
+COPY integrations/paperclip-core-review-recovery/runtime-tool-delivery.patch /tmp/paperclip-native-runtime-delivery.patch
+RUN test "$(sha256sum /app/server/src/adapters/registry.ts | cut -d' ' -f1)" = "4a858763f69947d5745c7b8cb251a62fa404bc9683ade0ffb76282ed12761394" && \
+    test "$(sha256sum /app/server/src/adapters/registry.test.ts | cut -d' ' -f1)" = "ea44b32dc536e1591f70a42c1c1bdbc75ab1c4d0d474ef70ad960106ef9049f9" && \
+    cd /app && git apply --check /tmp/paperclip-native-runtime-delivery.patch && \
+    git apply /tmp/paperclip-native-runtime-delivery.patch && \
+    test "$(sha256sum /app/server/src/adapters/registry.ts | cut -d' ' -f1)" = "3baa151320e2cadd36b9278e3643090ca8c13b1503e71f0841f2838b897328cf" && \
+    test "$(sha256sum /app/server/src/adapters/registry.test.ts | cut -d' ' -f1)" = "ce6e9c0a3254eb0fec876a5723f7ee902f348d8a51d719caaffe065b4e6578c6"
+
 RUN find /app -type d -name .vite-temp -prune -exec chown node:node {} + && \
     chown node:node /app/server/src/services/execution-blocker-rework.test.ts
 USER node
@@ -100,6 +109,11 @@ RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
     -t "replays the exact lost reviewer wake|does not replay a skipped wake" \
     --reporter=json --outputFile=/tmp/paperclip-review-wake-tests.json --maxWorkers=1 && \
     node -e "const r=require('/tmp/paperclip-review-wake-tests.json');if(r.numPassedTests!==2||r.numFailedTests!==0)throw Error('Review wake expected exactly 2 focused passing tests');"
+# Exact native runtime tool delivery regression (17 selected cases, no failures).
+RUN cd /app && NO_COLOR=1 pnpm exec vitest run server/src/adapters/registry.test.ts \
+    -t "built-in runtime connection tool delivery" \
+    --reporter=json --outputFile=/tmp/paperclip-native-runtime-delivery-tests.json --maxWorkers=1 && \
+    node -e "const r=require('/tmp/paperclip-native-runtime-delivery-tests.json');if(r.numPassedTests!==17||r.numFailedTests!==0)throw Error('Hermes native MCP expected 17 passing selected tests');"
 USER root
 RUN cd /app && pnpm --filter @paperclipai/hermes-paperclip-adapter typecheck && \
     pnpm --filter @paperclipai/server exec tsc --noEmit && \
