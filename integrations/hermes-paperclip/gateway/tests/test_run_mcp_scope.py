@@ -200,5 +200,59 @@ class RunMcpScopeTests(unittest.TestCase):
             self.assertEqual(first.enabled_toolsets, ["skills"])
         self.assertFalse(native.active)
 
+    def test_model_visible_catalog_is_refreshed_then_restored(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        old_tools = [{"type": "function", "function": {"name": "tool_search"}}]
+        agent = types.SimpleNamespace(
+            enabled_toolsets=["skills"], disabled_toolsets=[], quiet_mode=True,
+            tools=old_tools, valid_tool_names={"tool_search"})
+        mocked_model = types.ModuleType("model_tools")
+        mocked_model.get_tool_definitions = lambda **kw: [
+            {"type": "function", "function": {"name": "tool_search"}},
+            {"type": "function", "function": {"name": "tool_a"}}]
+        mocked_oneshot = types.ModuleType("agent.oneshot_footprint")
+        mocked_oneshot.prune_oneshot_tools = lambda x: x
+        mocked_toolsets = types.ModuleType("toolsets")
+        mocked_toolsets.agent_tool_drops = lambda agent: []
+        with native.installed(), patch.dict(sys.modules, {
+            "model_tools": mocked_model, "agent.oneshot_footprint": mocked_oneshot,
+            "toolsets": mocked_toolsets,
+        }):
+            with borrowed_run_tools(authority, grant("cho", "run-model-catalog"),
+                                    authenticated_profile="cho", run_id="run-model-catalog", agent=agent):
+                self.assertEqual(agent.valid_tool_names, {"tool_search", "tool_a"})
+                self.assertEqual(len(agent.tools), 2)
+                self.assertEqual(len(agent.enabled_toolsets), 2)
+            self.assertIs(agent.tools, old_tools)
+            self.assertEqual(agent.valid_tool_names, {"tool_search"})
+            self.assertEqual(agent.enabled_toolsets, ["skills"])
+
+    def test_catalog_missing_run_mcp_schema_fails_closed(self):
+        native = FakeNativeRegistry()
+        authority = types.SimpleNamespace(_local_editor_mcp={})
+        agent = types.SimpleNamespace(
+            enabled_toolsets=["skills"], disabled_toolsets=[], quiet_mode=True,
+            tools=[{"type": "function", "function": {"name": "tool_search"}}],
+            valid_tool_names={"tool_search"})
+        mocked_model = types.ModuleType("model_tools")
+        mocked_model.get_tool_definitions = lambda **kw: [
+            {"type": "function", "function": {"name": "tool_search"}}]
+        mocked_oneshot = types.ModuleType("agent.oneshot_footprint")
+        mocked_oneshot.prune_oneshot_tools = lambda x: x
+        mocked_toolsets = types.ModuleType("toolsets")
+        mocked_toolsets.agent_tool_drops = lambda agent: []
+        with native.installed(), patch.dict(sys.modules, {
+            "model_tools": mocked_model, "agent.oneshot_footprint": mocked_oneshot,
+            "toolsets": mocked_toolsets,
+        }):
+            with self.assertRaises(InvalidRunGrant):
+                with borrowed_run_tools(authority, grant("cho", "run-missing-catalog"),
+                                        authenticated_profile="cho", run_id="run-missing-catalog", agent=agent):
+                    self.fail("unavailable model toolset must be rejected")
+            self.assertEqual(agent.enabled_toolsets, ["skills"])
+            self.assertEqual(agent.valid_tool_names, {"tool_search"})
+        self.assertFalse(native.active)
+
 if __name__ == "__main__":
     unittest.main()
