@@ -1,0 +1,30 @@
+diff --git a/codex_provider/nodes.py b/codex_provider/nodes.py
+index 80f5151..0000000 100644
+--- a/codex_provider/nodes.py
++++ b/codex_provider/nodes.py
+@@ -43,6 +43,6 @@ SPEED_FAST = "fast (1.5x, uses more quota)"
+ SERVICE_TIER = {SPEED_STANDARD: "default", SPEED_FAST: "priority"}
+ 
+ BASE_URL = "https://chatgpt.com/backend-api/codex"
+-IMAGE_MODEL = "gpt-image-2"
++IMAGE_MODEL = "gpt-image-2.5"
+ 
+ # Preview frames to ask for. **0 — none.** Nothing consumes them: the node returns one
+@@ -59,7 +59,7 @@ PARTIAL_IMAGES = 0
+ # The chat model is only the host that invokes the tool; it makes no pixels itself.
+ # Since Oct 2026 the backend refuses gpt-5.5 for ChatGPT-login requests (HTTP 400 "The 'gpt-5.5' model is not
+-# supported when using Codex with a ChatGPT account"); gpt-6.1-sol works. Low effort: the host only calls the tool.
++# supported when using Codex with a ChatGPT account"); gpt-6.1-sol works. Do not send reasoning.effort:
++# image-generation requests reject the host's `low` value, and the tool does not need an effort override.
+ HOST_MODEL = "gpt-6.1-sol"
+-HOST_EFFORT = "low"
+ INSTRUCTIONS = ("You are an assistant that must fulfill image generation and image "
+                 "editing requests by using the image_generation tool when provided.")
+@@ -454,7 +454,6 @@ class ArkCodexImageGen:
+             "tool_choice": {"type": "allowed_tools", "mode": "required",
+                             "tools": [{"type": "image_generation"}]},
+             "stream": True,
+-            "reasoning": {"effort": HOST_EFFORT},
+         }
+         tier = SERVICE_TIER.get(speed)
+         if tier:

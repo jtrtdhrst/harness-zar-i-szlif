@@ -1,0 +1,34 @@
+name: ComfyUI ArkCodex image compatibility
+
+on:
+  pull_request:
+    paths:
+      - "comfyui-mcp/**"
+      - ".github/workflows/comfy-arkcodex-compat.yml"
+  push:
+    branches:
+      - "KOMAA-1599"
+    paths:
+      - "comfyui-mcp/**"
+      - ".github/workflows/comfy-arkcodex-compat.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  arkcodex-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch exact upstream custom node
+        run: |
+          git clone --quiet https://github.com/Hishamahmer/comfyui-arkennemasis.git /tmp/arkennemasis
+          git -C /tmp/arkennemasis checkout --quiet --detach 9fea8c02d6937189f31fab4bf85744e8e38a39c5
+      - name: Validate pinned image payload patch
+        run: python3 comfyui-mcp/tests/test_arkennemasis_image_reasoning_patch.py /tmp/arkennemasis
+      - name: Validate fail-closed startup overlay and rollback
+        run: python3 comfyui-mcp/tests/test_arkcodex_image_compat.py /tmp/arkennemasis
