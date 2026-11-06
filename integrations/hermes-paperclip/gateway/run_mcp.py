@@ -151,6 +151,7 @@ def _project_scoped_tools(agent, schemas):
     original_enabled = agent.enabled_toolsets
     original_generation = getattr(agent, "_tool_snapshot_generation", None)
     scoped_names = set(schemas)
+    logging.getLogger("gateway.run_mcp").warning("run_mcp_projection_enter schemas=%d", len(scoped_names))
     scoped_toolsets = {
         registry.get_toolset_for_tool(name) for name in scoped_names
     } - {None, ""}
@@ -183,6 +184,7 @@ def _project_scoped_tools(agent, schemas):
         quiet_mode=True,
     )
     projected_names = {item["function"]["name"] for item in projected}
+    logging.getLogger("gateway.run_mcp").warning("run_mcp_projection_catalog discovered=%d raw=%d projected=%d direct_mcp=%d", len(scoped_names), len(raw_names), len(projected_names), sum(name.startswith("mcp__") for name in projected_names))
     projected.extend(
         item for item in (original_tools or [])
         if item["function"]["name"] not in projected_names
@@ -211,6 +213,7 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
     names = _server_names(scope, servers)
     try:
         with _borrowed(authority, scope, servers, names, cwd, partial=False) as discovered:
+            logging.getLogger("gateway.run_mcp").warning("run_mcp_discovery_counts servers=%d schemas=%d connected=%d", len(servers), len(discovered[0]), len(discovered[1]))
             if len(discovered[1]) != len(servers):
                 raise InvalidRunGrant("run MCP connection unavailable")
             if agent is None:
