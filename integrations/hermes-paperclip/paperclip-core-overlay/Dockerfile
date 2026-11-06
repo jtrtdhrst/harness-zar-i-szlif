@@ -43,7 +43,7 @@ RUN set -eux; \
 # combined build; fail on drift rather than silently patching different bytes.
 RUN set -eux; \
     test "$(sha256sum /app/server/src/services/issues.ts | cut -d' ' -f1)" = "b5b3066bd585870c219e50f8fd760a16486fa06c246a4605fcbb9b9185553afe"; \
-    test "$(sha256sum /app/server/src/routes/issues.ts | cut -d' ' -f1)" = "641b3d9cb5e744671527f16129dd78518376dca31616b845ec6b8da99d636d8"; \
+    test "$(sha256sum /app/server/src/routes/issues.ts | cut -d' ' -f1)" = "641b3d9cb5e744671527f16129dd78518376dca31616b845ec6b8da99d636d8c"; \
     test "$(sha256sum /app/server/src/services/heartbeat.ts | cut -d' ' -f1)" = "f3369d87010af52fa30a69df6cc4f8b0b227d0644aef9a13840bc4604e0c0691"; \
     cd /app; git apply --check /tmp/paperclip-reviewer-checkout.patch; \
     git apply /tmp/paperclip-reviewer-checkout.patch; \
