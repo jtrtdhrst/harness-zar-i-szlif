@@ -75,7 +75,7 @@ Pozycje przeklasyfikowane po debugu:
 | P10 | `succeeded` + `liveness=blocked` | brak bramki biznesowej na liveness | OPEN | P1 |
 | P11 | 248 narzędzi, `mcp_paperclip__*` → Tool not found | podwójne połączenie Paperclip MCP + tłumaczenie nazw tool gateway | OPEN (fix opisany) | P0 |
 | P12 | 402 „Insufficient credits” | SaaS Vectorize z launch config | FIXED razem z P9 | P0 |
-| P13 | prod = HEAD otwartego PR #74 | Coolify śledzi gałąź funkcjonalną; CTO CHANGES_REQUESTED; fix `81fa3ae` | OPEN (re-review) | P0 |
+| P13 | prod = HEAD otwartego PR #74 | Coolify śledzi gałąź funkcjonalną; CTO CHANGES_REQUESTED; fix `db8d93f` + CI green | OPEN (re-review) | P0 |
 | P14 | 13/14 agentów opencode_local | migracja zatrzymana na 1/14 | OPEN (zależne) | P1 |
 | P15 | stage=agent, participant=user | **celowa eskalacja po 3 rundach**; limit podniesiony do 50, 16 zadań odblokowanych | FIXED polityką | P2 |
 | P16 | 748 recovery / 966 runów | backfill legacy + bieżące recovery | OPEN (metryka) | P2 |
@@ -133,6 +133,7 @@ Plik: `/usr/local/libexec/product_native_promotion.py` (backup:
 - `systemctl is-enabled` = `enabled`, `is-active` = `active`.
 - Run 21:36:09: `{"live":"98cd058…","result":"already_released","sha":"98cd058…"}`.
 - Stan po runie: `{"last_deployed_sha":"98cd058…","status":"healthy"}`.
+- PR #75: `Native Product Release Gate CI` **success**, `Release Lanes Policy` **success**.
 
 ### Pozostały test akceptacyjny
 
@@ -341,8 +342,9 @@ Uwaga: heartbeat-invoke nie jest poprawnym canary — adapter odrzuca run bez is
 - CTO dał **CHANGES_REQUESTED**: `_project_scoped_tools` chwilowo modyfikuje współdzielony
   stan narzędzi agenta, a testy nie dowodzą izolacji przy równoległych runach, anulowaniu
   i wyjątkach. To realna luka, nie formalność.
-- **Poprawka wypchnięta do PR #74** (commit `81fa3ae`): per-agent `RLock` trzymany przez
-  cały czas projekcji, test współbieżny, test wyjątku i przywrócenia inwentarza.
+- **Poprawka wypchnięta do PR #74**: `81fa3ae` (per-agent `RLock` przez cały czas
+  projekcji + test współbieżny, wyjątku i przywrócenia inwentarza) oraz `db8d93f` (CI
+  uruchamia testy projekcji). **Hermes Gateway Coolify Image CI: success**, 6/6 testów.
   Wymaga re-review CTO przed merge.
 - Obrazy nie mają etykiet repo/commit; jedynym provenance jest tag SHA + compose labels.
 
@@ -638,7 +640,7 @@ w remote, PR i `/__release.json`.
 
 1. **P8** — zrobione; czeka na następny realny merge.
 2. **P9/P12** — zrobione; potwierdzić logiem następnego runu Designera.
-3. **P13** — re-review PR #74 po `81fa3ae` (izolacja współbieżna), merge do release,
+3. **P13** — re-review PR #74 po `db8d93f` (izolacja współbieżna + CI), merge do release,
    przełączyć Coolify prod na `release/*`, rebuild z merge SHA, guard na PR-head.
 4. **P11** — jeden profil Paperclip MCP na agenta, naprawa tłumaczenia nazw w tool
    gateway, preflight narzędzi, E2E na nowym prod.
