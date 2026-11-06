@@ -38,17 +38,13 @@ version=1, company_id, agent_id, issue_id, run_id, profile,
 scopes=["tools:call"], expires_at (ISO UTC) and
 servers=[{name, url (HTTPS), token (opaque Paperclip bearer)}].
 
-Security boundary for bearer destinations: runtime accepts only the exact
-operator-controlled HTTPS native MCP URL `https://paperclip-mcp.zariszlif.pl/mcp`
-by default, or an explicit comma-delimited `HERMES_PAPERCLIP_MCP_URLS`
-environment allowlist. No request envelope can extend the allowlist. HTTP,
-unknown HTTPS origins, URL userinfo, unexpected ports, alternate paths, query,
-fragment and nonprintable authorization tokens fail closed. The destination
-allowlist is separate from Paperclip's per-tool-call issuer validation, which
-must independently verify the short-lived run token and revoke it after the
-run. Do not configure wildcard domains or turn off the restriction in
-production. Redirects and backend issuer isolation require live negatives
-before a production canary counts as E2E.
+Security boundary for bearer destinations (verified production issuer contract on 2026-11-06):
+- Existing legacy destination remains the **exact** HTTPS URL `https://paperclip-mcp.zariszlif.pl/mcp`, or separately operator-listed exact HTTPS `/mcp` URLs via `HERMES_PAPERCLIP_MCP_URLS`.
+- **Actual Paperclip Core native issuer** creates run-bound named gateways under `https://paperclip.kompaszbiorek.pl/mcp/gateways/gw_<32 lowercase hex>`; this strict first-party hostname + path pattern is admitted. The Core's exact `/api/mcp/project-tools` and `/mcp/runtime-tools` may also be admitted; all still require independently validated run-specific bearers.
+- There is **no wildcard hostname, path suffix, arbitrary `/mcp` subpath, query/fragment, HTTP, port override, URL credentials, encoded-path escape or cross-origin bearer redirect**. Hermes' MCP client enforces `strict_redirect_headers`; Paperclip Core itself validates scope, run, agent, expiry and revocation on every call.
+- An explicit empty `HERMES_PAPERCLIP_MCP_URLS` disables **all** borrowed remote MCP servers (including the first-party Core routes). A request body can never extend the allowed origins. Tests in `tests/test_run_mcp.py` cover valid gateway URLs, SSRF/path negatives and operator disable semantics.
+
+Root cause of the 2026-11-06 first true Designer canary HTTP 403: the former Hermes receiver only allowed `/mcp` on the external MCP host and therefore rejected Paperclip's **real** `/mcp/gateways/gw_<id>` URLs before a tool could run. This patch fixes that versioned wire mismatch without copying a token to logs or changing Paperclip's issuer authority.
 
 The receiver strips paperclip_run_mcp before routing, prompts, session history,
 durable run status or Opik. The tool config is registered only while the
