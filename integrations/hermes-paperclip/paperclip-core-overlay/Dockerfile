@@ -59,20 +59,52 @@ RUN set -eux; \
     git apply /tmp/h03-reconciliation.patch; \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "7ec285484ef6664321e9b2e6aba73eb2c0254554db703328f5a02d6169a960a0"
 
+# Fail closed unless the exact Core source matches the reviewed production base.
+# A definitive Hermes /v1/runs auth denial must not manufacture a legacy recovery hold.
+COPY integrations/paperclip-core-review-recovery/legacy-auth-admission.patch /tmp/paperclip-legacy-auth-admission.patch
+COPY integrations/paperclip-core-review-recovery/legacy-auth-admission.integration.test.ts /app/server/src/services/legacy-auth-admission.integration.test.ts
+RUN test "$(sha256sum /app/server/src/services/legacy-execution-recovery.ts | cut -d' ' -f1)" = "dd5997b5f46e58d6033b7144c4ebbcd45afbea83adaa2b59e5c761ef1856de5c" && \
+    cd /app && git apply --check /tmp/paperclip-legacy-auth-admission.patch && \
+    git apply /tmp/paperclip-legacy-auth-admission.patch && \
+    test "$(sha256sum /app/server/src/services/legacy-execution-recovery.ts | cut -d' ' -f1)" = "36046af06728f6e800d5eb87289025014150b1a1b0ebe927290619fc7c2e7712" && \
+    chown node:node /app/server/src/services/legacy-auth-admission.integration.test.ts
+
+# The lost stage-wake repair is additive to H03, not a replacement for
+# independently validated native reviewer admission. Pin both original and
+# patched exact bytes; reject upstream drift rather than silently ship.
+COPY integrations/paperclip-core-review-recovery/review-wake-recovery.patch /tmp/paperclip-review-wake-recovery.patch
+RUN test "$(sha256sum /app/server/src/services/recovery/service.ts | cut -d' ' -f1)" = "c414df876e7df64e701a752513db8e5cf7365589294d50da0e1396788a9207db" && \
+    test "$(sha256sum /app/server/src/__tests__/heartbeat-process-recovery.test.ts | cut -d' ' -f1)" = "963edc495d0a0a3919827446190252251949439f43a9c7801aea43516208f8a2" && \
+    cd /app && git apply --check /tmp/paperclip-review-wake-recovery.patch && \
+    git apply /tmp/paperclip-review-wake-recovery.patch && \
+    test "$(sha256sum /app/server/src/services/recovery/service.ts | cut -d' ' -f1)" = "c5cb54e80a0b43bb5278c43fb345b9811b417ef83a34eb74c6f3c4eb902d35ad" && \
+    test "$(sha256sum /app/server/src/__tests__/heartbeat-process-recovery.test.ts | cut -d' ' -f1)" = "339f5a3ac1dc39b59261dfced6e42b48050d90b58454fad9724388e94c3c7522"
+
 RUN find /app -type d -name .vite-temp -prune -exec chown node:node {} + && \
     chown node:node /app/server/src/services/execution-blocker-rework.test.ts
 USER node
 RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
     server/src/services/execution-blocker-rework.test.ts \
+    server/src/services/legacy-execution-recovery.test.ts \
+    server/src/services/legacy-auth-admission.integration.test.ts \
     server/src/services/execution-blocker-undispatched.test.ts \
     server/src/__tests__/issue-stale-execution-lock-routes.test.ts \
     server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts \
     packages/adapters/hermes/src/gateway/server/execute.test.ts \
     --reporter=json --outputFile=/tmp/hermes-h03-full-suite.json --maxWorkers=1 && \
-    node -e "const r=require('/tmp/hermes-h03-full-suite.json');if(r.numPassedTests!==142||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('Expected 142 real tests with zero skip/fail');"
+    node -e "const r=require('/tmp/hermes-h03-full-suite.json');if(r.numPassedTests!==161||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('Expected 161 real tests with zero skip/fail');"
+# These are precisely two focused PostgreSQL cases selected out of a
+# larger regression suite. Do not claim the unrelated skipped cases passed.
+RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
+    server/src/__tests__/heartbeat-process-recovery.test.ts \
+    -t "replays the exact lost reviewer wake|does not replay a skipped wake" \
+    --reporter=json --outputFile=/tmp/paperclip-review-wake-tests.json --maxWorkers=1 && \
+    node -e "const r=require('/tmp/paperclip-review-wake-tests.json');if(r.numPassedTests!==2||r.numFailedTests!==0)throw Error('Review wake expected exactly 2 focused passing tests');"
 USER root
 RUN cd /app && pnpm --filter @paperclipai/hermes-paperclip-adapter typecheck && \
     pnpm --filter @paperclipai/server exec tsc --noEmit && \
     pnpm --filter @paperclipai/server exec tsc && \
     grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js && \
-    grep -q 'safeAbortedLegacyReworkHandoff' /app/server/dist/services/execution-blocker.js
+    grep -q 'safeAbortedLegacyReworkHandoff' /app/server/dist/services/execution-blocker.js && \
+    grep -q 'confirmedHermesCreateAuthDenial' /app/server/dist/services/legacy-execution-recovery.js && \
+    grep -q 'execution-stage-lease-recovery' /app/server/dist/services/recovery/service.js
