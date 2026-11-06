@@ -24,6 +24,27 @@ class ServiceCoverageTests(unittest.TestCase):
         with temp:
             self.assertEqual(check(root, config), (3, 1))
 
+    def test_accepts_unfiltered_pr_event_for_any_root(self):
+        workflow = "name: test\non:\n  pull_request:\n  push:\n    branches: [main]\n"
+        temp, root, config = self.fixture(
+            {"mode": "workflow", "workflows": [".github/workflows/test.yml"]}, workflow
+        )
+        with temp:
+            self.assertEqual(check(root, config), (3, 1))
+
+    def test_push_paths_cannot_mask_a_pull_request_gap(self):
+        workflow = (
+            "name: test\non:\n  pull_request:\n    paths:\n"
+            "      - 'other/**'\n  push:\n    branches: [main]\n"
+            "    paths:\n      - 'svc/**'\n"
+        )
+        temp, root, config = self.fixture(
+            {"mode": "workflow", "workflows": [".github/workflows/test.yml"]}, workflow
+        )
+        with temp:
+            with self.assertRaisesRegex(ValueError, "does not path-filter"):
+                check(root, config)
+
     def test_rejects_unclassified_new_root(self):
         temp, root, config = self.fixture({"mode": "manual_only", "reason": "manual gate"})
         with temp:
