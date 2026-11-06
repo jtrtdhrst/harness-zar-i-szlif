@@ -157,6 +157,39 @@ export function evaluateNativePaperclipReview(issue: unknown, prUrl: string, exa
 }
 
 
+
+/** A ledger is NOT authorization. A replay must re-read GitHub's merged PR
+ * and compare the exact PR identity, head, merge commit and native issue.
+ */
+export function assertMergedPrLedgerReadback(
+  prior: Record<string, unknown>,
+  expected: { issueId: string; repository?: string | null; pullRequestNumber: number; expectedHeadSha: string },
+  github: Record<string, unknown>,
+): void {
+  const url = typeof prior.prUrl === "string" ? prior.prUrl : "";
+  const match = /^https:\/\/github\.com\/(miloszspyrka-code\/(?:zar-i-szlif|harness-zar-i-szlif))\/pull\/([1-9]\d*)$/.exec(url);
+  if (!match || Number(match[2]) !== expected.pullRequestNumber
+      || (expected.repository && match[1] !== expected.repository)
+      || prior.issueId !== expected.issueId || prior.pullRequestNumber !== expected.pullRequestNumber
+      || prior.expectedHeadSha !== expected.expectedHeadSha) {
+    throw err("merge_writeback_unverified", "Merge ledger PR, issue or requested SHA identity mismatch");
+  }
+  const head = prior.actualHeadSha;
+  const commit = prior.mergeCommitSha;
+  if (typeof head !== "string" || !/^[a-f0-9]{40}$/i.test(head)
+      || !(head === expected.expectedHeadSha
+          || (expected.expectedHeadSha.length >= 7 && head.startsWith(expected.expectedHeadSha)))
+      || typeof commit !== "string" || !/^[a-f0-9]{40}$/i.test(commit)
+      || prior.mergeCommit !== commit) {
+    throw err("merge_writeback_unverified", "Merge ledger head/commit evidence is invalid");
+  }
+  const liveCommit = isRecord(github.mergeCommit) ? github.mergeCommit.oid : github.mergeCommit;
+  if (github.state !== "MERGED" || typeof github.mergedAt !== "string" || !github.mergedAt
+      || github.url !== url || github.headRefOid !== head || liveCommit !== commit) {
+    throw err("merge_writeback_unverified", "Live GitHub merged PR readback disagrees with the saved ledger");
+  }
+}
+
 /** Write back an already verified GitHub merge to exactly one independently
  * reviewed Paperclip PR artifact. This is NOT a release/deployment approval.
  * Replays are idempotent; conflicting provenance always fails closed.
@@ -862,17 +895,32 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
         ])).digest("hex")}`;
         const prior = await readLedger(ledgerKey);
         if (prior) {
-          if (prior.issueId !== effectiveIssueId || prior.pullRequestNumber !== pullRequestNumber
-              || prior.expectedHeadSha !== expectedHeadSha || typeof prior.prUrl !== "string"
-              || typeof prior.actualHeadSha !== "string" || typeof prior.mergeCommitSha !== "string") {
-            throw err("merge_writeback_unverified", "Existing merge ledger cannot be reconciled safely");
+          // Never treat a local ledger as sufficient proof that GitHub merged
+          // THIS request. Fresh readback precedes even a completed replay.
+          const repoFlag = (repository ? ["--repo", repository] : []) as string[];
+          const confirmReplay = await runJailedExec({
+            ws,
+            argv: ["gh", "pr", "view", String(pullRequestNumber), ...repoFlag,
+              "--json", "headRefOid,mergedAt,mergeCommit,state,url"],
+            timeoutSec: 30, outputLimit: 4096, operationId: null,
+            extraEnv: scopedGhEnv() ?? undefined,
+          });
+          if (confirmReplay.exitCode !== 0) {
+            throw err("merge_writeback_unverified", "Cannot re-read GitHub merged PR for ledger reconciliation");
           }
-          if (prior.workProductSyncState === "confirmed") return { ...prior, replayed: true };
+          let remote: unknown;
+          try { remote = JSON.parse(scrub(String(confirmReplay.stdout ?? ""))); }
+          catch { throw err("merge_writeback_unverified", "GitHub merged PR readback is malformed"); }
+          if (!isRecord(remote)) throw err("merge_writeback_unverified", "GitHub merged PR readback is not an object");
+          assertMergedPrLedgerReadback(prior, {
+            issueId: effectiveIssueId, repository, pullRequestNumber, expectedHeadSha,
+          }, remote);
           const currentIssue = await client.requestJson<unknown>("GET", `/issues/${encodeURIComponent(effectiveIssueId)}`);
           const synced = await syncMergedPrWorkProduct(
-            client, currentIssue, effectiveIssueId, prior.prUrl, prior.actualHeadSha, prior.mergeCommitSha);
+            client, currentIssue, effectiveIssueId, prior.prUrl as string,
+            prior.actualHeadSha as string, prior.mergeCommitSha as string);
           const completed = { ...prior, ...synced, status: "ok", workProductSyncState: "confirmed" };
-          await writeLedger(ledgerKey, completed);
+          if (prior.workProductSyncState !== "confirmed") await writeLedger(ledgerKey, completed);
           return { ...completed, replayed: true };
         }
         const repoFlag = (repository ? ["--repo", repository] : []) as string[];
