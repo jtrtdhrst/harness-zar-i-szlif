@@ -19,19 +19,26 @@ _ALLOWED_SCOPES = {"tools:call"}
 _DEFAULT_MCP_URLS = "https://paperclip-mcp.zariszlif.pl/mcp"
 
 
+# Paperclip Core issues short-lived heartbeat_run gateway tokens for this exact
+# public origin. The gateway ID is a server-minted opaque hex identifier, never
+# a caller-chosen URL. No wildcard hostname, arbitrary path, query or redirect.
+_PAPERCLIP_CORE_HOST = "paperclip.kompaszbiorek.pl"
+_NATIVE_GATEWAY_PATH = re.compile(r"^/mcp/gateways/gw_[0-9a-f]{32}$")
+_NATIVE_CORE_MCP_PATHS = frozenset({"/api/mcp/project-tools", "/mcp/runtime-tools"})
+
+
 def _allowed_mcp_url(url: object) -> bool:
     if not isinstance(url, str) or any(ord(ch) < 33 or ord(ch) > 126 for ch in url):
         return False
-    allowed = {
-        value.strip() for value in os.environ.get(
-            "HERMES_PAPERCLIP_MCP_URLS", _DEFAULT_MCP_URLS
-        ).split(",") if value.strip()
-    }
-    if url not in allowed:
+    # An explicit empty allowlist is the operator's kill switch for ALL
+    # per-run remote MCP destinations, including Core's first-party endpoints.
+    allowlist = os.environ.get("HERMES_PAPERCLIP_MCP_URLS", _DEFAULT_MCP_URLS)
+    if not allowlist.strip():
         return False
+    allowed_exact = {item.strip() for item in allowlist.split(",") if item.strip()}
     try:
         parts = urlsplit(url)
-        return (
+        if not (
             parts.scheme == "https"
             and parts.hostname is not None
             and parts.username is None
@@ -39,13 +46,22 @@ def _allowed_mcp_url(url: object) -> bool:
             and parts.port in (None, 443)
             and parts.query == ""
             and parts.fragment == ""
-            and parts.path == "/mcp"
             and parts.hostname not in {"localhost", "127.0.0.1", "::1"}
             and "." in parts.hostname
+        ):
+            return False
+        if url in allowed_exact:
+            # Preserve the existing exact opt-in for public /mcp endpoints.
+            return parts.path == "/mcp"
+        return (
+            parts.netloc == _PAPERCLIP_CORE_HOST
+            and (
+                _NATIVE_GATEWAY_PATH.fullmatch(parts.path) is not None
+                or parts.path in _NATIVE_CORE_MCP_PATHS
+            )
         )
     except ValueError:
         return False
-
 
 
 
