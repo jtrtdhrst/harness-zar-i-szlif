@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import stat
 import tempfile
 import time
 import urllib.error
@@ -36,6 +37,8 @@ BASE = "ghcr.io/paperclipai/paperclip:2026.1023.0"
 STATE_DIR = Path("/var/lib/paperclip-gitops")
 STATE = STATE_DIR / "paperclip-mcp.json"
 PUBLIC = "https://paperclip-mcp.zariszlif.pl"
+NATIVE_GATE = Path("/usr/local/libexec/paperclip_native_release_gate.py")
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 HEX = re.compile(r"^[0-9a-f]{40}$")
 WATCHED_PREFIXES = (
     "paperclip-mcp/mcp-gateway/",
@@ -129,6 +132,65 @@ def assess_release_attestation(data):
         raise RuntimeError("A GitHub Actions check is pending, failing or unreadable")
     return pr
 
+def validate_native_review_result(evidence, pr_number, head_sha, merge_sha):
+    """Accept ONLY the exact binding returned by the host-owned first-class verifier."""
+    required = ("issue_id", "decision_id", "reviewer_agent_id", "source_run_id")
+    if (not isinstance(evidence, dict) or evidence.get("verified") is not True or
+        evidence.get("repository") != REPO or evidence.get("pr") != pr_number or
+        evidence.get("head_sha") != head_sha or evidence.get("merge_sha") != merge_sha or
+        any(not isinstance(evidence.get(k), str) or not UUID.fullmatch(evidence[k]) for k in required)):
+        raise RuntimeError("Native Paperclip review identity/SHA mismatch")
+    return {key: evidence[key] for key in required}
+
+
+def verify_native_review(pr_number, head_sha, merge_sha):
+    """Invoke the fixed root-owned verifier; never consume caller-provided review flags."""
+    if not isinstance(pr_number, int) or pr_number < 1 or not validate_sha(head_sha) or not validate_sha(merge_sha):
+        raise RuntimeError("Invalid native review parameters")
+    try:
+        mode = NATIVE_GATE.lstat()
+    except OSError:
+        raise RuntimeError("Native Paperclip verifier not installed") from None
+    if (not stat.S_ISREG(mode.st_mode) or mode.st_uid != 0 or mode.st_mode & 0o022):
+        raise RuntimeError("Native Paperclip verifier ownership/mode invalid")
+    result = run([sys.executable, "-B", str(NATIVE_GATE), "--repo", REPO,
+                  "--pr", str(pr_number), "--head-sha", head_sha,
+                  "--merge-sha", merge_sha], timeout=40, allow_fail=True)
+    if result.returncode != 0:
+        raise RuntimeError("Native Paperclip independent review denied")
+    try:
+        evidence = json.loads(result.stdout.strip())
+    except (TypeError, ValueError, AttributeError):
+        raise RuntimeError("Native Paperclip verifier response malformed") from None
+    return validate_native_review_result(evidence, pr_number, head_sha, merge_sha)
+
+
+def verify_reviewed_history(repo_path, previous, remote):
+    """Every MCP-affecting merge since last release needs its OWN first-class review."""
+    if not validate_sha(previous) or not validate_sha(remote):
+        raise RuntimeError("Missing immutable prior release baseline")
+    revs = docker_core("git", "-C", repo_path, "rev-list", "--first-parent",
+                       "--reverse", previous + ".." + remote).splitlines()
+    if not revs or len(revs) > 50:
+        raise RuntimeError("Unbounded or empty release history")
+    reviewed = []
+    for merge_sha in revs:
+        if not validate_sha(merge_sha):
+            raise RuntimeError("Invalid release history SHA")
+        parents = docker_core("git", "-C", repo_path, "show", "-s", "--format=%P", merge_sha).split()
+        if len(parents) != 2 or any(not validate_sha(p) for p in parents):
+            raise RuntimeError("Direct/squash commit on release path is not approved")
+        files = docker_core("git", "-C", repo_path, "diff", "--name-only", parents[0], merge_sha).splitlines()
+        if not any(is_component_change(file) for file in files):
+            continue
+        pr = verified_pr(merge_sha)
+        evidence = verify_native_review(pr["number"], pr["head_sha"], merge_sha)
+        reviewed.append({**pr, "merge_sha": merge_sha, "decision_id": evidence["decision_id"]})
+    if not reviewed:
+        raise RuntimeError("No independently reviewed MCP source in release history")
+    return reviewed
+
+
 def verified_pr(sha):
     # The existing Coolify GitHub App reads PR provenance and green CI.
     # CHO/CTO's independent review belongs to Paperclip's native decision
@@ -158,7 +220,8 @@ def verified_pr(sha):
         out = json.loads(r.stdout.strip())
     except (ValueError, json.JSONDecodeError) as err:
         raise RuntimeError("Coolify PR attestation response invalid") from err
-    return assess_release_attestation(out)
+    pr = assess_release_attestation(out)
+    return {"number": pr, "head_sha": out["head_sha"]}
 
 def get_container_id():
     r = run(["docker", "ps", "-q", "--filter", "label=com.docker.compose.project=" + PROJECT_ID,
@@ -313,9 +376,10 @@ def process(plan=False):
                 save_state(state)
             print(json.dumps({"result":"not_a_paperclip_mcp_change","sha":remote,"changed_paths_count":len(changed)}))
             return 0
-        pr = verified_pr(remote)
+        reviewed = verify_reviewed_history(path + "/repo", previous, remote)
+        pr = reviewed[-1]
         if plan:
-            print(json.dumps({"result":"ready","sha":remote,"merged_pr":pr,"affected_paths_count":len(watched)}))
+            print(json.dumps({"result":"ready","sha":remote,"merged_pr":pr["number"],"affected_paths_count":len(watched)}))
             return 0
         failure = state.get("failed_release") or {}
         if failure.get("sha") == remote and time.time() - failure.get("time",0) < 600:
@@ -348,13 +412,14 @@ def process(plan=False):
             "deployed_sha":remote,
             "deployed_image_id":image_id,
             "previous_image_id":old["image_id"],
-            "merged_pr":pr,
+            "merged_pr":pr["number"],
+            "reviewed_prs":[p["number"] for p in reviewed],
             "last_successful_release":datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "failed_release":None,
         })
         save_state(state)
         print(json.dumps({"result":"deployed","source_sha":remote,
-                          "merged_pr":pr,"image_id":image_id,"healthy":result["health"]}))
+                          "merged_pr":pr["number"],"image_id":image_id,"healthy":result["health"]}))
         return 0
     finally:
         run(["docker", "exec", CORE, "rm", "-rf", path], allow_fail=True)

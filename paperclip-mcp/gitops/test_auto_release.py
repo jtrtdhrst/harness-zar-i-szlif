@@ -110,6 +110,62 @@ class ReleaseSafetyTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     m.assess_release_attestation(invalid)
 
+    def test_native_result_requires_first_class_identity_and_exact_sha(self):
+        valid={"verified":True,"repository":m.REPO,"pr":25,"head_sha":"a"*40,
+               "merge_sha":"b"*40, **{k:"12345678-1234-4234-8234-123456789abc"
+               for k in ("issue_id","decision_id","reviewer_agent_id","source_run_id")}}
+        self.assertIn("decision_id",m.validate_native_review_result(valid,25,"a"*40,"b"*40))
+        for changed in ({"verified":False},{"repository":"other/repo"},{"pr":26},
+                        {"head_sha":"c"*40},{"merge_sha":"d"*40},{"decision_id":None},
+                        {"source_run_id":"not-a-uuid"},{"reviewer_agent_id":None}):
+            with self.subTest(changed=changed):
+                with self.assertRaisesRegex(RuntimeError,"identity/SHA mismatch"):
+                    m.validate_native_review_result({**valid,**changed},25,"a"*40,"b"*40)
+
+    def test_native_verifier_executes_only_root_owned_fixed_script(self):
+        valid={"verified":True,"repository":m.REPO,"pr":25,"head_sha":"a"*40,
+               "merge_sha":"b"*40, **{k:"12345678-1234-4234-8234-123456789abc"
+               for k in ("issue_id","decision_id","reviewer_agent_id","source_run_id")}}
+        from unittest.mock import MagicMock
+        good=MagicMock()
+        good.lstat.return_value=SimpleNamespace(st_mode=0o100755,st_uid=0)
+        good.__str__.return_value="/usr/local/libexec/paperclip_native_release_gate.py"
+        with patch.object(m,"NATIVE_GATE",good),patch.object(m,"run",return_value=SimpleNamespace(returncode=0,stdout=json.dumps(valid))) as call:
+            m.verify_native_review(25,"a"*40,"b"*40)
+            args=call.call_args.args[0]
+            self.assertIn("--merge-sha",args)
+            self.assertNotIn("--issue-id",args)
+            self.assertNotIn("--review-approved",args)
+        with patch.object(m,"NATIVE_GATE",good),patch.object(m,"run",return_value=SimpleNamespace(returncode=1,stdout=json.dumps(valid))):
+            with self.assertRaisesRegex(RuntimeError,"independent review denied"):
+                m.verify_native_review(25,"a"*40,"b"*40)
+        for mode,uid in ((0o120777,0),(0o100777,0),(0o100755,1000)):
+            good.lstat.return_value=SimpleNamespace(st_mode=mode,st_uid=uid)
+            with patch.object(m,"NATIVE_GATE",good), self.assertRaisesRegex(RuntimeError,"ownership/mode invalid"):
+                m.verify_native_review(25,"a"*40,"b"*40)
+        good.lstat.side_effect=FileNotFoundError()
+        with patch.object(m,"NATIVE_GATE",good), self.assertRaisesRegex(RuntimeError,"not installed"):
+            m.verify_native_review(25,"a"*40,"b"*40)
+
+    def test_all_mcp_merges_need_independent_exact_sha_approval(self):
+        first="1"*40; second="2"*40; previous="0"*40
+        def fake_docker(*a,**kw):
+            if "rev-list" in a:return first+"\n"+second
+            if "show" in a:return previous+" "+("9"*40)
+            if "diff" in a:return ("paperclip-mcp/src/safe.ts" if a[-1]==first else "docs/README.md")
+            raise AssertionError(a)
+        with patch.object(m,"docker_core",side_effect=fake_docker),patch.object(m,"verified_pr",return_value={"number":25,"head_sha":"a"*40}) as gh,patch.object(m,"verify_native_review",return_value={"decision_id":"x"}) as native:
+            got=m.verify_reviewed_history("/repo",previous,second)
+        self.assertEqual(len(got),1)
+        self.assertEqual(got[0]["merge_sha"],first)
+        gh.assert_called_once_with(first)
+        native.assert_called_once_with(25,"a"*40,first)
+        with patch.object(m,"docker_core",side_effect=lambda *a,**kw: ("1"*40 if "rev-list" in a else previous)):
+            with self.assertRaises(RuntimeError):
+                m.verify_reviewed_history("/repo",previous,first)
+        with self.assertRaisesRegex(RuntimeError,"Missing immutable prior"):
+            m.verify_reviewed_history("/repo",None,second)
+
     def test_service_and_source_are_hard_scoped(self):
         self.assertEqual(m.REPO, "miloszspyrka-code/harness-zar-i-szlif")
         self.assertEqual(m.SERVICE,"paperclip-mcp")
