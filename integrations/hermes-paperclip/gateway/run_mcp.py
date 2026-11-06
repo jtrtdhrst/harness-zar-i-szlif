@@ -152,6 +152,8 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
             # search is filtered by the per-agent enabled_toolsets snapshot.
             # AIAgent is created separately for each /v1/runs dispatch.
             before = None
+            before_tools = None
+            before_valid = None
             try:
                 if agent is not None:
                     before = getattr(agent, "enabled_toolsets", None)
@@ -163,11 +165,35 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
                             or "mcp-*" in denied or denied.intersection(borrowed_toolsets)):
                         raise InvalidRunGrant("run MCP tools forbidden by agent policy")
                     agent.enabled_toolsets = [*before, *(t for t in borrowed_toolsets if t not in before)]
+                    # The AIAgent tool catalog was frozen before the run's grant
+                    # was discovered. Re-snapshot it inside the scoped registry,
+                    # without changing any global profile's tool selection.
+                    before_tools = getattr(agent, "tools", None)
+                    before_valid = getattr(agent, "valid_tool_names", None)
+                    if isinstance(before_tools, list):
+                        import model_tools
+                        from agent.oneshot_footprint import prune_oneshot_tools
+                        from toolsets import agent_tool_drops
+                        args = {"enabled_toolsets": agent.enabled_toolsets,
+                                "disabled_toolsets": agent.disabled_toolsets,
+                                "quiet_mode": True}
+                        raw = model_tools.get_tool_definitions(**args, skip_tool_search_assembly=True)
+                        exposed = {t.get("function", {}).get("name") for t in raw or []}
+                        if not set(discovered[0]).issubset(exposed):
+                            raise InvalidRunGrant("run MCP registry schema not visible")
+                        refreshed = prune_oneshot_tools(model_tools.get_tool_definitions(**args) or [])
+                        drops = set(agent_tool_drops(agent))
+                        refreshed = [t for t in refreshed if t.get("function", {}).get("name") not in drops]
+                        agent.tools = refreshed
+                        agent.valid_tool_names = {t["function"]["name"] for t in refreshed}
                 yield scope
             finally:
-                if agent is not None and before is not None:
-                    # Return the AIAgent to its exact configured tool selection.
-                    agent.enabled_toolsets = before
+                if agent is not None:
+                    if before_tools is not None:
+                        agent.tools = before_tools
+                        agent.valid_tool_names = before_valid
+                    if before is not None:
+                        agent.enabled_toolsets = before
     finally:
         # _borrowed disconnects the last borrower; clear local references too.
         borrowed = getattr(authority, "_local_editor_mcp", None)
