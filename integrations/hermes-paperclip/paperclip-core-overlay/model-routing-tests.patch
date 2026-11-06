@@ -23,7 +23,7 @@ index 2fb1491..21e4f03 100644
 +      pollIntervalMs: 250,
 +      eventReconnectMs: 250,
 +    });
-+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
++    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
 +      const u = String(url);
 +      if (u.endsWith("/v1/runs")) {
 +        return new Response(JSON.stringify({ run_id: "model-smoke-run", status: "started" }), { status: 202 });
