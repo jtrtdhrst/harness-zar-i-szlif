@@ -16,7 +16,8 @@
       "production_readback": "https://panel.zariszlif.pl/__release.json",
       "exact_sha_required": true,
       "review_required": true,
-      "observed_baseline": "2026-11-04: main=ci-approved=deployed=7322f946a5a395db29fa95d14da1ea9037e30d7c"
+      "observed_baseline": "2026-11-04: main=ci-approved=deployed=7322f946a5a395db29fa95d14da1ea9037e30d7c",
+      "reviewer_role": "CTO"
     },
     {
       "id": "hermes-gateway-canary",
@@ -30,7 +31,8 @@
       "review_required": true,
       "production_readback": null,
       "exact_sha_required": true,
-      "observed_baseline": "2026-11-04: private healthy canary; not production; reviewed cutover pending"
+      "observed_baseline": "2026-11-04: private healthy canary; not production; reviewed cutover pending",
+      "reviewer_role": "CHO"
     },
     {
       "id": "hermes-gateway",
@@ -43,7 +45,8 @@
       "review_required": true,
       "production_readback": null,
       "exact_sha_required": true,
-      "observed_baseline": "2026-11-04: degraded:unhealthy; Coolify Git metadata is NOT source provenance; no cohort cutover"
+      "observed_baseline": "2026-11-04: degraded:unhealthy; Coolify Git metadata is NOT source provenance; no cohort cutover",
+      "reviewer_role": "CHO"
     },
     {
       "id": "paperclip-core",
@@ -56,16 +59,17 @@
       "review_required": true,
       "production_readback": "https://paperclip.kompaszbiorek.pl/api/health",
       "exact_sha_required": true,
-      "observed_baseline": "2026-11-04T17:02Z: running local/paperclip-review-recovery:4f05e290; base upstream revision 1b4c8038; overlay commit 4f05e290 from merged PR #43; runtime image ID sha256:ba2bf404...; reproducible source-to-image proof OPEN",
-      "artifact_source_ref": "local/paperclip-review-recovery:4f05e290",
+      "observed_baseline": "2026-11-06 14:24 UTC live Docker inspect: Paperclip Core local/paperclip-core-h03-candidate:56204bc9, sha256:ea292ecf0230fcf1429430df604c2c5cc0d398ac67fb9f254b28b92199f234bd, healthy; exact PR #57 HEAD 56204bc9 merged into harness main at 185f9e9c; source-to-digest reproducibility still not independently attested",
+      "artifact_source_ref": "local/paperclip-core-h03-candidate:56204bc9",
       "source_revision": "1b4c803816e82b0265c8422e1a804327a7ed8c54",
-      "source_provenance_scope": "Upstream base + harness overlay at merged PR #43; running local image separately observed. Build reproducibility and source-to-digest attestation remain OPEN",
+      "source_provenance_scope": "Pinned upstream Paperclip base revision 1b4c803816e82b0265c8422e1a804327a7ed8c54 + merged harness PR #57 H03 reviewer-checkout overlay 56204bc93f84955fa3faa980404d5ef0963d9162; running image separately inspected, source-to-digest rebuild attestation still OPEN",
       "upstream_base_repository": "paperclipai/paperclip",
       "upstream_base_ref": "ghcr.io/paperclipai/paperclip:2026.1023.0",
       "upstream_base_revision": "1b4c803816e82b0265c8422e1a804327a7ed8c54",
-      "overlay_source_sha": "4f05e2904b8663e096bf4f839f25d46767f18899",
-      "runtime_image_id": "sha256:ba2bf404be28f2ae5ee8a2a5785944280463f67f84fd52a3b20bda49d9af1855",
-      "overlay_source_to_runtime_digest_verified": false
+      "overlay_source_sha": "56204bc93f84955fa3faa980404d5ef0963d9162",
+      "runtime_image_id": "sha256:ea292ecf0230fcf1429430df604c2c5cc0d398ac67fb9f254b28b92199f234bd",
+      "overlay_source_to_runtime_digest_verified": false,
+      "reviewer_role": "CHO"
     },
     {
       "id": "paperclip-mcp",
@@ -78,7 +82,8 @@
       "review_required": true,
       "production_readback": "https://paperclip-mcp.zariszlif.pl",
       "exact_sha_required": true,
-      "observed_baseline": "2026-11-04: local image paperclip-mcp:gitops-active; live MCP verified; source/build commit equivalence requires independent proof"
+      "observed_baseline": "2026-11-04: local image paperclip-mcp:gitops-active; live MCP verified; source/build commit equivalence requires independent proof",
+      "reviewer_role": "CHO"
     },
     {
       "id": "comfy-mcp",
@@ -91,7 +96,8 @@
       "review_required": true,
       "production_readback": "https://mcp-comfy.kompaszbiorek.pl/mcp",
       "exact_sha_required": true,
-      "observed_baseline": "2026-11-04: local image local/comfyui-mcp:0.52.206-chatfiles7; running healthy; deployment provenance not verified"
+      "observed_baseline": "2026-11-04: local image local/comfyui-mcp:0.52.206-chatfiles7; running healthy; deployment provenance not verified",
+      "reviewer_role": "CHO"
     },
     {
       "id": "hermes-gateway-git-release-candidate",
@@ -110,7 +116,8 @@
       "source_to_digest_verified": false,
       "network_isolation_verified": false,
       "observed_no_public_host_ports": true,
-      "observed_baseline": "2026-11-04T17:01Z: Coolify healthy; harness main 4f05e290... candidate image; no public host ports, separate /opt/data, shared Coolify Docker network; auto deploy to candidate true. Not production, not isolation certified, not a cutover gate PASS"
+      "observed_baseline": "2026-11-04T17:01Z: Coolify healthy; harness main 4f05e290... candidate image; no public host ports, separate /opt/data, shared Coolify Docker network; auto deploy to candidate true. Not production, not isolation certified, not a cutover gate PASS",
+      "reviewer_role": "CHO"
     }
   ],
   "other_resources": [
@@ -129,7 +136,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "No deployment without independent reactivation approval"
+      "release_contract": "No deployment without independent reactivation approval",
+      "reviewer_role": "CHO"
     },
     {
       "id": "hermes-permissions-repair-temporary",
@@ -146,7 +154,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "No deployment without independent reactivation approval"
+      "release_contract": "No deployment without independent reactivation approval",
+      "reviewer_role": "CHO"
     },
     {
       "id": "plasmic",
@@ -163,7 +172,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "hindsight-core",
@@ -180,7 +190,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "hindsight-mcp",
@@ -197,7 +208,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "opik",
@@ -214,7 +226,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "mautic",
@@ -231,7 +244,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "supabase",
@@ -248,7 +262,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "opik-mcp",
@@ -265,7 +280,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "emailens-mcp",
@@ -282,7 +298,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "plasmic-mcp",
@@ -299,7 +316,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "coolify-mcp",
@@ -316,7 +334,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "qdrant-mcp",
@@ -333,7 +352,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "supabase-mcp",
@@ -350,7 +370,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "qdrant",
@@ -367,7 +388,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "opencode",
@@ -384,7 +406,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "ubuntu-mcp",
@@ -401,7 +424,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "ubuntu-mcp-oauth-proxy",
@@ -418,7 +442,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "No deployment without independent reactivation approval"
+      "release_contract": "No deployment without independent reactivation approval",
+      "reviewer_role": "CHO"
     },
     {
       "id": "comfy",
@@ -435,7 +460,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "cloudflared-mcp",
@@ -452,7 +478,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "cloudflared-paperclip",
@@ -469,7 +496,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "hermes-paperclip-sync-checks",
@@ -486,7 +514,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "mantic-mcp",
@@ -503,7 +532,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "playwright-mcp",
@@ -520,7 +550,8 @@
       "source_commit_required_when_source_built": true,
       "evidence_state": "open",
       "observed_at": "2026-11-04",
-      "release_contract": "CHO + CTO approved immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback"
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
     }
   ],
   "scope_snapshot": {
@@ -544,7 +575,8 @@
       "version_id": "77db375a-3fad-45b5-b7da-45ab2b87e266",
       "deployment_at": "2026-10-27T23:47:01.690575Z",
       "observed_source": "api",
-      "release_contract": "CHO/CTO reviewed immutable Worker version, smoke, traffic readback and previous-version rollback"
+      "release_contract": "CHO/CTO reviewed immutable Worker version, smoke, traffic readback and previous-version rollback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "stronaglowna",
@@ -558,7 +590,8 @@
       "version_id": "c9a82c13-55e0-4010-8fb8-9dcbfb556547",
       "deployment_at": "2026-10-23T11:53:56.880212Z",
       "observed_source": "wrangler",
-      "release_contract": "CHO/CTO reviewed immutable Worker version, smoke, traffic readback and previous-version rollback"
+      "release_contract": "CHO/CTO reviewed immutable Worker version, smoke, traffic readback and previous-version rollback",
+      "reviewer_role": "CHO"
     },
     {
       "id": "zariszlif-prawne",
@@ -572,7 +605,8 @@
       "version_id": "81f217c7-80ed-4ff7-b429-71810826f715",
       "deployment_at": "2026-10-20T14:57:08.423236Z",
       "observed_source": "api",
-      "release_contract": "CHO/CTO reviewed immutable Worker version, smoke, traffic readback and previous-version rollback"
+      "release_contract": "CHO/CTO reviewed immutable Worker version, smoke, traffic readback and previous-version rollback",
+      "reviewer_role": "CHO"
     }
   ]
 }
