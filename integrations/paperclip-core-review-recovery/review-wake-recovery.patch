@@ -1,0 +1,176 @@
+--- a/server/src/services/recovery/service.ts
++++ b/server/src/services/recovery/service.ts
+@@ -7,6 +7,7 @@
+ import { isIssueReviewPathRecoveryRun } from "./review-path-recovery.js";
+ import { escalateExhaustedIssueReviewPathRecovery } from "./review-path-recovery-escalation.js";
+ import { executionRetryAccounting } from "../execution-recovery-attempt.js";
++import { getExecutionBlocker } from "../execution-blocker.js";
+ import { isExplicitContinuationRetryClaim } from "../explicit-continuation-retry-claim.js";
+ import {
+   decideLegacyContinuation, legacyDispositionEpisode, legacyDispositionFingerprint,
+@@ -4969,6 +4970,77 @@
+         }
+         const participantLatestRun = participantLatestRunForRecovery;
+ 
++        // An initial reviewer wake can lose its admission race against the
++        // coder's environment lease. This leaves a durable *skipped* receipt
++        // but no reviewer run; the ordinary reviewer-retry path below only
++        // handled an existing terminal reviewer run.
++        //
++        // Replay only an actual server-originated, exact-stage review wake.
++        // Never manufacture approval, replay stale stages, or reopen the
++        // implementor's execution. Admission still checks ownership and lease.
++        if (
++          !participantLatestRun &&
++          agentInvokable &&
++          pendingExecutionState.currentStageType === "review" &&
++          pendingExecutionState.currentStageId &&
++          !(await getExecutionBlocker(db, issue.companyId, issue.id))
++        ) {
++          const stageId = pendingExecutionState.currentStageId;
++          const [lostWake] = await db
++            .select({ id: agentWakeupRequests.id, payload: agentWakeupRequests.payload })
++            .from(agentWakeupRequests)
++            .where(and(
++              eq(agentWakeupRequests.companyId, issue.companyId),
++              eq(agentWakeupRequests.agentId, participantAgentId),
++              eq(agentWakeupRequests.status, "skipped"),
++              eq(agentWakeupRequests.reason, "execution_reconciliation_required"),
++              eq(agentWakeupRequests.source, "assignment"),
++              sql`${agentWakeupRequests.payload}->>'issueId' = ${issue.id}`,
++              sql`${agentWakeupRequests.payload}->'executionStage'->>'stageId' = ${stageId}`,
++            ))
++            .orderBy(desc(agentWakeupRequests.requestedAt))
++            .limit(1);
++          const executionStage = parseObject(parseObject(lostWake?.payload).executionStage);
++          const originalParticipant = parseObject(executionStage.currentParticipant);
++          if (
++            lostWake &&
++            executionStage.stageId === stageId &&
++            executionStage.stageType === "review" &&
++            executionStage.wakeRole === "reviewer" &&
++            originalParticipant.type === "agent" &&
++            originalParticipant.agentId === participantAgentId
++          ) {
++            const queued = await deps.enqueueWakeup(participantAgentId, {
++              source: "automation",
++              triggerDetail: "system",
++              reason: "execution_review_requested",
++              issueStateGuard: {
++                statuses: ["in_review"],
++                assigneeAgentId: participantAgentId,
++              },
++              idempotencyKey: `execution-stage-lease-recovery:${issue.id}:${stageId}`,
++              payload: { issueId: issue.id, executionStage, recoveredWakeId: lostWake.id },
++              requestedByActorType: "system",
++              requestedByActorId: null,
++              contextSnapshot: {
++                issueId: issue.id,
++                taskId: issue.id,
++                wakeReason: "execution_review_requested",
++                source: "issue.execution_stage_lease_recovery",
++                executionStage,
++                recoveredWakeId: lostWake.id,
++              },
++            });
++            if (queued) {
++              result.reviewParticipantRequeued += 1;
++              result.issueIds.push(issue.id);
++            } else {
++              result.skipped += 1;
++            }
++            continue;
++          }
++        }
++
+         if (
+           !participantLatestRun ||
+           !isTerminalIssueRun(participantLatestRun)
+--- a/server/src/__tests__/heartbeat-process-recovery.test.ts
++++ b/server/src/__tests__/heartbeat-process-recovery.test.ts
+@@ -10072,6 +10072,85 @@
+     }
+   });
+ 
++  it("replays the exact lost reviewer wake once after the implementor lease clears", async () => {
++    const { companyId, agentId, issueId, runId, wakeupRequestId, stageId } =
++      await seedInReviewParticipantRunFixture();
++
++    // Simulate the real 2026-11-06 race: the coder's lease blocked the stage
++    // handoff wake, so no reviewer run was admitted; the lease has since gone.
++    await db.update(issues).set({
++      executionRunId: null, executionLockedAt: null, executionAgentNameKey: null,
++    }).where(eq(issues.id, issueId));
++    await db.update(heartbeatRuns).set({
++      status: "cancelled",
++      contextSnapshot: { issueId: randomUUID() },
++      wakeupRequestId: null,
++      finishedAt: new Date(),
++    }).where(eq(heartbeatRuns.id, runId));
++    const stage = {
++      stageId,
++      stageType: "review",
++      wakeRole: "reviewer",
++      currentParticipant: { type: "agent", agentId, userId: null },
++      allowedActions: ["approve", "request_changes"],
++    };
++    await db.update(agentWakeupRequests).set({
++      status: "skipped",
++      source: "assignment",
++      reason: "execution_reconciliation_required",
++      runId: null,
++      payload: { issueId, executionStage: stage },
++      finishedAt: new Date(),
++    }).where(eq(agentWakeupRequests.id, wakeupRequestId));
++
++    const heartbeat = heartbeatService(db);
++    const result = await heartbeat.reconcileStrandedAssignedIssues();
++    expect(result.reviewParticipantRequeued).toBe(1);
++    expect(result.issueIds).toContain(issueId);
++    const [replay] = await db.select().from(agentWakeupRequests).where(and(
++      eq(agentWakeupRequests.companyId, companyId),
++      eq(agentWakeupRequests.agentId, agentId),
++      eq(agentWakeupRequests.reason, "execution_review_requested"),
++    ));
++    expect(replay).toBeTruthy();
++    expect(replay?.payload).toMatchObject({
++      issueId, executionStage: { stageId, stageType: "review" },
++      recoveredWakeId: wakeupRequestId,
++    });
++  });
++
++  it("does not replay a skipped wake for a replaced reviewer stage", async () => {
++    const { agentId, issueId, runId, wakeupRequestId, stageId } =
++      await seedInReviewParticipantRunFixture();
++    await db.update(issues).set({
++      executionRunId: null, executionLockedAt: null, executionAgentNameKey: null,
++    }).where(eq(issues.id, issueId));
++    await db.update(heartbeatRuns).set({
++      status: "cancelled",
++      contextSnapshot: { issueId: randomUUID() },
++      wakeupRequestId: null,
++      finishedAt: new Date(),
++    }).where(eq(heartbeatRuns.id, runId));
++    await db.update(agentWakeupRequests).set({
++      status: "skipped", reason: "execution_reconciliation_required",
++      source: "assignment", runId: null,
++      payload: { issueId, executionStage: {
++        stageId: randomUUID(), stageType: "review", wakeRole: "reviewer",
++        currentParticipant: { type: "agent", agentId, userId: null },
++      } },
++      finishedAt: new Date(),
++    }).where(eq(agentWakeupRequests.id, wakeupRequestId));
++
++    const result = await heartbeatService(db).reconcileStrandedAssignedIssues();
++    expect(result.reviewParticipantRequeued).toBe(0);
++    expect(result.issueIds).not.toContain(issueId);
++    const pending = await db.select().from(agentWakeupRequests).where(and(
++      eq(agentWakeupRequests.agentId, agentId),
++      eq(agentWakeupRequests.reason, "execution_review_requested"),
++    ));
++    expect(pending).toHaveLength(0);
++  });
++
+   it("does not let an active chat conversation suppress stranded execution-review participant recovery", async () => {
+     const { companyId, agentId, issueId, runId, wakeupRequestId, stageId } =
+       await seedInReviewParticipantRunFixture();
