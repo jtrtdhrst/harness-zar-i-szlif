@@ -252,6 +252,182 @@ describe("eligibility & DAG", () => {
     expect(text).toContain("executable");
   });
 
+  it("ignores a fulfilled DONE blocker in execution eligibility (H03 regression)", async () => {
+    eligibilityMocks("todo", [{ id: "done", status: "done", isUnresolved: false, isDependencyReady: true }], []);
+    const res = await getTool("paperclipGetExecutionEligibility").execute({ issueId: ISSUE });
+    const result = JSON.parse(res.content[0]?.text ?? "{}");
+    expect(result.executable).toBe(true);
+    expect(result.blockerCount).toBe(0);
+    expect(result.blockers).toEqual([]);
+  });
+
+  it("still denies unresolved and cancelled blocker relations", async () => {
+    for (const blocker of [
+      { id: "pending", status: "in_progress", isUnresolved: true },
+      { id: "cancelled", status: "cancelled", isUnresolved: true },
+      { id: "cancelled-projection", status: "cancelled", isUnresolved: false, isDependencyReady: true },
+      { id: "unknown", status: "unknown" },
+    ]) {
+      eligibilityMocks("todo", [blocker], []);
+      const res = await getTool("paperclipGetExecutionEligibility").execute({ issueId: ISSUE });
+      const result = JSON.parse(res.content[0]?.text ?? "{}");
+      expect(result.executable).toBe(false);
+      expect(result.blockerCount).toBe(1);
+      expect(result.reasons).toContain("blocked_by_1");
+    }
+  });
+
+  it("reconciles false progress when normalized review attention is none", async () => {
+    const issue = {
+      id: ISSUE, status: "in_progress", assigneeAgentId: AGENT,
+      reviewAttention: { state: "none", paths: [], reason: null },
+      executionState: { status: "changes_requested", currentStageType: "review" },
+      scheduledRetry: null, unblockDescriptor: null,
+    };
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/approvals", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
+      { match: `/issues/${ISSUE}`, body: issue },
+    ]);
+    const res = await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    expect(res.content[0]?.text ?? "").toContain("in_progress_to_todo");
+    const patch = calls.find((call) => call.init.method === "PATCH" && call.url.endsWith(`/issues/${ISSUE}`));
+    expect(patch).toBeDefined();
+    expect(JSON.parse(String(patch?.init.body)).status).toBe("todo");
+  });
+
+  it("does not reconcile while an actual review is pending", async () => {
+    const issue = {
+      id: ISSUE, status: "in_progress", assigneeAgentId: AGENT,
+      reviewAttention: { state: "pending", paths: ["review"], reason: "awaiting_review" },
+      executionState: { status: "pending", currentStageType: "review" },
+      scheduledRetry: null, unblockDescriptor: null,
+    };
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/approvals", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
+      { match: `/issues/${ISSUE}`, body: issue },
+    ]);
+    const res = await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    expect(res.content[0]?.text ?? "").toContain("review_attention_present");
+    expect(calls.some((call) => call.init.method === "PATCH" && call.url.endsWith(`/issues/${ISSUE}`))).toBe(false);
+  });
+
+
+  // H03 / changes_requested must recover into a REAL issue/agent bound run.
+  // This exercises the MCP contract against a stateful Paperclip-compatible test server;
+  // it does NOT replace a production issue-run readback.
+  it("rework recovery selects native original executor and proves a matching issue run", async () => {
+    const checkoutRun = "99999999-9999-4999-8999-999999999999";
+    let status = "in_progress";
+    let issued = false;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const issue = () => ({
+      id: ISSUE, status, assigneeAgentId: AGENT,
+      reviewAttention: { state: "none" },
+      executionState: {
+        status: "changes_requested", currentStageType: "review",
+        returnAssignee: { type: "agent", agentId: OWNER },
+      },
+      scheduledRetry: null, unblockDescriptor: null,
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const request = init ?? {};
+      calls.push({ url: u, init: request });
+      if (u.endsWith("/live-runs")) return mockJsonResponse(issued
+        ? [{ id: checkoutRun, issueId: ISSUE, agentId: OWNER, status: "queued" }]
+        : []);
+      if (u.endsWith("/documents?includeSystem=true")) return mockJsonResponse([]);
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/diagnostics/blockers")) return mockJsonResponse({ blockers: [] });
+      if (u.endsWith("/checkout") && request.method === "POST") {
+        const posted = JSON.parse(String(request.body)) as { agentId: string };
+        if (status !== "todo" || posted.agentId !== OWNER) return mockJsonResponse({ error: "wrong rework owner" }, 409);
+        issued = true;
+        status = "in_progress";
+        return mockJsonResponse({ runId: checkoutRun, woke: true });
+      }
+      if (u.endsWith("/issues/" + ISSUE) && request.method === "PATCH") {
+        status = (JSON.parse(String(request.body)) as {status:string}).status;
+        return mockJsonResponse(issue());
+      }
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse(issue());
+      return mockJsonResponse(null);
+    }));
+    const repair = await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    expect(repair.content[0]?.text ?? "").toContain("in_progress_to_todo");
+    expect(status).toBe("todo");
+    // A caller cannot substitute the assigned Harness agent for the native CHO returnAssignee.
+    const wrongOwner = await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE, agentId: AGENT });
+    expect(wrongOwner.content[0]?.text ?? "").toContain("changes_requested_return_assignee_mismatch");
+    expect(issued).toBe(false);
+    const wake = await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE });
+    const out = JSON.parse(wake.content[0]?.text ?? "{}");
+    expect(out.woke).toBe(true);
+    expect(out.verified).toBe(true);
+    expect(out.observedRun).toMatchObject({ id: checkoutRun, issueId: ISSUE, agentId: OWNER, status: "queued" });
+    expect(calls.filter((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toHaveLength(1);
+    expect(calls.some((call) => call.url.includes("stalled-review-decision"))).toBe(false);
+  });
+
+  it("does not count unbound or foreign-agent live runs as successful checkout", async () => {
+    const badRun = "88888888-8888-4888-8888-888888888888";
+    let checkedOut = false;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const request = init ?? {};
+      calls.push({ url: u, init: request });
+      if (u.endsWith("/live-runs")) return mockJsonResponse(checkedOut
+        ? [{ id: badRun, status: "queued", agentId: OWNER, issueId: ISSUE }]
+        : []);
+      if (u.endsWith("/documents?includeSystem=true")) return mockJsonResponse([]);
+      if (u.endsWith("/diagnostics/blockers")) return mockJsonResponse({ blockers: [] });
+      if (u.endsWith("/checkout") && request.method === "POST") {
+        checkedOut = true;
+        return mockJsonResponse({ woke: true, runId: badRun });
+      }
+      // The run lookup also lacks the issueId, so neither source may prove a scoped wake.
+      if (u.includes("/heartbeat-runs/" + badRun)) return mockJsonResponse({ id: badRun, status: "queued", agentId: AGENT });
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse({
+        id: ISSUE, status: "todo", assigneeAgentId: AGENT, executionState: null,
+      });
+      return mockJsonResponse(null);
+    }));
+    const out = JSON.parse((await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE })).content[0]?.text ?? "{}");
+    expect(out.woke).toBe(false);
+    expect(out.verified).toBe(false);
+    expect(out.observedRun).toBeNull();
+    expect(checkedOut).toBe(true);
+    expect(calls.filter((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toHaveLength(1);
+  });
+
+  it("repair removes DONE but retains CANCELLED relational blockers", async () => {
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [
+        { id: "done", status: "done", isUnresolved: false },
+        { id: "cancelled", status: "cancelled", isUnresolved: true },
+      ] } },
+      { match: `/issues/${ISSUE}`, body: {
+        id: ISSUE, status: "blocked", blockedByIssueIds: ["done", "cancelled"],
+        assigneeAgentId: AGENT,
+      } },
+    ]);
+    await getTool("paperclipRepairIssue").execute({ issueId: ISSUE, apply: true });
+    const patches = calls.filter((call) => call.init.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(JSON.parse(String(patches[0]?.init.body)).blockedByIssueIds).toEqual(["cancelled"]);
+    expect(patches.some((call) => JSON.parse(String(call.init.body)).status === "todo")).toBe(false);
+  });
+
   it("computes blockedBy add/remove as one atomic PATCH", async () => {
     const { calls } = mockFetchRoutes([
       { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "blocked", blockedByIssueIds: ["b1", "b2"] } },
@@ -638,8 +814,10 @@ mockFetchRoutes([
       { match: "/stalled-review-decision", body: { error: "Issue is no longer a stalled review" }, status: 409 },
       { match: "/live-runs", body: [] },
       { match: "/approvals", body: [] },
+      { match: "/documents?includeSystem=true", body: [] },
+      { match: "/diagnostics/blockers", body: { blockers: [] } },
       { match: "/active-run", body: { error: "no active run" }, status: 404 },
-      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "in_review", identifier: "KOMAA-999", title: "wedged review" } },
+      { match: `/issues/${ISSUE}`, body: { id: ISSUE, status: "in_review", identifier: "KOMAA-999", title: "wedged review", executionState: { status: "pending", currentStageType: "review", currentParticipant: { type: "agent", agentId: AGENT } } } },
     ]);
     const res = await getTool("paperclipResolveReviewWedge").execute({ issueId: ISSUE, action: "route" });
     const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
@@ -647,6 +825,148 @@ mockFetchRoutes([
     const text = res.content[0]?.text ?? "";
     expect(text).toContain("No status mutation");
     expect(text).toContain("no longer stalled");
+    // Route 409 is not a review decision or a permission to override native reviewer admission.
+    const refreshed = JSON.parse(text);
+    expect(refreshed.result.noMutation).toBe(true);
+    expect(refreshed.result.canonicalState.status).toBe("in_review");
+    const review = JSON.parse((await getTool("paperclipGetReviewState").execute({ issueId: ISSUE })).content[0]?.text ?? "{}");
+    expect(review.wedged).toBe(true);
+    expect(review.currentStage.currentParticipant.agentId).toBe(AGENT);
+    const wake = JSON.parse((await getTool("paperclipWakeIssueFresh").execute({ issueId: ISSUE, agentId: AGENT })).content[0]?.text ?? "{}");
+    expect(wake.woke).toBe(false);
+    expect(wake.reason).toBe("review_pending_no_checkout");
+    // A stale 409 must never authorize checkout, approve the review or demote its status.
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/checkout") && init?.method === "POST")).toBe(false);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+
+  // Authorized native claim is the explicit recovery path when stale 409
+  // cannot route a configured-but-unclaimed review. Never synthesize approval.
+  it("Board reviewer recovery after stale 409 proves a real issue+reviewer run and flags Core status drift", async () => {
+    let status = "in_review";
+    let checkedOut = false;
+    const reviewerRun = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const board = new PaperclipApiClient({
+      apiUrl: "http://localhost:3100/api", apiKey: "token-board",
+      boardApiKey: "token-board", companyId: COMPANY, agentId: AGENT,
+      principalKind: "board",
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url), request = init ?? {};
+      calls.push({ url: u, init: request });
+      if (u.endsWith("/stalled-review-decision")) return mockJsonResponse({ error: "Issue is no longer a stalled review" }, 409);
+      if (u.endsWith("/live-runs")) return mockJsonResponse(checkedOut
+        ? [{ id: reviewerRun, issueId: ISSUE, agentId: AGENT, status: "running" }] : []);
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/active-run")) return mockJsonResponse(null);
+      if (u.endsWith("/checkout") && request.method === "POST") {
+        checkedOut = true;
+        status = "in_progress"; // Known native Core projection defect, not an approval.
+        return mockJsonResponse({ status, issueId: ISSUE, executionState: { status: "pending" } });
+      }
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse({
+        id: ISSUE, status, assigneeAgentId: AGENT,
+        executionState: { status: "pending", currentStageId: "aaaaaaaa-1111-4111-8111-111111111111", currentStageType: "review",
+          currentParticipant: { type: "agent", agentId: AGENT } },
+      });
+      return mockJsonResponse(null);
+    }));
+    const routed = JSON.parse((await getTool("paperclipResolveReviewWedge", board).execute({
+      issueId: ISSUE, action: "route",
+    })).content[0]?.text ?? "{}");
+    expect(routed.result.noMutation).toBe(true);
+    expect(checkedOut).toBe(false);
+    const native = createToolDefinitions(board).find((candidate) => candidate.name === "paperclipCheckoutIssue");
+    if (!native) throw new Error("native checkout tool not registered");
+    const out = JSON.parse((await native.execute({
+      issueId: ISSUE, agentId: AGENT, expectedStatuses: ["in_review"],
+    })).content[0]?.text ?? "{}");
+    expect(out.reviewerRecovery).toBe(true);
+    expect(out.woke).toBe(true);
+    expect(out.verified).toBe(true);
+    expect(out.observedRun).toMatchObject({ id: reviewerRun, issueId: ISSUE, agentId: AGENT });
+    expect(out.statusDrift).toBe(true);
+    expect(out.pendingReviewPreserved).toBe(true);
+    const posts = calls.filter((call) => call.url.endsWith("/checkout") && call.init.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect((posts[0]?.init.headers as Record<string, string>).Authorization).toBe("Bearer token-board");
+    expect(calls.some((call) => call.init.method === "PATCH")).toBe(false);
+  });
+
+  it("native reviewer recovery rejects a foreign participant and non-Board caller before checkout", async () => {
+    const { calls } = mockFetchRoutes([
+      { match: "/live-runs", body: [] },
+      { match: "/approvals", body: [] },
+      { match: `/issues/${ISSUE}`, body: {
+        id: ISSUE, status: "in_review",
+        executionState: { status: "pending", currentStageId: "aaaaaaaa-1111-4111-8111-111111111111", currentStageType: "review",
+          currentParticipant: { type: "agent", agentId: AGENT } },
+      } },
+    ]);
+    const board = new PaperclipApiClient({
+      apiUrl: "http://localhost:3100/api", apiKey: "token-board",
+      boardApiKey: "token-board", companyId: COMPANY, agentId: AGENT,
+      principalKind: "board",
+    });
+    const wrong = createToolDefinitions(board).find((candidate) => candidate.name === "paperclipCheckoutIssue");
+    if (!wrong) throw new Error("native checkout tool not registered");
+    const foreign = await wrong.execute({ issueId: ISSUE, agentId: OWNER, expectedStatuses: ["in_review"] });
+    expect(foreign.isError).toBe(true);
+    expect(foreign.content[0]?.text ?? "").toContain("native_reviewer_recovery_denied");
+    const agent = createToolDefinitions(makeClient()).find((candidate) => candidate.name === "paperclipCheckoutIssue");
+    if (!agent) throw new Error("native checkout tool not registered");
+    const unprivileged = await agent.execute({ issueId: ISSUE, agentId: AGENT, expectedStatuses: ["in_review"] });
+    expect(unprivileged.isError).toBe(true);
+    expect(unprivileged.content[0]?.text ?? "").toContain("Board-only reviewer recovery");
+    expect(calls.some((call) => call.url.endsWith("/checkout") && call.init.method === "POST")).toBe(false);
+  });
+
+
+  it("reviewer recovery detects participant and stage change after native checkout", async () => {
+    const board = new PaperclipApiClient({
+      apiUrl: "http://localhost:3100/api", apiKey: "token-board",
+      boardApiKey: "token-board", companyId: COMPANY, agentId: AGENT,
+      principalKind: "board",
+    });
+    const runId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const oldStage = "aaaaaaaa-1111-4111-8111-111111111111";
+    const newStage = "cccccccc-1111-4111-8111-111111111111";
+    let checkedOut = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/live-runs")) return mockJsonResponse(checkedOut
+        ? [{ id: runId, issueId: ISSUE, agentId: AGENT, status: "running" }] : []);
+      if (u.endsWith("/approvals")) return mockJsonResponse([]);
+      if (u.endsWith("/checkout") && init?.method === "POST") {
+        checkedOut = true;
+        return mockJsonResponse({ woke: true });
+      }
+      if (u.endsWith("/issues/" + ISSUE)) return mockJsonResponse({
+        id: ISSUE, status: checkedOut ? "in_progress" : "in_review",
+        executionState: {
+          status: "pending", currentStageId: checkedOut ? newStage : oldStage,
+          currentStageType: "review",
+          currentParticipant: { type: "agent", agentId: checkedOut ? OWNER : AGENT },
+        },
+      });
+      return mockJsonResponse(null);
+    }));
+    const native = createToolDefinitions(board).find((candidate) => candidate.name === "paperclipCheckoutIssue");
+    if (!native) throw new Error("native checkout tool not registered");
+    const out = JSON.parse((await native.execute({
+      issueId: ISSUE, agentId: AGENT, expectedStatuses: ["in_review"],
+    })).content[0]?.text ?? "{}");
+    expect(checkedOut).toBe(true);
+    expect(out.nativeCheckoutAccepted).toBe(true);
+    expect(out.woke).toBe(false);
+    expect(out.verified).toBe(false);
+    expect(out.staleTransition).toBe(true);
+    expect(out.observedRun).toBeNull();
+    expect(out.pendingReviewPreserved).toBe(false);
+    expect(out.statusDrift).toBe(false);
+    expect(out.note).toMatch(/Stale reviewer transition/);
   });
 
   // KOMAA-849: when stalled-review-decision is unavailable (5xx), route fails
