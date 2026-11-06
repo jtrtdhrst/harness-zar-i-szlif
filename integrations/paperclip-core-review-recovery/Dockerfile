@@ -33,6 +33,16 @@ RUN test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' 
     git apply /tmp/paperclip-reconciliation-overlay.patch && \
     test "$(sha256sum /app/server/src/services/execution-blocker.ts | cut -d' ' -f1)" = "7ec285484ef6664321e9b2e6aba73eb2c0254554db703328f5a02d6169a960a0"
 
+# Fail closed unless the exact Core source matches the reviewed production base.
+# A definitive Hermes /v1/runs auth denial must not manufacture a legacy recovery hold.
+COPY integrations/paperclip-core-review-recovery/legacy-auth-admission.patch /tmp/paperclip-legacy-auth-admission.patch
+COPY integrations/paperclip-core-review-recovery/legacy-auth-admission.integration.test.ts /app/server/src/services/legacy-auth-admission.integration.test.ts
+RUN test "$(sha256sum /app/server/src/services/legacy-execution-recovery.ts | cut -d' ' -f1)" = "dd5997b5f46e58d6033b7144c4ebbcd45afbea83adaa2b59e5c761ef1856de5c" && \
+    cd /app && git apply --check /tmp/paperclip-legacy-auth-admission.patch && \
+    git apply /tmp/paperclip-legacy-auth-admission.patch && \
+    test "$(sha256sum /app/server/src/services/legacy-execution-recovery.ts | cut -d' ' -f1)" = "36046af06728f6e800d5eb87289025014150b1a1b0ebe927290619fc7c2e7712" && \
+    chown node:node /app/server/src/services/legacy-auth-admission.integration.test.ts
+
 # PostgreSQL integration tests must ACTUALLY execute: Vitest's all-skipped exit 0
 # is not acceptable. Run under the existing non-root node account.
 USER node
@@ -41,8 +51,10 @@ RUN cd /app && NO_COLOR=1 pnpm exec vitest run \
     server/src/__tests__/issue-h03-false-progress-rework.integration.test.ts \
     server/src/services/execution-blocker-undispatched.test.ts \
     server/src/services/execution-blocker-rework.test.ts \
+    server/src/services/legacy-execution-recovery.test.ts \
+    server/src/services/legacy-auth-admission.integration.test.ts \
     --reporter=json --outputFile=/tmp/paperclip-h03-tests.json --maxWorkers=1 && \
-    node -e "const r=require('/tmp/paperclip-h03-tests.json');if(r.numPassedTests!==32||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('H03 expected 32 real passing tests, zero skipped or failed');"
+    node -e "const r=require('/tmp/paperclip-h03-tests.json');if(r.numPassedTests!==51||r.numPendingTests!==0||r.numFailedTests!==0)throw Error('H03 expected 51 real passing tests, zero skipped or failed');"
 USER root
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc --noEmit
 # The pinned runtime already contains compiled runner/vendor assets. Rebuilding
@@ -51,4 +63,5 @@ RUN cd /app && pnpm --filter @paperclipai/server exec tsc --noEmit
 RUN cd /app && pnpm --filter @paperclipai/server exec tsc && \
     test -s /app/server/dist/services/execution-blocker.js && \
     grep -q 'safeUndispatchedReviewHandoff' /app/server/dist/services/execution-blocker.js && \
-    grep -q 'safeAbortedLegacyReworkHandoff' /app/server/dist/services/execution-blocker.js
+    grep -q 'safeAbortedLegacyReworkHandoff' /app/server/dist/services/execution-blocker.js && \
+    grep -q 'confirmedHermesCreateAuthDenial' /app/server/dist/services/legacy-execution-recovery.js
