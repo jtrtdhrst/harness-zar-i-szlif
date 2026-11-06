@@ -137,8 +137,14 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
 
 @contextmanager
 def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_id: str,
-                       cwd: str = "."):
-    """Borrow ephemeral MCP connections in Hermes' native scoped registry."""
+                       cwd: str = ".", agent=None):
+    """Expose validated per-run MCP tools to THIS agent, then restore its tool snapshot.
+
+    Native connection discovery alone is insufficient: the AIAgent snapshots tools
+    before /v1/runs execution. Rebuild its tool/tool_search projection while the
+    run-specific session_tool_scope is active. Neither the bearer nor toolsets are
+    added to a persistent profile/global configuration.
+    """
     from gateway.session_local_mcp import _borrowed, _server_names
 
     servers, scope = validate_grant(envelope, authenticated_profile=authenticated_profile,
@@ -146,9 +152,38 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
     names = _server_names(scope, servers)
     try:
         with _borrowed(authority, scope, servers, names, cwd, partial=False) as discovered:
-            if len(discovered[1]) != len(servers):
-                raise InvalidRunGrant("run MCP connection unavailable")
-            yield scope
+            schemas, connected = discovered
+            if len(connected) != len(servers) or not schemas:
+                raise InvalidRunGrant("run MCP connection or tool discovery unavailable")
+            if agent is None:
+                # Backwards-compatible scope inspection for non-executing callers.
+                yield scope
+            else:
+                from tools.mcp_tool_agent import refresh_agent_mcp_tools
+                original = getattr(agent, "enabled_toolsets", None)
+                if not isinstance(original, (list, tuple, set)) or not all(
+                    isinstance(value, str) for value in original
+                ):
+                    raise InvalidRunGrant("run MCP agent tool selection unavailable")
+                original = list(original)
+                ephemeral = sorted({f"mcp-{names[i]}" for i in connected})
+                if set(ephemeral) & set(original):
+                    raise InvalidRunGrant("run MCP tool scope was already present")
+                try:
+                    refresh_agent_mcp_tools(agent, enabled_override=original + ephemeral,
+                                            quiet_mode=True, content_aware=True)
+                    enabled = set(getattr(agent, "enabled_toolsets", ()) or ())
+                    visible = set(getattr(agent, "valid_tool_names", ()) or ())
+                    if not set(ephemeral) <= enabled or not (
+                        set(schemas) & visible or "tool_search" in visible
+                    ):
+                        raise InvalidRunGrant("run MCP tools are not visible to agent")
+                    yield scope
+                finally:
+                    # Restore the original tool selection and cached tool definitions
+                    # before closing the scoped connections, including on failure.
+                    refresh_agent_mcp_tools(agent, enabled_override=original,
+                                            quiet_mode=True, content_aware=True)
     finally:
         # _borrowed disconnects the last borrower; clear local references too.
         borrowed = getattr(authority, "_local_editor_mcp", None)
