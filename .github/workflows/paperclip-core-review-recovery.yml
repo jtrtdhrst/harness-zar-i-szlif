@@ -9,6 +9,10 @@ on:
     paths:
       - 'integrations/paperclip-core-review-recovery/**'
       - '.github/workflows/paperclip-core-review-recovery.yml'
+concurrency:
+  group: paperclip-core-review-recovery-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   packages: write
