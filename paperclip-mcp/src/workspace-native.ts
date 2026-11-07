@@ -1207,6 +1207,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         if (issueId) await verifyIssueWritable(client, issueId);
         await enforceDeploymentRoot(client, { issueId: issueId ?? ws.sourceIssueId, targetPath: ws.realCwd, workspacePath: ws.realCwd, tool: "paperclipGitPush" });
         if ((remote ?? "origin") !== "origin") throw err("push_denied", "Only the origin remote is allowlisted");
+        await resolveAllowedPublicationRepo(ws); // deny upstream and unknown destinations before any Git write
         const before = await gitHead(ws);
         const target = branch ?? before.branch;
         if (!target) throw err("git_failed", "Cannot determine current branch", { remediationOwner: "harness" });
@@ -1269,6 +1270,7 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
         if (issueId) await verifyIssueWritable(client, issueId);
         const trackingIssue = issueId ?? ws.sourceIssueId;
         if (!trackingIssue) throw err("review_evidence_unlinked", "PR creation requires an originating Paperclip issue", { remediationOwner: "CHO" });
+        const publicationRepo = await resolveAllowedPublicationRepo(ws); // never select upstream or a foreign repository
         const before = await gitHead(ws);
         if (!before.head || !/^[0-9a-f]{40}$/i.test(before.head)) throw err("git_failed", "Cannot pin PR head");
         if (!before.branch || ["main", "master"].includes(before.branch)) {
@@ -1279,12 +1281,12 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
           const sym = await runJailedExec({ ws, argv: ["git", "symbolic-ref", "refs/remotes/origin/HEAD"], timeoutSec: 15, outputLimit: 256 });
           baseBranch = sym.exitCode === 0 ? (sym.stdout.trim().split("/").pop() || "main") : "main";
         }
-        const argv = ["gh", "pr", "create", "--base", baseBranch, "--head", before.branch, "--title", title, "--body", body || title, ...(draft ? ["--draft"] : [])];
+        const argv = ["gh", "pr", "create", "--repo", publicationRepo, "--base", baseBranch, "--head", before.branch, "--title", title, "--body", body || title, ...(draft ? ["--draft"] : [])];
         let maybeGh = await runJailedExec({ ws, argv, timeoutSec: 90, outputLimit: 8192, extraEnv: { ...ghEnv() } });
         if (maybeGh.exitCode !== 0 && /command not found|spawn error|ENOENT/i.test(maybeGh.stdout + maybeGh.stderr)) {
           maybeGh = await runJailedExec({
             ws,
-            argv: ["npx", "--yes", "gh", "pr", "create", "--base", baseBranch, "--head", before.branch as string, "--title", title, "--body", body || title, ...(draft ? ["--draft"] : [])],
+            argv: ["npx", "--yes", "gh", "pr", "create", "--repo", publicationRepo, "--base", baseBranch, "--head", before.branch as string, "--title", title, "--body", body || title, ...(draft ? ["--draft"] : [])],
             timeoutSec: 90, outputLimit: 8192, extraEnv: { ...ghEnv() },
           });
         }
@@ -1299,19 +1301,25 @@ export function createWorkspaceNativeTools(client: PaperclipApiClient): Workspac
           }
           if (/already exists|already.*pull request/i.test(out)) {
             const existing = await runJailedExec({
-              ws, argv: ["gh", "pr", "view", before.branch, "--json", "url"],
+              ws, argv: ["gh", "pr", "view", before.branch, "--repo", publicationRepo, "--json", "url"],
               timeoutSec: 30, outputLimit: 2048, extraEnv: { ...ghEnv() },
             });
             if (existing.exitCode !== 0) throw err("review_evidence_unlinked", "Existing PR URL could not be recovered");
             let existingUrl: string;
             try { existingUrl = JSON.parse(existing.stdout).url; }
             catch { throw err("review_evidence_unlinked", "Existing PR URL malformed"); }
+            if (!existingUrl.startsWith(`https://github.com/${publicationRepo}/pull/`)) {
+              throw err("publish_target_denied", "Existing PR points outside the authorized origin repository");
+            }
             const workProductId = await syncIssuePullRequestProduct(client, ws, trackingIssue, existingUrl, before.head, title, before.branch, baseBranch, runId);
             return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, alreadyExists: true, url: existingUrl, workProductId };
           }
           throw err("git_failed", `PR creation failed: ${out}`, { remediationOwner: "harness" });
         }
         const url = maybeGh.stdout.trim().split("\n").pop() || "";
+        if (!/^https:\/\/github\.com\/miloszspyrka-code\/(?:paperclip|zar-i-szlif|harness-zar-i-szlif)\/pull\/[1-9]\d*$/i.test(url) || !url.startsWith(`https://github.com/${publicationRepo}/pull/`)) {
+          throw err("publish_target_denied", "GitHub returned a PR outside the authorized origin repository");
+        }
         const workProductId = await syncIssuePullRequestProduct(client, ws, trackingIssue, url, before.head, title, before.branch, baseBranch, runId);
         return { workspaceId: ws.workspaceId, branch: before.branch, base: baseBranch, url, workProductId, alreadyExists: false };
       },
@@ -1597,6 +1605,26 @@ function hasGitHubAuth(): boolean {
 function parseRepoSlugFromRemote(url: string): string | null {
   const match = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\s*$/.exec(url.trim());
   return match ? `${match[1]}/${match[2]}` : null;
+}
+
+// Publication is explicitly limited to the user's own repositories. A remote
+// called "upstream" is for FETCH ONLY; never infer the PR target from it.
+export function assertAllowedPublicationRepo(originUrl: string): string {
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)(miloszspyrka-code\/(?:paperclip|zar-i-szlif|harness-zar-i-szlif))(?:\.git)?$/i.exec(originUrl.trim());
+  if (!match) {
+    throw err("publish_target_denied", "Git publication is restricted to owned repositories; upstream paperclipai/paperclip and unknown remotes are forbidden");
+  }
+  return match[1].toLowerCase();
+}
+
+async function resolveAllowedPublicationRepo(ws: ResolvedWorkspace): Promise<string> {
+  const remote = await runJailedExec({
+    ws, argv: ["git", "remote", "get-url", "origin"], timeoutSec: 15, outputLimit: 1024,
+  });
+  if (remote.exitCode !== 0) {
+    throw err("publish_target_denied", "Cannot verify the origin remote; publication denied");
+  }
+  return assertAllowedPublicationRepo(remote.stdout);
 }
 
 /** owner/repo for the workspace origin. REST reads stay scoped to that repo. */
