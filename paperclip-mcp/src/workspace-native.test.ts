@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PaperclipApiClient } from "./client.js";
-import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv, nativeGitPushBranchAllowed } from "./workspace-native.js";
+import { createWorkspaceNativeTools, ghEnv, runJailedExec, isAllowedReadOnlyGithubApiArgv, nativeGitPushBranchAllowed, assertAllowedPublicationRepo } from "./workspace-native.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
@@ -154,7 +154,8 @@ describe("run-bound Git delivery tool handlers", () => {
       queueMicrotask(() => {
         const joined = args.join(" ");
         let stdout = "";
-        if (joined.includes("rev-parse --abbrev-ref HEAD")) stdout = "KOMAA-1465\n";
+        if (joined.includes("remote get-url origin")) stdout = "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git\n";
+        else if (joined.includes("rev-parse --abbrev-ref HEAD")) stdout = "KOMAA-1465\n";
         else if (joined.includes("rev-parse HEAD")) stdout = `${head}\n`;
         else if (joined.includes("diff --cached --name-only")) stdout = "src/workspace-native.test.ts\n";
         else if (joined.includes("diff --cached")) stdout = "diff --git a/src/workspace-native.test.ts b/src/workspace-native.test.ts\n+test\n";
@@ -256,5 +257,30 @@ describe("native Git push branch protection", () => {
     for (const branch of ["fix/KOMAA-1512","feature/new-panel","test/canary"]) {
       expect(nativeGitPushBranchAllowed(branch)).toBe(true);
     }
+  });
+});
+
+describe("Git publication is restricted to owned origins, never official Paperclip upstream", () => {
+  it.each([
+    "https://github.com/miloszspyrka-code/paperclip.git",
+    "git@github.com:miloszspyrka-code/paperclip.git",
+    "ssh://git@github.com/miloszspyrka-code/paperclip.git",
+    "https://github.com/miloszspyrka-code/zar-i-szlif",
+    "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git",
+  ])("permits the authorized origin %s", (url) => {
+    expect(assertAllowedPublicationRepo(url)).toMatch(/^miloszspyrka-code\//);
+  });
+
+  it.each([
+    "https://github.com/paperclipai/paperclip.git",
+    "git@github.com:paperclipai/paperclip.git",
+    "https://github.com/miloszspyrka-code/random-repository.git",
+    "https://github.com/other/paperclip.git",
+    "https://github.com/miloszspyrka-code/paperclip.git/../other",
+    "https://evil.example/github.com/miloszspyrka-code/paperclip.git",
+    "https://github.com/miloszspyrka-code/paperclip.git?redirect=upstream",
+    "",
+  ])("refuses foreign/upstream or ambiguous destination %s", (url) => {
+    expect(() => assertAllowedPublicationRepo(url)).toThrow(/restricted to owned repositories/);
   });
 });
