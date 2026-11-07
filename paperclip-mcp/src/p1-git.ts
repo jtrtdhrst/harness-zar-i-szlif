@@ -656,7 +656,7 @@ export function createP1GitTools(client: PaperclipApiClient): P1GitToolDefinitio
           forkRequired,
           forkAvailable: Boolean(originUrl),
           pushTarget: originUrl,
-          pullRequestTarget: upstreamUrl ?? originUrl,
+          pullRequestTarget: originUrl, // PRs target the owned origin, never the public upstream
           branch,
           transportAuthenticated,
           transportReason,
