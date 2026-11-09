@@ -32,6 +32,7 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p,"live_release",side_effect=[OLD,NEW]),\
              patch.object(p,"candidate_history",return_value=[{"pr":12,"head":SOURCE,"merge":NEW}]),\
              patch.object(p,"github_api",side_effect=api),\
+             patch.object(p,"require_verified_local_image_delivery"),\
              patch.object(p,"save") as save,\
              patch.object(p.time,"sleep",side_effect=AssertionError("unexpected sleep")):
             result=p.process(plan=False)
