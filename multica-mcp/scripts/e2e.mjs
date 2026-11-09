@@ -1,4 +1,5 @@
 const url = (process.env.MCP_URL || 'https://mcp-multifca.zariszlif.pl/mcp').replace(/\/$/, '');
+const apiUrl = (process.env.MULTICA_API_URL || 'https://multica.zariszlif.pl').replace(/\/$/, '');
 const token = process.env.MULTICA_TOKEN;
 const workspaceId = process.env.TEST_WORKSPACE_ID;
 if (!token || !workspaceId) throw new Error('MULTICA_TOKEN and TEST_WORKSPACE_ID are required; no stored credential fallback is used.');
@@ -24,6 +25,7 @@ function entityId(value) {
 }
 
 let projectId;
+let issueId;
 try {
   const initialized = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'multica-mcp-e2e', version: '0.1.0' } });
   if (!initialized.result?.serverInfo?.name) throw new Error('initialize response missing serverInfo');
@@ -49,7 +51,7 @@ try {
     project: projectId,
     description: 'Disposable MCP adapter write/readback fixture.',
   });
-  const issueId = entityId(created);
+  issueId = entityId(created);
   if (!issueId) throw new Error('issue.create returned no issue id');
 
   const readback = await callTool('multica__issue__get', { workspace_id: workspaceId, id: issueId });
@@ -60,6 +62,19 @@ try {
   projectId = undefined;
   console.log(JSON.stringify({ status: 'PASS', transport: 'streamable-http', initialize: true, toolsListed: names.size, writeReadback: true, disposableProjectCleaned: true, issueId }));
 } finally {
+  // The MCP intentionally exposes no issue.delete; project deletion does not
+  // cascade, so remove the disposable issue through the native API.
+  if (issueId) {
+    try {
+      const response = await fetch(`${apiUrl}/api/issues/${issueId}?workspace_id=${encodeURIComponent(workspaceId)}`, {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!response.ok && response.status !== 404) throw new Error(`HTTP ${response.status}`);
+    } catch {
+      console.error('E2E issue cleanup failed; inspect and remove only the newly-created disposable issue.');
+    }
+  }
   if (projectId) {
     try { await callTool('multica__project__delete', { workspace_id: workspaceId, id: projectId, confirm: true }); }
     catch { console.error('E2E cleanup failed; inspect and remove only the newly-created disposable project.'); }
