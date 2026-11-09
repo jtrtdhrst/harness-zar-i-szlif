@@ -17,6 +17,7 @@
 | Product `https://panel.zariszlif.pl/healthz` | HTTP 200, `ok` |
 | Product `https://panel.zariszlif.pl/__release.json` | HTTP 200, `98cd058155dbf4c268777246fc510324f98f7dc5` |
 | Multica `https://multica.zariszlif.pl/` | HTTP 200 HTML. Authenticated agent E2E not implied |
+| Multica MCP `https://mcp-multifca.zariszlif.pl/health` | HTTP 200, 184 catalog operations; 157 tools; 401 without token; authenticated write/readback/delete PASS |
 | Old Outline `https://wiki.zariszlif.pl/` | HTTP 502 after service stopped; NOT a usable active knowledge system |
 | Repowise API `/health` | HTTP 200 internal |
 | Repowise MCP `http://repowise-mcp:7338/mcp` | `initialize`/`tools/list`/`list_repos`/`get_architecture` passed with authorization |
@@ -27,7 +28,7 @@
 
 ## Coolify inventory
 
-Connector returned 34 projects, 32 service resources and 11 standalone application resources on 2026-11-09. This table reports provider status; values may change and do not prove individual version/digest.
+Connector returned 34 projects, 32 service resources and 12 standalone application resources on 2026-11-09. This table reports provider status; values may change and do not prove individual version/digest.
 
 ### Services
 
@@ -76,6 +77,7 @@ Connector returned 34 projects, 32 service resources and 11 standalone applicati
 | hermes-gateway-poc | qycm1xpcgsemlxt6npyhuvkh | exited:unhealthy | coollabsio/coolify | main |
 | hermes-git-build-canary | yh20mb2rurecnmn60t5vfc3s | running:healthy | miloszspyrka-code/harness-zar-i-szlif | fix/hermes-runmcp-authority-20261106 |
 | multica-hermes-e2e-localbuild | 9ikauoagijplda4skjdv2zej | exited:unhealthy | miloszspyrka-code/zar-i-szlif | poc/multica-hermes-e2e-20261109-base |
+| multica-mcp | 5o4edyfjo0wftfg08mtkknir | running:healthy | miloszspyrka-code/harness-zar-i-szlif | main |
 | repowise | oea9obpkhzbgkmipxwqmz2hj | running:unknown | repowise-dev/repowise.git | v0.60.1 |
 | repowise-harness-source-temp | mdccyotmyyi7krjqhop8kh7b | exited:unhealthy | miloszspyrka-code/harness-zar-i-szlif | main |
 | repowise-mcp | fciqzgceop7mqtqickkfomd7 | exited:unhealthy | repowise-dev/repowise.git | v0.60.1 |
