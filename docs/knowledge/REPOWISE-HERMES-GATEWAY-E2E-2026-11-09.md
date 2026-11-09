@@ -4,7 +4,7 @@
 
 ## Production runtime and evidence
 - Repowise 0.60.1: Coolify project `repowise-knowledge`; app UUID `oea9obpkhzbgkmipxwqmz2hj`.
-- Internal MCP `http://repowise-mcp:7338/mcp` (service `lecwi3emh9hjxirn07pshmd2b51` is NOT its ID; the actual MCP service is `lecwi3emh9hjxir7gphmalie`). Sixteen read tools; unauthenticated requests rejected HTTP 401. Do not publish publicly.
+- Internal MCP `http://repowise-mcp:7338/mcp` (Coolify service `lecwi3emh9hjxir7gphmalie`). Sixteen read tools; unauthenticated requests rejected HTTP 401. Do not publish publicly.
 - Production Hermes Gateway UUID `2sganhxhhnioiqh4an9g2f4k`, version 0.22.5, shares private `coolify` Docker network.
 - All 14 Hermes profile configs contain native `mcp_servers.repowise` with profile environment secret indirection and include `repowise` in the API toolset selection. Native `hermes mcp test repowise` passed **14/14**, discovered 16 tools per profile.
 - A genuine Hermes model turn in profile `harness-engineer` used Repowise `list_repos` and correctly returned Product `81c4b068` and Harness `0d19ac32`. OpenCode/DeepSeek v4.1 Flash independently used the same Repowise MCP with both repositories. This proves Hermes runtime integration, **not an external authenticated Gateway REST-triggered job**.
