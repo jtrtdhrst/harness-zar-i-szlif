@@ -1,0 +1,553 @@
+{
+  "source": "Paperclip Wiki read-only filesystem snapshot",
+  "date": "2026-11-09",
+  "owner": "harness",
+  "pages": [
+    {
+      "source_path": "wiki/agents/ceo/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/ceo/AGENTS.md",
+      "sha256": "3b355b0938f4615d82b77c193e68688e884eca2ce2fd31b55d95ea3878521d39",
+      "bytes": 16903,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/ceo/incident-2026-10-12-responsible-user-unavailable.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/ceo/incident-2026-10-12-responsible-user-unavailable.md",
+      "sha256": "dcab70f8a3b540d228c874887433c5fd23be30b35e832bc09a494635563ae23d",
+      "bytes": 5030,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cmo/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cmo/AGENTS.md",
+      "sha256": "a62b04a64693957733a0f899d8ed4b5a5a43a857a8962f39290bf3ca3cf9a7e1",
+      "bytes": 13720,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/coo/AGENTS-2026-10-20-historical.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/coo/AGENTS-2026-10-20-historical.md",
+      "sha256": "d577eb98b9934c0b2a8908ea04fa18abab8bfecf86456724ca4b0dca7f01f458",
+      "bytes": 288,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/coo/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/coo/AGENTS.md",
+      "sha256": "d7b236e56fd7f04bca71b569a703ea07c5af9d62702d8cecbd18d5e476c8f7b1",
+      "bytes": 9705,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/coo/CAPABILITIES-2026-10-20-historical.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/coo/CAPABILITIES-2026-10-20-historical.md",
+      "sha256": "e34c8bf777d1f852eb725d8954e1a6c15c8c7d7ac627a76be12dd152249f39c8",
+      "bytes": 7346,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/AGENTS-2026-10-20-historical.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/AGENTS-2026-10-20-historical.md",
+      "sha256": "ecf67d056269bf5f6029f432f2fa8a5bb824377d047e8d50ef2a213d33c920b1",
+      "bytes": 288,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/AGENTS.md",
+      "sha256": "c2e1158560e5fdb907e0290fd5d2f831b360520ee4895655a1fc0765ae2274eb",
+      "bytes": 31036,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/CAPABILITIES-2026-10-20-historical.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/CAPABILITIES-2026-10-20-historical.md",
+      "sha256": "e52eb7a8b9129c49b280a397316e90142104730592577d7c6b488c1f46674b3a",
+      "bytes": 6186,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/ENGINEERING-FAILURE-TRIAGE-LEDGER.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/ENGINEERING-FAILURE-TRIAGE-LEDGER.md",
+      "sha256": "cd891688774b4143f53a846c02eec6e1580124ef6ac6523a792045283bcb3a0f",
+      "bytes": 81327,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/PENDING-KOMAA-608-REVIEW-a86f8a416.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/PENDING-KOMAA-608-REVIEW-a86f8a416.md",
+      "sha256": "8e3605e938381898f6cee5c213efaffac51919878efd155e7b34b6627fe6824e",
+      "bytes": 188,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/PENDING-KOMAA-754-CLOSEOUT-c28b9a79.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/PENDING-KOMAA-754-CLOSEOUT-c28b9a79.md",
+      "sha256": "a1c73c326717eb6b0bbe175c6ed044ef7d02eef13e9a3e89c80f97a490b3ad33",
+      "bytes": 3105,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/PENDING-KOMAA-756-CLOSEOUT-12a4bf8b.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/PENDING-KOMAA-756-CLOSEOUT-12a4bf8b.md",
+      "sha256": "64be3f6ecf03cc367b82bd5dc1412b91ed2140aebc69e3a6741452ef764b5a6b",
+      "bytes": 2198,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/PENDING-KOMAA-757-CLOSEOUT-fe437670.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/PENDING-KOMAA-757-CLOSEOUT-fe437670.md",
+      "sha256": "3d44f225e13b6e566c793900dde679813ca50e37d41038851b0c44a1cb87fbf8",
+      "bytes": 3555,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/PENDING-KOMAA-758-CLOSEOUT-06351ca8.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/PENDING-KOMAA-758-CLOSEOUT-06351ca8.md",
+      "sha256": "b3797a3c15877ef68cc06afe99d512abec460615db718f9c1ba09a7bfe9708ee",
+      "bytes": 2263,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/cto/PENDING-KOMAA-761-CLOSEOUT-ee82553d.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/PENDING-KOMAA-761-CLOSEOUT-ee82553d.md",
+      "sha256": "82d4b94ae41902aade320ec7e70325d3a3240c7047b48c417e1e01e237171679",
+      "bytes": 2981,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/designer/AGENTS-2026-10-20-historical.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/designer/AGENTS-2026-10-20-historical.md",
+      "sha256": "87882a71625235f6b68d719f3b6da8b03dab50865c5a96749c2793cf8ef9a5f3",
+      "bytes": 303,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/designer/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/designer/AGENTS.md",
+      "sha256": "b4919ce43e46e6254293c38ae34ef35b5843f7a162f4e1a236e6d20bfbc930e5",
+      "bytes": 18464,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/designer/CAPABILITIES-2026-10-20-historical.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/designer/CAPABILITIES-2026-10-20-historical.md",
+      "sha256": "d035ff601dc4ce98bd7d347692e7c34b7007aa7275f10a5c2e462299d698322f",
+      "bytes": 3318,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/email-creative/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/email-creative/AGENTS.md",
+      "sha256": "3ed7b32af6d0b3e502cada5aa038b67b9e60fb19bec9f722c03b1e4f2e33f5f8",
+      "bytes": 11141,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/engineer/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/engineer/AGENTS.md",
+      "sha256": "793269a4c745cd1fe69891362152f1f2ea5d2d45dacf737cff6f6cc1f8445dab",
+      "bytes": 22290,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/harness/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/harness/AGENTS.md",
+      "sha256": "a85647628d078851ab4613a04137c43b3045b4b202ca7e4971f00d6051e62cb8",
+      "bytes": 20901,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/lifecycle-ops/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/lifecycle-ops/AGENTS.md",
+      "sha256": "df90d2b60e5b6928b778bb8d4410892295f08e3c6112bf5818ca8ba4bfc70d8d",
+      "bytes": 12146,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/mcp-engineer/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/mcp-engineer/AGENTS.md",
+      "sha256": "c07a39c8cf9bcd4cd2ca12dbb9164f037293fe238df3ef12a186985fa0de7262",
+      "bytes": 27876,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/agents/ui-qa/AGENTS.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/ui-qa/AGENTS.md",
+      "sha256": "1fac0141bfcddd5d8fcec193c25a1a513edc553ef91d9b5da1d2a82ffddf3e34",
+      "bytes": 12138,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/_mcp-wiki-smoke-test-moved.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/_mcp-wiki-smoke-test-moved.md",
+      "sha256": "194ea54a328e39b18233797c3b63cf172a3ffb34e16cd5246f27ede47abd4a9a",
+      "bytes": 154,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/_mcp-wiki-smoke-test.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/_mcp-wiki-smoke-test.md",
+      "sha256": "194ea54a328e39b18233797c3b63cf172a3ffb34e16cd5246f27ede47abd4a9a",
+      "bytes": 154,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/agent-context-budget.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/agent-context-budget.md",
+      "sha256": "236f1fc98239491217cf9e73aa7b377323d7de39286b747f7e703e1f5218f60e",
+      "bytes": 6390,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/agent-execution-acceptance-v61.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/agent-execution-acceptance-v61.md",
+      "sha256": "80afdb797eaa28bb40b012be35945e3d14ccbe9cf418f791b401cf75c29d55f9",
+      "bytes": 12477,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/agent-git-delivery-policy.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/agent-git-delivery-policy.md",
+      "sha256": "7a9e64c38af49e7ab99e821a951337f2984467678965a22905732e53e5b155f7",
+      "bytes": 13877,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/archetypy-zwierzat-i-dialogi.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/archetypy-zwierzat-i-dialogi.md",
+      "sha256": "d39e12f812b159f96da32b1a3e7495d7412c9f72f65787b3409caa8a9fa98ecb",
+      "bytes": 9197,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/context-first-execution.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/context-first-execution.md",
+      "sha256": "4e83d88318d2c42a7485f09721eeefdeac5c1f5999954bfb93f449e0b2590c42",
+      "bytes": 14093,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/definition-of-done.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/definition-of-done.md",
+      "sha256": "9bd627f1a7742f2ce0df6a47aa7b8ccea5fd2b1d9d5556571f67d97ca14b918a",
+      "bytes": 14057,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/delivery-dag-orchestration-v65.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/delivery-dag-orchestration-v65.md",
+      "sha256": "2071900f8cca85b111232d13eb5f5e4c9e085d3c2b6846f79033430014fd7db8",
+      "bytes": 10057,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/git-coolify-release-contract.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/git-coolify-release-contract.md",
+      "sha256": "c1407cd7d9ce2e317a8399a27e0923f49dafb798b700d80b0c9cb3c6d1934cce",
+      "bytes": 19285,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/harness-execution-reliability-v71.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/harness-execution-reliability-v71.md",
+      "sha256": "50c59faad88b926a81d41dc96d43dc5a3c13097466950b5da11780bbfaf639a9",
+      "bytes": 10407,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/hermes-execution-prompts-and-skills-20261031.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/hermes-execution-prompts-and-skills-20261031.md",
+      "sha256": "84a5769c46beba77fb128cbb0e4c49a9fe6c1d8d4a0690d7dd1f11d939df6677",
+      "bytes": 1241,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/hermes-hindsight-operating-model-20261031.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/hermes-hindsight-operating-model-20261031.md",
+      "sha256": "4084d1aa39bcc75d1558c1b869aa981f8b01b0acecdfda474600d529755a3fab",
+      "bytes": 9516,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/hermes-paperclip-run-scoped-e2e.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/hermes-paperclip-run-scoped-e2e.md",
+      "sha256": "a7d4cc1550dc969dac38972e423a91425234ef3ad0ccd79d6ec439c37803f5bf",
+      "bytes": 4758,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/hermes-skill-mcp-publication-runbook-20261101.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/hermes-skill-mcp-publication-runbook-20261101.md",
+      "sha256": "82c0f759bb2965ca2fc0316a088e42aa5b2a4543ec6aa694246b0e187da85967",
+      "bytes": 4769,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/mcp-github-branch-migration-20261022.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/mcp-github-branch-migration-20261022.md",
+      "sha256": "057ef8511adfc883ad1808def4197845be362c0847f54cfcac5d2bc644b481f2",
+      "bytes": 14747,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/native-task-watchdog-policy-20261029.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/native-task-watchdog-policy-20261029.md",
+      "sha256": "ab5b48041b7c88ad4620a17f6647b9b7a93e342f24f3fc4584d1602b5100813e",
+      "bytes": 4453,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/owner-change-delivery-and-open-defects-20261107.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/owner-change-delivery-and-open-defects-20261107.md",
+      "sha256": "215b4ec112e96803c27c6874c84c3b2b667e7c3877b4cfe86b31c41fba034635",
+      "bytes": 14345,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/paperclip-agent-review-rework-no-human-escalation-20261106.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/paperclip-agent-review-rework-no-human-escalation-20261106.md",
+      "sha256": "14c4d1bef36abf62e8626de03b94a352ba5c369fa3db6e42c9c6736c50a0c659",
+      "bytes": 4674,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/paperclip-local-architecture-upstream-delta.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/paperclip-local-architecture-upstream-delta.md",
+      "sha256": "c340a602c87412ba9de5d79ceac28e621b3eba4ea9cb20ac4f3ccd6696ce0e45",
+      "bytes": 23589,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/paperclip-wiki-mcp.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/paperclip-wiki-mcp.md",
+      "sha256": "b9a37caa9f1c7530db44279edc5f9fed86ee379ea62902fb8fab1fe2d3668a4e",
+      "bytes": 1890,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/plugin-boundaries.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/plugin-boundaries.md",
+      "sha256": "f882b47d2cbb4271936e2c695c2075b9aa837fa9c9584be1e0fa9318782abd29",
+      "bytes": 226,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/concepts/prompt-skill-regression-matrix-2026-10-21.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/prompt-skill-regression-matrix-2026-10-21.md",
+      "sha256": "e6fc48bb99b2b8e3b6caf09144440114c20a4812481179f56a7d7cc573189247",
+      "bytes": 8214,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/ceo/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/ceo/AGENTS-2026-10-20.md",
+      "sha256": "813e0c2b4f7c03d3aacd5a15e39930d48bd37dec4b2963fbd20c3a056f17fc16",
+      "bytes": 12869,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/ceo/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/ceo/CAPABILITIES-2026-10-20.md",
+      "sha256": "8e07cd5a4b570c535572389d938ef92aa10f13e4b10ad56236c8d2e0ca4029f6",
+      "bytes": 4105,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/cmo/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/cmo/AGENTS-2026-10-20.md",
+      "sha256": "2d3f94903a6f6934d21eee4a8e0d76b29bfb13a0a69ab93a0bb52623bce4182a",
+      "bytes": 9914,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/cmo/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/cmo/CAPABILITIES-2026-10-20.md",
+      "sha256": "5e5eabf1ae600da23010d5b8237438d3962e3ccd07e2b59e9a081145715baae3",
+      "bytes": 4812,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/coo/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/coo/AGENTS-2026-10-20.md",
+      "sha256": "5089dac77925363c16925000cb39b31c5f05deedd4380f9e7e6195ec363c194a",
+      "bytes": 25688,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/cto/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/cto/AGENTS-2026-10-20.md",
+      "sha256": "0673ba23df965afddf5570016886af63ed259d9519f322a89c8f4b2b3f9c4d47",
+      "bytes": 16453,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/designer/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/designer/AGENTS-2026-10-20.md",
+      "sha256": "5453394331e74cd815ed951562dadbd4de956975b6f53d05edbcfc02e44ef7be",
+      "bytes": 7411,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/email-creative/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/email-creative/AGENTS-2026-10-20.md",
+      "sha256": "129a3f1af7f89762bbc64383df8553ee626e2914c4a8e834037ff47f88a65d5d",
+      "bytes": 7997,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/email-creative/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/email-creative/CAPABILITIES-2026-10-20.md",
+      "sha256": "031962a7f98dc48fdd4db4b94a0a8afcc2d83179ee0848a6af65953fb5bf3705",
+      "bytes": 3433,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/engineer/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/engineer/AGENTS-2026-10-20.md",
+      "sha256": "4250e51edd439adb396a8129b2beb6f6c4738dd35f5267daa8b3558ac8c53849",
+      "bytes": 12667,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/engineer/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/engineer/CAPABILITIES-2026-10-20.md",
+      "sha256": "09d8352188d282aef57b07b9351c0fef2db5e0c754dd0b63da2c03e99cb0dbfc",
+      "bytes": 5030,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/lifecycle-ops/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/lifecycle-ops/AGENTS-2026-10-20.md",
+      "sha256": "7eb0efdab8c9aa6f07b0fee3cec2effb8210bd334fca46156b3d2539eee6a657",
+      "bytes": 9379,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/lifecycle-ops/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/lifecycle-ops/CAPABILITIES-2026-10-20.md",
+      "sha256": "9d978b832488f266d7b98e530561fa6883af6dfac5b520dfe4651f24432dbbc3",
+      "bytes": 3068,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/mcp-engineer/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/mcp-engineer/AGENTS-2026-10-20.md",
+      "sha256": "9a89290655cf2750a3faf152d1e202c8d1453eb96e70749e69c312ffccbf4d30",
+      "bytes": 16238,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/mcp-engineer/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/mcp-engineer/CAPABILITIES-2026-10-20.md",
+      "sha256": "d8f6f30c331ab30313cd172914d975adfca54397830e9d43ed9325f97692684d",
+      "bytes": 5048,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/ui-qa/AGENTS-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/ui-qa/AGENTS-2026-10-20.md",
+      "sha256": "d44fe3d561e81db3463b006d9e7ed1da09842ff9a4cd46cd7e669647f10591ff",
+      "bytes": 6788,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/context-archives/ui-qa/CAPABILITIES-2026-10-20.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/ui-qa/CAPABILITIES-2026-10-20.md",
+      "sha256": "ccc28f3a3d2f4e9f22c0e8e7b1768b14989e5734e8fdd6d661d109a661711ca2",
+      "bytes": 3820,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/e2e/final2-409.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/e2e/final2-409.md",
+      "sha256": "b67c82e222cf27bd862c935f376ae80cabb47c2fbb3f4a0343327ba2c4d94c59",
+      "bytes": 5,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/e2e/mcp-132-20261014.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/e2e/mcp-132-20261014.md",
+      "sha256": "ee9b02e7dac26ae524d3eeed6c1678d2bb38284b21f4ad2022ee214834bbff33",
+      "bytes": 20,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/e2e/mcp-connectivity-test.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/e2e/mcp-connectivity-test.md",
+      "sha256": "28f4456b9ad9934aa7d1d21c236aecc017ac158588e48f1df55321de8f5e07c4",
+      "bytes": 84,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/e2e/p1-wiki-409.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/e2e/p1-wiki-409.md",
+      "sha256": "3b9e027fe82d9151259b0861251b3c98d9f4c7a79a013e093d18f534d7bdaae3",
+      "bytes": 12,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/entities/mcp-qdrant-hybrid.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/entities/mcp-qdrant-hybrid.md",
+      "sha256": "5b3b28e6103a2bcfde160a0b2a3fb2f6df68e4caab642a4e5ee4afa2f8fb7cb2",
+      "bytes": 3584,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/entities/repo-map.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/entities/repo-map.md",
+      "sha256": "c96f721c7e6417224ca6c978114e38d46d6574840034a82543bb05688aee2c25",
+      "bytes": 4468,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/entities/responsible-user-guard-outage.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/entities/responsible-user-guard-outage.md",
+      "sha256": "8735d8d617c0a39f111b4e56cf0766e66bfce7da7996cc99d38d0f23f600dc75",
+      "bytes": 246,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/index.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/index.md",
+      "sha256": "97cad6dc816f69e1274ca1a55b26ef95f57b7f67814685f9529105ea0438e214",
+      "bytes": 4250,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/log.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/log.md",
+      "sha256": "f385d60b123481ba4468795f8960751333c03e999b00324bb4c95bf9b0d43fb0",
+      "bytes": 9394,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/operations/active-backlog-inventory-2026-11-04.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/operations/active-backlog-inventory-2026-11-04.md",
+      "sha256": "7f6c3bd5aaff3a73899e1f113640285cd1139aee185ed0f1edc890a00d4be0c5",
+      "bytes": 46873,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/ops/komma1415-gateway-probe.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/ops/komma1415-gateway-probe.md",
+      "sha256": "6f4333d9c5e75d4f0c1f85af0d756bcd4bc95617469bccc2dc47a41344fde69d",
+      "bytes": 62,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/sources/wspolny-kontekst.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/sources/wspolny-kontekst.md",
+      "sha256": "ad4e9da5b34a39edccc971b51bd317b08deb65752b88061da5ae55a350b33fb3",
+      "bytes": 1703,
+      "status": "historical_only"
+    },
+    {
+      "source_path": "wiki/sweep/sweep-mcp-test.md",
+      "archive_path": "docs/knowledge/paperclip-archive/wiki/sweep/sweep-mcp-test.md",
+      "sha256": "6971e8b729418840f4d7376f52ab9f2b4fb5ddd568445c1902f0366686ef97f9",
+      "bytes": 37,
+      "status": "historical_only"
+    }
+  ]
+}
