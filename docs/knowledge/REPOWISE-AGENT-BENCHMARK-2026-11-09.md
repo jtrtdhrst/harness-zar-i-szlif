@@ -20,12 +20,14 @@
 | Function/security analysis | RepoWise | YES | 52.9 s | 8 | 65,720 | 248,064 | 1,803 |
 | Function/security analysis, exact repo provided | GitHub | NO — timeout (110 s wall) | 102.9 s recorded events | 15 | 50,122 | 517,376 | 1,912 |
 | Document discovery, no repo name supplied | GitHub (exploratory) | NO — timeout (110 s wall) | 101.4 s recorded events | 9 | 34,938 | 264,320 | 1,396 |
+| Architecture evidence / readiness warning | RepoWise | YES — correctly refused to infer production readiness | 20.3 s | 2 | 26,274 | 47,872 | 1,396 |
 
 ### Measured impact
 
 - For the fully completed *same document task*, RepoWise was **30.7% faster by event duration** and used **30% fewer tool calls** (7 vs 10). The GitHub-only control was also correct once given the exact repo. This is **one pair**, not an estimated average improvement.
 - Cached-read token count on that same pair was **25.0% lower**, but noncached input tokens were **18.0% higher** with RepoWise. Do not describe this as an unequivocal token or monetary saving.
 - On the function/security task, RepoWise answered correctly within 52.9 seconds of events; GitHub-only did not complete within its 110-second wall limit, despite 15 calls. The timeout means **no fair relative latency percentage** can be calculated for this task.
+- A third **nonpaired safety/regression case** asked whether the RepoWise architecture score 9.9/10 and 0 detected violations prove production E2E. A real RepoWise-assisted agent answered **NO**, reported 2 checked rules and 9/14 isolated services, and explicitly cited partial graph evidence. It completed in 20.3 s of events with 2 tool calls. This test checks interpretation quality; it is **not** another speed comparison.
 - A separate direct source-extraction comparison of the already-known `paperclip-mcp/src/issue-hierarchy.ts` returned **1,088 characters / 23 lines** for the verified RepoWise function range versus **6,786 characters / 180 lines** for the full GitHub file (about **84% less text**). This does not apply when the task actually requires the entire file.
 - Across the two paired tasks: grounded completion **2/2 with RepoWise vs 1/2 with GitHub**, in this small single-model test. Tool-use discovery overhead is substantial in both conditions.
 
@@ -37,7 +39,7 @@
 
 ## Opik provenance
 
-The five actual OpenCode runs were imported to a **private, metadata-only** native Opik project named `repowise-agent-ab-20261109` (project ID `01a1c2b6-f9d9-75cf-9cb4-a4506d607e7f`). Each trace was created through the self-hosted native private API and verified by GET readback. Import metadata explicitly identifies the event-JSONL origin, model, condition, correctness, token counts, tool calls and raw-log SHA-256; no prompts, full answers, secrets or transcripts were uploaded.
+The six actual OpenCode runs (two paired tasks, one unseeded discovery run, one architecture-readiness safety probe) were imported to a **private, metadata-only** native Opik project named `repowise-agent-ab-20261109` (project ID `01a1c2b6-f9d9-75cf-9cb4-a4506d607e7f`). Each trace was created through the self-hosted native private API and verified by GET readback. Import metadata explicitly identifies the event-JSONL origin, model, condition, correctness, token counts, tool calls and raw-log SHA-256; no prompts, full answers, secrets or transcripts were uploaded.
 
 Private raw JSONL evidence remains on the VPS in `/opt/repowise-knowledge/agent-benchmark-20261109/` (root-owned; do not publicly publish or sync). These are **imported benchmark traces**, not evidence of automatic Opik instrumentation of Multica runs.
 
