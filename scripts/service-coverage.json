@@ -17,6 +17,8 @@
     "mantic-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
     "mautic": {"mode": "manual_only", "reason": "Upstream application and data service; no repository build or automatic promotion."},
     "mcp-edge": {"mode": "manual_only", "reason": "Retained legacy service; no targeted CI/release workflow."},
+    "multica": {"mode": "manual_only", "reason": "Non-MCP Multica source is retained for agent context; it must not trigger automatic image builds or production promotion."},
+    "multica-mcp": {"mode": "manual_only", "reason": "MCP has a separate scoped Coolify source binding; no GitHub Actions image-build workflow is declared until its CI path is verified."},
     "opik": {"mode": "manual_only", "reason": "Upstream multi-container service; component digest and dependency-aware review required."},
     "opik-mcp": {"mode": "workflow", "workflows": [".github/workflows/opik-mcp-access-guard.yml"]},
     "opik-run-enricher": {"mode": "workflow", "workflows": [".github/workflows/opik-run-enricher.yml"]},
