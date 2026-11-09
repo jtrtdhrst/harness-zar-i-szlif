@@ -237,6 +237,24 @@ def save(data):
     os.replace(tmp, STATE)
 
 
+def require_verified_local_image_delivery():
+    """Never advance ci-approved before real runner/registry/deploy E2E."""
+    ready = Path("/var/lib/paperclip-gitops/zis-image-promotion-ready.json")
+    runner = Path("/opt/zis-actions-runner/.runner")
+    if not runner.is_file() or not ready.is_file():
+        raise Denied("local_image_delivery_unverified")
+    try:
+        data = json.loads(ready.read_text(encoding="utf8"))
+    except (OSError, ValueError):
+        raise Denied("local_image_delivery_unverified") from None
+    expected = {"schema_version": 1, "verified": True,
+                "registry": "127.0.0.1:5000",
+                "coolify_image_app_uuid": "cs847jiwtuq5rlm8ntjeohgf",
+                "runner": "zis-local-build"}
+    if not isinstance(data, dict) or any(data.get(k) != v for k, v in expected.items()):
+        raise Denied("local_image_delivery_unverified")
+
+
 def process(plan=False):
     current = ref("main")
     release = ref(RELEASE_REF)
@@ -255,7 +273,8 @@ def process(plan=False):
         raise Denied("git_ref_race")
     summary = {"main":current,"prior":release,"reviewed_prs":[x["pr"] for x in verified]}
     if plan:
-        return {"result":"admissible", **summary}
+        return {"result":"admissible", "delivery_gate":"local_image_delivery_required", **summary}
+    require_verified_local_image_delivery()
     github_api("/repos/" + REPO + "/git/refs/heads/" + RELEASE_REF, method="patch", body={"sha":current,"force":False})
     if ref(RELEASE_REF) != current:
         raise Denied("release_ref_readback_mismatch")
