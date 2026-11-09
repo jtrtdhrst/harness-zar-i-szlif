@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 AUTO_MCP_IMAGE_WORKFLOWS = {"paperclip-mcp-ci.yml", "opik-mcp-access-guard.yml"}
-DOCKER_BUILD = re.compile(r"\\bdocker\\s+build\\b|docker/build-push-action@")
+DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@")
 
 def image_build_jobs(content):
     if "\njobs:\n" not in "\n" + content:
@@ -18,7 +18,7 @@ def image_build_jobs(content):
     segment = ("\n" + content).split("\njobs:\n", 1)[1]
     jobs, current, lines = [], None, []
     for line in segment.splitlines():
-        match = re.match(r"^  ([A-Za-z][A-Za-z0-9_-]*):\\s*$", line)
+        match = re.match(r"^  ([A-Za-z][A-Za-z0-9_-]*):\s*$", line)
         if match:
             if current is not None and DOCKER_BUILD.search("\n".join(lines)):
                 jobs.append((current, "\n".join(lines)))
@@ -33,7 +33,7 @@ def compliant(workflow_name, job):
     if workflow_name in AUTO_MCP_IMAGE_WORKFLOWS:
         return True
     return (re.search(r"(?m)^    if: .*workflow_dispatch.*refs/heads/main", job) is not None
-            and re.search(r"(?m)^    runs-on: \\[self-hosted,.*local-build.*\\]", job) is not None)
+            and re.search(r"(?m)^    runs-on: \[self-hosted,.*local-build.*\]", job) is not None)
 
 class NonMcpBuildGuardTests(unittest.TestCase):
     def test_no_automatic_builds_from_non_mcp_sources(self):
