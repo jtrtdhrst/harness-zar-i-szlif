@@ -21,5 +21,3 @@ jobs:
         working-directory: opik-run-enricher
       - run: python3 -m py_compile worker.py
         working-directory: opik-run-enricher
-      - run: docker build --tag opik-enricher-candidate:ci .
-        working-directory: opik-run-enricher
