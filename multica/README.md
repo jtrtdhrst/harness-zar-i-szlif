@@ -15,6 +15,8 @@ not vendored here, matching the `paperclip/` and `qdrant/` platform folders.
   committed here.
 
 The platform is deployed from pinned upstream images, not built from this
-repository. The only Git-built service in this repository that targets Multica
-is `multica-mcp/`. Do not add a second Multica database or change the existing
-`multica-stack` service when rebuilding the MCP adapter.
+repository. `docker-compose.example.yml` is a sanitized standalone template;
+Coolify remains the source of the live environment and secrets. The only
+Git-built service in this repository that targets Multica is `multica-mcp/`.
+Do not add a second Multica database or change the existing `multica-stack`
+service when rebuilding the MCP adapter.
