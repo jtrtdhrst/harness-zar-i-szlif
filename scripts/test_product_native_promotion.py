@@ -41,8 +41,9 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertEqual(save.call_args[0][0]["previous_sha"],OLD)
 
     def test_provenance_denies_unreviewed_main_direct_commit(self):
-        with patch.object(p,"commit",return_value={"sha":NEW,"parents":[{"sha":OLD}]}):
-            with self.assertRaisesRegex(p.Denied,"non_merge_commit"):
+        with patch.object(p,"commit",return_value={"sha":NEW,"parents":[{"sha":OLD}]}),\
+             patch.object(p,"provenance",side_effect=p.Denied("missing_or_ambiguous_main_pr")):
+            with self.assertRaisesRegex(p.Denied,"missing_or_ambiguous_main_pr"):
                 p.candidate_history(OLD,NEW)
 
     def test_every_new_merge_must_be_independently_accepted(self):
@@ -56,7 +57,7 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p,"native_approval",side_effect=lambda pr,head,merge: (_ for _ in ()).throw(p.Denied("missing_review")) if pr==12 else None):
             with self.assertRaisesRegex(p.Denied,"missing_review"):
                 p.candidate_history(OLD,NEW)
-            self.assertEqual(checks.call_count,2)
+            self.assertEqual(checks.call_count,4)
 
     def test_direct_release_denied_when_production_drifted(self):
         with patch.object(p,"ref",side_effect=[NEW,OLD]),patch.object(p,"live_release",return_value=SOURCE):

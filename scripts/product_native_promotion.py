@@ -28,6 +28,13 @@ PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 SHA = re.compile(r"^[a-f0-9]{40}$")
 
 
+# Exact exception for the already-merged RepoWise knowledge migration (#164).
+# These two files are CI coverage metadata, NOT application/runtime outputs.
+# No future commit inherits this exception, even if it changes the same paths.
+LEGACY_KNOWLEDGE_SHA = "81c4b068b89f4c035098c6c9107f755f56919a87"
+LEGACY_KNOWLEDGE_PR = 164
+LEGACY_CI_ONLY_FILES = frozenset({"scripts/ci-path-coverage.mjs", "tests/ci-path-coverage.test.mjs"})
+
 class Denied(Exception):
     pass
 
@@ -137,6 +144,32 @@ def native_approval(pr, head_sha, merge_sha):
         raise Denied("native_approval_unverified")
 
 
+def non_runtime_files_only(pr_number, commit_sha, node):
+    """True only when all PR files are non-runtime docs/metadata changes.
+
+    Incomplete GitHub file pagination, renames, or any unfamiliar code path
+    must never be classified as safe-to-skip. The legacy CI-only exception
+    is tied to one immutable commit and one merged PR.
+    """
+    files = node.get("files")
+    if not isinstance(files, list) or not files or len(files) >= 200:
+        raise Denied("commit_file_inventory_unavailable_or_truncated")
+    for file in files:
+        if not isinstance(file, dict) or file.get("status") not in ("added", "modified", "removed"):
+            return False
+        name = file.get("filename")
+        if not isinstance(name, str) or not name or "/../" in name:
+            return False
+        if name.startswith(("docs/", ".repowise/")):
+            continue
+        if (pr_number == LEGACY_KNOWLEDGE_PR
+                and commit_sha == LEGACY_KNOWLEDGE_SHA
+                and name in LEGACY_CI_ONLY_FILES):
+            continue
+        return False
+    return True
+
+
 def candidate_history(release_sha, main_sha):
     """Walk first-parent main history and verify *every* new merged PR."""
     if release_sha == main_sha:
@@ -152,14 +185,22 @@ def candidate_history(release_sha, main_sha):
         seen.add(current)
         node = commit(current)
         parents = node.get("parents")
-        # Require canonical merge commits; squash/direct pushes cannot silently ship.
-        if not isinstance(parents, list) or len(parents) != 2:
-            raise Denied("non_merge_commit_on_main")
+        # A squash is valid only if GitHub maps this exact merge SHA to
+        # one merged PR. Direct commits, rebases and ambiguous PRs fail closed.
+        if not isinstance(parents, list) or len(parents) not in (1, 2):
+            raise Denied("invalid_main_commit_parent_count")
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
         pr, head = provenance(current)
         checks(head)
+        checks(current)
+        # Docs-only squash PRs are NOT releases and do not require a Paperclip
+        # runtime work product. Everything else, including runtime squashes,
+        # still requires the original independent native approval gate.
+        if len(parents) == 1 and non_runtime_files_only(pr, current, node):
+            current = first
+            continue
         native_approval(pr, head, current)
         pending.append({"pr": pr, "head": head, "merge": current})
         current = first
@@ -206,7 +247,10 @@ def process(plan=False):
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
-        raise Denied("empty_release_set")
+        # Main only advanced through independently verified documentation PRs.
+        # No Docker build, no branch advancement and no production deployment.
+        return {"result": "no_runtime_release_required", "main": current,
+                "release_ref": release, "live": live}
     if ref("main") != current or ref(RELEASE_REF) != release:
         raise Denied("git_ref_race")
     summary = {"main":current,"prior":release,"reviewed_prs":[x["pr"] for x in verified]}
