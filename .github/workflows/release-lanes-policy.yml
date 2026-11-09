@@ -27,3 +27,5 @@ jobs:
           python-version: "3.12"
       - name: Validate release contract, every root disposition and regressions
         run: python scripts/check-release-lanes.py --self-test
+      - name: Guard against non-MCP automatic image builds
+        run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
