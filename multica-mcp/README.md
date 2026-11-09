@@ -57,3 +57,5 @@ Keep the adapter in this repository and commit every release. To upgrade, pin th
 - Local daemon/config/login commands and CLI-host file transfers are not exposed as remote capabilities.
 - The Paperclip 200-tool inventory is a read-only differential baseline, not a promise to implement Paperclip behavior in Multica.
 - This adapter does not implement Core scheduling, queueing, workflow, permissions, PR completion, or task cancellation; these remain native Multica behavior.
+
+GitOps: every push to `main` under `multica-mcp/` triggers a Coolify rebuild of the application; the container is not built on the host.
