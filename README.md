@@ -22,6 +22,8 @@ The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-papercl
 - `supabase-mcp/` — Supabase MCP
 - `ubuntu-mcp/` — Ubuntu MCP
 - `mcp-edge/` — Edge gateway service (retain until deployment retirement is verified)
+- `multica-mcp/` — Multica v0.8.1 MCP control plane (Git-built Coolify application)
+- `multica/` — Multica platform metadata (upstream images, owned volumes)
 
 Project folders without vendored source are metadata-only; their runtime
 source/image is recorded in `docs/COOLIFY-PROJECTS.md`. Each service folder
@@ -52,6 +54,7 @@ The table below is a **candidate source layout** for independently verified serv
 | Supabase MCP | `/supabase-mcp` | Dockerfile `/Dockerfile` | `supabase-mcp/**` |
 | Ubuntu MCP | `/ubuntu-mcp` | Dockerfile `/Dockerfile` | `ubuntu-mcp/**` |
 | MCP edge (temporary) | `/mcp-edge` | Dockerfile `/Dockerfile.coolify` | `mcp-edge/**` |
+| Multica MCP | `/multica-mcp` | Dockerfile `/Dockerfile` | `multica-mcp/**` |
 
 Plasmic Studio (non-MCP) uses `/plasmic` and Docker Compose `/docker-compose.yml`.
 The ComfyUI engine (non-MCP) is separately built from `comfyui-mcp/Dockerfile.comfyui`.

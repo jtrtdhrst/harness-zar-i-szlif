@@ -39,6 +39,8 @@ same project.
 | `coolify-mcp` | `coolify-mcp` | `*_coolify-mcp-oauth` state volume | `coolify-mcp/` (planned) |
 | `emailens-mcp` | `emailens-mcp` | stateless | `emailens-mcp/` |
 | `ubuntu-mcp` | `ubuntu-mcp` | `ubuntu-mcp-audit` | `ubuntu-mcp/` |
+| `Multica MCP Control Plane` | `multica-mcp` | stateless (talks to `multica`) | `multica-mcp/` |
+| `multica` | `multica-stack` | `backend-uploads`, `pgdata` | `multica/` |
 | `Cloudflare Ingress i Edge` | `cloudflared-paperclip`, edge | no application data; tunnel token is a mounted secret | `cloudflare-ingress/` (planned) |
 | `shared-ingress` | `opencode`, `oauth-callback-proxy`, `oauth-loopback-bridge` | host bind paths, no Docker data volumes | `shared-ingress/` |
 | `Kod Aplikacji` | `kod-aplikacji` (panel) | panel-owned only | `kod-aplikacji/` (planned) |
@@ -60,6 +62,7 @@ same project.
 | `qdrant-mcp` | `docker build -t local/qdrant-mcp qdrant-mcp` | `Dockerfile` |
 | `supabase-mcp` | `docker build -t local/supabase-mcp supabase-mcp` | `Dockerfile` |
 | `ubuntu-mcp` | `docker build -t local/ubuntu-mcp ubuntu-mcp` | `Dockerfile` |
+| `multica-mcp` | `docker build -t local/multica-mcp-control-plane:0.2.0 multica-mcp` | `multica-mcp/Dockerfile` |
 | `mcp-edge` | `docker build -f mcp-edge/Dockerfile.coolify mcp-edge` | `Dockerfile.coolify` |
 
 ## Pending structural cleanup
