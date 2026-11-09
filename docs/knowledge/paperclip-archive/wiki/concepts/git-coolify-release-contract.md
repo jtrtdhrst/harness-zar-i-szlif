@@ -1,0 +1,96 @@
+---
+title: GitHub → Paperclip → Coolify — canonical two-repository release lanes
+type: concept
+tags: [git, coolify, ci, production, merge, paperclip, delivery]
+updated: 2026-11-05
+---
+
+# Canonical two-repository E2E delivery — authoritative deployment map
+> **Paperclip upstream/local architecture authority:** `wiki/concepts/paperclip-local-architecture-upstream-delta.md` and the CHO/Harness `paperclip-local-architecture` Skill. The Core is a pinned, custom layered image, NOT upstream `master` or the `harness:main` Dockerfile; the MCP and Hermes images are independent release units. Read live digests before acting.
+
+
+Applies to `miloszspyrka-code/zar-i-szlif` (product) and `miloszspyrka-code/harness-zar-i-szlif` (harness/infrastructure). Complements `wiki/concepts/agent-git-delivery-policy.md` and Definition of Done. This page describes VERIFIED settings separately from TARGET settings. No agent may label a unit test, green PR CI, candidate image, or test branch merge as production E2E.
+
+## Repo-specific review ownership (corrected 2026-11-06)
+
+**Exactly ONE independent native code review per delivery unit, never serial CTO+CHO by default.** Source paths belonging to `miloszspyrka-code/zar-i-szlif` (application, product UI, product MCP, product CI/Cloudflare code) route the code-review stage to **CTO**. Paths belonging to `miloszspyrka-code/harness-zar-i-szlif` (infrastructure, integrations, Hermes, host release controllers and general MCP services) route the review stage to **CHO**. Engineer / Product Engineer implements product; Harness Engineer / relevant infra engineer implements harness; reviewer cannot be original author. Release operator responsibilities and acceptance are distinct from adding a second mandatory code reviewer. Do not add an unrelated CHO review for product or an unrelated CTO review for harness. Two-stage review is exceptional and only applies to separately authorized, explicitly scoped high-risk outcomes, not the default pipeline. The first-class `executionPolicy.stages` must reflect this map; prose-only policy is insufficient. Exact-HEAD CI, legitimate review decision, approved merge, per-service build/deploy, live readback and rollback remain mandatory. On 2026-11-06 `KOMAA-1616` and `KOMAA-1617` were corrected in active Paperclip runtime to one stage each (product CTO, harness CHO), without restarting their developer runs.
+
+## One delivery flow (no duplicate PR per run)
+
+Canonical issue `KOMAA-NNN` → same issue-owned worktree/branch `KOMAA-NNN` for retries → targeted tests → authorized run-scoped commit/push → ONE PR to canonical `main` → exact head SHA CI → independent native Paperclip review on that SHA → authorized gated merge → release promotion from exact reviewed integrated SHA → Coolify build/restart → production SHA+health readback → rollback test → DONE.
+
+Re-review required after SHA changes. Never direct-push or force-push `main`, `ci-approved`, `release/*`; no new GitHub App, host-global PAT or secret in logs. One task/branch/PR; never spawn a new branch to solve a failed review. Board-sourced PR must be attributed as Board, not falsely as agent-run push. The review identity must differ from the author. Enforce E2E in runtime code/CI and GitHub protections where actually available.
+
+## Actual Coolify source map — verified 2026-11-05
+
+| Service | Coolify UUID / mode | Current branch or artifact | TARGET & release authority |
+| --- | --- | --- | --- |
+| Żar i Szlif web | `k0vwdsjazxguvgmh4qixjgxn`, GitHub App #1, `ops/coolify/Dockerfile` | `zar-i-szlif:ci-approved`, healthy | **KEEP `ci-approved`** as approved release/ref; only the source-controlled, native-review-gated Product promotion controller may move it. Coolify auto-build/deploys changed release ref. Never direct PR→production. |
+| Paperclip MCP | `gevr1m6rdj4t4fbhcjvqv8gg`, Coolify Compose | Local image `paperclip-mcp:gitops-active`, healthy | **No `git_branch` in Coolify for Compose.** Build immutable image from reviewed `harness:main` source SHA and promote by image digest, then live `tools/list`, denied anonymous, version/health readback + rollback. |
+| Paperclip Core | `2omzqpy8dxgmhuwfbzo7bvvv`, Coolify Compose | Local `local/paperclip-review-recovery:4f05e290`, healthy | Separate reviewed upstream-patch build/digest lane; NOT automatically linked to Harness `main` and not promoted with MCP. |
+| Hermes Gateway production | `2sganhxhhnioiqh4an9g2f4k`, Coolify application | **CONFIG FIXED 2026-11-05**: `harness-zar-i-szlif:release/hermes-gateway`, existing GitHub App #1, build context `/integrations/hermes-paperclip/gateway`, auto-deploy OFF, running healthy previous image | Metadata is correct and verified; the CURRENT RUNNING IMAGE is not yet proven built from the new stored source. Only deploy after canary CI, digest/volume/env comparison and rollback validation; do not equate config change with live cutover. |
+| Hermes Gateway candidate | `hut52do8jdwumzdnaphtnmfp`, Coolify application | `harness-zar-i-szlif:release/hermes-gateway`, GitHub App #1, healthy | Use as canary build/health/rollback source; not proof production cutover. |
+| Hermes legacy POC and old test build | Separate apps | Unhealthy/exited | Not release authorities; do not redeploy as fallback without provenance. |
+
+## Verified production build status — updated 2026-11-06
+
+**Current PRODUCT release: LIVE VERIFIED.** GitHub Product `main` and `ci-approved` both equal `b3dd661a0482cfaa3c3f1c94f27c6d8b36061a14`; live `https://panel.zariszlif.pl/__release.json` returned that exact SHA and `source=zar-i-szlif/main`; `/healthz` returned HTTP 200 `ok`. Coolify app `k0vwdsjazxguvgmh4qixjgxn` is running healthy; exact-SHA webhook deployment `6a8futuhzhxdlsfwqy7xbr9s` finished. Source Product PR #156 was merged 2026-11-05 as that SHA following native CTO approval. Harness PR #59 (release admission controller) and #60 (PHP PATCH fix) were independently accepted and merged into Harness `main=b15c90fd5390bdde1e4c319b3c17d18f86773a36`. The production controller is installed at `/usr/local/libexec/product_native_promotion.py` (sha256 `da9992b82fee1df95e476855561ff0a8e1ba7ef40d0e2fa50ca358995ed483cf`), timer enabled/active, latest service exit 0. `--plan` on 2026-11-06 returned `already_released` exit 0. Negative run against unapproved PR #153 denied `missing_or_ambiguous_work_product`, exit 1, no ref mutation. Formal KOMAA-1613 acceptance on 2026-11-05 records real rollback to preceding image and subsequent forward redeployment.
+
+**The obsolete unsafe Product `promote-release` GitHub Actions job is REMOVED** on current `main`; `product-ci.yml` now validates source only. The single native Ubuntu admission controller is the release writer. This is verified for PRODUCT only; it does not authorize the Harness/Paperclip-MCP or Hermes production lanes.
+
+**Residual GitHub security gap:** both private repositories' `main` refs still report `protected=false` on 2026-11-06. GitHub server-side required PR/review/check enforcement therefore remains pending, even though tool-level and native-host admission checks are working. Do not call this fully enforced GitHub protection.
+
+## Release invariants and negative tests
+
+1. Product: the only writer to `ci-approved` must require every new `main` merge be tied to one native Paperclip approved issue decision and exactly accepted head+merge SHA, real reviewer run independent from producer, exact successful `validate-product` check. Deny unknown/dirty/direct-commit main history, stale SHA, wrong run/agent, missing or changed approval, missing CI, and GitHub ref race.
+2. Product Coolify auto-deploy is triggered only by `ci-approved`, never PR/test branches. After deployment verify same `main/ci-approved` source SHA in GitHub, Coolify deployment record, `__release.json`, plus healthz 200. Record previous deployment image tag before canary; test rollback using native Coolify rollback without forcing branch reset. On failed readback mark UNVERIFIED and stop further promotions.
+3. Harness MCP: ordinary automatic MCP-image promotion requires exact native first-class review, merged source SHA, successful CI, image identity, health and rollback. Never treat a GitHub merge, a user comment, or an operator-directed controller release as a native Paperclip review decision. On 2026-11-06 the owner explicitly authorized a ONE-TIME manual host-controller release of PR #55 after cancelling KOMAA-1602; the controller was installed with backup and `paperclip-mcp-auto-release.timer` is now ENABLED/ACTIVE. The running MCP app image was not rebuilt because the PR touched only GitOps files. Future unreviewed MCP source changes must still fail closed.
+4. GitHub `main` currently has `protected=false` for BOTH private repos; no server-enforced bypass prevention. Set required PR/status checks, no force push or deletions with eligible paid plan and admin approval. Until confirmed, label this `GITHUB_PROTECTION_PENDING` (not production-complete).
+5. Review staging: testing merge must target nonproduction `e2e/git-merge-gate-20261105`, not `main`. Existing agent-run PR #155 (Product CTO) and PR #56 (Harness CHO) have passed real native merge to this nonproduction branch. That does not release product.
+6. Coolify/host safety: do not rebuild Hermes production against `coollabsio/coolify`. For each production deployment check available RAM/swap/disk and prior image, build one service at a time, show current SHA+health after, preserve rollback. Repeated builds without new source are not development progress.
+
+## Remaining cross-service blockers — live readback 2026-11-06
+
+- **Product web:** product release E2E DONE (PR #156, CI, immutable running SHA, Coolify deployment, HTTP, host rollback + forward). Does NOT imply every service is releasable.
+- **Harness Paperclip MCP:** public OAuth transport `LIVE_VERIFIED` and smoke `SMOKE_FULL_PASS`, 200 registered tools, authenticated call 200, anonymous 401. Host GitOps controller from merged Harness PR #55 was installed via explicitly logged, owner-directed manual exception on 2026-11-06; unit `paperclip-mcp-auto-release.timer` enabled/active, idempotent service run exit0, source Git blob bound to merged main. Running MCP image unchanged/healthy (`sha256:bad16c856ddb95603535dd4c7abfefc5d652a5849b9020c68f13bfa9be2270bf`), so no new MCP application image deployment is claimed. Native automatic admission remains fail-closed for future MCP source changes.
+- **Harness Hermes Gateway:** Coolify app points to `harness-zar-i-szlif:release/hermes-gateway`, runs healthy, but latest stored deployment refers to ambiguous `HEAD`; running image `:latest` is not yet tied to a verified exact source SHA. Candidate branch build is not production cutover. Do not turn auto-deploy on or merge PR #36 absent the first-class gates.
+- **GitHub server-side enforcement:** both private `main` branches have `protected=false`; review is not enforced server-side. Keep fail-closed release gates and enforce GitHub protection when account support permits.
+- **Paperclip delivery lineage API:** KOMAA-1612 and KOMAA-1613 have recorded genuine native review/release evidence but `paperclipGetDeliveryLineage` still projects `lineageValid=false` due to incomplete work-products/approvals/acceptance-evidence indexing. Treat this as an observability gap, not proof that no operational release occurred; don't erase the gap or assume closed issues prove full lineage.
+- **Agents:** Paperclip health OK; CTO reported `error` and normal scheduler heartbeat disabled during 2026-11-06 read. Do not claim that unattended end-to-end agent development is automatically active without an actual run.
+
+## DONE evidence for a future production change
+
+`issueId, issueRunId, producerAgent, sourceBranch, baseSha, candidateSha, workProductId, nativeReviewDecisionId, reviewerRunId, CI job URL/conclusion, GitHub mergeSha, immutable imageDigest, Coolify deployment UUID, live releaseSha, health, rollback target and rollback test`. All source IDs must refer to the same delivered change. Mark `NOT_DONE` if any required link is unverified.
+
+## E2E execution readback — 2026-11-05
+
+- Product Coolify `k0vwdsjazxguvgmh4qixjgxn` full forced no-cache Docker build (deployment `3wm8kigcfqgi8buwwakisdei`) FINISHED on `ci-approved=7322f946a5a395db29fa95d14da1ea9037e30d7c`, logs explicitly confirm Docker build completed, rolling update healthy and production `__release.json` exact SHA + `healthz=200`. Earlier cached redeploy `nwpbggcuaga47phzegn0ww8b` SKIPPED compilation; do not confuse the two.
+- Harness canonical `KOMAA-1612` agent code commit `b6f2c5297a0c8b60fe07594f526d3def25553cbd` was created after repairing seven root-owned Git object directories to repository UID1000; 22 focused tests passed. Original Board draft PR #58 ref naming collided with canonical branch, so Board branch was preserved by rename to `archive/board-KOMAA-1612-candidate-04170249` at exact original SHA and PR #58 CLOSED UNMERGED. Agent subsequently pushed actual issue-owned branch and opened PR #59 against `main`, with real `createdByRunId`; CHO review required on exact final SHA. No source published directly to `main`.
+- Hermes production `2sganhxhhnioiqh4an9g2f4k`: auto-deploy explicitly OFF, source repository, branch and GitHub App #1 association corrected. Readback shows current app `running:healthy` and intended build context. DO NOT mark deployed from new source until a real deploy/digest check.
+
+## Independent public readback — 2026-11-06
+
+- GitHub exact branch refs PRODUCT `main=ci-approved=b3dd661a0482cfaa3c3f1c94f27c6d8b36061a14`; HARNESS `main=b15c90fd5390bdde1e4c319b3c17d18f86773a36`; Hermes release ref `4f05e2904b8663e096bf4f839f25d46767f18899`.
+- Coolify production Product latest successful deploy and current container source SHA align; `product-native-promotion.timer` active. **Historical snapshot:** `paperclip-mcp-auto-release.timer` was disabled at first; it was enabled after the later owner-directed PR #55 merge, verified host install and live checks recorded below. GitHub App Paperclip Git auth checks for both repos reported authenticated/read/push/create_pr supported.
+- MCP verification returned `LIVE_VERIFIED` and `SMOKE_FULL_PASS` against public authenticated transport, including negative anonymous authorization case.
+- Opik `paperclip-ada5390b` traces present, latest as of `2026-11-06T00:01:36Z`; this does not establish full GitHub/Coolify deployment trace correlation.
+- Actual host memory 22 GiB total, 9 GiB available, 11 GiB swap used, disk 77% full on initial inspection; serialize builds and avoid needless rebuilds of production.
+
+## Owner-directed manual controller release — 2026-11-06
+
+**Scope:** Only the Paperclip MCP *host GitOps release controller*. The user explicitly cancelled stalled native-review task KOMAA-1602 and directed a manual release. Paperclip issue was persistently set to `cancelled`, not `done`; its review decision was NOT forged. The older Core review task KOMAA-1595 was not changed. The manual release was logged in GitHub PR #55 as a `COMMENT` review (not an `APPROVE` or independent Paperclip decision).
+
+1. Exact source PR [Harness #55](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/55): candidate `cde80049410f79fac5fb823073c16c5d64709d61`, exact-head CI `validate-paperclip-mcp` SUCCESS (Actions run `42209898775`), focused 11/11 Python tests PASS, `py_compile` PASS, no dirty source. GH merge committed `a6bbde9cbe3636d64d01314162ba12ca0c90121a`, and remote `main` ref readback matched.
+2. Live Ubuntu root-owned host controller `/usr/local/libexec/paperclip-mcp-auto-release.py`: Git blob SHA `dcdde2785a444473885eb2bf80174ce3a8b36748` matches GitHub main file. Installed controller SHA-256 `d6550cf9534abe229d5870f8d69a2590cbbe7ae0a02e3a2a45be41f60e91949b`. Previous root-owned file backed up as `/usr/local/libexec/paperclip-mcp-auto-release.py.before-pr55-a6bbde9c.bak` (SHA-256 `c46e971522ef36820955b701a8207f05172e6ad778d852e2ffc384d0faafbbde`). Root-owned native release verifier remains installed.
+3. Executed candidate `--plan` against live GitHub before promotion: `not_a_paperclip_mcp_change`, main SHA `a6bbde9...`, `changed_paths_count=20`, exit0. Executed real `systemctl start paperclip-mcp-auto-release.service`: `Result=success, ExecMainStatus=0`; persistent watermark `last_checked_sha=a6bbde9...`; next idempotent service run returned `already_checked`, exit0. Enabled `paperclip-mcp-auto-release.timer`, post-write readback `enabled/active`, interval 2min.
+4. Native release gate positive test on genuine, independently approved Harness PR #59: `verified=true`, exit0, decision `c2191a75-1f55-4c6f-9e4f-2b80681b22d1`, exact head and merge SHAs. Negative test on cancelled PR #55: `native_review_not_approved`, exit1. This proves the manual exception was **not** retroactively converted into native approval or a general bypass. Automatic MCP-image promotion still rejects source without genuine native approval.
+5. Post-install live MCP API: `paperclipVerifyLiveMCP => LIVE_VERIFIED`, `paperclipMCPRunSmokeTest => SMOKE_FULL_PASS`; public /health 200, anonymous MCP 401, authenticated initialize and harmless call 200, tools/list 200 tools, image `sha256:bad16c856ddb95603535dd4c7abfefc5d652a5849b9020c68f13bfa9be2270bf` healthy. Product /healthz 200. Since this release modifies the controller, not the MCP service code, there was **no new MCP image build or image rollback**; do not label this as a new full image-promotion E2E test.
+
+**Remaining broader gaps:** private GitHub `main` refs unprotected (GitHub 403 upgrade required); Hermes runtime and review task KOMAA-1595 separate and unchanged. Owner-directed manual controller promotion is a one-off exception, not a standing policy to fabricate approvals or bypass the exact-SHA admission gate for future releases.
+
+## 2026-11-07 OWNER CHANGE HANDOFF / VERIFIED LIVE DELTA
+
+This page contains 2026-11-05/06 snapshots, **not current immutable live facts**. For new owner-directed changes, CHO and Harness Engineer must read `wiki/concepts/owner-change-delivery-and-open-defects-20261107.md` and perform fresh source/runtime readback. Product PR #157 (path-specific CI), Product PR #158 (Coolify Docker build coverage fix), and Harness PR #62 (release-folder test) were merged on 2026-11-06; all three are source outcomes, **not** a blanket E2E pass of every service. Harness Hermes PR #36 and native review recovery PR #57 are merged, yet Hermes migration remains blocked (13 agents on `opencode_local`, 1 Designer `hermes_gateway` in `error`). The currently running Hermes Gateway Git branch observed in Coolify on 2026-11-07 differs from the older pinned release branch written below; this is a **source metadata discrepancy to reconcile**, not permission to silently deploy. Use exact Coolify resource/source/ref/image readback.
+
+GitHub Actions spend and external-repository writes are priority owner concerns: verify effective repo/credential allowlists and upstream write denial, identify and reduce redundant CI triggers without disabling meaningful gates. No automatic production promotion solely from merge; no prompt-only claim of security or readiness. One independent reviewer: product CTO; harness CHO.
+
