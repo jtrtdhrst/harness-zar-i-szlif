@@ -1,0 +1,1015 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-11-09",
+  "additionalTools": [
+    "paperclipWorkspaceApplyUnifiedDiff",
+    "paperclipWorkspaceBatchChange",
+    "paperclipWorkspaceRunChecks"
+  ],
+  "source": "Read-only MCP tools/list from the existing Paperclip gateway; 200 tools. No Paperclip state or configuration was changed.",
+  "scope": "Differential inventory only. The Multica adapter never invokes Paperclip. Similar names do not imply semantic parity.",
+  "directParity": "ARCHITECTURALLY_INCOMPATIBLE",
+  "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task.",
+  "tools": [
+    {
+      "name": "paperclipListAgentChats",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentChat",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSendChatMessage",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetChatMessages",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipNewChatSession",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipMe",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipInboxLite",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListAgents",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListSkills",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgent",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListIssues",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetHeartbeatContext",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListComments",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetComment",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListIssueApprovals",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListDocuments",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetDocument",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListDocumentRevisions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListProjects",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetProject",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetIssueWorkspaceRuntime",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipControlIssueWorkspaceServices",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWaitForIssueWorkspaceService",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListGoals",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetGoal",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListApprovals",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCreateApproval",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetApproval",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetApprovalIssues",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListApprovalComments",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCreateIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateAgent",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCheckoutIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWakeupAgent",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipClearAgentError",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipReleaseIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipAddComment",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSuggestTasks",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipAskUserQuestions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRequestConfirmation",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRequestCheckboxConfirmation",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListIssueInteractions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipAcceptInteraction",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRejectInteraction",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCancelIssueInteraction",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpsertIssueDocument",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRestoreIssueDocumentRevision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipLinkIssueApproval",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUnlinkIssueApproval",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipApprovalDecision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipAddApprovalComment",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWikiList",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWikiSearch",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWikiGetPage",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWikiProposeChange",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWikiApplyChange",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWikiCreatePage",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetRunDetail",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListCatalogSkills",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetCatalogSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCreateSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipDeleteSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipInstallCatalogSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipInstallSkillUpdate",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetSkillUpdateStatus",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetSkillFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateSkillFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipAuditSkill",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipApiRequest",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListRuns",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListLiveRuns",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetCurrentOperatorRun",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipStartOperatorRun",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCancelRun",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipReapStaleRuns",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListScheduledRetries",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCancelScheduledRetry",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWakeIssueFresh",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRetryIssueFresh",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetExecutionEligibility",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipReconcileIssueExecution",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipReconcileCompanyControlPlane",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSetExecutionHold",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipClearExecutionHold",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetDependencyGraph",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipPatchDependencyGraph",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipValidateDAG",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipBulkUpdateIssues",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListRecoveryActions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipResolveRecoveryAction",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListDecisions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetDecision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipResolveDecision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListWorkspaces",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetWorkspace",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetWorkspaceLocks",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipProvisionWorkspace",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipDetachWorkspace",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipResetWorkspace",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetWorkspaceCloseReadiness",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetReviewState",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSubmitReviewDecision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRequestReview",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListPendingReviews",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetRunEvents",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipTailRunLog",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetRunTranscript",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetSchedulerState",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetProviderHealth",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetRuntimePreflight",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentInstructions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentInstructionsFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateAgentInstructionsFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipPatchAgentInstructionsBundle",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipDeleteAgentInstructionsFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipPatchAgentRuntimeConfig",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentSkillSet",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSyncAgentSkills",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListAgentConfigRevisions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentConfigRevision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRollbackAgentConfig",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateAgentPermissions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetEconomicsMetrics",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCreateSkillTestRun",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetSkillTestRun",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentEffectiveConfig",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentPermissions",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipExplainForbidden",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListRoutines",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetRoutine",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCreateRoutine",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateRoutine",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRunRoutineNow",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListRoutineRuns",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetRoutineMetrics",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateGoal",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipDetachGoal",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSearchActivity",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSearchLogs",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetDeliveryMetrics",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetCostMetrics",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListArtifacts",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetCandidateState",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetServerInfo",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListFeatureFlags",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUpdateFeatureFlag",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetSystemHealth",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipListMonitors",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipOperatorSnapshot",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipReconcileBlockedIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRepairIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipCloseIssueWithEvidence",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUnblockAndWake",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipResolveReviewWedge",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipSupersedeIssue",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetExecutionState",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetControlPlaneRevision",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRetryWithCausalGate",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetDeliveryLineage",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipPlanControlPlaneRepair",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipApplyControlPlaneRepair",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRepairControlPlane",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipRunDeliveryCycle",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspaceListFiles",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspaceReadFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspacePatchFile",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspaceExec",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitStatus",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitDiff",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitCreateBranch",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitCommit",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitPush",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitCreatePR",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitGetChecks",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitGetMergeReadiness",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetAgentEffectiveTools",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipVerifyAgentTool",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetToolDenial",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipVerifyLiveMCP",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipMCPRunSmokeTest",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitAuthStatus",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitGetRemoteTopology",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitWaitChecks",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGitMergePR",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipOAuthDiagnoseSession",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipGetIssueFieldDetails",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipDescribeIssueFields",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipManageIssueRelationships",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipManageIssueExecutionPolicy",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipManageIssueMonitor",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipManageIssueWatchdog",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipManageIssueLinks",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipUploadChatgptImage",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspaceApplyUnifiedDiff",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspaceBatchChange",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    },
+    {
+      "name": "paperclipWorkspaceRunChecks",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "Paperclip-specific APIs belong to a separate platform. Calling or changing Paperclip is outside this Multica adapter and prohibited by the task."
+    }
+  ]
+}
