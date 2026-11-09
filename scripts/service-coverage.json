@@ -2,6 +2,7 @@
   "schema_version": 1,
   "entries": {
     ".github": {"mode": "manual_only", "reason": "Workflow definitions are validated by the workflow that invokes this checker."},
+    ".repowise": {"mode": "workflow", "workflows": [".github/workflows/release-lanes-policy.yml"]},
     "_archive": {"mode": "manual_only", "reason": "Archived sources are retained for reference and are not built or released."},
     "cloudflare-ingress": {"mode": "manual_only", "reason": "Existing ingress is a protected runtime resource; no repository build or promotion workflow is authorized."},
     "comfy": {"mode": "manual_only", "reason": "Engine release requires a separately reviewed immutable artifact and manual Coolify promotion."},
