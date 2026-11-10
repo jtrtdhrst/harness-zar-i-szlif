@@ -3,6 +3,11 @@ FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de6
 
 ENV NODE_ENV=production PORT=3000 MULTICA_CLI=/usr/local/bin/multica
 WORKDIR /app
+# Coolify's managed HTTP health probe shells out to `curl` inside the container
+# (`/bin/sh: curl: not found` in deployment logs), while the Alpine base image
+# ships only busybox `wget`. Install the distribution-provided curl package from
+# the pinned Alpine release and fail the build if the binary is not runnable.
+RUN apk add --no-cache curl && curl --version | head -n 1
 COPY --chown=node:node package.json catalog.mjs server.mjs ./
 COPY --chown=node:node docs/paperclip-tool-baseline.json ./docs/paperclip-tool-baseline.json
 COPY --from=multica --chmod=0755 /app/multica /usr/local/bin/multica
