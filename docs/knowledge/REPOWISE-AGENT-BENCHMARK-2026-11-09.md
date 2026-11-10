@@ -21,6 +21,7 @@
 | Function/security analysis, exact repo provided | GitHub | NO — timeout (110 s wall) | 102.9 s recorded events | 15 | 50,122 | 517,376 | 1,912 |
 | Document discovery, no repo name supplied | GitHub (exploratory) | NO — timeout (110 s wall) | 101.4 s recorded events | 9 | 34,938 | 264,320 | 1,396 |
 | Architecture evidence / readiness warning | RepoWise | YES — correctly refused to infer production readiness | 20.3 s | 2 | 26,274 | 47,872 | 1,396 |
+| Post-promotion repository isolation | RepoWise | YES — harness-only and product-only files correctly separated | 31.5 s | 5 | 50,576 | 123,776 | 1,354 |
 
 ### Measured impact
 
@@ -39,13 +40,21 @@
 
 ## Opik provenance
 
-The six actual OpenCode runs (two paired tasks, one unseeded discovery run, one architecture-readiness safety probe) were imported to a **private, metadata-only** native Opik project named `repowise-agent-ab-20261109` (project ID `01a1c2b6-f9d9-75cf-9cb4-a4506d607e7f`). Each trace was created through the self-hosted native private API and verified by GET readback. Import metadata explicitly identifies the event-JSONL origin, model, condition, correctness, token counts, tool calls and raw-log SHA-256; no prompts, full answers, secrets or transcripts were uploaded.
+The seven actual OpenCode runs (two paired tasks, one unseeded discovery run, one architecture-readiness safety probe, one post-promotion repo-isolation regression) were imported to a **private, metadata-only** native Opik project named `repowise-agent-ab-20261109` (project ID `01a1c2b6-f9d9-75cf-9cb4-a4506d607e7f`). Each trace was created through the self-hosted native private API and verified by GET readback. Import metadata explicitly identifies the event-JSONL origin, model, condition, correctness, token counts, tool calls and raw-log SHA-256; no prompts, full answers, secrets or transcripts were uploaded.
 
 Private raw JSONL evidence remains on the VPS in `/opt/repowise-knowledge/agent-benchmark-20261109/` (root-owned; do not publicly publish or sync). These are **imported benchmark traces**, not evidence of automatic Opik instrumentation of Multica runs.
 
+## Production RepoWise index regression after repair
+
+- The native staged isolation smoke was corrected to query a true product file (`app/mcp-worker/src/index.ts`), a true harness file (`scripts/service-coverage.json`), and a **negative cross-repo ownership assertion** against `scripts/product_native_promotion.py`. All staged MCP checks passed.
+- The full staged migration followed the existing atomic promotion/rollback procedure. It returned `PROMOTE_OK`, `LIVE_STATUS_OK`, and `SYNC_SUCCESS`, with backup path `/opt/repowise-knowledge/rollback/sync-20261109T235316Z-133837`. Production MCP became healthy again, and both SQLite wiki databases passed `pragma quick_check`.
+- Direct RepoWise MCP after promotion: product no longer returns the harness-only promotion script; product resolves its own MCP Worker; harness resolves the promotion script; `get_overview(repo="product")` now correctly describes product, not harness. Both indexes read current GitHub `main` SHAs with zero stale commits.
+- A **fresh real OpenCode plan agent** independently repeated the ownership test, answered correctly in 31.5 s (5 tool calls), and was added to the Opik metadata-only project. This test is unpaired and must not be counted as a speed win.
+- The automatic GitHub timer was re-enabled; the native service had a separate idempotent `SYNC_CURRENT` readback with no regeneration. Future ticks should be monitored for recurrent failures; a successful manual service run is not an unattended-tick guarantee.
+
 ## Limits and next gates
 
-1. **n = 2** paired task types with one model and one OpenCode `plan` agent. Repeated trials and other models/roles are necessary before treating the figures as a general speed/token advantage.
+1. **n = 2** paired task types with one model and one OpenCode `plan` agent in the existing `opencode-26aqp0flyvdinjn6dklxnb1c` container (OpenCode v2.2.5; the separate host CLI has v1.19.5). Repeated trials and other models/roles are necessary before treating the figures as a general speed/token advantage.
 2. The 14 configured Hermes Gateway profiles do **not** equal 14 executed Multica agents. Production Multica `zar-prod` daemon is still unauthorized and guarded, and may not be promoted without native session authentication; do not bypass it.
 3. The user is configuring the RepoWise LLM provider and embedder separately. This benchmark uses exact path/symbol retrieval and makes **no** claim that `get_answer` synthesis or semantic search is available.
 4. RepoWise GitHub staging→MCP→production promotion has its own regression check and rollback gate. Never turn a staging-only PASS into a production-release claim.
