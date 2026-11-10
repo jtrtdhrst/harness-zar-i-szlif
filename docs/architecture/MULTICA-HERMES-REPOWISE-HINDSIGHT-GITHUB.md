@@ -155,3 +155,50 @@ The following is **live configuration/readback evidence**, not proof of producti
 **Credential handling:** Do not copy an owner's full Multica PAT into agents, embed model or MCP keys in prompts, or remove auth checks to make a test pass. Per-task or role-scoped credentials only. Paperclip is migration evidence read-only. An unavailable provider key is a real deployment blocker; no silent alternative model.
 
 **Exit criteria:** Successful native Hermes `session/new` and `session/prompt`; model identity readback; a RepoWise tool call and a role-scoped Hindsight recall under the *same* Multica task; negative cross-bank access test; native GitHub branch/PR/CI plus independent review; approved merged SHA deployed by Coolify, checked against container image, HTTP and functional readback; linked Opik trace. Only then change migration status to DONE.
+
+## 12. Verified live role and MCP runtime checks — 10 Nov 2026
+
+**Production cutover verdict: NO-GO.** These are direct CLI/Multica MCP and Coolify readbacks, not aspirational statuses. Paperclip was accessed READ ONLY. All issues listed below belong to the existing Multica workspace (not a new test workspace).
+
+### Basic role/skill execution evidence
+
+The following eight existing non-production issues ran to `completed` and produced an in-issue agent comment beginning `MIGRATION_E2E=PASS`:
+
+| Agent | Test issue | Observed outcome |
+|---|---|---|
+| Engineer | `ZARI-17` | PASS: read task, load native and role skills, write comment |
+| Designer | `ZARI-10` | PASS: role/skill response and issue comment |
+| Lifecycle Ops | `ZARI-11` | PASS: role/skill response and issue comment |
+| Harness Engineer | `ZARI-13` | PASS: role/skill response and issue comment |
+| Email Creative | `ZARI-14` | PASS: role/skill response and issue comment |
+| MCP Engineer | `ZARI-15` | PASS: role/skill response and issue comment |
+| UI QA | `ZARI-16` | PASS: role/skill response and issue comment |
+| Mascot Designer | `ZARI-18` | PASS: role/skill response and issue comment |
+
+The six C-level roles are **not validated**: `ZARI-5` CTO, `ZARI-6` CMO, `ZARI-7` COO, `ZARI-9` CPO and `ZARI-12` CHO had failed runs with `opencode model selection failed` for source model `openai/gpt-6-luna`. `ZARI-8` CEO initially failed for the same reason, then had a later technically completed run, but its reported comment was `MIGRATION_E2E=FAIL`. **Never count a completed run with a FAIL acceptance comment as successful.** The eight PASS tests executed on OpenCode; **none proves native Hermes routing**. Do not silently replace a source model or claim equivalence after a model substitution.
+
+The official bundled `multica-platform` skill is attached to 14/14 roles. Source-derived role skills are also now attached in the active workspace. Selected skill bodies include a `Multica migration note` that marks Paperclip-specific instructions reference-only. Name parity is not function parity and requires separate behavioural regression tests.
+
+### Tool execution and confinement failure
+
+`ZARI-20` was a bounded read-only actual MCP acceptance test in the **existing Harness project**, run by Engineer. It did load `multica-platform` and read its issue. It did **not** demonstrate an actual RepoWise MCP call or Hindsight recall, despite `agent mcp list` showing `repowise` plus `hindsight-engineer` enabled. The runtime tool list exposed some Hindsight tools but not RepoWise tools. Agent expanded to shell-based runtime configuration inspection, violating the narrow read-only-tool restriction. Operator cancelled run `01a1c5f0-7170-7846-bcc7-d77e7ef40132`, cancelled and unassigned `ZARI-20`, and recorded the failure. **Connected/assigned MCP != callable MCP.** The acceptance gate requires actual `tool_use` and successful `tool_result` for each named service, with a separate cross-bank negative test.
+
+### Coolify RepoWise MCP storage diagnosis
+
+At diagnosis, `repowise-mcp` application `fciqzgceop7mqtqickkfomd7` was `exited:unhealthy` with no container, while primary `repowise` app `oea9obpkhzbgkmipxwqmz2hj` was healthy. Existing main RepoWise indexes both Harness and Product; Harness index confirmed exact commit `5ee1dbbfb040397dc14207ba40fef58b60adb10d`.
+
+The native MCP application was started via Coolify for diagnosis. Container returned healthy but logged `No .repowise directory found at /repo`; crucially its persistent storage list was **empty**. Main RepoWise has two named volumes, mounted at `/workspace` and `/data`. Attempting to attach those by name through standalone application storage created **new UUID-prefixed volumes** rather than reusing originals. Both new entries were deleted **before redeployment**. The empty MCP instance was stopped and its final readback was `exited:unhealthy` / `container_present=false`. The primary RepoWise instance and the separately connected RepoWise plugin were not stopped, and the indexed Harness SHA remained unchanged.
+
+Native Coolify 4.4.6 storage mounts prefix names by app UUID and do not allow arbitrary `--mount` or `-v` in Custom Docker Options. Docker Compose `volumes: ... external: true` is the documented native cross-resource reuse mechanism; converting the present Dockerfile application to Compose requires an explicit controlled deployment plan, backup/snapshot and post-deploy source index readback before activation. Do not deploy an MCP process with an empty `/repo` and call it ready. If using the existing separately connected RepoWise MCP instead, confirm its exact stable endpoint and task-level authorization before changing the workspace library.
+
+Docs: https://coolify.io/docs/core/persistent-storage/storage-mounts/volume-mounts and https://coolify.io/docs/applications/builds/custom-docker-options .
+
+### Additional real blockers / production release readback
+
+- Native Hermes runtime ID `2c84d3ef-7bf7-4e1c-b81a-3078d9e5512c` and OpenCode runtime ID `2a9b818b-ebb3-4ab1-b2d1-3dd4501f3272` both report online. Production role agents remain on OpenCode, because native Hermes inference with `opencode-go/deepseek-v4.1-flash` failed authentication (`No usable credentials found for provider 'opencode-go'`). Native Hermes ACP installation/probe is not a substitute for authenticated inference plus MCP operations.
+- Ubuntu SSH MCP returned `UNAUTHORIZED` during the latest host checks. Do not bypass by another tool or force credentials into CLI arguments; reconnect authorized access before touching host profile files, model credentials, or runtime transport. The Hermes Gateway container was reported healthy in Coolify at last check.
+- Paperclip read-only inventory reported 14 agents, 58 total skill entries (34 company), 15 projects, and 1260 issues: 808 done, 437 cancelled, 15 open. These 15 open issues have first-class parent/blocker/review/document relationships. Do not mass-dispatch them or flatten their dependency graph into plain descriptions. No full lossless issue migration has been proven.
+- Product Coolify `zar-i-szlif-web` follows `ci-approved` with **automatic deployment disabled**. Last confirmed successful release SHA `98cd058155dbf4c268777246fc510324f98f7dc5` matched `ci-approved`; `main` was one commit ahead at check. This verifies one exact-SHA alignment, not agent-driven PR/CI/promotion/rollback E2E.
+- Opik connector did not return reliable recent trace list during this validation; cross-system trace lineage remains unproven.
+
+**Next controlled gate:** Re-authorize host access; configure task-scoped provider auth for native Hermes (not a workspace-owner PAT); repair/replace RepoWise task-level MCP endpoint using the indexed workspace; prove RepoWise + Hindsight `tool_use/tool_result` in ONE native Hermes run with negative cross-bank denial; reconcile the six C-level source models; perform an authorized PR/CI/merge/Coolify release/readback/rollback canary with independent review; migrate open Paperclip tasks only when required first-class dependencies can be represented. Keep NO-GO until all gates have immutable evidence.
