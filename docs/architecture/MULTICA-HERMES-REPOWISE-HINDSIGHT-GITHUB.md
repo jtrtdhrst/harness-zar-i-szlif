@@ -123,9 +123,35 @@ The `ZARI-2` issue is a one-time, isolated diagnostic execution, **not** an arch
 
 ## 10. Follow-up verification checklist
 
-- [ ] Verify all 14 agent MCP bindings: exactly RepoWise plus the matching Hindsight bank.
-- [ ] Reproduce and fix the `ZARI-2` OpenCode ACP/provider tool-event schema failure, with a regression test.
+- [x] Verify 14/14 agent MCP bindings: exactly RepoWise plus the matching Hindsight bank; verified by live Multica CLI readback.
+- [x] Identify the `ZARI-2` OpenCode SSE tool-event schema failure; disable the native Hermes `tool_progress_events` option (strict OpenAI-compatible SSE) and verify `ZARI-3` completes with model output. This is **not** MCP execution E2E: `ZARI-3` reported tools=0.
 - [ ] Demonstrate one complete authorized call to RepoWise and one to Hindsight under the same role through Multica, with cross-bank denial.
 - [ ] Demonstrate GitHub branch/PR/CI from the same run, with an independent reviewer and safe dry-run deployment/readback.
 - [ ] Verify Opik receives linked per-run telemetry without storing secrets.
 - [ ] Verify RepoWise sync from the reviewed harness commit and query this architecture back through RepoWise MCP.
+
+## 11. Native Hermes ACP migration checkpoint — 10 Nov 2026
+
+The following is **live configuration/readback evidence**, not proof of production cutover:
+
+| Item | Observed state | Evidence class |
+|---|---|---|
+| Multica production workspace | `zar-i-szlif` (`28378cc8-2c3a-4f8e-af1c-63e308407b17`) | configured |
+| Daemon | `multica-zar-daemon.service` active; service user `multica-zar` | observed |
+| Runtime: OpenCode | ID `2a9b818b-ebb3-4ab1-b2d1-3dd4501f3272`, online | observed |
+| Runtime: native Hermes ACP | ID `2c84d3ef-7bf7-4e1c-b81a-3078d9e5512c`, online; Hermes 0.22.5 and `hermes acp --check` PASS | observed |
+| Model/profile identities | Fourteen role-specific Hermes homes under `/srv/multica-zar/.hermes/profiles/<role>` are staged; 14 corresponding Multica agents exist | configured, not inferred |
+| MCP bindings | Exactly `repowise` and `hindsight-<matching-role>` enabled for each of 14 agents | readback PASS, tool calls unproven |
+| Multica platform skill | Official bundled `multica-platform` skill imported with nine native references; assigned to 14/14 agents | readback PASS |
+| Legacy skills | Thirty Paperclip-derived skills staged in Multica library; none attached. Paperclip read-only source currently lists 34 company skills / 58 total; 29 attached-company skill names needed by roles are staged | migration incomplete |
+| Project repository resources | Harness and Product projects both have native `github_repo` resources pointing at the respective canonical GitHub repositories | observed |
+| GitHub App | Timed installation-token refresh active; read-only `git ls-remote` of both `main` branches succeeded | readback PASS; agent PR flow unproven |
+| Gateway SSE compatibility | Native `platforms.api_server.tool_progress_events: false` configured; Gateway returned healthy; strict-client tool-progress validation error no longer reproduced in model-only `ZARI-3` | PARTIAL |
+| Native Hermes inference | `opencode-go/deepseek-v4.1-flash` in isolated Engineer profile could not authenticate: `No usable credentials found for provider 'opencode-go'`. Credential projection was not completed | **FAIL** |
+| Multica run → MCP → GitHub → review → CI → Coolify → readback | No full successful trace; `ZARI-2` failed before SSE fix; `ZARI-3` completed model text but performed zero tool calls | **NO-GO** |
+
+**Boundary:** Multica injects a task-scoped `MULTICA_TOKEN` to a *native* Hermes ACP worker. This avoids the previous nested OpenCode → Hermes Gateway model route, where MCP tools were owned by OpenCode but the inner Hermes agent could not invoke them. Presence of the native runtime alone does not prove it uses the correct credential or actually executes tools. Keep the current OpenCode agent assignments unchanged until at least one native Hermes role completes authenticated inference and real RepoWise+Hindsight calls under its task token.
+
+**Credential handling:** Do not copy an owner's full Multica PAT into agents, embed model or MCP keys in prompts, or remove auth checks to make a test pass. Per-task or role-scoped credentials only. Paperclip is migration evidence read-only. An unavailable provider key is a real deployment blocker; no silent alternative model.
+
+**Exit criteria:** Successful native Hermes `session/new` and `session/prompt`; model identity readback; a RepoWise tool call and a role-scoped Hindsight recall under the *same* Multica task; negative cross-bank access test; native GitHub branch/PR/CI plus independent review; approved merged SHA deployed by Coolify, checked against container image, HTTP and functional readback; linked Opik trace. Only then change migration status to DONE.
