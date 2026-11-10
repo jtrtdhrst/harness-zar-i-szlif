@@ -59,3 +59,12 @@ Keep the adapter in this repository and commit every release. To upgrade, pin th
 - This adapter does not implement Core scheduling, queueing, workflow, permissions, PR completion, or task cancellation; these remain native Multica behavior.
 
 GitOps: every push to `main` under `multica-mcp/` triggers a Coolify rebuild of the application; the container is not built on the host.
+
+
+## Production release and rollback evidence
+
+This MCP adapter is a control-plane dependency. A successful `main` merge alone is not release proof. Every deployment must retain the source commit SHA, the resulting image identifier, the CI result, the Coolify deployment UUID, and an authenticated `tools/list` / safe read-only tool result. Liveness `GET /health` is necessary but not sufficient.
+
+A release canary should: (1) run the PR CI checks; (2) merge only the reviewed SHA; (3) verify that Coolify built/deployed that SHA; (4) confirm `GET /health` and one task-scoped MCP call; (5) exercise rollback to a previously healthy image, verify availability, and then restore the newly tested release. Never use a status field or a queued deploy as evidence of a completed rollout.
+
+This contract documents the existing native GitHub Actions and Coolify controls. It introduces no custom release adapter, does not change the Multica Core, and does not turn Paperclip into a write target.
