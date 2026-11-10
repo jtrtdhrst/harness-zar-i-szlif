@@ -29,3 +29,25 @@
 - Hermes Gateway: exactly 14 canonical profiles parsed as YAML and each had native `mcp_servers.repowise.url=http://repowise-mcp:7338/mcp`; container-to-service DNS resolved and anonymous request returned HTTP 401. Hermes and RepoWise containers remained healthy. This is a configuration/connectivity/security-negative test, **not** an authenticated agent-run pass.
 - Native Multica workspace `28378cc8-2c3a-4f8e-af1c-63e308407b17` (`zar-i-szlif`) had `0` agents, `0` runtimes and `0` workspace MCP library entries at readback. Existing systemd `multica-zar-daemon.service` is enabled but gated by absent `/srv/multica-zar/.multica/zar-prod-verified`; the native preflight `multica-zar-auth-verify` returned `AUTH_NOT_READY` and the CLI reported `not authenticated: run 'multica login' first`. Do not bypass this guard or claim a live Hermes→Multica→RepoWise E2E.
 - Remaining user-managed inputs: RepoWise LLM provider and semantic embedder. Separate remaining integrations: an authorized Multica CLI login / runtime registration, agent provisioning, actual authenticated Hermes/Multica-to-RepoWise call and Opik trace. A new PAT should be entered through the native CLI interactive flow, **never** committed or passed in a shell argument.
+
+## Final live remediation and measured agent value — 2026-11-09 23:59 UTC
+
+**Root cause confirmed**: at 23:14:50 UTC a separate authorized `harness-ops` shell explicitly issued `systemctl stop repowise-github-sync.timer`; at 23:15:01 the previous staging full-indexer was killed by a **1 GiB cgroup OOM (exit 137)**. The host script subsequently used a 4 GiB no-swap indexer limit.
+
+**Critical correctness bug**: the former live `product/.repowise/wiki.db` held both `harness` and `product` repository records. The original stage MCP smoke also incorrectly expected the harness-owned `scripts/product_native_promotion.py` file in `product`. The smoke was changed to a real product source file, and an explicit negative ownership assertion now fails on a harness-only path in product.
+
+**Tested recovery pipeline**:
+
+1. Isolated full upgrade: product generated 118 pages, harness 284 pages without OOM. Native workspace updater completed.
+2. Offline staged positive/negative source isolation queries: PASS for both repos.
+3. Staged authenticated MCP smoke: initialize/tool list, aliases, product search/context, harness search/context, negative isolation, and cross-repo blast radius all PASS.
+4. Atomic promotion: `PROMOTE_OK`, backup at `/opt/repowise-knowledge/rollback/sync-20261109T235316Z-133837`.
+5. Production readback: `LIVE_REPO_OK` on both SHAs, `LIVE_CURRENT`, `LIVE_STATUS_OK`, final `SYNC_SUCCESS` (exit 0). RepoWise MCP back to `healthy`; both isolated SQLite index DBs `pragma quick_check=ok`.
+6. Independent external RepoWise MCP readback: harness-only file absent in product; product-only Worker present in product; `get_overview(repo="product")` now correct. `get_conformance`: 2 native checked rules, zero detected violations, **partial** architecture evidence.
+7. Re-enabled 15-minute `repowise-github-sync.timer` read back `enabled` and `active`. An immediate independent service invocation returned `SYNC_CURRENT` on both repos without full rebuild, proving idempotence. Monitor subsequent unattended ticks before asserting ongoing unattended reliability.
+
+The production product release remained `98cd058155dbf4c268777246fc510324f98f7dc5`, with `/healthz` HTTP 200. No product application deployment was made.
+
+**Actual model measurements**: see `docs/knowledge/REPOWISE-AGENT-BENCHMARK-2026-11-09.md` (7 real OpenCode DeepSeek v4.1 Flash plan runs, 2 paired tasks, source-safety and post-fix regression, metadata-only private Opik project `repowise-agent-ab-20261109`). On a completed same-document pair, RepoWise answered in 39.7 s vs 57.3 s for GitHub (30.7% faster by recorded event time, 7 vs 10 tool calls), with a **mixed** token picture. No generalizable efficacy claim from this small sample.
+
+**Still open (separate owners)**: the user is configuring RepoWise LLM/semantic embedder. Multica production `zar-prod` remained unauthenticated, and authenticated execution of 14 Hermes profiles → Multica → RepoWise → Opik has **not** passed E2E. Do not bypass native Multica login guard or claim 14/14 live role runs.
