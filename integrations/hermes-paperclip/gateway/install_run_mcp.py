@@ -30,6 +30,8 @@ def patch_source(original: str) -> str:
         "        return _json_error(_openai_error, \"Invalid JSON object\", status=400)\n"
         "    # Strip private credentials before any room, prompt, history or status processing.\n"
         "    paperclip_run_mcp_supplied = \"paperclip_run_mcp\" in body\n"
+        "    import logging as _run_mcp_logging\n"
+        "    _run_mcp_logging.getLogger(\"gateway.run_mcp\").warning(\"run_mcp_admission supplied=%s server_count=%d\", paperclip_run_mcp_supplied, len(body.get(\"paperclip_run_mcp\", {}).get(\"servers\", [])) if isinstance(body.get(\"paperclip_run_mcp\"), dict) else 0)\n"
         "    paperclip_run_mcp = body.pop(\"paperclip_run_mcp\", None)\n"
         "    paperclip_run_id = request.headers.get(\"X-Paperclip-Run-Id\", \"\")\n"
         "    if paperclip_run_mcp_supplied:\n"
@@ -73,6 +75,14 @@ def patch_source(original: str) -> str:
         "    # A run-scoped grant must not silently move into a live Bot Chat without its MCP context.\n"
         "    admitted = (await self._admit_to_live_bot_chat(session_id, user_message, turn_author)\n"
         "                if selected_session_id and not paperclip_run_mcp_supplied else None)\n")
+
+    once(
+        "    if admitted is None and getattr(self.gateway_runner, 'session_authority', None) is not None:\n",
+        "    # Run-scoped Paperclip MCP grants require the isolated worker, never the\n"
+        "    # session-authority admission path (observe_api_turn bypasses\n"
+        "    # _run_agent_sync and would silently omit ephemeral MCP tools).\n"
+        "    if (admitted is None and not paperclip_run_mcp_supplied\n"
+        "            and getattr(self.gateway_runner, 'session_authority', None) is not None):\n")
 
     once(
         "    effective_task_id = session_id or run.run_id\n",

@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 import os
 import re
 import logging
+import threading
+import weakref
 
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
@@ -135,8 +137,39 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
         raise InvalidRunGrant("invalid run MCP grant") from None
 
 
+_PROJECTION_LOCKS_GUARD = threading.Lock()
+_PROJECTION_LOCKS = weakref.WeakKeyDictionary()
+_FALLBACK_PROJECTION_LOCK = threading.RLock()
+
+
+def _projection_lock(agent):
+    """One projection at a time per agent: the tool inventory is shared mutable state."""
+    try:
+        with _PROJECTION_LOCKS_GUARD:
+            lock = _PROJECTION_LOCKS.get(agent)
+            if lock is None:
+                lock = threading.RLock()
+                _PROJECTION_LOCKS[agent] = lock
+            return lock
+    except TypeError:  # non-weakrefable agent stub
+        return _FALLBACK_PROJECTION_LOCK
+
+
 @contextmanager
 def _project_scoped_tools(agent, schemas):
+    """Hold the agent's projection lock for the whole run, not just the swap.
+
+    shortcut: per-agent serialization; replace with run-local agent copies when
+    Hermes exposes them. Concurrent runs on one agent must never interleave the
+    tool inventory, or one run can see another run's scoped MCP tools.
+    """
+    with _projection_lock(agent):
+        with _project_scoped_tools_locked(agent, schemas):
+            yield
+
+
+@contextmanager
+def _project_scoped_tools_locked(agent, schemas):
     """Rebuild the run-local model tool inventory after MCP discovery.
 
     Hermes initializes agent.tools before the run-grant registry is borrowed.

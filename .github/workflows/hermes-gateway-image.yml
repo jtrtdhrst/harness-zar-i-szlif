@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Run run-scoped MCP projection regression tests
+        run: python3 -m unittest discover -s integrations/hermes-paperclip/gateway/tests -p 'test_run_mcp_projection.py' -v
       - name: Build pinned image with Coolify probe binary
         run: docker build -f integrations/hermes-paperclip/gateway/Dockerfile -t hermes-gateway-healthcheck-ci:verified integrations/hermes-paperclip/gateway
       - name: Check image capabilities

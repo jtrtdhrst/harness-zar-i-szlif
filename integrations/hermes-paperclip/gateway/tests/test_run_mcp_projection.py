@@ -79,6 +79,43 @@ class RunMcpProjectionTests(unittest.TestCase):
                 with _project_scoped_tools(self.agent, {}):
                     pass
 
+    def test_concurrent_runs_on_one_agent_never_interleave_tool_inventory(self):
+        import threading
+
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+        observed = []
+
+        def first():
+            with _project_scoped_tools(self.agent, {"mcp__scoped__read": {}}):
+                first_entered.set()
+                release_first.wait(2)
+                observed.append(("first", set(self.agent.valid_tool_names)))
+
+        def second():
+            first_entered.wait(2)
+            with _project_scoped_tools(self.agent, {"mcp__scoped__read": {}}):
+                second_entered.set()
+                observed.append(("second", set(self.agent.valid_tool_names)))
+
+        with patch.dict(sys.modules, self.modules):
+            t1 = threading.Thread(target=first)
+            t2 = threading.Thread(target=second)
+            t1.start()
+            t2.start()
+            self.assertTrue(first_entered.wait(1))
+            self.assertFalse(second_entered.wait(0.2))
+            release_first.set()
+            t1.join(2)
+            t2.join(2)
+
+        self.assertTrue(second_entered.is_set())
+        self.assertEqual([name for name, _ in observed], ["first", "second"])
+        for _, names in observed:
+            self.assertEqual(names, {"existing", "mcp__scoped__read"})
+        self.assertEqual(self.agent.valid_tool_names, {"existing"})
+
     def test_default_toolset_selection_preserved(self):
         self.agent.enabled_toolsets = None
         with patch.dict(sys.modules, self.modules):
