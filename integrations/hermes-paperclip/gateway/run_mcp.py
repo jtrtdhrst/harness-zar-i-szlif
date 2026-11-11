@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 import os
 import re
 import logging
+import threading
+import weakref
 
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$")
@@ -135,6 +137,24 @@ def validate_grant(envelope: object, *, authenticated_profile: str, run_id: str,
         raise InvalidRunGrant("invalid run MCP grant") from None
 
 
+_PROJECTION_LOCKS_GUARD = threading.Lock()
+_PROJECTION_LOCKS = weakref.WeakKeyDictionary()
+_FALLBACK_PROJECTION_LOCK = threading.RLock()
+
+
+def _projection_lock(agent):
+    """One projection at a time per agent: the tool inventory is shared mutable state."""
+    try:
+        with _PROJECTION_LOCKS_GUARD:
+            lock = _PROJECTION_LOCKS.get(agent)
+            if lock is None:
+                lock = threading.RLock()
+                _PROJECTION_LOCKS[agent] = lock
+            return lock
+    except TypeError:  # non-weakrefable agent stub
+        return _FALLBACK_PROJECTION_LOCK
+
+
 @contextmanager
 def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_id: str,
                        cwd: str = ".", agent=None):
@@ -159,31 +179,32 @@ def borrowed_run_tools(authority, envelope, *, authenticated_profile: str, run_i
                 # Backwards-compatible scope inspection for non-executing callers.
                 yield scope
             else:
-                from tools.mcp_tool_agent import refresh_agent_mcp_tools
-                original = getattr(agent, "enabled_toolsets", None)
-                if not isinstance(original, (list, tuple, set)) or not all(
-                    isinstance(value, str) for value in original
-                ):
-                    raise InvalidRunGrant("run MCP agent tool selection unavailable")
-                original = list(original)
-                ephemeral = sorted({f"mcp-{names[i]}" for i in connected})
-                if set(ephemeral) & set(original):
-                    raise InvalidRunGrant("run MCP tool scope was already present")
-                try:
-                    refresh_agent_mcp_tools(agent, enabled_override=original + ephemeral,
-                                            quiet_mode=True, content_aware=True)
-                    enabled = set(getattr(agent, "enabled_toolsets", ()) or ())
-                    visible = set(getattr(agent, "valid_tool_names", ()) or ())
-                    if not set(ephemeral) <= enabled or not (
-                        set(schemas) & visible or "tool_search" in visible
+                with _projection_lock(agent):
+                    from tools.mcp_tool_agent import refresh_agent_mcp_tools
+                    original = getattr(agent, "enabled_toolsets", None)
+                    if not isinstance(original, (list, tuple, set)) or not all(
+                        isinstance(value, str) for value in original
                     ):
-                        raise InvalidRunGrant("run MCP tools are not visible to agent")
-                    yield scope
-                finally:
-                    # Restore the original tool selection and cached tool definitions
-                    # before closing the scoped connections, including on failure.
-                    refresh_agent_mcp_tools(agent, enabled_override=original,
-                                            quiet_mode=True, content_aware=True)
+                        raise InvalidRunGrant("run MCP agent tool selection unavailable")
+                    original = list(original)
+                    ephemeral = sorted({f"mcp-{names[i]}" for i in connected})
+                    if set(ephemeral) & set(original):
+                        raise InvalidRunGrant("run MCP tool scope was already present")
+                    try:
+                        refresh_agent_mcp_tools(agent, enabled_override=original + ephemeral,
+                                                quiet_mode=True, content_aware=True)
+                        enabled = set(getattr(agent, "enabled_toolsets", ()) or ())
+                        visible = set(getattr(agent, "valid_tool_names", ()) or ())
+                        if not set(ephemeral) <= enabled or not (
+                            set(schemas) & visible or "tool_search" in visible
+                        ):
+                            raise InvalidRunGrant("run MCP tools are not visible to agent")
+                        yield scope
+                    finally:
+                        # Restore the original tool selection and cached tool definitions
+                        # before closing the scoped connections, including on failure.
+                        refresh_agent_mcp_tools(agent, enabled_override=original,
+                                                quiet_mode=True, content_aware=True)
     finally:
         # _borrowed disconnects the last borrower; clear local references too.
         borrowed = getattr(authority, "_local_editor_mcp", None)
