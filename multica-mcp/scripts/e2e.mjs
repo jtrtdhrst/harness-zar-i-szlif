@@ -58,6 +58,15 @@ try {
   const actualTitle = readback?.title || readback?.issue?.title;
   if (actualTitle !== title) throw new Error(`issue readback mismatch: expected ${title}`);
 
+  // List operations emit a top-level CLI array; MCP requires `structuredContent`
+  // to be a JSON object, so the adapter must return an `items` envelope.
+  for (const name of ['multica__agent__list', 'multica__workspace__mcp__list']) {
+    const listed = await callTool(name, { workspace_id: workspaceId, output: 'json' });
+    if (!listed || typeof listed !== 'object' || Array.isArray(listed) || !Array.isArray(listed.items)) {
+      throw new Error(`${name} structuredContent is not an items record`);
+    }
+  }
+
   await callTool('multica__project__delete', { workspace_id: workspaceId, id: projectId, confirm: true });
   projectId = undefined;
   console.log(JSON.stringify({ status: 'PASS', transport: 'streamable-http', initialize: true, toolsListed: names.size, writeReadback: true, disposableProjectCleaned: true, issueId }));

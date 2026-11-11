@@ -14,7 +14,7 @@ const catalog = buildCatalog(CLI);
 const paperclip = loadPaperclipBaseline();
 const operations = new Map(catalog.operations.map((entry) => [entry.name, entry]));
 const active = new Map();
-const home = '/tmp/multica-mcp-home';
+const home = process.env.MULTICA_MCP_HOME || '/tmp/multica-mcp-home';
 mkdirSync(home, { recursive: true, mode: 0o700 });
 
 function safeText(value) {
@@ -129,6 +129,18 @@ function runCli(entry, args, token, requestKey) {
   return promise;
 }
 
+// MCP requires `structuredContent` to be a JSON object (record); a top-level array
+// or scalar is rejected by SDK-side schema validation (e.g. "expected record, path
+// [\"structuredContent\"], received array"). Several operations emit a top-level JSON
+// array (agent.list, workspace.mcp.list, project.list, runtime.list,
+// issue.comment.list, issue.timeline), so wrap those in a stable `items` envelope
+// and leave object-returning operations untouched.
+export function toStructuredContent(value) {
+  if (Array.isArray(value)) return { items: value };
+  if (value !== null && typeof value === 'object') return value;
+  return { value: value ?? null };
+}
+
 function toolResult(ok, text, structuredContent) {
   const result = { content: [{ type: 'text', text: safeText(text) }], isError: !ok };
   if (structuredContent !== undefined) result.structuredContent = sanitizeStructured(structuredContent);
@@ -160,7 +172,7 @@ async function callTool(name, args, token, requestKey) {
   }
   const text = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
   try {
-    return toolResult(true, text, JSON.parse(result.stdout));
+    return toolResult(true, text, toStructuredContent(JSON.parse(result.stdout)));
   } catch {
     return toolResult(true, text || 'Operation completed.');
   }

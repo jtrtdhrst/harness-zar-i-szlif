@@ -11,6 +11,10 @@ Independent, stateless MCP adapter for the installed Multica **v0.8.1** CLI at c
 - OAuth is **not implemented**: the installed Multica version is not a generic OAuth authorization server. No OAuth token exchange is emulated. Use a caller-owned, revocable Multica PAT or the task’s actual `mat_` token.
 - MCP request cancellation stops the local CLI process only; it does not claim to cancel an already accepted Multica run. Use the native `issue.cancel-task` tool for Multica run cancellation.
 
+## Tool results
+
+`content[0].text` carries the raw CLI output. `structuredContent` is always a JSON object, as the MCP specification requires: operations whose CLI output is a top-level array (`agent.list`, `workspace.mcp.list`, `project.list`, `runtime.list`, `issue.comment.list`, `issue.timeline`, …) return `{"items": [...]}`, while object-returning operations are passed through unwrapped. SDK clients reject an array here with `expected record, path ["structuredContent"], received array`.
+
 ## Catalog and compatibility
 
 At startup, the adapter discovers leaf commands and argument types from the pinned CLI’s own `--help` output. `tools/list` exposes every native, non-host-local operation as an individual fixed tool. It never accepts a command string, shell fragment, arbitrary URL, or arbitrary HTTP path. Unknown flags/arguments are rejected, subprocesses run with `shell:false`, and credentials are excluded from logs and redacted from returned output.
@@ -36,6 +40,8 @@ Requires Node 24+ and Docker. The CLI is copied from the pinned public backend i
 npm test
 docker build -t local/multica-mcp-control-plane:0.2.0 .
 ```
+
+`MULTICA_MCP_HOME` overrides the CLI runtime working directory (default `/tmp/multica-mcp-home`), which lets the suite run where that path is not writable by the current user.
 
 The Docker image fails closed unless the copied CLI reports v0.8.1 and commit prefix `b1ea927de`. No npm packages or database are required. `npm run catalog` additionally requires `MULTICA_CLI` to point at that binary.
 
