@@ -8,7 +8,7 @@ export const ROOT_COMMANDS = [
   'user', 'version',
 ];
 
-const LOCAL_ONLY = /^(daemon\.|auth\.|config\.|login$|setup\.|update$|version$|runtime\.profile\.)/;
+const LOCAL_ONLY = /^(daemon\.|auth\.|config\.|login$|setup\.|update$|version$|runtime\.profile\.|workspace\.switch$)/;
 const HOST_FILES = /^(attachment\.|agent\.avatar$)/;
 const OMIT_FILE_FLAGS = /(?:^|[-_])(?:file|stdin)(?:$|[-_])/i;
 
@@ -77,18 +77,26 @@ export function parsePositionals(text, path) {
   const positionals = [];
   for (const token of tokens) {
     if (token === '[flags]' || token === '[flags...]') break;
-    const required = /^<([a-z][a-z0-9-]*)>$/i.exec(token);
-    const optional = /^\[([a-z][a-z0-9-]*)\]$/i.exec(token);
-    const repeated = /^<([a-z][a-z0-9-]*)\.\.\.>$/i.exec(token);
+    // Cobra renders value alternatives as one token, e.g. `<limit|none>`; use the
+    // first alternative as the input property name so the positional is not dropped.
+    const required = /^<([a-z][a-z0-9|_-]*)>$/i.exec(token);
+    const optional = /^\[([a-z][a-z0-9|_-]*)\]$/i.exec(token);
+    const repeated = /^<([a-z][a-z0-9_-]*)\.\.\.>$/i.exec(token);
     const match = required || optional || repeated;
     if (!match) continue;
-    positionals.push({ name: match[1], required: Boolean(required), repeated: Boolean(repeated) });
+    positionals.push({ name: match[1].split('|')[0], required: Boolean(required), repeated: Boolean(repeated) });
   }
   return positionals;
 }
 
+export function isLocalOnly(path) {
+  // workspace.switch persists a default workspace in the profile's shared HOME,
+  // so it would silently retarget other callers of the same MCP container.
+  return LOCAL_ONLY.test(path);
+}
+
 function classification(path, flags) {
-  if (LOCAL_ONLY.test(path)) {
+  if (isLocalOnly(path)) {
     return { status: 'ARCHITECTURALLY_INCOMPATIBLE', reason: 'This CLI command manages local authentication, configuration, daemon state, or runtime profile files; a remote MCP container must not impersonate or control the host CLI runtime.' };
   }
   if (HOST_FILES.test(path)) {
