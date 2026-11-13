@@ -77,12 +77,14 @@ export function parsePositionals(text, path) {
   const positionals = [];
   for (const token of tokens) {
     if (token === '[flags]' || token === '[flags...]') break;
-    const required = /^<([a-z][a-z0-9-]*)>$/i.exec(token);
-    const optional = /^\[([a-z][a-z0-9-]*)\]$/i.exec(token);
-    const repeated = /^<([a-z][a-z0-9-]*)\.\.\.>$/i.exec(token);
+    // Cobra renders value alternatives as one token, e.g. `<limit|none>`; use the
+    // first alternative as the input property name so the positional is not dropped.
+    const required = /^<([a-z][a-z0-9|_-]*)>$/i.exec(token);
+    const optional = /^\[([a-z][a-z0-9|_-]*)\]$/i.exec(token);
+    const repeated = /^<([a-z][a-z0-9_-]*)\.\.\.>$/i.exec(token);
     const match = required || optional || repeated;
     if (!match) continue;
-    positionals.push({ name: match[1], required: Boolean(required), repeated: Boolean(repeated) });
+    positionals.push({ name: match[1].split('|')[0], required: Boolean(required), repeated: Boolean(repeated) });
   }
   return positionals;
 }

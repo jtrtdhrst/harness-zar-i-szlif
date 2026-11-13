@@ -25,3 +25,10 @@ test('maps required positional arguments separately from flags', () => {
     { name: 'status', required: true, repeated: false },
   ]);
 });
+
+test('keeps positional arguments that list value alternatives', () => {
+  assert.deepEqual(parsePositionals('USAGE\n  multica runtime concurrency <runtime-id> <limit|none> [flags]\n', 'runtime.concurrency'), [
+    { name: 'runtime-id', required: true, repeated: false },
+    { name: 'limit', required: true, repeated: false },
+  ]);
+});
