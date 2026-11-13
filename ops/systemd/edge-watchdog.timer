@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the public edge every minute
+
+[Timer]
+OnBootSec=60sec
+OnUnitInactiveSec=60sec
+AccuracySec=10sec
+Persistent=true
+Unit=edge-watchdog.service
+
+[Install]
+WantedBy=timers.target
