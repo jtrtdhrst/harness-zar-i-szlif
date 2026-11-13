@@ -1,0 +1,12 @@
+[Unit]
+Description=Check unevidenced Done transitions every minute
+
+[Timer]
+OnBootSec=60sec
+OnUnitInactiveSec=60sec
+AccuracySec=10sec
+Persistent=true
+Unit=multica-done-gate.service
+
+[Install]
+WantedBy=timers.target
