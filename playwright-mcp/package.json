@@ -3,6 +3,9 @@
   "version": "0.0.83",
   "private": true,
   "description": "Playwright MCP with idle HTTP proxy",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
   "dependencies": {
     "@playwright/mcp": "0.0.83"
   }
