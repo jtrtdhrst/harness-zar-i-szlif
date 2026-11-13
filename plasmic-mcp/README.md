@@ -129,3 +129,24 @@ Writing tools default to \`dryRun=true\` and require an \`idempotencyKey\` for \
 ### WAB identity is separate from MCP bearer auth
 
 The MCP's \`MCP_AUTH_TOKEN\` secures the transport but does **not** authenticate to WAB. For real project access configure a WAB-authorized \`PLASMIC_EMAIL\` and \`PLASMIC_PASSWORD\`, or a supported WAB team identity where the endpoint permits it. The underlying user must have project permission. \`/health=200\` checks the transport only; \`/ready=200\` requires WAB health **and** authenticated \`listProjects()\`. A \`403 Must be a normal user\` is not an MCP outage and must not be bypassed by disabling authorization.
+
+## State volume ownership (/state)
+
+The image runs as the unprivileged `mcp` user (uid/gid **10001**) with a
+read-only root filesystem; only the `plasmic_mcp_state` volume mounted at
+`/state` is writable. The image creates `/state` owned by `mcp` so a **new**
+volume inherits that owner.
+
+A volume created by an earlier root-running image stays `root:root`, and the
+first state write (`plasmic_get_changes` seen marker, audit log, project lock)
+then fails with `EACCES`. Initialise such a volume once, as the host owner:
+
+```bash
+docker run --rm -v <plasmic_mcp_state volume>:/state alpine chown 10001:10001 /state
+```
+
+The server does not disable the seen marker or skip auditing on a read-only
+state dir. It logs `STATE_DIR not writable` at start, reports it as a failing
+check on `/ready`, and every state-writing tool fails with
+`STATE_DIR_UNWRITABLE (<tool>): EACCES: <path> must be owned by the container
+user (uid 10001 / mcp); ...` instead of a bare `EACCES`.
