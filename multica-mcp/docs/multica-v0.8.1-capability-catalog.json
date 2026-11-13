@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-09T16:10:31.759Z",
+  "generatedAt": "2026-11-13T18:59:27.976Z",
   "multica": {
     "version": "0.8.1",
     "commit": "b1ea927def6490c43bedff537b6f4ed9a47fa828",
@@ -16,9 +16,9 @@
   },
   "counts": {
     "total": 184,
-    "passNative": 157,
+    "passNative": 156,
     "blocked": 3,
-    "incompatible": 24
+    "incompatible": 25
   },
   "operations": [
     {
@@ -8000,6 +8000,11 @@
           "name": "project-id",
           "required": true,
           "repeated": false
+        },
+        {
+          "name": "workflow",
+          "required": true,
+          "repeated": false
         }
       ],
       "omittedFlags": [],
@@ -8025,13 +8030,18 @@
             "type": "string",
             "description": "Positional argument for project.workflow.set."
           },
+          "workflow": {
+            "type": "string",
+            "description": "Positional argument for project.workflow.set."
+          },
           "workspace_id": {
             "type": "string",
             "description": "Optional Multica workspace UUID. Forwarded as native CLI context; Multica validates membership and role."
           }
         },
         "required": [
-          "project-id"
+          "project-id",
+          "workflow"
         ],
         "additionalProperties": false
       }
@@ -8616,6 +8626,11 @@
           "name": "runtime-id",
           "required": true,
           "repeated": false
+        },
+        {
+          "name": "limit",
+          "required": true,
+          "repeated": false
         }
       ],
       "omittedFlags": [],
@@ -8630,13 +8645,18 @@
             "type": "string",
             "description": "Positional argument for runtime.concurrency."
           },
+          "limit": {
+            "type": "string",
+            "description": "Positional argument for runtime.concurrency."
+          },
           "workspace_id": {
             "type": "string",
             "description": "Optional Multica workspace UUID. Forwarded as native CLI context; Multica validates membership and role."
           }
         },
         "required": [
-          "runtime-id"
+          "runtime-id",
+          "limit"
         ],
         "additionalProperties": false
       }
@@ -11588,7 +11608,13 @@
           "required": false
         }
       ],
-      "positionals": [],
+      "positionals": [
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
+        }
+      ],
       "omittedFlags": [],
       "inputSchema": {
         "type": "object",
@@ -11596,6 +11622,10 @@
           "output": {
             "type": "string",
             "description": "Output format: table or json (default \"json\")"
+          },
+          "workspace-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.get."
           },
           "workspace_id": {
             "type": "string",
@@ -11679,6 +11709,11 @@
           "name": "server-name",
           "required": true,
           "repeated": false
+        },
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
         }
       ],
       "omittedFlags": [
@@ -11708,6 +11743,10 @@
             "type": "string",
             "description": "Positional argument for workspace.mcp.add."
           },
+          "workspace-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.mcp.add."
+          },
           "workspace_id": {
             "type": "string",
             "description": "Optional Multica workspace UUID. Forwarded as native CLI context; Multica validates membership and role."
@@ -11732,7 +11771,13 @@
           "required": false
         }
       ],
-      "positionals": [],
+      "positionals": [
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
+        }
+      ],
       "omittedFlags": [],
       "inputSchema": {
         "type": "object",
@@ -11740,6 +11785,10 @@
           "output": {
             "type": "string",
             "description": "Output format: table or json (default \"json\")"
+          },
+          "workspace-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.mcp.list."
           },
           "workspace_id": {
             "type": "string",
@@ -11768,6 +11817,11 @@
           "name": "server-id",
           "required": true,
           "repeated": false
+        },
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
         }
       ],
       "omittedFlags": [],
@@ -11779,6 +11833,10 @@
             "description": "Output format: table or json (default \"json\")"
           },
           "server-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.mcp.remove."
+          },
+          "workspace-id": {
             "type": "string",
             "description": "Positional argument for workspace.mcp.remove."
           },
@@ -11835,6 +11893,11 @@
           "name": "server-id",
           "required": true,
           "repeated": false
+        },
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
         }
       ],
       "omittedFlags": [
@@ -11865,6 +11928,10 @@
             "description": "Replacement server entry as JSON (avoid: lands in shell history)"
           },
           "server-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.mcp.update."
+          },
+          "workspace-id": {
             "type": "string",
             "description": "Positional argument for workspace.mcp.update."
           },
@@ -11902,6 +11969,11 @@
           "name": "email",
           "required": true,
           "repeated": false
+        },
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
         }
       ],
       "omittedFlags": [],
@@ -11917,6 +11989,10 @@
             "description": "Member role to grant: member or admin (owner is not allowed) (default \"member\")"
           },
           "email": {
+            "type": "string",
+            "description": "Positional argument for workspace.member.invite."
+          },
+          "workspace-id": {
             "type": "string",
             "description": "Positional argument for workspace.member.invite."
           },
@@ -11944,7 +12020,13 @@
           "required": false
         }
       ],
-      "positionals": [],
+      "positionals": [
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
+        }
+      ],
       "omittedFlags": [],
       "inputSchema": {
         "type": "object",
@@ -11952,6 +12034,10 @@
           "output": {
             "type": "string",
             "description": "Output format: table or json (default \"table\")"
+          },
+          "workspace-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.member.list."
           },
           "workspace_id": {
             "type": "string",
@@ -11965,21 +12051,33 @@
     {
       "path": "workspace.switch",
       "name": "multica__workspace__switch",
-      "status": "PASS_NATIVE",
-      "reason": "Invoked through the pinned Multica v0.8.1 CLI using the caller’s bearer token; Multica remains the authorization authority.",
+      "status": "ARCHITECTURALLY_INCOMPATIBLE",
+      "reason": "This CLI command manages local authentication, configuration, daemon state, or runtime profile files; a remote MCP container must not impersonate or control the host CLI runtime.",
       "destructive": false,
       "nativeFlags": [],
-      "positionals": [],
+      "positionals": [
+        {
+          "name": "workspace-id",
+          "required": true,
+          "repeated": false
+        }
+      ],
       "omittedFlags": [],
       "inputSchema": {
         "type": "object",
         "properties": {
+          "workspace-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.switch."
+          },
           "workspace_id": {
             "type": "string",
             "description": "Optional Multica workspace UUID. Forwarded as native CLI context; Multica validates membership and role."
           }
         },
-        "required": [],
+        "required": [
+          "workspace-id"
+        ],
         "additionalProperties": false
       }
     },
@@ -12026,7 +12124,13 @@
           "required": false
         }
       ],
-      "positionals": [],
+      "positionals": [
+        {
+          "name": "workspace-id",
+          "required": false,
+          "repeated": false
+        }
+      ],
       "omittedFlags": [
         {
           "name": "context-stdin",
@@ -12061,6 +12165,10 @@
           "output": {
             "type": "string",
             "description": "Output format: table or json (default \"json\")"
+          },
+          "workspace-id": {
+            "type": "string",
+            "description": "Positional argument for workspace.update."
           },
           "workspace_id": {
             "type": "string",

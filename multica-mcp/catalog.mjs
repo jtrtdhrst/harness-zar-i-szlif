@@ -8,7 +8,7 @@ export const ROOT_COMMANDS = [
   'user', 'version',
 ];
 
-const LOCAL_ONLY = /^(daemon\.|auth\.|config\.|login$|setup\.|update$|version$|runtime\.profile\.)/;
+const LOCAL_ONLY = /^(daemon\.|auth\.|config\.|login$|setup\.|update$|version$|runtime\.profile\.|workspace\.switch$)/;
 const HOST_FILES = /^(attachment\.|agent\.avatar$)/;
 const OMIT_FILE_FLAGS = /(?:^|[-_])(?:file|stdin)(?:$|[-_])/i;
 
@@ -89,8 +89,14 @@ export function parsePositionals(text, path) {
   return positionals;
 }
 
+export function isLocalOnly(path) {
+  // workspace.switch persists a default workspace in the profile's shared HOME,
+  // so it would silently retarget other callers of the same MCP container.
+  return LOCAL_ONLY.test(path);
+}
+
 function classification(path, flags) {
-  if (LOCAL_ONLY.test(path)) {
+  if (isLocalOnly(path)) {
     return { status: 'ARCHITECTURALLY_INCOMPATIBLE', reason: 'This CLI command manages local authentication, configuration, daemon state, or runtime profile files; a remote MCP container must not impersonate or control the host CLI runtime.' };
   }
   if (HOST_FILES.test(path)) {

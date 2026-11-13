@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isHostLocalFlag, parseFlags, parsePositionals, parseSubcommands } from '../catalog.mjs';
+import { isHostLocalFlag, isLocalOnly, parseFlags, parsePositionals, parseSubcommands } from '../catalog.mjs';
 
 test('reads Cobra command and flag metadata without losing repeated values', () => {
   assert.deepEqual(parseSubcommands('COMMANDS\n  create: Create one\n  get: Read one\n\nFLAGS\n'), ['create', 'get']);
@@ -31,4 +31,16 @@ test('keeps positional arguments that list value alternatives', () => {
     { name: 'runtime-id', required: true, repeated: false },
     { name: 'limit', required: true, repeated: false },
   ]);
+});
+
+test('keeps optional positional alternatives and blocks the shared-profile switch', () => {
+  assert.deepEqual(parsePositionals('USAGE\n  multica workspace get [workspace-id|slug|prefix] [flags]\n', 'workspace.get'), [
+    { name: 'workspace-id', required: false, repeated: false },
+  ]);
+  assert.deepEqual(parsePositionals('USAGE\n  multica project workflow set <project-id> <workflow|default> [flags]\n', 'project.workflow.set'), [
+    { name: 'project-id', required: true, repeated: false },
+    { name: 'workflow', required: true, repeated: false },
+  ]);
+  assert.equal(isLocalOnly('workspace.switch'), true);
+  assert.equal(isLocalOnly('workspace.get'), false);
 });
