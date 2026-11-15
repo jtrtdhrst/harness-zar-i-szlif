@@ -151,28 +151,82 @@ process needs write access to those files and directories, not merely to
 
 ### Migrating a populated volume (host owner, once)
 
-Stop the service first: chowning a directory tree under a live writer races
-with it and can leave half-owned state.
+Chowning a directory tree under a live writer races with it and can leave
+half-owned state, so the service must be **stopped and verified stopped**, and
+the volume **backed up and the archive verified**, before any ownership change.
+The block below is fail-fast: `set -euo pipefail` plus explicit guard checks
+mean a failed stop, a missing volume mapping or a missing backup archive aborts
+the procedure **before** `chown` runs. Do not strip the guards to "get it done".
 
 ```bash
-SERVICE=<coolify service id or compose service name>
-STATE_VOLUME=plasmic_mcp_state          # verify the real name: docker volume ls
+set -euo pipefail
 
-# 1. stop writers — take the MCP service down
-docker stop "$SERVICE"
+# 0. resolve the exact container and the volume it really mounts at /state
+CONTAINER=<container id or name>        # find it: docker ps --filter name=plasmic-mcp
+STATE_VOLUME=<state volume name>
+BACKUP_DIR=<absolute host path with free space>
 
-# 2. back up the volume before touching ownership (audit log and locks included)
-docker run --rm -v "$STATE_VOLUME":/state -v "$PWD":/backup alpine \
-  tar czf /backup/plasmic_mcp_state-$(date +%Y%m%dT%H%M%S).tgz -C /state .
+# 1. verify the binding before touching anything: the container must exist,
+#    must mount a volume at /state, and it must be THIS volume
+docker inspect --type container "$CONTAINER" >/dev/null
+MOUNTED=$(docker inspect --type container \
+  -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Name}}{{end}}{{end}}' "$CONTAINER")
+if [ -z "$MOUNTED" ]; then
+  echo "container $CONTAINER mounts no volume at /state — aborting" >&2
+  exit 1
+fi
+if [ "$MOUNTED" != "$STATE_VOLUME" ]; then
+  echo "container $CONTAINER mounts $MOUNTED at /state, not $STATE_VOLUME — aborting" >&2
+  exit 1
+fi
+docker volume inspect "$STATE_VOLUME" >/dev/null
 
-# 3. fix ownership of the whole tree, not the mount root
+# 2. stop writers, then PROVE the container is stopped
+docker stop "$CONTAINER"
+if [ "$(docker inspect --type container -f '{{.State.Running}}' "$CONTAINER")" != "false" ]; then
+  echo "container $CONTAINER is still running — aborting before touching the volume" >&2
+  exit 1
+fi
+
+# 3. back up, then PROVE the archive exists and is not empty
+mkdir -p "$BACKUP_DIR"
+ARCHIVE="$BACKUP_DIR/plasmic_mcp_state-$(date +%Y%m%dT%H%M%S).tgz"
+docker run --rm -v "$STATE_VOLUME":/state -v "$BACKUP_DIR":/backup alpine \
+  tar czf "/backup/$(basename "$ARCHIVE")" -C /state .
+if [ ! -s "$ARCHIVE" ]; then
+  echo "backup archive $ARCHIVE is missing or empty — aborting before chown" >&2
+  exit 1
+fi
+
+# 4. only now: fix ownership of the whole tree, not the mount root
 docker run --rm -v "$STATE_VOLUME":/state alpine chown -R 10001:10001 /state
 
-# 4. verify descendants — every entry must report 10001:10001
-docker run --rm -v "$STATE_VOLUME":/state alpine ls -lnR /state
+# 5. verify every descendant, not just /state
+docker run --rm -v "$STATE_VOLUME":/state alpine sh -c '
+  bad=$(find /state \( ! -user 10001 -o ! -group 10001 \) -print)
+  if [ -n "$bad" ]; then
+    echo "still not owned by 10001:10001:" >&2
+    echo "$bad" >&2
+    exit 1
+  fi'
 
-# 5. start the service again and check /ready (stateDir check must pass)
+# 6. start the service again and check /ready (the stateDir check must pass)
+docker start "$CONTAINER"
 ```
+
+If the stack is Compose-managed, scope the stop to the real project and service
+instead of a bare `$CONTAINER` — and verify it the same way:
+
+```bash
+COMPOSE_PROJECT=<compose project>       # docker compose ls
+COMPOSE_SERVICE=<service name>          # docker compose -p "$COMPOSE_PROJECT" config --services
+docker compose -p "$COMPOSE_PROJECT" stop "$COMPOSE_SERVICE"
+docker compose -p "$COMPOSE_PROJECT" ps --status running --services | grep -qx "$COMPOSE_SERVICE" \
+  && { echo "$COMPOSE_SERVICE is still running — aborting" >&2; exit 1; }
+```
+
+Keep the backup and verification guards from the block above; only the stop step
+changes.
 
 ### New or empty volume
 
