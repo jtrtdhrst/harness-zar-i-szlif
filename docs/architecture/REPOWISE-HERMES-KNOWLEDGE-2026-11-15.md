@@ -72,3 +72,13 @@ Wspólny wpis `repowise` (oba repo) usunięty z biblioteki workspace; `agent.mcp
 E2E (ZARI-210/ZARI-211): product agent `list_repos` → tylko `/workspace/product`, `search_codebase` na `paperclip-mcp/src/control-plane.ts` → 0 wyników; harness agent → tylko `/workspace/harness`, `app/plugin/index.ts` → brak trafień. Instrukcje agentów mówią wprost, do którego repo są scopowane.
 
 **Ograniczenie:** wszyscy agenci działają jako ten sam uid `multica-zar` (`runtime_mode=local`), więc widzą cudze workdiry i bare mirror `.repos`. Stare workdiry i `/var/lib/multica-preview/src-*` przeniesiono do `/srv/multica-zar/quarantine-20261115` (root 0700), ale `.repos` musi pozostać czytelny dla daemona. Recheck ZARI-212 potwierdził też, że `multica repo checkout <drugie-repo>` nadal się udaje: Multica 0.8.1 nie ma allowlisty repo w `repo checkout`, a `runtime_mcp_overlay` jest zarezerwowany dla Composio. Twarda izolacja systemu plików i checkoutu wymaga osobnych daemonów per OS user ze scoped credentials albo zmiany w daemonie; nie wdrożono. Do tego czasu obowiązuje zakaz w instrukcjach agentów.
+
+## 7. Hindsight a RepoWise — jeden fakt, jedno miejsce (2026-11-15)
+
+Podział odpowiedzialności: **RepoWise = fakty o kodzie** (ścieżki, symbole, struktura, zależności, ownership, SHA, stan indeksu), **Hindsight = doświadczenie wykonawcze** (co zadziałało, co nie, pułapki niewidoczne w kodzie, proces, środowisko, koszt, bezpieczeństwo).
+
+- Czyszczenie banków: 324 → **88** unitów, 167 → **25** dokumentów, 126 → **29** chunków. Usunięto 241 unitów zaklasyfikowanych jako fakty o kodzie, logi narzędzi, canary/noise oraz duplikaty. Backup: `/var/backups/hindsight-20261115T175217Z.dump` (pg_dump).
+- Dyrektywa bankowa we wszystkich 14 bankach `hermes-*`: „RepoWise is the only source for code facts… never store or recall file paths, symbols, file contents, repository structure, dependencies, ownership, commit SHAs, branches, indexed state or code snippets”.
+- Instrukcje 14 agentów Multica i `SOUL.md` Hermes Gateway: „Hindsight is not a second code index” + zakaz retainowania ścieżek, symboli, struktury, SHA, ownership i snippetów.
+- Walidacja na żywym banku `hermes-engineer`: `retain` faktu o kodzie (ścieżka + symbol + SHA) → HTTP 202, ale **0 unitów**; `retain` lekcji procesowej → 2 unity; `recall` zwraca lekcję, a zapytanie o kod nie znajduje faktu.
+- Stan po: 0 unitów z pełnym SHA, 0 snippetów kodu; 12 wpisów wymieniających pliki to lekcje operacyjne (np. topologia `repo checkout`, izolacja uid), nie fakty możliwe do zastąpienia przez RepoWise.
