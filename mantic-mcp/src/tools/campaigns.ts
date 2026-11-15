@@ -29,7 +29,9 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'create_campaign',
-    description: 'Create a new campaign',
+    description:
+      'Create a new campaign (shell only: name, description and publish dates). Entry sources are not part of this ' +
+      'call - use create_campaign_with_automation for segments/forms entry sources.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,7 +58,11 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'create_campaign_with_automation',
-    description: 'Create campaign with full event automation including triggers, actions, and canvas settings',
+    description:
+      'Create campaign with full event automation including triggers, actions, and canvas settings. ' +
+      'Campaign entry sources this server can express are `segments` (sent as campaign lists) and `forms`; a ' +
+      'tag-change decision (lead.changetags) is an in-campaign event, not an entry source, and there is no ' +
+      'tag-trigger enrollment.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,8 +90,8 @@ export const toolDefinitions: ToolDefinition[] = [
             },
           },
         },
-        segments: { type: 'array', description: 'Segment IDs to trigger campaign', items: { type: 'number' } },
-        forms: { type: 'array', description: 'Form IDs to trigger campaign', items: { type: 'number' } },
+        segments: { type: 'array', description: 'Segment IDs used as campaign entry sources (sent as campaign lists)', items: { type: 'number' } },
+        forms: { type: 'array', description: 'Form IDs used as campaign entry sources', items: { type: 'number' } },
         canvasSettings: { type: 'object', description: 'Visual campaign builder settings' },
       },
       required: ['name'],

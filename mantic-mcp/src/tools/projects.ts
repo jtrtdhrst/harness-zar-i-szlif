@@ -1,10 +1,11 @@
 import type { MauticApiClient } from '../api/client.js';
 import type { ToolDefinition, ToolHandler } from '../types/index.js';
+import { mapV2Error, V2_SURFACE } from '../api/v2-errors.js';
 
 export const toolDefinitions: ToolDefinition[] = [
   {
     name: 'list_projects',
-    description: 'List all projects - organize marketing resources (Mautic 7 API v2)',
+    description: `List all projects - organize marketing resources (${V2_SURFACE})`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -84,7 +85,12 @@ export const toolHandlers: Record<string, ToolHandler> = {
     if (args?.page) params.page = args.page;
     if (args?.itemsPerPage) params.itemsPerPage = args.itemsPerPage;
 
-    const response = await client.v2.get('/projects', { params });
+    let response;
+    try {
+      response = await client.v2.get('/projects', { params });
+    } catch (error) {
+      mapV2Error('list_projects', error);
+    }
     const { items, total } = client.parseV2Collection(response.data);
     return {
       content: [{ type: 'text', text: `Found ${total} projects:\n${JSON.stringify(items, null, 2)}` }],
@@ -93,7 +99,12 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
   async get_project(client: MauticApiClient, args: any) {
     const { id } = args;
-    const response = await client.v2.get(`/projects/${id}`);
+    let response;
+    try {
+      response = await client.v2.get(`/projects/${id}`);
+    } catch (error) {
+      mapV2Error('get_project', error);
+    }
     return {
       content: [{ type: 'text', text: `Project details:\n${JSON.stringify(response.data, null, 2)}` }],
     };
@@ -104,7 +115,12 @@ export const toolHandlers: Record<string, ToolHandler> = {
     if (args.description) payload.description = args.description;
     if (args.properties) payload.properties = args.properties;
 
-    const response = await client.v2.post('/projects', payload);
+    let response;
+    try {
+      response = await client.v2.post('/projects', payload);
+    } catch (error) {
+      mapV2Error('create_project', error);
+    }
     return {
       content: [{ type: 'text', text: `Project created successfully:\n${JSON.stringify(response.data, null, 2)}` }],
     };
@@ -112,7 +128,12 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
   async update_project(client: MauticApiClient, args: any) {
     const { id, ...updateData } = args;
-    const response = await client.v2.put(`/projects/${id}`, updateData);
+    let response;
+    try {
+      response = await client.v2.put(`/projects/${id}`, updateData);
+    } catch (error) {
+      mapV2Error('update_project', error);
+    }
     return {
       content: [{ type: 'text', text: `Project ${id} updated successfully:\n${JSON.stringify(response.data, null, 2)}` }],
     };
@@ -120,9 +141,14 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
   async patch_project(client: MauticApiClient, args: any) {
     const { id, ...patchData } = args;
-    const response = await client.v2.patch(`/projects/${id}`, patchData, {
-      headers: { 'Content-Type': 'application/merge-patch+json' },
-    });
+    let response;
+    try {
+      response = await client.v2.patch(`/projects/${id}`, patchData, {
+        headers: { 'Content-Type': 'application/merge-patch+json' },
+      });
+    } catch (error) {
+      mapV2Error('patch_project', error);
+    }
     return {
       content: [{ type: 'text', text: `Project ${id} patched successfully:\n${JSON.stringify(response.data, null, 2)}` }],
     };
@@ -130,7 +156,11 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
   async delete_project(client: MauticApiClient, args: any) {
     const { id } = args;
-    await client.v2.delete(`/projects/${id}`);
+    try {
+      await client.v2.delete(`/projects/${id}`);
+    } catch (error) {
+      mapV2Error('delete_project', error);
+    }
     return {
       content: [{ type: 'text', text: `Project ${id} deleted successfully` }],
     };

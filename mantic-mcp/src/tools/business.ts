@@ -1,5 +1,12 @@
 import type { MauticApiClient } from '../api/client.js';
+import { ErrorCode, McpError } from '../errors.js';
 import type { ToolDefinition, ToolHandler } from '../types/index.js';
+import {
+  mergeTagLists,
+  normalizeTagList,
+  readContactTags,
+  verifyContactTags,
+} from '../lib/contact-payload.js';
 
 export const toolDefinitions: ToolDefinition[] = [
   {
@@ -96,7 +103,9 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: 'add_contact_tags',
-    description: 'Add tags to contact',
+    description:
+      'Add tags to a contact. Applies the contact edit route with the merged tag set (existing tags are preserved), ' +
+      'then reads the contact back and fails if a requested tag did not persist.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -203,10 +212,37 @@ export const toolHandlers: Record<string, ToolHandler> = {
   },
 
   async add_contact_tags(client: MauticApiClient, args: any) {
-    const { contactId, tags } = args;
-    const response = await client.v1.post(`/contacts/${contactId}/contact/add`, { tags });
+    const contactId = args?.contactId;
+    if (contactId === undefined || contactId === null) {
+      throw new McpError(ErrorCode.InvalidParams, 'add_contact_tags: contactId is required');
+    }
+    const requested = normalizeTagList(args?.tags);
+    if (requested.length === 0) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'add_contact_tags: tags must contain at least one non-empty tag name',
+      );
+    }
+
+    // Mautic has no "add one tag" endpoint: the supported write is the contact
+    // edit route with the full tag set, so merge with what the contact already
+    // carries and never drop existing tags.
+    const existing = await readContactTags(client, contactId);
+    const merged = mergeTagLists(existing, requested);
+
+    await client.v1.patch(`/contacts/${contactId}/edit`, { tags: merged });
+
+    const confirmed = await verifyContactTags(client, contactId, requested, 'add_contact_tags');
+
     return {
-      content: [{ type: 'text', text: `Tags added to contact ${contactId} successfully:\n${JSON.stringify(response.data, null, 2)}` }],
+      content: [
+        {
+          type: 'text',
+          text:
+            `Tags confirmed on contact ${contactId} (added: ${JSON.stringify(requested)}).\n` +
+            `Tags read back from the provider: ${JSON.stringify(confirmed)}`,
+        },
+      ],
     };
   },
 

@@ -38,6 +38,56 @@ See `.env.example`. `MAUTIC_BASE_URL`, `MAUTIC_CLIENT_ID`, `MAUTIC_CLIENT_SECRET
 `MAUTIC_TOKEN_ENDPOINT` are all required; the process exits immediately when any is
 missing.
 
+## Tools and API surface
+
+68 baseline tools plus `get_instance_identity` (read-only), 69 in total.
+
+### Campaign entry sources
+
+`create_campaign_with_automation` can express exactly two entry sources:
+`segments` (sent as campaign `lists`) and `forms`. A tag change
+(`lead.changetags`) is an in-campaign decision, **not** an entry source, and this
+server has no tag-trigger enrollment. A campaign that supplies only a tag-change
+decision is rejected by the provider with `At least one contact source is
+required`. `create_campaign` creates the campaign shell only and takes no entry
+sources.
+
+### Contact tags and custom fields
+
+`customFields` is flattened into the top-level contact body for `create_contact`
+and `update_contact` — no nested object is sent, because Mautic ignores unknown
+nested keys while returning HTTP 200. `add_contact_tags` uses the contact edit
+route (`PATCH /contacts/{id}/edit`) with the merged tag set, since Mautic has no
+per-tag endpoint; it then reads the contact back and returns an error when a
+requested tag did not persist. Tag writes are never reported as success without
+that read-back.
+
+### Instance identity
+
+`get_instance_identity` reports the configured base host, the credential identity
+returned by `GET /users/self`, and whether the `/api/v2` entrypoint answers. It
+returns no tokens, headers or credential values. Mautic v1 exposes no version
+endpoint, so `mauticVersion` stays `null` — identity is the credential-level proof
+of which instance answered.
+
+### API v2 tools
+
+The six `*_project` tools are the only API v2 (API Platform) consumers. A provider
+401/403/404 is reported as an explicit "Mautic API v2 is not available to this
+credential" error naming the HTTP status — never as success, and never as an
+unrelated failure. A v1 OAuth client is not automatically valid on `/api/v2`.
+
+## Tests
+
+```bash
+npm ci
+npm test        # tsc build + node --test
+```
+
+`test/` exercises the real handlers against a recording fake client, including the
+negative controls (stale tag read-back, provider 401 on v2, secret leakage in the
+identity payload). No additional test dependency is used.
+
 ## Provenance
 
 Source of the running container (`mantic-mcp:latest` / `mantic-mcp-http:latest` on the

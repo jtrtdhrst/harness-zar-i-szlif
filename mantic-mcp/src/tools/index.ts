@@ -11,6 +11,7 @@ import * as business from './business.js';
 import * as advanced from './advanced.js';
 import * as integration from './integration.js';
 import * as projects from './projects.js';
+import * as instance from './instance.js';
 
 const modules = [
   contacts,
@@ -23,6 +24,7 @@ const modules = [
   advanced,
   integration,
   projects,
+  instance,
 ];
 
 export const allToolDefinitions: ToolDefinition[] = modules.flatMap(m => m.toolDefinitions);
