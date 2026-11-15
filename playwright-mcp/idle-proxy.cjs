@@ -10,6 +10,14 @@ const IDLE_SECONDS = (() => {
   return Number.isFinite(v) && v >= 10 ? v : 600; // cannot be disabled, min 10s (tests)
 })();
 const LISTEN_PORTS = (process.env.LISTEN_PORTS || "8932,8761").split(",").map((s) => Number(s.trim())).filter(Boolean);
+// Inactivity deadline for client-facing POST requests (ms). Only POST is
+// bounded: it is a request/response exchange and must not hang forever.
+// A GET/DELETE is a client-held SSE channel whose only traffic may be an event
+// sent much later, so this deadline is deliberately NOT applied to it.
+const REQUEST_TIMEOUT_MS = (() => {
+  const v = parseInt(process.env.REQUEST_TIMEOUT_MS || "120000", 10);
+  return Number.isFinite(v) && v > 0 ? v : 120000;
+})();
 // Entry point of the real MCP server. Overridable only so the lifecycle
 // regression suite can drive a stub backend; the shipped default is unchanged.
 const BACKEND_ENTRY = process.env.BACKEND_ENTRY || "/app/cli.js";
@@ -144,7 +152,7 @@ async function handleMcp(clientReq, clientRes, chunks) {
       inFlight++;
       let released = false;
       const release = () => { if (released) return; released = true; inFlight--; };
-      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: "POST", path: "/mcp", headers, timeout: 120000 },
+      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: "POST", path: "/mcp", headers, timeout: REQUEST_TIMEOUT_MS },
         (bRes) => {
           const h = { ...bRes.headers };
           delete h["connection"]; delete h["transfer-encoding"];
@@ -177,7 +185,7 @@ async function handleMcp(clientReq, clientRes, chunks) {
     try {
       if (!backend) { clientRes.writeHead(502).end('{"error":"backend unavailable"}'); return; }
       const bRes = await backendRequest(backend, { method: "POST", path: "/mcp",
-        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-session-id": sharedSid } }, bodyRaw, 120000);
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-session-id": sharedSid } }, bodyRaw, REQUEST_TIMEOUT_MS);
       relay(clientRes, bRes, true);
     } catch (e) {
       // Same isolation rule as above: one failed shared-session request must
@@ -218,7 +226,12 @@ function handler(clientReq, clientRes) {
       let released = false;
       const release = () => { if (released) return; released = true; openStreams--; };
       const proxy = http.request({ host: "127.0.0.1", port: be.port, method: clientReq.method, path: "/mcp",
-        headers: { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "close" }, timeout: 120000 },
+        // No `timeout` here on purpose. A GET stream is client-held and may stay
+        // silent for as long as the server has no event to send; imposing the
+        // POST deadline on it severed live event channels and dropped
+        // `openStreams` to 0, which then let the idle watcher kill a backend
+        // whose browser context was still in use.
+        headers: { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "close" } },
         (bRes) => {
           const h = { ...bRes.headers }; delete h["connection"]; delete h["transfer-encoding"];
           clientRes.writeHead(bRes.statusCode, h);
@@ -227,7 +240,6 @@ function handler(clientReq, clientRes) {
           bRes.on("close", release);
           bRes.pipe(clientRes);
         });
-      proxy.on("timeout", () => { proxy.destroy(); release(); if (!clientRes.headersSent) clientRes.writeHead(504).end(); else clientRes.end(); });
       proxy.on("error", () => { release(); if (!clientRes.headersSent) clientRes.writeHead(502).end(); else clientRes.end(); });
       clientRes.on("close", release);
       proxy.end();

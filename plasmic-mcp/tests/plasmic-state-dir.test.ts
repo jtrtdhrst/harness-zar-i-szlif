@@ -2,7 +2,7 @@
 // narzędzie musi zwrócić konkretną diagnozę zamiast surowego EACCES.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chmod, mkdtemp, readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -39,6 +39,21 @@ test("writable state dir passes the probe", async () => {
   const probe = await probeStateDir(dir);
   assert.equal(probe.ok, true);
   assert.equal(probe.detail, undefined);
+  // The probe must prove the write without leaving anything on the volume.
+  assert.deepEqual(await readdir(dir), [], "the write probe must clean up after itself");
+});
+
+test("probe is a real write, not access(W_OK): write-without-search dir fails", { skip: isRoot ? "root bypasses permission checks" : false }, async () => {
+  // Mode 0o222 sets the write bit but clears the search bit: `access(dir, W_OK)`
+  // succeeds, so the old mkdir+access probe reported a healthy state dir on a
+  // path where creating a file fails with EACCES. Only an actual create/write
+  // proves what the state-writing tools will experience.
+  const dir = await mkdtemp(join(tmpdir(), "plasmic-wx-"));
+  await chmod(dir, 0o222);
+  const probe = await probeStateDir(dir);
+  assert.equal(probe.ok, false, "probe accepted a directory that cannot accept a new file");
+  assert.match(probe.detail ?? "", /EACCES/);
+  assert.ok(probe.detail?.includes(dir), "diagnostic must name the exact path");
 });
 
 test("unwritable state dir is reported with path, uid and the fix", { skip: isRoot ? "root bypasses permission checks" : false }, async () => {

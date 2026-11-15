@@ -25,6 +25,12 @@ using it. A client session holds real browser state, so:
 
 - the idle watcher stops the backend only when `inFlight == 0` **and**
   `openStreams == 0` (no request being proxied, no client-held SSE channel);
+- the proxy imposes **no timeout of its own on a `GET`/`DELETE` stream**. A
+  client-held SSE channel may legitimately carry no bytes for minutes (the
+  server simply has no event to send), so only `POST` is bounded, by
+  `REQUEST_TIMEOUT_MS` (default `120000`, env-overridable for tests). A
+  stream that was cut by the proxy used to drop `openStreams` to 0, which then
+  let the idle watcher stop a backend whose browser context was still in use;
 - a failed proxy request is returned to that one client and never tears the
   backend down — a single dropped socket must not reset every other client's
   browser context to `about:blank`;

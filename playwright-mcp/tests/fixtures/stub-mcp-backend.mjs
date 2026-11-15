@@ -114,12 +114,18 @@ async function handlePost(req, res) {
 function handleGet(req, res) {
   const sid = req.headers["mcp-session-id"];
   if (!sid || !sessions.has(String(sid))) return rpcError(res, 404, null, "Session not found");
+  // STUB_SILENT models the case the proxy must survive: headers, one comment,
+  // then no traffic at all for the rest of the stream's life.
+  const silent = process.env.STUB_SILENT === "1";
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-  res.write(`: stub stream ${String(sid).slice(0, 8)}\n\n`);
-  const keepAlive = setInterval(() => res.write(": keepalive\n\n"), 2000);
-  req.on("close", () => {
-    clearInterval(keepAlive);
-    res.end();
+  res.write(silent ? ":\n\n" : `: stub stream ${String(sid).slice(0, 8)}\n\n`);
+  // Teardown is keyed on the RESPONSE closing, not the request: IncomingMessage
+  // 'close' fires when the request body is done, which is not the end of a
+  // client-held stream. Keying on it here would end the stream immediately and
+  // make the suite's "held stream" assertion vacuous.
+  const keepAlive = silent ? null : setInterval(() => res.write(": keepalive\n\n"), 2000);
+  res.on("close", () => {
+    if (keepAlive) clearInterval(keepAlive);
   });
 }
 

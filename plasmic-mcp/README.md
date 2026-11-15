@@ -139,11 +139,50 @@ volume inherits that owner.
 
 A volume created by an earlier root-running image stays `root:root`, and the
 first state write (`plasmic_get_changes` seen marker, audit log, project lock)
-then fails with `EACCES`. Initialise such a volume once, as the host owner:
+then fails with `EACCES`.
+
+The `chown` must cover **every descendant**, not only the mount root. A legacy
+volume already holds `root`-owned children — `/state/seen/<project>__main.json`
+(seen markers), `/state/locks` (project locks) and `audit.jsonl` — and the MCP
+process needs write access to those files and directories, not merely to
+`/state`. `chown 10001:10001 /state` alone leaves them root-owned, so the same
+`EACCES` comes back on the first `get_changes` even though the documented
+"fix" was applied.
+
+### Migrating a populated volume (host owner, once)
+
+Stop the service first: chowning a directory tree under a live writer races
+with it and can leave half-owned state.
 
 ```bash
-docker run --rm -v <plasmic_mcp_state volume>:/state alpine chown 10001:10001 /state
+SERVICE=<coolify service id or compose service name>
+STATE_VOLUME=plasmic_mcp_state          # verify the real name: docker volume ls
+
+# 1. stop writers — take the MCP service down
+docker stop "$SERVICE"
+
+# 2. back up the volume before touching ownership (audit log and locks included)
+docker run --rm -v "$STATE_VOLUME":/state -v "$PWD":/backup alpine \
+  tar czf /backup/plasmic_mcp_state-$(date +%Y%m%dT%H%M%S).tgz -C /state .
+
+# 3. fix ownership of the whole tree, not the mount root
+docker run --rm -v "$STATE_VOLUME":/state alpine chown -R 10001:10001 /state
+
+# 4. verify descendants — every entry must report 10001:10001
+docker run --rm -v "$STATE_VOLUME":/state alpine ls -lnR /state
+
+# 5. start the service again and check /ready (stateDir check must pass)
 ```
+
+### New or empty volume
+
+Nothing to migrate: the image creates `/state` owned by `mcp` before dropping
+privileges, so a fresh volume inherits `10001:10001`. Do not run the `chown`
+steps above on a fresh volume; verify with `/ready` instead.
+
+If the platform creates the volume itself (root-owned), the same recursive
+`chown` applies — with the service stopped and a backup taken — before the
+first start that writes state.
 
 The server does not disable the seen marker or skip auditing on a read-only
 state dir. It logs `STATE_DIR not writable` at start, reports it as a failing
