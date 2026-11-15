@@ -54,3 +54,21 @@ Wynik canary 2026-11-15: agent wywołał `list_repos` + `search_codebase`/`get_c
 - Pełna proza RepoWise wymaga `init --prose` (koszt); obecnie model pisze tylko strony koncepcyjne, reszta jest szablonowa.
 - PR `#106` przenosi dwa ADR z live mirror do Git; do merge sync może paść na `source-dirty-overlap`, jeśli commit dotknie `.repowise/decisions.yaml`.
 - RepoWise nie indeksuje treści `docs/**`; agenci czytają dokumentację z checkoutu/GitHub.
+
+## 6. Izolacja repo w Multica (2026-11-15)
+
+Mechanizm platformy: projekt ma `project_resource` typu `github_repo` (Product → `zar-i-szlif`, Harness → `harness-zar-i-szlif`), a zadanie dostaje workdir tylko z repo swojego projektu.
+
+RepoWise jest scopowany per repo, nie per workspace:
+
+| Serwer | Endpoint | Binding agentów |
+|---|---|---|
+| `repowise-product` | `http://127.0.0.1:17339/mcp` (`--no-workspace`) | Engineer, UI QA, Designer, Mascot Designer, CPO, CMO, Lifecycle Ops, Email Creative, CTO, COO |
+| `repowise-harness` | `http://127.0.0.1:17340/mcp` (`--no-workspace`) | Harness Engineer, MCP Engineer, CHO |
+| brak | — | CEO (rola cross-project) |
+
+Wspólny wpis `repowise` (oba repo) usunięty z biblioteki workspace; `agent.mcp_config` pozostaje pusty — bindingi pochodzą wyłącznie z biblioteki.
+
+E2E (ZARI-210/ZARI-211): product agent `list_repos` → tylko `/workspace/product`, `search_codebase` na `paperclip-mcp/src/control-plane.ts` → 0 wyników; harness agent → tylko `/workspace/harness`, `app/plugin/index.ts` → brak trafień. Instrukcje agentów mówią wprost, do którego repo są scopowane.
+
+**Ograniczenie:** wszyscy agenci działają jako ten sam uid `multica-zar` (`runtime_mode=local`), więc widzą cudze workdiry i bare mirror `.repos`. Stare workdiry i `/var/lib/multica-preview/src-*` przeniesiono do `/srv/multica-zar/quarantine-20261115` (root 0700), ale `.repos` musi pozostać czytelny dla daemona. Twarda izolacja systemu plików wymaga osobnych daemonów per OS user (platforma nie ma sandboxa per task); nie wdrożono.
