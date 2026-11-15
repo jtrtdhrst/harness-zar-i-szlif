@@ -19,6 +19,29 @@ decisions:
   accepted_by: repowise_migration
   evidence:
   - 1964a9dcf5082e989f52832d1d61c0f237bcad46
+- id: c112522cb7057f53e485cb9c29009174
+  title: Agents use RepoWise for code facts and Hindsight for execution experience
+  decision: Use the Multica workspace MCP library as the single definition for repowise and hindsight-<role>;
+    keep agent.mcp_config only for role-specific extras. RepoWise is the first tool for code, structure
+    and impact questions behind a freshness gate; Hindsight is the only store for verified execution experience,
+    with one recall at task start and one retain after a verified outcome. Do not store code or runtime
+    facts in Hindsight, and do not treat RepoWise as proof of runtime state. Policy lives in one workspace
+    skill plus a short instruction line; adoption is measured in Opik.
+  reason: Multica source (ResolveAgentMcpConfig, mergeRuntimeAndAgentMcpConfig) gives deterministic precedence
+    and reads config on every claim, so consolidation needs no restart and is reversible. Duplicate definitions
+    already shadow the library, causing token and URL drift. The tools are unused because no policy references
+    them, and stale code plus synthetic memory make adoption unsafe until both are fixed.
+  scope:
+  - docs/architecture/BACKEND-ARCHITECTURE-2026-11-09.md
+  - docs/knowledge/AGENT-LOOKUP.md
+  - multica-mcp
+  currency: active
+  source: agent
+  accepted_at: '2026-11-13T21:13:52.726802'
+  accepted_by: opencode
+  evidence:
+  - ad0cf80b288e132294223c7bbbad209896ea4256
+  - bf38352af0d6b8532eeef6056d4dfa32aa943563
 - id: ccaa7a4aa301d99c59df8750fe493229
   title: Harness owns standalone MCP services and agent infrastructure
   decision: Harness owns Hermes, Multica integration, generic MCPs and their deployment controllers. Product-specific
@@ -32,3 +55,20 @@ decisions:
   accepted_by: repowise_migration
   evidence:
   - 1964a9dcf5082e989f52832d1d61c0f237bcad46
+- id: d3a0622352237466926c85bb65632a56
+  title: RepoWise is the canonical architecture knowledge index for Żar i Szlif
+  decision: Maintain durable architecture and operational integration documentation in the harness Git
+    repository under docs/architecture, and make it discoverable through the existing RepoWise workspace
+    index. Multica tasks are execution evidence only. RepoWise tracks source-code structure and decisions;
+    Hindsight stores scoped agent episode memory, not codebase documentation.
+  reason: Keeps one version-controlled truth attached to the two indexed repositories; prevents conflicting
+    agent task descriptions, memory banks and transient VPS notes from becoming architecture sources of
+    truth.
+  scope:
+  - docs/architecture/MULTICA-HERMES-REPOWISE-HINDSIGHT-GITHUB.md
+  currency: active
+  source: agent
+  accepted_at: '2026-11-10T13:03:56.372666'
+  accepted_by: chatgpt
+  evidence:
+  - b85bda674a8cfb3b6498a5f5b8e5bfcd2abba83a
