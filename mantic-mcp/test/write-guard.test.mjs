@@ -255,7 +255,7 @@ test('a scoped fixture contact create is allowed', async () => {
 
 test('the identity probe is cached so a write batch does not re-probe', async () => {
   const client = identityClient({
-    'v1:GET:/contacts/2': { status: 200, data: { contact: { id: 2, tags: [TAG] } } },
+    'v1:GET:/contacts/2': { status: 200, data: { contact: { id: 2, email: 'fixture@example.invalid', tags: [TAG] } } },
     'v1:PATCH:/contacts/2/edit': { status: 200, data: { contact: { id: 2 } } },
   });
   const guard = new WriteGuard(makeEnv());

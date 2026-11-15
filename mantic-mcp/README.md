@@ -99,9 +99,19 @@ A `test-write` call is authorized only when **all** of these hold:
    `MAUTIC_WRITE_GUARD_IDENTITY_TTL_MS`, default 60 s);
 3. `MAUTIC_TARGET_TENANT` equals the grant's `tenant`;
 4. the grant is `scope: "test-only"`, lists the tool, and has not expired;
-5. the resource is in scope: every tag starts with one of `allowedTagPrefixes`,
-   the contact e-mail matches one of `allowedContactEmails` (glob), and a
-   `delete_contact` target is read back first so its real e-mail is checked.
+5. the resource is in scope:
+   - **tags** are read through the same normalisation the payload builder uses
+     (`flattenContactPayload` / `normalizeTagList`), so every accepted input form
+     — array of strings, `{tag}` objects, comma-separated string, object map — is
+     scope-checked before it can reach the provider; every tag must start with
+     one of `allowedTagPrefixes`;
+   - **the target contact** is resolved at the provider (`GET /contacts/{id}`) for
+     `update_contact`, `delete_contact` and `add_contact_tags`, and its **real**
+     e-mail must match one of `allowedContactEmails`. A requested e-mail is never
+     used as evidence of target identity, an unreadable target is a denial, and a
+     target with no verifiable e-mail is a denial;
+   - an **address being written** must also be in scope, so a fixture contact
+     cannot be moved onto a real customer address.
 
 A refusal throws a typed `McpError` whose `data` is
 `{error: "WRITE_GUARD_DENIED", reason, tool, targetHost, ...}` — sanitized, with

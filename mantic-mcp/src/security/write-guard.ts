@@ -22,6 +22,7 @@
  * model claims, and no grant content is ever echoed in a response or log.
  */
 import { ErrorCode, McpError } from '../errors.js';
+import { flattenContactPayload, normalizeTagList } from '../lib/contact-payload.js';
 
 export type ToolEffect = 'read' | 'test-write' | 'denied';
 
@@ -217,19 +218,6 @@ export function matchesGlob(pattern: string, value: string): boolean {
   return new RegExp(`^${escaped}$`, 'i').test(value);
 }
 
-function tagsOf(args: any): string[] {
-  const candidates: unknown[] = [];
-  if (Array.isArray(args?.tags)) candidates.push(...args.tags);
-  else if (typeof args?.tags === 'string') candidates.push(...args.tags.split(','));
-  const custom = args?.customFields?.tags;
-  if (Array.isArray(custom)) candidates.push(...custom);
-  else if (typeof custom === 'string') candidates.push(...custom.split(','));
-  return candidates
-    .filter((value): value is string => typeof value === 'string')
-    .map((value) => value.trim())
-    .filter((value) => value !== '');
-}
-
 function parseGrant(raw: string | undefined): { grant: WriteGrant | null; error: DenialReason | null } {
   if (!raw || raw.trim() === '') return { grant: null, error: 'NO_GRANT' };
   let parsed: any;
@@ -381,67 +369,98 @@ export class WriteGuard {
     return { ok: true, host };
   }
 
-  /** Least-privilege resource scope for the grantable fixture tools. */
+  /**
+   * Least-privilege resource scope for the grantable fixture tools.
+   *
+   * Two rules keep this honest (review round 2):
+   *  1. tags are read through the *same* normalisation the payload builder uses
+   *     (`flattenContactPayload` / `normalizeTagList`), so no accepted input
+   *     representation — `{tag}` objects included — can reach the provider
+   *     without being scope-checked;
+   *  2. every contact-scoped write resolves the **target** contact at the
+   *     provider and applies the recipient rule to its real e-mail, exactly like
+   *     `delete_contact`. A requested e-mail is never evidence of target
+   *     identity, and an unreadable target or a target without a verifiable
+   *     e-mail is a denial, not a pass.
+   */
   private async checkScope(
     toolName: string,
     client: any,
     args: any,
     grant: WriteGrant,
   ): Promise<Record<string, unknown> | null> {
-    const tagViolation = (tags: string[], field: string) => {
+    const tagViolation = (tags: string[]): Record<string, unknown> | null => {
       const rejected = tags.filter(
         (tag) => !grant.allowedTagPrefixes.some((prefix) => prefix !== '' && tag.startsWith(prefix)),
       );
-      return rejected.length > 0 ? { field, reason: 'tag-not-in-grant-scope', rejectedCount: rejected.length } : null;
+      return rejected.length > 0
+        ? { field: 'tags', reason: 'tag-not-in-grant-scope', rejectedCount: rejected.length }
+        : null;
     };
-    const emailViolation = (email: unknown, field: string) => {
-      if (typeof email !== 'string' || email === '') {
+
+    const recipientViolation = (email: unknown, field: string): Record<string, unknown> | null => {
+      if (typeof email !== 'string' || email.trim() === '') {
         return { field, reason: 'recipient-not-in-grant-scope', rejectedCount: 1 };
       }
       const allowed = grant.allowedContactEmails.some((pattern) => matchesGlob(pattern, email));
       return allowed ? null : { field, reason: 'recipient-not-in-grant-scope', rejectedCount: 1 };
     };
 
-    if (toolName === 'add_contact_tags') {
-      const tags = tagsOf(args);
+    /** Resolve the contact the write would act on and check its real address. */
+    const targetViolation = async (id: unknown): Promise<Record<string, unknown> | null> => {
+      if (id === undefined || id === null || id === '') {
+        return { field: 'id', reason: 'recipient-not-in-grant-scope', rejectedCount: 1 };
+      }
+      let contact: any;
+      try {
+        const response = await client.v1.get(`/contacts/${id}`);
+        contact = response?.data?.contact ?? {};
+      } catch {
+        return { field: 'targetContact', reason: 'target-not-verifiable', rejectedCount: 1 };
+      }
+      return recipientViolation(contact?.email, 'targetContactEmail');
+    };
+
+    const requireTags = (value: unknown): Record<string, unknown> | null => {
+      const tags = normalizeTagList(value);
       if (tags.length === 0) return { field: 'tags', reason: 'tag-not-in-grant-scope', rejectedCount: 1 };
-      return tagViolation(tags, 'tags');
-    }
+      return tagViolation(tags);
+    };
 
     if (toolName === 'create_tag') {
-      if (typeof args?.tag !== 'string' || args.tag.trim() === '') {
-        return { field: 'tag', reason: 'tag-not-in-grant-scope', rejectedCount: 1 };
-      }
-      return tagViolation([args.tag.trim()], 'tag');
+      const tags = normalizeTagList([args?.tag]);
+      if (tags.length === 0) return { field: 'tag', reason: 'tag-not-in-grant-scope', rejectedCount: 1 };
+      return tagViolation(tags);
+    }
+
+    if (toolName === 'add_contact_tags') {
+      const tagCheck = requireTags(args?.tags);
+      if (tagCheck) return tagCheck;
+      // The tag write lands on a specific contact: scope is the recipient, not
+      // just the tag name.
+      return targetViolation(args?.contactId);
     }
 
     if (toolName === 'create_contact' || toolName === 'update_contact') {
-      const tags = tagsOf(args);
-      const tagCheck = tags.length > 0 ? tagViolation(tags, 'tags') : null;
-      if (tagCheck) return tagCheck;
-      // update_contact may legitimately omit the email; create_contact may not.
-      if (args?.email !== undefined || toolName === 'create_contact') {
-        return emailViolation(args?.email, 'email');
+      // Exactly the body the handler will send — one normalisation path.
+      const payload = flattenContactPayload(args, { omit: toolName === 'update_contact' ? ['id'] : [] });
+      if (Object.prototype.hasOwnProperty.call(payload, 'tags')) {
+        const tagCheck = tagViolation(normalizeTagList(payload.tags));
+        if (tagCheck) return tagCheck;
       }
-      if (args?.customFields && typeof args.customFields === 'object' && 'email' in args.customFields) {
-        return emailViolation((args.customFields as Record<string, unknown>).email, 'email');
+      if (toolName === 'update_contact') {
+        const target = await targetViolation(args?.id);
+        if (target) return target;
       }
+      // The address being written must be in scope too, so a fixture contact
+      // cannot be moved onto a real customer address.
+      if (payload.email !== undefined) return recipientViolation(payload.email, 'email');
+      if (toolName === 'create_contact') return recipientViolation(undefined, 'email');
       return null;
     }
 
     if (toolName === 'delete_contact') {
-      const id = args?.id;
-      if (id === undefined || id === null) {
-        return { field: 'id', reason: 'recipient-not-in-grant-scope', rejectedCount: 1 };
-      }
-      let email: unknown;
-      try {
-        const response = await client.v1.get(`/contacts/${id}`);
-        email = response?.data?.contact?.email;
-      } catch {
-        return { field: 'id', reason: 'recipient-not-in-grant-scope', rejectedCount: 1 };
-      }
-      return emailViolation(email, 'email');
+      return targetViolation(args?.id);
     }
 
     return null;
