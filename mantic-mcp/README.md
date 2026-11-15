@@ -77,6 +77,62 @@ The six `*_project` tools are the only API v2 (API Platform) consumers. A provid
 credential" error naming the HTTP status — never as success, and never as an
 unrelated failure. A v1 OAuth client is not automatically valid on `/api/v2`.
 
+## Write guard (SECURITY GATE v2)
+
+Provider mutations are **denied by default** at the transport boundary
+(`dispatchTool`), not in an agent prompt. Every tool is classified explicitly:
+`read` passes, five `test-write` tools are the only grantable mutations, and
+every other mutation is refused unconditionally. An unclassified tool name is
+denied as a mutation, so a tool added later cannot become writable by accident.
+
+| Class | Tools | Behaviour |
+| --- | --- | --- |
+| `read` | all `list_*`, `get_*`, `search_contacts`, `get_form_submissions`, `get_segment_contacts`, `get_contact_activity`, `list_contact_fields`, `export_campaign`, `get_instance_identity` (34) | unchanged, no grant needed |
+| `test-write` | `create_contact`, `update_contact`, `delete_contact`, `add_contact_tags`, `create_tag` (5) | allowed only under a matching TEST-only grant |
+| `denied` | send, campaign execute/create/clone/import, enrollment, segment/email/content/company/note/points/stage/webhook/file/report and API v2 project mutations (30) | never granted in this build, even if listed |
+
+A `test-write` call is authorized only when **all** of these hold:
+
+1. `MAUTIC_TARGET_HOST` equals the host of `MAUTIC_BASE_URL`;
+2. `MAUTIC_PRINCIPAL` equals the username or e-mail that the provider itself
+   returns from `GET /users/self` (a probe, not a self-reported value; cached for
+   `MAUTIC_WRITE_GUARD_IDENTITY_TTL_MS`, default 60 s);
+3. `MAUTIC_TARGET_TENANT` equals the grant's `tenant`;
+4. the grant is `scope: "test-only"`, lists the tool, and has not expired;
+5. the resource is in scope: every tag starts with one of `allowedTagPrefixes`,
+   the contact e-mail matches one of `allowedContactEmails` (glob), and a
+   `delete_contact` target is read back first so its real e-mail is checked.
+
+A refusal throws a typed `McpError` whose `data` is
+`{error: "WRITE_GUARD_DENIED", reason, tool, targetHost, ...}` — sanitized, with
+no grant content, token, header or credential value. Reasons:
+`NO_GRANT`, `GRANT_INVALID`, `GRANT_EXPIRED`, `TENANT_MISMATCH`, `HOST_MISMATCH`,
+`PRINCIPAL_MISMATCH`, `IDENTITY_UNAVAILABLE`, `TOOL_NOT_GRANTED`,
+`SCOPE_VIOLATION`, `TOOL_DENIED`, `UNKNOWN_TOOL`.
+
+Env contract: see `.env.example`. Empty `MAUTIC_WRITE_GRANT` = read-only, which
+is the intended default. The grant is operator policy in the deployment
+environment; it is never committed, never read from tool arguments or issue
+comments, and carries no provider credential.
+
+**What this does not enforce, by design and by scope:**
+
+- **Per-agent principals.** The stdio/HTTP MCP transport has no trusted actor
+  identity: one server process serves whichever agent connects. Scoping is
+  therefore per *deployment* (one grant per deployed instance), which is why a
+  grant must never be placed on a shared instance. A per-actor binding needs an
+  operator-side principal or a per-agent deployment.
+- **Stop control.** Cancelling a run (`issue cancel-task`) or steering an agent
+  is a runtime capability outside this package; a mid-run comment is not a stop
+  guarantee. The guard limits what a run can do, not when it stops.
+- **The Cloudflare Worker** (`worker/`) reuses `src/tools/**` but passes no guard
+  and has no `getBaseUrl`, so its writes are denied too (fail-closed). Wiring a
+  grant there needs `worker/**` and is out of this issue's scope.
+
+**Rollback:** unset `MAUTIC_WRITE_GRANT` (or redeploy the previous image). Both
+return the service to its prior behaviour immediately; no data migration, no
+state, no schema.
+
 ## Tests
 
 ```bash
@@ -86,7 +142,11 @@ npm test        # tsc build + node --test
 
 `test/` exercises the real handlers against a recording fake client, including the
 negative controls (stale tag read-back, provider 401 on v2, secret leakage in the
-identity payload). No additional test dependency is used.
+identity payload) and the write guard's fail-closed matrix: no grant, invalid or
+expired grant, tenant/host/principal mismatch, unverifiable identity, tool not
+granted, out-of-scope tag/recipient, unclassified tool, and send/activation tools
+listed in a grant — each asserted to reach the provider **zero** times. No
+additional test dependency is used.
 
 ## Provenance
 
