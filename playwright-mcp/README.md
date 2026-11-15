@@ -8,6 +8,16 @@ Playwright MCP server with the idle HTTP proxy used by Paperclip.
 - Data: stateless; browser profiles are ephemeral.
 - The proxy starts the MCP backend on demand and stops it after
   `IDLE_SECONDS` without traffic.
+- The backend runs with `--isolated` (profile kept in memory, never on disk) and
+  is spawned as its own process group, so the idle stop signals Chromium as well
+  as the node child. Without both, a respawned backend collided with a lingering
+  browser on the persistent profile, and every tool then failed with
+  `Browser is already in use ... use --isolated` (browser_navigate answered a
+  bare HTTP 400) until the container was restarted.
+
+```bash
+npm test   # node --test (idle-proxy.test.cjs)
+```
 
 ```bash
 docker build -t local/playwright-mcp:0.0.83 .

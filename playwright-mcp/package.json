@@ -5,5 +5,8 @@
   "description": "Playwright MCP with idle HTTP proxy",
   "dependencies": {
     "@playwright/mcp": "0.0.83"
+  },
+  "scripts": {
+    "test": "node --test"
   }
 }

@@ -11,6 +11,13 @@ const IDLE_SECONDS = (() => {
 })();
 const LISTEN_PORTS = (process.env.LISTEN_PORTS || "8932,8761").split(",").map((s) => Number(s.trim())).filter(Boolean);
 const BACKEND_ARGS = ["--headless", "--browser", "chromium", "--no-sandbox",
+  // --isolated keeps the browser profile in memory instead of the default
+  // persistent profile under $HOME. A persistent profile can only be used by
+  // one browser instance at a time, so a respawned backend collided with a
+  // Chromium that was still shutting down and failed every tool with
+  // "Browser is already in use for /home/node/.cache/ms-playwright-mcp/...".
+  // The proxy is stateless by design (see README), so isolation is correct here.
+  "--isolated",
   "--port", "0", "--host", "127.0.0.1", "--allowed-hosts", "*"];
 
 const log = (...a) => console.error("[proxy]", ...a);
@@ -29,10 +36,38 @@ function markDead(code, sig) {
   sharedSid = null;
 }
 
+function backendSpawnOptions(overrides = {}) {
+  // detached: the backend becomes a process-group leader so its Chromium
+  // grandchildren are reachable with a single group signal. Without it a
+  // SIGTERM to the node process leaves the browser alive, holding its profile.
+  return { stdio: ["ignore", "pipe", "pipe"], detached: true, ...overrides };
+}
+
+/**
+ * Signal the backend and everything it spawned.
+ * Negative pid targets the whole process group; the fallback keeps a plain
+ * child.kill for environments where the group signal is not available.
+ */
+function killTree(child, signal, kill = process.kill) {
+  const pid = child && child.pid;
+  if (!pid || pid <= 0) return false;
+  try {
+    kill(-pid, signal);
+    return true;
+  } catch {
+    try {
+      child.kill(signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 function spawnBackend() {
   // Random port per spawn (--port 0): no EADDRINUSE races with a previous
   // backend that is still shutting down. Port discovered from stderr.
-  const child = spawn("node", ["/app/cli.js", ...BACKEND_ARGS], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("node", ["/app/cli.js", ...BACKEND_ARGS], backendSpawnOptions());
   let port = 0;
   child.stderr.on("data", (d) => {
     process.stderr.write(`[pw] ${d}`);
@@ -104,10 +139,11 @@ function killBackend() {
   backend = null;
   sharedSid = null;
   if (be) {
-    // SIGTERM now, SIGKILL after grace; the handle is retained so a lingerer
-    // can still be reaped (no orphaned browsers holding resources).
-    try { be.child.kill("SIGTERM"); } catch {}
-    setTimeout(() => { try { be.child.kill("SIGKILL"); } catch {} }, 10000).unref();
+    // SIGTERM the whole backend process group now, SIGKILL after grace; the
+    // handle is retained so a lingerer can still be reaped (no orphaned
+    // browsers holding the profile lock or resources).
+    killTree(be.child, "SIGTERM");
+    setTimeout(() => { killTree(be.child, "SIGKILL"); }, 10000).unref();
   }
 }
 
@@ -194,19 +230,24 @@ function handler(clientReq, clientRes) {
   clientRes.writeHead(405).end('{"error":"method not allowed"}');
 }
 
-for (const p of LISTEN_PORTS) {
-  http.createServer(handler).listen(p, "0.0.0.0", () => log(`listening on :${p}/mcp (idle ${IDLE_SECONDS}s)`));
-}
-
-// idle watcher: kill ONLY the backend (proxy stays, respawns on demand)
-setInterval(() => {
-  if (closing || !backend) return;
-  const idle = (Date.now() - lastActive) / 1000;
-  if (idle > IDLE_SECONDS) {
-    log(`idle ${Math.round(idle)}s > ${IDLE_SECONDS}s, stopping backend`);
-    killBackend();
+function startServers() {
+  for (const p of LISTEN_PORTS) {
+    http.createServer(handler).listen(p, "0.0.0.0", () => log(`listening on :${p}/mcp (idle ${IDLE_SECONDS}s)`));
   }
-}, 5000).unref();
+
+  // idle watcher: kill ONLY the backend (proxy stays, respawns on demand)
+  setInterval(() => {
+    if (closing || !backend) return;
+    const idle = (Date.now() - lastActive) / 1000;
+    if (idle > IDLE_SECONDS) {
+      log(`idle ${Math.round(idle)}s > ${IDLE_SECONDS}s, stopping backend`);
+      killBackend();
+    }
+  }, 5000).unref();
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
 
 function shutdown(sig) {
   if (closing) return;
@@ -215,5 +256,16 @@ function shutdown(sig) {
   killBackend();
   setTimeout(() => process.exit(0), 500).unref();
 }
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Only listen when executed as the entrypoint, so the module can be required
+// by tests without opening ports or spawning a browser.
+if (require.main === module) startServers();
+
+module.exports = {
+  BACKEND_ARGS,
+  IDLE_SECONDS,
+  LISTEN_PORTS,
+  backendSpawnOptions,
+  killTree,
+  startServers,
+};
