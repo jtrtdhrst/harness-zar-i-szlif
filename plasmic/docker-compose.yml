@@ -1,5 +1,9 @@
 # Self-hosted Plasmic (Studio + WAB + codegen) built from the vendored
-# upstream source in ./platform (plasmicapp/plasmic @ 85b8611).
+# upstream source in ./platform (plasmicapp/plasmic @ e2e0b74).
+#
+# PostgreSQL stays on 15 here on purpose: upstream moved its own compose to
+# postgres:18 with /var/lib/postgresql and a different user, which requires a
+# dump/restore of the existing plasmic_pgdata volume (see UPGRADE-20261115.md).
 #
 # Coolify: Docker Compose build pack, base directory /, compose docker-compose.yml.
 # All values below come from Coolify environment variables (see .env.example).

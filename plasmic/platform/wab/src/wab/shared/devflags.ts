@@ -172,7 +172,7 @@ export interface HostLessPackageInfo {
   /**
    * Groups multiple packages into a single Insert Panel entry post-install.
    * Pre-install, only members flagged with `isPrimaryItemOfBundle: true`
-   * render as tiles in the component store — flag one for a single tile
+   * render as tiles in the component store â€” flag one for a single tile
    * (Strapi/Wordpress/CMS pattern) or flag several to surface each member
    * independently (e.g. APIs surfaces both Fetch and GraphQL).
    */
@@ -418,10 +418,8 @@ const DEFAULT_DEVFLAGS = {
       projectId: [],
     },
   ]),
-  // Turns on PlasmicImg for all
-  usePlasmicImg: false,
   usePlasmicTranslation: false,
-  imgOptimizerHost: "https://img.plasmic.app",
+  imgOptimizerHost: process.env.IMAGE_OPTIMIZER_HOST || "",
   revisionNum: undefined,
   secretApiTokenTeams: ["teamId"],
   showFullPreviewWarning: true,
@@ -437,16 +435,34 @@ const DEFAULT_DEVFLAGS = {
   showCopilot: true,
   enableChatCopilot: false,
   enableQueryMigrationCopilot: false,
+  chatCopilotFreeDailyTokenLimit: 0,
   chatCopilotModelProviderOpts: {
     provider: "VertexAnthropic",
     modelName: "claude-sonnet-5",
     maxTokens: 32000,
+  } as ModelProviderOpts,
+  codeCopilotModelProviderOpts: {
+    provider: "OpenAI",
+    modelName: "gpt-6-luna",
+    maxTokens: 4000,
+    options: { openai: { reasoningEffort: "low" } },
   } as ModelProviderOpts,
   phishingCheckModelProviderOpts: {
     provider: "Google",
     modelName: "gemini-2.5-flash-lite",
     maxTokens: 10000,
   } as ModelProviderOpts,
+  enableImageDescriptions: false,
+  imageDescriptionModelProviderOpts: {
+    provider: "Google",
+    modelName: "gemini-3.1-flash-lite",
+    location: "global",
+    maxTokens: 400,
+    temperature: 0,
+    options: { google: { mediaResolution: "MEDIA_RESOLUTION_LOW" } },
+  } as ModelProviderOpts,
+  emailPhishingCheckModelProviderOpts: undefined as
+    ModelProviderOpts | undefined,
 
   hostLessWorkspaceId: undefined as WorkspaceId | undefined,
   manuallyUpdatedHostLessProjectIds: [] as string[],
@@ -459,6 +475,9 @@ const DEFAULT_DEVFLAGS = {
 
   codePreview: false,
   demo: false,
+  // dockview studio layout: tabbed bottom panel, dockable right pane, data picker docked in the
+  // bottom panel
+  dockview: false,
   hideBlankStarter: false,
   skipInvariants: false,
   uncatchErrors: false,
@@ -555,6 +574,10 @@ const DEFAULT_DEVFLAGS = {
   cmsUniqueFields: false,
   // Allows using auth and backend integrations in a project.
   enableDataQueries: false,
+  // Limits CALLING legacy data queries to this rate per hour. 0 to block.
+  limitDataQueries: null as number | null,
+  // Legacy data source IDs exempt from limitDataQueries, to keep them working.
+  limitDataQueriesExemptDataSourceIds: [] as string[],
   // Disable the public copilot interaction
   disablePublicCopilot: false,
   // Preset animations importable project id
@@ -604,6 +627,7 @@ export function applyDevFlagOverridesToTarget(
 
 export function applyPlasmicUserDevFlagOverrides(target: DevFlagsType) {
   mergeSane(target, {
+    dockview: true,
     plexus: true,
     branching: true,
     logToConsole: true,
@@ -617,7 +641,6 @@ export function applyPlasmicUserDevFlagOverrides(target: DevFlagsType) {
 }
 
 const perProjectFlags: (keyof DevFlagsType)[] = [
-  "usePlasmicImg",
   "usePlasmicTranslation",
   "useLoadingState",
   "useWhitespaceNormal",

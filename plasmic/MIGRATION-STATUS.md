@@ -1,8 +1,21 @@
 # Plasmic self-host source — migration status
 
-Source: product `main` @ `e3dd9cbb419a39aa6934546a1aa9a310058d6573`. Upstream: `plasmicapp/plasmic` @ `85b861115687fde8e7970a9f270660aecb62b38e`.
+Upstream: `plasmicapp/plasmic` @ `e2e0b744f22638782736fe3a24ce9772e7cdb1b0` (2026-11-15).
+Previous pin: `85b861115687fde8e7970a9f270660aecb62b38e` (2026-10-09), 212 commits back.
 
-A complete recursive Git SHA comparison found exactly **6 added, 2 modified, 16 omitted** files relative to this pinned upstream (7,750 source blobs vs 7,760 upstream blobs). The 8 local additions/overrides are stored in this directory, including Compose, WAB devflags and Studio configuration. The complete public upstream is a Git submodule at `plasmic/upstream/`.
+Upstream delta between the two pins: **207 added, 160 removed, 1,160 modified** blobs
+(8,919 → 8,970 blobs, recursive GitHub Trees comparison, untruncated). This is a
+source-level upgrade, not a patch bump: it must clear the canary build in
+`plasmic/UPGRADE-20261115.md` before it can serve production.
+
+Local overlay over the pinned upstream, copied by `plasmic/bootstrap-source.sh`:
+
+- **added**: `.dockerignore`, `.env.example`, `SELFHOST.md`, `studio.Dockerfile`, `studio/nginx.conf`
+- **modified**: `docker-compose.yml` (own service definitions, PostgreSQL 15 retained),
+  `platform/wab/src/wab/shared/devflags.ts` (only `githubClientId` / `githubAppName`)
+- **omitted**: 16 upstream paths deleted by the bootstrap script
+
+The complete public upstream is a Git submodule at `plasmic/upstream/`.
 
 From a clean clone of this repository, run:
 

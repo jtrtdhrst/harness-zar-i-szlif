@@ -3,7 +3,7 @@
 Self-hosted Plasmic (Studio + WAB + codegen) deployed from this repository.
 Everything the deployment needs is in this repo; `platform/` is a vendored copy of
 [`plasmicapp/plasmic`](https://github.com/plasmicapp/plasmic) at
-`85b861115687fde8e7970a9f270660aecb62b38e` with a single local change.
+`e2e0b744f22638782736fe3a24ce9772e7cdb1b0` with a single local change.
 
 ## What runs
 
@@ -19,8 +19,12 @@ The only source change against upstream is `githubClientId` / `githubAppName` in
 key is **not** in the image: `plasmic-wab` writes it from
 `PLASMIC_GITHUB_SECRETS_B64` at container start.
 
-`platform/shared/.keep` exists because the pinned upstream commit predates
-`platform/shared/`, while `platform/wab/Dockerfile` copies that directory.
+`platform/shared/` (`hosting`, `observability`) ships with the pinned upstream
+commit as a pnpm workspace member, so no placeholder is needed.
+
+PostgreSQL stays on 15 in this overlay. Upstream moved its compose file to
+`postgres:18` with a different data directory and user, which needs a dump/restore
+migration of `plasmic_pgdata`; see `plasmic/UPGRADE-20261115.md`.
 
 ## Local run
 
