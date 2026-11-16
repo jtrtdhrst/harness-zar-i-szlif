@@ -1,0 +1,159 @@
+"""Fail-closed tests for the root-invoked Harness local-CI attester (ZARI-240)."""
+import io
+import json
+import os
+import stat
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import harness_local_ci_attest as attest
+
+KEY = b"k" * 32
+OTHER_KEY = b"z" * 32
+SOURCE = "a" * 40
+BASE = "b" * 40
+DIGEST = "sha256:" + "c" * 64
+RESULTS = [{"command": "python -m unittest -q", "exit": 0}]
+PATHS = ["mantic-mcp/src/server.ts"]
+
+
+class AttesterTests(unittest.TestCase):
+    def build(self, **overrides):
+        kwargs = {"service": "mantic-mcp", "source_sha": SOURCE, "results": RESULTS,
+                  "changed_paths": PATHS, "image_digest": DIGEST, "key": KEY}
+        kwargs.update(overrides)
+        return attest.build_attestation(**kwargs)
+
+    def test_signature_roundtrip_verifies(self):
+        self.assertTrue(attest.verify_attestation(self.build(), KEY))
+
+    def test_tampered_payload_is_rejected(self):
+        data = self.build()
+        data["tests"] = [{"command": "python -m unittest -q", "exit": 0},
+                         {"command": "echo skipped", "exit": 0}]
+        self.assertFalse(attest.verify_attestation(data, KEY))
+
+    def test_wrong_key_is_rejected(self):
+        self.assertFalse(attest.verify_attestation(self.build(), OTHER_KEY))
+
+    def test_missing_or_malformed_signature_is_rejected(self):
+        data = self.build()
+        data.pop("signature")
+        self.assertFalse(attest.verify_attestation(data, KEY))
+        self.assertFalse(attest.verify_attestation("not-a-dict", KEY))
+        self.assertFalse(attest.verify_attestation(self.build(), b"short"))
+
+    def test_signature_field_is_the_only_unsigned_exclusion(self):
+        data = self.build()
+        self.assertIn("signature", data)
+        self.assertNotIn("signature", attest.signed_payload(data))
+
+    def test_rejects_failing_test_exit(self):
+        with self.assertRaisesRegex(attest.Denied, "attestation_tests_failed"):
+            self.build(results=[{"command": "python -m unittest -q", "exit": 1}])
+
+    def test_rejects_empty_test_evidence(self):
+        with self.assertRaisesRegex(attest.Denied, "attestation_tests_missing"):
+            self.build(results=[])
+
+    def test_rejects_duplicate_test_records(self):
+        with self.assertRaisesRegex(attest.Denied, "attestation_test_duplicate"):
+            self.build(results=RESULTS + RESULTS)
+
+    def test_rejects_changes_outside_the_service(self):
+        with self.assertRaisesRegex(attest.Denied, "changed_paths_outside_service"):
+            self.build(changed_paths=["paperclip-mcp/gitops/paperclip-mcp-auto-release.py"])
+
+    def test_rejects_traversal_and_absolute_paths(self):
+        for paths in (["mantic-mcp/../paperclip-mcp/x.py"], ["/etc/passwd"]):
+            with self.assertRaises(attest.Denied):
+                self.build(changed_paths=paths)
+
+    def test_rejects_invalid_sha_and_digest(self):
+        with self.assertRaisesRegex(attest.Denied, "invalid_source_sha"):
+            self.build(source_sha="deadbeef")
+        with self.assertRaisesRegex(attest.Denied, "invalid_image_digest"):
+            self.build(image_digest="sha256:abc")
+
+    def test_artifact_manifest_digest_ignores_timing(self):
+        first = self.build(created_at="2026-11-16T00:00:00+00:00")
+        second = self.build(created_at="2026-11-17T00:00:00+00:00")
+        self.assertEqual(first["artifact_manifest_digest"], second["artifact_manifest_digest"])
+        self.assertNotEqual(first["signature"], second["signature"])
+
+    def test_idempotent_reuse_requires_identical_run_identity(self):
+        data = self.build()
+        self.assertTrue(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST, ["python -m unittest -q"], KEY))
+        self.assertFalse(attest.reusable(data, "mantic-mcp", "d" * 40, DIGEST, ["python -m unittest -q"], KEY))
+        self.assertFalse(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST, ["pytest -q"], KEY))
+        self.assertFalse(attest.reusable(data, "playwright-mcp", SOURCE, DIGEST, ["python -m unittest -q"], KEY))
+        self.assertFalse(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST, ["python -m unittest -q"], OTHER_KEY))
+
+    def test_attestation_path_is_service_and_sha_scoped(self):
+        path = attest.attestation_path("/tmp/out", "mantic-mcp", SOURCE)
+        self.assertEqual(path, Path("/tmp/out") / ("mantic-mcp-" + SOURCE + ".json"))
+
+    def test_atomic_write_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "attest.json"
+            attest.write_atomic(target, self.build())
+            mode = stat.S_IMODE(target.stat().st_mode)
+            self.assertEqual(mode, 0o600)
+            self.assertEqual(json.loads(target.read_text())["service"], "mantic-mcp")
+
+    def test_run_tests_records_real_exit_codes(self):
+        results = attest.run_tests([["/bin/sh", "-c", "exit 0"], ["/bin/sh", "-c", "exit 3"]], ".")
+        self.assertEqual([r["exit"] for r in results], [0, 3])
+
+    def test_run_tests_fails_closed_on_missing_binary(self):
+        with self.assertRaisesRegex(attest.Denied, "test_command_unavailable"):
+            attest.run_tests([["definitely-not-a-real-binary-xyz"]], ".")
+
+    def test_changed_paths_uses_git_and_fails_closed(self):
+        completed = type("R", (), {"returncode": 0, "stdout": "mantic-mcp/a.ts\nmantic-mcp/b.ts\n"})()
+        with patch.object(attest.subprocess, "run", return_value=completed):
+            self.assertEqual(attest.changed_paths(".", BASE, SOURCE), ["mantic-mcp/a.ts", "mantic-mcp/b.ts"])
+        empty = type("R", (), {"returncode": 0, "stdout": ""})()
+        with patch.object(attest.subprocess, "run", return_value=empty):
+            with self.assertRaisesRegex(attest.Denied, "changed_paths_unbounded"):
+                attest.changed_paths(".", BASE, SOURCE)
+        failed = type("R", (), {"returncode": 128, "stdout": ""})()
+        with patch.object(attest.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(attest.Denied, "git_diff_failed"):
+                attest.changed_paths(".", BASE, SOURCE)
+
+    def test_key_file_must_be_owner_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "key"
+            path.write_bytes(KEY)
+            os.chmod(path, 0o644)
+            with self.assertRaisesRegex(attest.Denied, "signing_key_permissions_too_open"):
+                attest._read_key(path, require_root=False)
+            os.chmod(path, 0o600)
+            self.assertEqual(attest._read_key(path, require_root=False), KEY)
+
+    def test_weak_key_is_rejected(self):
+        with self.assertRaisesRegex(attest.Denied, "signing_key_weak"):
+            attest.sign({"schema_version": 1}, b"short")
+
+    def test_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file = Path(tmp) / "key"
+            key_file.write_bytes(KEY)
+            os.chmod(key_file, 0o600)
+            out = Path(tmp) / "out"
+            with patch.object(attest, "changed_paths", return_value=PATHS), \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                code = attest.main(["--service", "mantic-mcp", "--source-sha", SOURCE,
+                                    "--base-sha", BASE, "--image-digest", DIGEST,
+                                    "--repo", ".", "--out-dir", str(out),
+                                    "--key-file", str(key_file), "--dry-run",
+                                    "--test-command", json.dumps(["python", "-m", "unittest"])])
+            self.assertEqual(code, 0)
+            self.assertFalse(out.exists(), "dry run must not create or write attestations")
+
+
+if __name__ == "__main__":
+    unittest.main()

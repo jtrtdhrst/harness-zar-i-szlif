@@ -126,6 +126,11 @@ if __name__ == "__main__":
     print(f"PASS: {classified} root folders classified, {targeted} targeted CI roots")
     if options.self_test:
         suite = TestLoader().discover("scripts", pattern="test_check_service_coverage.py")
+        # ZARI-240: the fail-closed release admission gate and the root-invoked
+        # local-CI attester must run in the same PR-time lane as the structural
+        # release contract, so a hold/attestation regression cannot merge.
+        for pattern in ("test_harness_release_admission.py", "test_harness_local_ci_attest.py"):
+            suite.addTests(TestLoader().discover("scripts", pattern=pattern))
         result = TextTestRunner(verbosity=2).run(suite)
         if not result.wasSuccessful():
             raise SystemExit(1)

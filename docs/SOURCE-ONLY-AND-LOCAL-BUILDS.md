@@ -37,3 +37,25 @@ No unrelated source-only path change may trigger an image build, nor can an MCP-
 - A disabled, nonpublic `image-mode-conversion-probe` application remains in Coolify pending manual deletion; native Coolify API rejected in-place change from Git-backed Dockerfile app to Docker Image mode. Production changeover therefore requires a staged image-app cutover, not an untested in-place build_pack mutation.
 
 **Acceptance:** before cutover, require a registered runner or approved equivalent local scheduler, reviewed source and exact SHA, successful build and immutable image publication, an image-only production route with synchronized `SOURCE_COMMIT`, HTTP readback, and demonstrated rollback with real HTTP availability. Test-workspace success alone is not a production release.
+
+## Harness MCP release admission (ZARI-240, source only)
+
+The Harness delivery controller must not treat a merged pull request as permission to build or deploy. Two repository-owned modules define the fail-closed contract; the privileged controller is expected to call them, and both are **not installed** on any host by this repository change.
+
+1. `scripts/harness_release_admission.py` — `evaluate(manifest, request, grant, attestation, now)` returns an admission record or raises `Denied` with a stable audit reason. It denies when any of the following is true:
+   - the service is unknown, ambiguous, not harness-owned, or its Coolify UUID/kind differs from `ops/release-lanes.json`;
+   - the resource is on `hold` (a missing `promotion_state` counts as hold) and no per-UUID grant exists;
+   - there is no revocable, unexpired, audited per-UUID grant bound to that exact Coolify UUID and source SHA — a manifest edit is never a substitute;
+   - the independent reviewer equals the producer, holds the wrong reviewer role for the lane, or approved a different PR head than the one being released;
+   - the source SHA is not the merged main squash SHA, or the base ref is not `main`;
+   - the root-owned local-CI attestation is missing, unsigned, not produced as uid 0, stale, failing, empty, or covers paths outside the service root;
+   - the immutable image digest is absent or differs from the attested digest.
+
+   Hold is evaluated before any artifact, so satisfying later evidence checks can never promote a held lane. The module is read-only and exposes no force/skip/override switch.
+
+2. `scripts/harness_local_ci_attest.py` — root-invoked attester. It runs the declared per-service test argv at one exact source SHA, records command and exit code for each, computes the changed-path artifact manifest digest, and writes an HMAC-signed attestation to `/var/lib/paperclip-gitops/harness-attestations/<service>-<sha>.json` (`0600`, exclusive lock, idempotent for an identical run identity). It holds no network credential and depends on no GitHub Actions billing.
+
+**Not claimed here:** nothing is deployed or installed by this change. The remaining owner/controller steps are (a) install the two modules and the attestation key (`/etc/paperclip-gitops/harness-attestation.key`, root `0600`, >= 32 bytes) on the approved host, and (b) change the existing root controller `harness_image_delivery.py` to call `harness_release_admission.evaluate` before any promotion and to abort on `Denied`. Until (b) is installed and read back, the controller behaviour is unchanged and no hold is enforced at runtime.
+
+**Known same-defect sibling path (not owned by ZARI-240):** `paperclip-mcp/gitops/paperclip-mcp-auto-release.py` verifies merged PR, CI and native review but never consults `ops/release-lanes.json`, so it can auto-release `paperclip-mcp` while the manifest holds it. That path belongs to the `paperclip-mcp` owner and needs its own bounded change and review.
+
