@@ -126,6 +126,17 @@ def _check_attestation(entry, request, attestation, source_sha):
         raise Denied("attestation_signature_unverified")
     if attestation.get("attestor_uid") != 0:
         raise Denied("attestation_not_root_owned")
+    # Owner security finding on PR #112: an attestation whose tests ran as root
+    # (or without a recorded unprivileged runner) proves nothing about a safe
+    # release, so it is refused rather than trusted.
+    runner_uid = attestation.get("runner_uid")
+    if not isinstance(runner_uid, int) or isinstance(runner_uid, bool) or runner_uid <= 0:
+        raise Denied("attestation_test_runner_not_privilege_dropped")
+    policy_digest = attestation.get("policy_digest")
+    if not (isinstance(policy_digest, str) and DIGEST.fullmatch(policy_digest)):
+        raise Denied("attestation_policy_digest_missing")
+    if request.get("policy_digest") is not None and request["policy_digest"] != policy_digest:
+        raise Denied("attestation_policy_digest_mismatch")
     if attestation.get("service") != entry.get("id"):
         raise Denied("attestation_service_mismatch")
     if attestation.get("source_sha") != source_sha:
@@ -236,6 +247,8 @@ def evaluate(manifest, request, grant=None, attestation=None, now=None):
         "reviewer_agent_id": reviewer,
         "grant_id": grant_id,
         "attestation_digest": attestation.get("artifact_manifest_digest"),
+        "attestation_policy_digest": attestation.get("policy_digest"),
+        "test_runner_uid": attestation.get("runner_uid"),
     }
 
 

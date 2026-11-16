@@ -62,6 +62,8 @@ def attestation(**overrides):
         "schema_version": 1,
         "signature_verified": True,
         "attestor_uid": 0,
+        "runner_uid": 1000,
+        "policy_digest": "sha256:" + "e" * 64,
         "service": "mantic-mcp",
         "source_sha": SOURCE,
         "image_digest": DIGEST,
@@ -153,6 +155,22 @@ class AdmissionTests(unittest.TestCase):
 
     def test_denies_attestation_not_produced_as_root(self):
         self.deny("attestation_not_root_owned", attestation=attestation(attestor_uid=1000))
+
+    def test_denies_attestation_whose_tests_ran_as_root(self):
+        # Owner security finding on PR #112: a root-executed test run is never
+        # releasable evidence, whatever else the attestation claims.
+        for runner in (0, None, -1, True):
+            self.deny("attestation_test_runner_not_privilege_dropped",
+                      attestation=attestation(runner_uid=runner))
+
+    def test_denies_attestation_without_policy_digest(self):
+        for digest in (None, "", "sha256:short", 42):
+            self.deny("attestation_policy_digest_missing",
+                      attestation=attestation(policy_digest=digest))
+
+    def test_denies_attestation_from_a_different_policy(self):
+        self.deny("attestation_policy_digest_mismatch",
+                  request=request(policy_digest="sha256:" + "f" * 64))
 
     def test_denies_stale_attestation_sha(self):
         self.deny("attestation_stale_source_sha", attestation=attestation(source_sha="f" * 40))

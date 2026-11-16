@@ -1,4 +1,9 @@
-"""Fail-closed tests for the root-invoked Harness local-CI attester (ZARI-240)."""
+"""Fail-closed tests for the root-invoked Harness local-CI attester (ZARI-240).
+
+Includes the negative controls demanded by the owner's exact-SHA security review
+of PR #112: no caller-supplied argv, no caller-supplied repo path, and no test
+execution under uid 0.
+"""
 import io
 import json
 import os
@@ -15,23 +20,41 @@ OTHER_KEY = b"z" * 32
 SOURCE = "a" * 40
 BASE = "b" * 40
 DIGEST = "sha256:" + "c" * 64
-RESULTS = [{"command": "python -m unittest -q", "exit": 0}]
+POLICY_DIGEST = "sha256:" + "e" * 64
+RESULTS = [{"command": "/usr/bin/python3 -m unittest -q", "exit": 0}]
 PATHS = ["mantic-mcp/src/server.ts"]
+NONROOT = os.geteuid() or 1000
+
+
+def policy(**overrides):
+    base = {
+        "schema_version": 1,
+        "repo_root": "/usr",
+        "out_dir": "/var/lib/paperclip-gitops/harness-attestations",
+        "key_file": "/etc/paperclip-gitops/harness-attestation.key",
+        "run_as_uid": NONROOT,
+        "run_as_gid": os.getegid() or 1000,
+        "services": {"mantic-mcp": [["/bin/sh", "-c", "exit 0"]]},
+    }
+    base.update(overrides)
+    return base
 
 
 class AttesterTests(unittest.TestCase):
     def build(self, **overrides):
         kwargs = {"service": "mantic-mcp", "source_sha": SOURCE, "results": RESULTS,
-                  "changed_paths": PATHS, "image_digest": DIGEST, "key": KEY}
+                  "changed_paths": PATHS, "image_digest": DIGEST, "key": KEY,
+                  "runner_uid": NONROOT, "policy_digest": POLICY_DIGEST}
         kwargs.update(overrides)
         return attest.build_attestation(**kwargs)
 
+    # --- signature / artifact integrity -------------------------------------
     def test_signature_roundtrip_verifies(self):
         self.assertTrue(attest.verify_attestation(self.build(), KEY))
 
     def test_tampered_payload_is_rejected(self):
         data = self.build()
-        data["tests"] = [{"command": "python -m unittest -q", "exit": 0},
+        data["tests"] = [{"command": "/usr/bin/python3 -m unittest -q", "exit": 0},
                          {"command": "echo skipped", "exit": 0}]
         self.assertFalse(attest.verify_attestation(data, KEY))
 
@@ -52,7 +75,7 @@ class AttesterTests(unittest.TestCase):
 
     def test_rejects_failing_test_exit(self):
         with self.assertRaisesRegex(attest.Denied, "attestation_tests_failed"):
-            self.build(results=[{"command": "python -m unittest -q", "exit": 1}])
+            self.build(results=[{"command": "/usr/bin/python3 -m unittest -q", "exit": 1}])
 
     def test_rejects_empty_test_evidence(self):
         with self.assertRaisesRegex(attest.Denied, "attestation_tests_missing"):
@@ -85,74 +108,218 @@ class AttesterTests(unittest.TestCase):
 
     def test_idempotent_reuse_requires_identical_run_identity(self):
         data = self.build()
-        self.assertTrue(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST, ["python -m unittest -q"], KEY))
-        self.assertFalse(attest.reusable(data, "mantic-mcp", "d" * 40, DIGEST, ["python -m unittest -q"], KEY))
+        self.assertTrue(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST,
+                                        ["/usr/bin/python3 -m unittest -q"], KEY, POLICY_DIGEST))
+        self.assertFalse(attest.reusable(data, "mantic-mcp", "d" * 40, DIGEST,
+                                         ["/usr/bin/python3 -m unittest -q"], KEY))
         self.assertFalse(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST, ["pytest -q"], KEY))
-        self.assertFalse(attest.reusable(data, "playwright-mcp", SOURCE, DIGEST, ["python -m unittest -q"], KEY))
-        self.assertFalse(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST, ["python -m unittest -q"], OTHER_KEY))
+        self.assertFalse(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST,
+                                         ["/usr/bin/python3 -m unittest -q"], OTHER_KEY))
+        self.assertFalse(attest.reusable(data, "mantic-mcp", SOURCE, DIGEST,
+                                         ["/usr/bin/python3 -m unittest -q"], KEY, "sha256:" + "f" * 64))
 
     def test_attestation_path_is_service_and_sha_scoped(self):
-        path = attest.attestation_path("/tmp/out", "mantic-mcp", SOURCE)
-        self.assertEqual(path, Path("/tmp/out") / ("mantic-mcp-" + SOURCE + ".json"))
+        path = attest.attestation_path("/var/lib/paperclip-gitops/out", "mantic-mcp", SOURCE)
+        self.assertEqual(path, Path("/var/lib/paperclip-gitops/out") / ("mantic-mcp-" + SOURCE + ".json"))
 
     def test_atomic_write_is_owner_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "attest.json"
             attest.write_atomic(target, self.build())
-            mode = stat.S_IMODE(target.stat().st_mode)
-            self.assertEqual(mode, 0o600)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
             self.assertEqual(json.loads(target.read_text())["service"], "mantic-mcp")
 
-    def test_run_tests_records_real_exit_codes(self):
-        results = attest.run_tests([["/bin/sh", "-c", "exit 0"], ["/bin/sh", "-c", "exit 3"]], ".")
+    # --- no caller-supplied execution surface -------------------------------
+    def test_cli_rejects_caller_supplied_test_commands(self):
+        for argv in (["--test-command", '["/bin/sh","-c","id"]'], ["--repo", "/tmp"],
+                     ["--out-dir", "/tmp"], ["--key-file", "/tmp/k"]):
+            with self.assertRaises(SystemExit) as caught:
+                attest.main(["--service", "mantic-mcp", "--source-sha", SOURCE,
+                             "--base-sha", BASE, "--image-digest", DIGEST] + argv)
+            self.assertEqual(caught.exception.code, 2, "CLI must not accept " + argv[0])
+
+    def test_alternate_repo_path_is_not_accepted(self):
+        self.assertNotIn("repo", attest.main.__doc__ or "")
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(attest.Denied, "policy_repo_root_unavailable"):
+                attest.validate_policy(policy(repo_root=str(Path(tmp) / "missing")))
+
+    def test_policy_out_dir_outside_state_root_is_rejected(self):
+        with self.assertRaisesRegex(attest.Denied, "policy_out_dir_outside_allowlist"):
+            attest.validate_policy(policy(out_dir="/tmp/attestations"))
+
+    def test_policy_relative_paths_are_rejected(self):
+        for field in ("repo_root", "out_dir", "key_file"):
+            with self.assertRaisesRegex(attest.Denied, "policy_" + field + "_invalid"):
+                attest.validate_policy(policy(**{field: "relative/path"}))
+
+    # --- uid 0 execution is refused ----------------------------------------
+    def test_policy_requires_privilege_drop(self):
+        for uid, gid in ((0, 1000), (1000, 0), (None, 1000), (1000, None), ("1000", 1000)):
+            with self.assertRaisesRegex(attest.Denied, "policy_privilege_drop_missing"):
+                attest.validate_policy(policy(run_as_uid=uid, run_as_gid=gid))
+
+    def test_run_tests_refuses_uid_zero(self):
+        for uid in (0, None, -1, True, 1000.0):
+            with self.assertRaisesRegex(attest.Denied, "test_runner_privilege_not_dropped"):
+                attest.run_tests([["/bin/sh", "-c", "exit 0"]], ".", uid, 1000)
+
+    def test_run_tests_refuses_uid_zero_gid(self):
+        with self.assertRaisesRegex(attest.Denied, "test_runner_privilege_not_dropped"):
+            attest.run_tests([["/bin/sh", "-c", "exit 0"]], ".", NONROOT, 0)
+
+    def test_privilege_dropper_refuses_uid_zero(self):
+        with self.assertRaisesRegex(attest.Denied, "test_runner_privilege_not_dropped"):
+            attest.privilege_dropper(0, 1000)
+        with self.assertRaisesRegex(attest.Denied, "test_runner_privilege_not_dropped"):
+            attest.privilege_dropper(1000, 0)
+
+    def test_attestation_cannot_claim_a_root_test_runner(self):
+        for runner in (0, None, -1, True):
+            with self.assertRaisesRegex(attest.Denied, "test_runner_privilege_not_dropped"):
+                self.build(runner_uid=runner)
+
+    def test_attestation_requires_policy_digest(self):
+        for digest in (None, "", "sha256:abc", 42):
+            with self.assertRaisesRegex(attest.Denied, "policy_digest_missing"):
+                self.build(policy_digest=digest)
+
+    @unittest.skipIf(os.geteuid() == 0, "root cannot demonstrate an unprivileged runner")
+    def test_run_tests_records_real_exit_codes_as_unprivileged_uid(self):
+        results = attest.run_tests([["/bin/sh", "-c", "exit 0"], ["/bin/sh", "-c", "exit 3"]],
+                                   ".", os.geteuid(), os.getegid())
         self.assertEqual([r["exit"] for r in results], [0, 3])
+
+    def test_run_tests_fails_closed_when_uid_cannot_be_assumed(self):
+        other = 65534 if os.geteuid() != 65534 else 65533
+        with self.assertRaisesRegex(attest.Denied, "test_runner_uid_unavailable"):
+            attest.run_tests([["/bin/sh", "-c", "exit 0"]], ".", other, os.getegid())
 
     def test_run_tests_fails_closed_on_missing_binary(self):
         with self.assertRaisesRegex(attest.Denied, "test_command_unavailable"):
-            attest.run_tests([["definitely-not-a-real-binary-xyz"]], ".")
+            attest.run_tests([["/definitely-not-a-real-binary-xyz"]], ".",
+                             os.geteuid() or 1000, os.getegid() or 1000)
+
+    def test_environment_is_sanitized(self):
+        env = attest.sanitized_env("/home/runner")
+        self.assertEqual(set(env), {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"})
+        self.assertEqual(env["HOME"], "/home/runner")
+
+    # --- policy-declared command allowlist ---------------------------------
+    def test_service_must_be_declared_in_policy(self):
+        with self.assertRaisesRegex(attest.Denied, "service_not_in_policy"):
+            attest.policy_commands(policy(), "playwright-mcp")
+
+    def test_command_must_be_absolute(self):
+        with self.assertRaisesRegex(attest.Denied, "policy_command_not_absolute"):
+            attest.policy_commands(policy(services={"mantic-mcp": [["python3", "-m", "unittest"]]}), "mantic-mcp")
+
+    def test_command_count_is_bounded(self):
+        with self.assertRaisesRegex(attest.Denied, "policy_commands_invalid"):
+            attest.policy_commands(policy(services={"mantic-mcp": []}), "mantic-mcp")
+
+    def test_policy_services_must_exist(self):
+        with self.assertRaisesRegex(attest.Denied, "policy_services_missing"):
+            attest.validate_policy(policy(services={}))
+
+    # --- checked-out tree -----------------------------------------------
+    def test_checkout_must_be_at_the_source_sha(self):
+        head = type("R", (), {"returncode": 0, "stdout": "f" * 40 + "\n"})()
+        clean = type("R", (), {"returncode": 0, "stdout": ""})()
+        with patch.object(attest.subprocess, "run", side_effect=[head, clean]):
+            with self.assertRaisesRegex(attest.Denied, "checkout_not_at_source_sha"):
+                attest.verify_checkout(".", SOURCE)
+
+    def test_checkout_must_be_clean(self):
+        head = type("R", (), {"returncode": 0, "stdout": SOURCE + "\n"})()
+        dirty = type("R", (), {"returncode": 0, "stdout": " M scripts/x.py\n"})()
+        with patch.object(attest.subprocess, "run", side_effect=[head, dirty]):
+            with self.assertRaisesRegex(attest.Denied, "checkout_dirty"):
+                attest.verify_checkout(".", SOURCE)
+        with patch.object(attest.subprocess, "run", side_effect=[head, clean_result()]):
+            self.assertTrue(attest.verify_checkout(".", SOURCE))
 
     def test_changed_paths_uses_git_and_fails_closed(self):
         completed = type("R", (), {"returncode": 0, "stdout": "mantic-mcp/a.ts\nmantic-mcp/b.ts\n"})()
         with patch.object(attest.subprocess, "run", return_value=completed):
             self.assertEqual(attest.changed_paths(".", BASE, SOURCE), ["mantic-mcp/a.ts", "mantic-mcp/b.ts"])
-        empty = type("R", (), {"returncode": 0, "stdout": ""})()
-        with patch.object(attest.subprocess, "run", return_value=empty):
-            with self.assertRaisesRegex(attest.Denied, "changed_paths_unbounded"):
-                attest.changed_paths(".", BASE, SOURCE)
-        failed = type("R", (), {"returncode": 128, "stdout": ""})()
-        with patch.object(attest.subprocess, "run", return_value=failed):
-            with self.assertRaisesRegex(attest.Denied, "git_diff_failed"):
-                attest.changed_paths(".", BASE, SOURCE)
+        for result, reason in ((type("R", (), {"returncode": 0, "stdout": ""})(), "changed_paths_unbounded"),
+                               (type("R", (), {"returncode": 128, "stdout": ""})(), "git_diff_failed")):
+            with patch.object(attest.subprocess, "run", return_value=result):
+                with self.assertRaisesRegex(attest.Denied, reason):
+                    attest.changed_paths(".", BASE, SOURCE)
 
-    def test_key_file_must_be_owner_only(self):
+    # --- trusted file loading (symlink / TOCTOU / ownership) ---------------
+    def test_trusted_file_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "key"
+            real.write_bytes(KEY)
+            os.chmod(real, 0o600)
+            link = Path(tmp) / "link"
+            link.symlink_to(real)
+            with self.assertRaisesRegex(attest.Denied, "signing_key_unavailable"):
+                attest.read_trusted_file(link, "signing_key", require_root=False)
+
+    def test_trusted_file_rejects_world_writable(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "key"
             path.write_bytes(KEY)
-            os.chmod(path, 0o644)
-            with self.assertRaisesRegex(attest.Denied, "signing_key_permissions_too_open"):
-                attest._read_key(path, require_root=False)
+            os.chmod(path, 0o666)
+            with self.assertRaisesRegex(attest.Denied, "signing_key_world_writable"):
+                attest.read_trusted_file(path, "signing_key", require_root=False)
+
+    def test_trusted_file_rejects_non_root_owner_when_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "key"
+            path.write_bytes(KEY)
             os.chmod(path, 0o600)
-            self.assertEqual(attest._read_key(path, require_root=False), KEY)
+            if os.geteuid() == 0:
+                self.assertEqual(attest.read_trusted_file(path, "signing_key"), KEY)
+            else:
+                with self.assertRaisesRegex(attest.Denied, "signing_key_not_root_owned"):
+                    attest.read_trusted_file(path, "signing_key")
+
+    def test_trusted_file_reads_without_following_a_swap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "key"
+            path.write_bytes(KEY)
+            os.chmod(path, 0o600)
+            self.assertEqual(attest.read_trusted_file(path, "signing_key", require_root=False), KEY)
 
     def test_weak_key_is_rejected(self):
         with self.assertRaisesRegex(attest.Denied, "signing_key_weak"):
             attest.sign({"schema_version": 1}, b"short")
 
-    def test_dry_run_writes_nothing(self):
+    # --- dry run ------------------------------------------------------------
+    def test_dry_run_writes_nothing_and_uses_policy_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
             key_file = Path(tmp) / "key"
             key_file.write_bytes(KEY)
             os.chmod(key_file, 0o600)
             out = Path(tmp) / "out"
-            with patch.object(attest, "changed_paths", return_value=PATHS), \
-                    patch("sys.stdout", new_callable=io.StringIO):
+            manifest = policy(repo_root=str(root), out_dir=str(out), key_file=str(key_file),
+                              services={"mantic-mcp": [["/bin/sh", "-c", "exit 0"]]})
+            policy_path = Path(tmp) / "policy.json"
+            policy_path.write_text(json.dumps(manifest))
+            os.chmod(policy_path, 0o600)
+            stream = io.StringIO()
+            with patch.object(attest, "STATE_ROOT", tmp), \
+                    patch.object(attest, "changed_paths", return_value=PATHS), \
+                    patch("sys.stdout", stream):
                 code = attest.main(["--service", "mantic-mcp", "--source-sha", SOURCE,
                                     "--base-sha", BASE, "--image-digest", DIGEST,
-                                    "--repo", ".", "--out-dir", str(out),
-                                    "--key-file", str(key_file), "--dry-run",
-                                    "--test-command", json.dumps(["python", "-m", "unittest"])])
+                                    "--policy", str(policy_path), "--dry-run"])
             self.assertEqual(code, 0)
             self.assertFalse(out.exists(), "dry run must not create or write attestations")
+            printed = json.loads(stream.getvalue())
+            self.assertEqual(printed["commands"], ["/bin/sh -c exit 0"])
+            self.assertEqual(printed["runner_uid"], NONROOT)
+
+
+def clean_result():
+    return type("R", (), {"returncode": 0, "stdout": ""})()
 
 
 if __name__ == "__main__":
