@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { plasmicCommentTools } from "./comment-tools.ts";
 import { plasmicUiTools } from "./ui-tools.ts";
+import { plasmicCatalogTools } from "./catalog-tools.ts";
+import { cloneInstanceAsPrivate, plasmicCompositionTools } from "./composition-tools.ts";
 
 export interface PlasmicCtx {
   client: PlasmicClient;
@@ -228,6 +230,8 @@ export function plasmicTools(ctx: PlasmicCtx): ToolDef[] {
   return [
     ...plasmicCommentTools(ctx),
     ...plasmicUiTools(ctx),
+    ...plasmicCatalogTools(ctx),
+    ...plasmicCompositionTools(ctx),
 
     {
       name: "plasmic_list_projects",
@@ -705,43 +709,85 @@ export function plasmicTools(ctx: PlasmicCtx): ToolDef[] {
     {
       name: "plasmic_use_component",
       annotations: A_WRITE,
-      description: "Wstaw instancję komponentu przez klon istniejącej instancji.",
+      description:
+        "Wstaw instancję komponentu przez klon istniejącej instancji. Klon dostaje własne VariantSetting/RuleSet/attrs (bez współdzielenia ze wzorcem) i jest podpinany do children rodzica, więc jest widoczny i renderowany.",
       schema: {
         projectId: z.string(),
         componentId: z.string(),
+        parentElementId: z.string().optional().describe(
+          "Kontener (TplTag), do którego children dopinamy instancję; domyślnie rodzic wzorcowej instancji",
+        ),
+        index: z.number().int().min(0).optional().describe("Pozycja w children rodzica; domyślnie na końcu"),
         branchId: z.string().optional(),
         ...idKey,
         ...dry,
       },
       handler: async (a) => {
-        const key = `use:${a.projectId}:${(a.idempotencyKey as string | undefined) ?? (a.componentId as string)}`;
+        const projectId = a.projectId as string;
+        const componentId = a.componentId as string;
+        const key = `use:${projectId}:${(a.idempotencyKey as string | undefined) ?? componentId}`;
         const { result } = await idempotentLive(ctx.stateDir + "/idempotency", key, a.dryRun as boolean | undefined, () =>
-          writeOp(ctx, "plasmic_use_component", a.projectId as string, a.componentId as string,
-            key,
+          writeOp(ctx, "plasmic_use_component", projectId, componentId, key,
             async () => {
+              let createdId: string | null = null;
+              let parentAttached = false;
               const out = await c.mutate(
-                a.projectId as string,
+                projectId,
                 a.branchId as string | undefined,
                 (bundle) => {
-                  const { iid } = resolve(bundle, a.componentId as string);
-                  const inst = Object.entries(bundle.map).find(([, value]) => {
+                  const map = bundle.map;
+                  const { iid } = resolve(bundle, componentId);
+                  const template = Object.entries(map).find(([, value]) => {
                     if (!value || typeof value !== "object") return false;
                     const entry = value as Record<string, unknown>;
                     const component = entry.component as Record<string, unknown> | undefined;
                     return entry.__type === "TplComponent" && component?.__ref === iid;
                   });
-                  if (!inst) {
+                  if (!template) {
                     throw new Error(
                       "NO_INSTANCE: brak instancji tego komponentu do sklonowania — wstaw pierwszą w Studio, potem klonuj przez MCP",
                     );
                   }
-                  const newId = newIid();
-                  const raw = JSON.parse(JSON.stringify(inst[1])) as Record<string, unknown>;
-                  return { map: { [newId]: raw } };
+                  // Sharing the template's VariantSetting/RuleSet/attrs made every
+                  // later style or prop edit mutate the template instance too.
+                  const cloned = cloneInstanceAsPrivate(map, template[0], key);
+                  createdId = cloned.instanceIid;
+                  const patch: Record<string, Record<string, unknown>> = { ...cloned.patch };
+                  const templateParent = (template[1].parent as { __ref?: string } | undefined)?.__ref;
+                  const targetParent = (a.parentElementId as string | undefined) ?? templateParent;
+                  if (targetParent) {
+                    const parent = map[targetParent] as Record<string, unknown> | undefined;
+                    const children = parent?.children;
+                    if (!parent || !Array.isArray(children)) {
+                      throw new Error(
+                        `PARENT_NOT_A_CONTAINER "${targetParent}" — pass the iid of an existing TplTag container`,
+                      );
+                    }
+                    const index = (a.index as number | undefined) ?? children.length;
+                    if (!Number.isInteger(index) || index < 0 || index > children.length) {
+                      throw new Error(`INDEX_OUT_OF_RANGE ${index} — parent has ${children.length} children`);
+                    }
+                    const next = [...children];
+                    next.splice(index, 0, { __ref: cloned.instanceIid });
+                    patch[targetParent] = { ...parent, children: next };
+                    patch[cloned.instanceIid] = { ...patch[cloned.instanceIid]!, parent: { __ref: targetParent } };
+                    parentAttached = true;
+                  }
+                  return { map: patch };
                 },
-                { dryRun: a.dryRun as boolean | undefined },
+                { dryRun: a.dryRun as boolean | undefined, saveMode: "full" },
               );
-              return out;
+              return {
+                ...out,
+                id: createdId,
+                parentAttached,
+                ...(parentAttached
+                  ? {}
+                  : {
+                    warning:
+                      "INSTANCE_NOT_ATTACHED: klon nie jest w children żadnego rodzica — dodaj parentElementId, inaczej nie będzie renderowany",
+                  }),
+              };
             }),
         );
         return result;
