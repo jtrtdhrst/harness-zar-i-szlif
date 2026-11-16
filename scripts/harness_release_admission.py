@@ -14,14 +14,22 @@ This module is read-only: it never builds, promotes, deploys or mutates any
 provider, and it deliberately exposes no ``--force``/``--skip``/override flag.
 Hold is the default: a resource without an explicit ``promotion_state`` is held,
 and no manifest edit can substitute for a per-UUID grant.
+
+The promotion path that consumes this decision lives in
+:mod:`harness_delivery_controller`: it calls :func:`evaluate` for every service
+whose source changed and refuses to build or deploy anything on ``Denied``.
+Gate artifacts and key material are read ``O_NOFOLLOW`` and validated with
+``fstat`` on the same descriptor that is read, so a path swapped after a check
+can never be the bytes that are trusted.
 """
 import argparse
+import errno
 import json
+import os
 import re
 import stat
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 RELEASE_BASE_REF = "main"
@@ -252,21 +260,56 @@ def evaluate(manifest, request, grant=None, attestation=None, now=None):
     }
 
 
-def _load_gate_file(path, label, require_root):
-    """Read a JSON gate artifact, refusing symlinks and untrusted ownership."""
+def read_trusted_bytes(path, label, require_root=True):
+    """Read a trusted gate artifact without a symlink or path-swap window.
+
+    The path is opened ``O_NOFOLLOW`` and every attribute check runs on that
+    descriptor's ``fstat``, so replacing the path after the check cannot change
+    what is read: there is no separate stat-then-reopen step to race. The
+    descriptor is stat'ed again after reading to refuse content that changed
+    underneath an open handle.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        info = Path(path).lstat()
-    except OSError:
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            raise Denied(label + "_symlink_refused") from None
         raise Denied(label + "_unavailable") from None
-    if not stat.S_ISREG(info.st_mode):
-        raise Denied(label + "_not_regular_file")
-    if info.st_mode & 0o022:
-        raise Denied(label + "_world_writable")
-    if require_root and info.st_uid != 0:
-        raise Denied(label + "_not_root_owned")
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise Denied(label + "_not_regular_file")
+        if info.st_mode & 0o022:
+            raise Denied(label + "_world_writable")
+        if require_root and info.st_uid != 0:
+            raise Denied(label + "_not_root_owned")
+        if info.st_size <= 0 or info.st_size > 262144:
+            raise Denied(label + "_invalid_size")
+        chunks = []
+        try:
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except OSError:
+            raise Denied(label + "_unreadable") from None
+        after = os.fstat(fd)
+        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise Denied(label + "_changed_during_read")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def load_gate_file(path, label, require_root):
+    """Read a JSON gate artifact, refusing symlinks and untrusted ownership."""
+    raw = read_trusted_bytes(path, label, require_root=require_root)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
         raise Denied(label + "_invalid_json") from None
     if not isinstance(data, dict):
         raise Denied(label + "_invalid_shape")
@@ -283,15 +326,18 @@ def main(argv=None):
     parser.add_argument("--now")
     args = parser.parse_args(argv)
     try:
-        manifest = _load_gate_file(args.manifest, "manifest", require_root=False)
-        request = _load_gate_file(args.request, "request", require_root=True)
-        grant = _load_gate_file(args.grant, "grant", require_root=True) if args.grant else None
+        manifest = load_gate_file(args.manifest, "manifest", require_root=False)
+        request = load_gate_file(args.request, "request", require_root=True)
+        grant = load_gate_file(args.grant, "grant", require_root=True) if args.grant else None
         attestation = None
         if args.attestation:
-            attestation = _load_gate_file(args.attestation, "attestation", require_root=True)
+            attestation = load_gate_file(args.attestation, "attestation", require_root=True)
             if not args.attestation_key:
                 raise Denied("attestation_key_missing")
-            key = Path(args.attestation_key).read_bytes()
+            # Key material is held to the same descriptor-validated, no-follow
+            # rule as the artifacts: an attacker-controlled key path would
+            # otherwise verify an attestation the attacker signed.
+            key = read_trusted_bytes(args.attestation_key, "attestation_key", require_root=True)
             from harness_local_ci_attest import verify_attestation
 
             if not verify_attestation(attestation, key):
