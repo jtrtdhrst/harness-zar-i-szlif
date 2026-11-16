@@ -14,12 +14,14 @@ is byte-identical to the merged commit's tree. Independent native approval is
 never replaced by that attestation.
 """
 import argparse
+import errno
 import fcntl
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -44,6 +46,13 @@ BILLING_BLOCKED = re.compile(
 MAX_NEVER_STARTED_SECONDS = 120
 TRUSTED_ATTESTATION_RUNNER = "zis-local-build"
 TRUSTED_ATTESTATION_SOURCE = "product_local_ci"
+# Attestation trust boundary: written only by product-local-ci-attest.service as
+# User=root into a root:root 0700 tree. Owner/group and mode are part of the
+# evidence, not decoration - a non-root writer could otherwise forge a pass.
+ATTESTATION_UID = 0
+ATTESTATION_GID = 0
+FORBIDDEN_WRITE_BITS = 0o022  # group write | other write
+ATTESTATION_MAX_BYTES = 8192
 
 
 
@@ -207,21 +216,104 @@ def checks(sha):
     return {"billing_blocked": billed}
 
 
+def _require_trusted_attestation_dir(info):
+    """Directory that holds attestations must be root-owned and not writable
+    by group or others; otherwise a non-root process could plant files."""
+    if not stat.S_ISDIR(info.st_mode):
+        raise Denied("local_ci_attestation_dir_untrusted")
+    if info.st_uid != ATTESTATION_UID:
+        raise Denied("local_ci_attestation_dir_untrusted")
+    if info.st_mode & FORBIDDEN_WRITE_BITS:
+        raise Denied("local_ci_attestation_dir_untrusted")
+
+
+def _require_trusted_attestation_file(info):
+    """One attestation inode: root-owned, single-link, regular, not writable
+    by group/others and of bounded size."""
+    if not stat.S_ISREG(info.st_mode):
+        raise Denied("local_ci_attestation_not_regular")
+    if info.st_uid != ATTESTATION_UID or info.st_gid != ATTESTATION_GID:
+        raise Denied("local_ci_attestation_owner_untrusted")
+    if info.st_mode & FORBIDDEN_WRITE_BITS:
+        raise Denied("local_ci_attestation_mode_untrusted")
+    if info.st_nlink != 1:
+        raise Denied("local_ci_attestation_link_untrusted")
+    if info.st_size > ATTESTATION_MAX_BYTES:
+        raise Denied("local_ci_attestation_too_large")
+
+
+def _secure_attestation_bytes(name):
+    """Read one attestation file without following links, from validated inodes.
+
+    Trust boundary: the only writer of this tree is root. The attest job runs
+    as ``User=root`` (product-local-ci-attest.service) and its output directory
+    ``/var/lib/paperclip-gitops`` is ``root:root 0700``. This consumer therefore
+    accepts bytes only from a root-owned, root-group, single-link, regular file
+    that is not group- or world-writable, reached through a directory descriptor
+    that is itself root-owned and not group/world-writable.
+
+    The bytes are read from the very descriptor that was validated, so a rename
+    or replacement between check and read cannot substitute content (TOCTOU),
+    and ``O_NOFOLLOW`` + the regular-file test mean a symlink or a FIFO is never
+    opened as an attestation. A file that is group/world-writable, owned by
+    anyone else, hard-linked, oversized or not a regular file is denied: those
+    are the only ways a non-root process could plant or forge this evidence.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = str(LOCAL_CI_DIR)
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | nofollow)
+    except OSError:
+        raise Denied("local_ci_attestation_dir_unavailable") from None
+    try:
+        info = os.fstat(dir_fd)
+        _require_trusted_attestation_dir(info)
+        try:
+            # O_NONBLOCK so a FIFO can never block the timer; it is rejected
+            # by the regular-file check below instead.
+            fd = os.open(name, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0),
+                         dir_fd=dir_fd)
+        except FileNotFoundError:
+            raise Denied("local_ci_attestation_missing") from None
+        except OSError as error:
+            if getattr(error, "errno", None) in (errno.ELOOP, errno.ENOTDIR):
+                raise Denied("local_ci_attestation_symlink_denied") from None
+            raise Denied("local_ci_attestation_unreadable") from None
+        try:
+            _require_trusted_attestation_file(os.fstat(fd))
+            chunks = []
+            total = 0
+            while True:
+                chunk = os.read(fd, 4096)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > ATTESTATION_MAX_BYTES:
+                    raise Denied("local_ci_attestation_too_large")
+                chunks.append(chunk)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(dir_fd)
+    return b"".join(chunks)
+
+
 def local_ci_attestation(sha):
     """Root-owned exact-SHA local CI attestation, used only for billing blocks.
 
-    The file is written by the root attest service into a root-only directory;
-    it may substitute for GitHub check evidence only for the exact reviewed
-    head commit, and only together with head/merge tree equality enforced by
-    the caller. It never replaces the independent native approval.
+    The file may substitute for GitHub check evidence only for the exact
+    reviewed head commit, and only together with head/merge tree equality
+    enforced by the caller. It never replaces the independent native approval.
+    Shape checks below are necessary but not sufficient: the evidence is only
+    as trustworthy as the file's ownership and mode, which are proven by
+    _secure_attestation_bytes before any JSON is parsed.
     """
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
         raise Denied("invalid_attestation_sha")
+    raw = _secure_attestation_bytes(sha + ".json")
     try:
-        data = json.loads((LOCAL_CI_DIR / (sha + ".json")).read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise Denied("local_ci_attestation_missing") from None
-    except (OSError, ValueError):
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
         raise Denied("local_ci_attestation_unreadable") from None
     if not isinstance(data, dict):
         raise Denied("local_ci_attestation_unreadable")

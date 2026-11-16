@@ -1,7 +1,11 @@
 """Fail-closed tests for native-reviewed product source -> ci-approved promotion."""
+import contextlib
 import json
+import os
+import shutil
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import product_native_promotion as p
 
@@ -144,14 +148,27 @@ class ProductPromotionTests(unittest.TestCase):
         data.update(overrides)
         return data
 
-    def write_attestation(self, directory, data):
-        p.Path(directory, SOURCE + ".json").write_text(json.dumps(data), encoding="utf-8")
+    @contextlib.contextmanager
+    def trusted_tree(self, mode=0o700):
+        """Temp attestation directory owned by the test process (root in prod)."""
+        directory = p.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(directory), True)
+        os.chmod(directory, mode)
+        with patch.object(p, "ATTESTATION_UID", os.getuid()), \
+             patch.object(p, "ATTESTATION_GID", os.getgid()), \
+             patch.object(p, "LOCAL_CI_DIR", directory):
+            yield directory
+
+    def write_attestation(self, directory, data, mode=0o600):
+        path = p.Path(directory, SOURCE + ".json")
+        path.write_text(json.dumps(data), encoding="utf-8")
+        os.chmod(path, mode)
+        return path
 
     def test_local_ci_attestation_accepts_exact_root_owned_shape(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.write_attestation(tmp, self.attestation())
-            with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
-                self.assertEqual(p.local_ci_attestation(SOURCE)["sha"], SOURCE)
+        with self.trusted_tree() as directory:
+            self.write_attestation(directory, self.attestation())
+            self.assertEqual(p.local_ci_attestation(SOURCE)["sha"], SOURCE)
 
     def test_local_ci_attestation_negative_controls(self):
         cases = {
@@ -162,21 +179,116 @@ class ProductPromotionTests(unittest.TestCase):
             "local_ci_attestation_undated": {"verified_at": ""},
         }
         for reason, override in cases.items():
-            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
-                self.write_attestation(tmp, self.attestation(**override))
-                with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
-                    with self.assertRaisesRegex(p.Denied, reason):
-                        p.local_ci_attestation(SOURCE)
+            with self.subTest(reason=reason), self.trusted_tree() as directory:
+                self.write_attestation(directory, self.attestation(**override))
+                with self.assertRaisesRegex(p.Denied, reason):
+                    p.local_ci_attestation(SOURCE)
 
     def test_local_ci_attestation_missing_and_unreadable_deny(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
-                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
+        with self.trusted_tree() as directory:
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
+                p.local_ci_attestation(SOURCE)
+            p.Path(directory, SOURCE + ".json").write_text("{not json", encoding="utf-8")
+            os.chmod(p.Path(directory, SOURCE + ".json"), 0o600)
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_unreadable"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_symlink_is_never_followed(self):
+        with self.trusted_tree() as directory:
+            target = self.write_attestation(directory, self.attestation())
+            os.rename(target, p.Path(directory, "real.json"))
+            os.symlink("real.json", p.Path(directory, SOURCE + ".json"))
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_symlink_denied"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_symlink_to_absolute_target_is_denied(self):
+        with self.trusted_tree() as directory, tempfile.TemporaryDirectory() as outside:
+            target = p.Path(outside, SOURCE + ".json")
+            target.write_text(json.dumps(self.attestation()), encoding="utf-8")
+            os.chmod(target, 0o600)
+            os.symlink(str(target), p.Path(directory, SOURCE + ".json"))
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_symlink_denied"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_must_be_a_regular_file(self):
+        with self.trusted_tree() as directory:
+            os.mkdir(p.Path(directory, SOURCE + ".json"))
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_not_regular"):
+                p.local_ci_attestation(SOURCE)
+            os.rmdir(p.Path(directory, SOURCE + ".json"))
+            os.mkfifo(p.Path(directory, SOURCE + ".json"))
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_not_regular"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_group_or_world_writable_denied(self):
+        for mode in (0o660, 0o602, 0o622, 0o777):
+            with self.subTest(mode=oct(mode)), self.trusted_tree() as directory:
+                self.write_attestation(directory, self.attestation(), mode=mode)
+                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_mode_untrusted"):
                     p.local_ci_attestation(SOURCE)
-            p.Path(tmp, SOURCE + ".json").write_text("{not json", encoding="utf-8")
-            with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
-                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_unreadable"):
-                    p.local_ci_attestation(SOURCE)
+
+    def inode(self, **overrides):
+        info = {"st_mode": p.stat.S_IFREG | 0o600, "st_uid": 0, "st_gid": 0,
+                "st_nlink": 1, "st_size": 256}
+        info.update(overrides)
+        return SimpleNamespace(**info)
+
+    def test_attestation_inode_policy_is_explicit(self):
+        cases = {
+            "symlink inode": ({"st_mode": p.stat.S_IFLNK | 0o777}, "local_ci_attestation_not_regular"),
+            "directory inode": ({"st_mode": p.stat.S_IFDIR | 0o700}, "local_ci_attestation_not_regular"),
+            "foreign owner": ({"st_uid": 1000}, "local_ci_attestation_owner_untrusted"),
+            "foreign group": ({"st_gid": 1000}, "local_ci_attestation_owner_untrusted"),
+            "group writable": ({"st_mode": p.stat.S_IFREG | 0o660}, "local_ci_attestation_mode_untrusted"),
+            "other writable": ({"st_mode": p.stat.S_IFREG | 0o602}, "local_ci_attestation_mode_untrusted"),
+            "hard linked": ({"st_nlink": 2}, "local_ci_attestation_link_untrusted"),
+            "oversized": ({"st_size": p.ATTESTATION_MAX_BYTES + 1}, "local_ci_attestation_too_large"),
+        }
+        for label, (override, reason) in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaisesRegex(p.Denied, reason):
+                    p._require_trusted_attestation_file(self.inode(**override))
+
+    def test_attestation_inode_policy_accepts_root_only_files(self):
+        for mode in (0o600, 0o400, 0o644):
+            with self.subTest(mode=oct(mode)):
+                p._require_trusted_attestation_file(self.inode(st_mode=p.stat.S_IFREG | mode))
+
+    def test_attestation_dir_policy_is_explicit(self):
+        for override in ({"st_mode": p.stat.S_IFDIR | 0o777},
+                         {"st_mode": p.stat.S_IFDIR | 0o770},
+                         {"st_uid": 1000},
+                         {"st_mode": p.stat.S_IFREG | 0o700}):
+            with self.subTest(override=override):
+                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_dir_untrusted"):
+                    p._require_trusted_attestation_dir(self.inode(**override))
+        p._require_trusted_attestation_dir(self.inode(st_mode=p.stat.S_IFDIR | 0o700))
+
+    def test_attestation_hardlink_denied(self):
+        with self.trusted_tree() as directory:
+            path = self.write_attestation(directory, self.attestation())
+            os.link(path, p.Path(directory, "second-link.json"))
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_link_untrusted"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_too_large_denied(self):
+        with self.trusted_tree() as directory:
+            path = p.Path(directory, SOURCE + ".json")
+            path.write_text(json.dumps(self.attestation()) + " " * p.ATTESTATION_MAX_BYTES, encoding="utf-8")
+            os.chmod(path, 0o600)
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_too_large"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_directory_must_be_trusted(self):
+        with self.trusted_tree(mode=0o777) as directory:
+            self.write_attestation(directory, self.attestation())
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_dir_untrusted"):
+                p.local_ci_attestation(SOURCE)
+
+    def test_attestation_unavailable_directory_denies(self):
+        with patch.object(p, "LOCAL_CI_DIR", p.Path("/__no_such_attestation_dir__")):
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_dir_unavailable"):
+                p.local_ci_attestation(SOURCE)
 
     def test_never_started_billing_blocked_needs_the_exact_billing_annotation(self):
         run = {"id": 7, "status": "completed", "conclusion": "failure",
