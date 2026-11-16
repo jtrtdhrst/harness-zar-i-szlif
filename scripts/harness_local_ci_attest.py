@@ -290,10 +290,15 @@ def privilege_dropper(uid, gid):
         try:
             import ctypes
 
-            # PR_SET_NO_NEW_PRIVS: no setuid binary can raise privileges back.
-            ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0)
-        except Exception:
-            pass
+            # PR_SET_NO_NEW_PRIVS must succeed BEFORE any credential transition.
+            # A missing syscall, nonzero return or raised error denies execution.
+            libc = ctypes.CDLL(None, use_errno=True)
+            prctl = libc.prctl
+            prctl.restype = ctypes.c_int
+            if prctl(38, 1, 0, 0, 0) != 0:
+                raise OSError("PR_SET_NO_NEW_PRIVS failed")
+        except Exception as exc:
+            raise OSError("no_new_privs_unavailable") from exc
         os.setgroups([])
         os.setgid(gid)
         os.setuid(uid)
@@ -331,7 +336,7 @@ def run_tests(commands, cwd, uid, gid, timeout=TEST_TIMEOUT):
                                        timeout=timeout, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        close_fds=True, preexec_fn=preexec)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
             raise Denied("test_command_unavailable") from None
         results.append({"command": label, "exit": completed.returncode,
                         "seconds": round(time.monotonic() - started, 3)})
@@ -391,13 +396,12 @@ def main(argv=None):
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--base-sha", required=True)
     parser.add_argument("--image-digest", required=True)
-    parser.add_argument("--policy", default=str(DEFAULT_POLICY))
     parser.add_argument("--dry-run", action="store_true", help="Print the plan; write nothing")
     args = parser.parse_args(argv)
     if os.geteuid() != 0 and not args.dry_run:
         raise SystemExit("requires root on the approved host (or --dry-run)")
     try:
-        policy_bytes = read_trusted_file(args.policy, "policy", require_root=os.geteuid() == 0)
+        policy_bytes = read_trusted_file(DEFAULT_POLICY, "policy", require_root=os.geteuid() == 0)
         policy_digest = "sha256:" + hashlib.sha256(policy_bytes).hexdigest()
         policy = json.loads(policy_bytes.decode("utf-8"))
         validate_policy(policy)
