@@ -46,7 +46,11 @@ Fail-closed rules:
 `SUPABASE_MCP_DDL_SCHEMA_ALLOWLIST` (comma-separated schema names), always refuses
 reserved schemas (`auth`, `storage`, `pg_catalog`, ...), only adds nullable columns of an
 allowlisted type, and defaults to verifying the change and then rolling the transaction
-back. It requires `DATABASE_URL` and never uses a service_role JWT.
+back. Verification compares the `information_schema` readback with the request — column
+name, type, `is_nullable = YES` and no default — because `ADD COLUMN IF NOT EXISTS`
+no-ops when the name already exists; a pre-existing column with a different definition
+therefore fails the call instead of being reported as applied. It requires `DATABASE_URL`
+and never uses a service_role JWT.
 
 ## Provenance
 

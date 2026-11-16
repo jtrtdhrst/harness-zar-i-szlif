@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`SUPABASE_MCP_DDL_SCHEMA_ALLOWLIST`), reserved-schema deny list, strict identifier and
   type validation, single transaction with `information_schema` readback, rollback by
   default. Requires `DATABASE_URL`; never uses a service_role JWT.
+  - Readback is verified against the request before success is reported (column name,
+    `data_type`, `is_nullable = YES`, no default). `ADD COLUMN IF NOT EXISTS` silently
+    no-ops on an existing column, so a pre-existing column of another type, a `NOT NULL`
+    column or a defaulted column now fails the call and rolls back instead of being
+    reported as applied.
 
 ### Added
 

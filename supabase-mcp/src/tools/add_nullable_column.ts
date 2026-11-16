@@ -7,7 +7,10 @@
  *   enum of non-destructive types. No DROP, no ALTER TYPE, no NOT NULL, no DEFAULT.
  * - Fails closed when the allowlist is unset/empty or the target schema is reserved.
  * - Runs inside a single transaction, reads the column back from information_schema, and
- *   rolls back by default so a caller can prove the change without persisting it.
+ *   requires the readback definition (name, type, nullability, absence of a default) to match
+ *   the request before reporting success — `ADD COLUMN IF NOT EXISTS` silently no-ops on an
+ *   existing column, so row existence alone is never treated as proof.
+ * - Rolls back by default so a caller can prove the change without persisting it.
  * - Requires the direct database connection (DATABASE_URL); it never uses a service_role
  *   JWT, so no standing elevated credential is needed by the calling agent.
  */
@@ -55,6 +58,31 @@ const ALLOWED_DATA_TYPES = [
 
 /** PostgreSQL identifier rule used by this tool (lower case, bounded length). */
 const IDENTIFIER_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/;
+
+/**
+ * Requested type -> the value information_schema.columns reports for it.
+ * Comparing the raw request against the catalog would reject valid columns whose catalog
+ * name differs ("timestamptz" is reported as "timestamp with time zone").
+ */
+const INFORMATION_SCHEMA_DATA_TYPES: Record<string, string> = {
+    text: 'text',
+    integer: 'integer',
+    bigint: 'bigint',
+    boolean: 'boolean',
+    numeric: 'numeric',
+    timestamptz: 'timestamp with time zone',
+    date: 'date',
+    uuid: 'uuid',
+    jsonb: 'jsonb',
+};
+
+/** Minimal shape of an information_schema.columns readback row. */
+interface ReadbackRow {
+    column_name?: unknown;
+    data_type?: unknown;
+    is_nullable?: unknown;
+    column_default?: unknown;
+}
 
 const AddNullableColumnInputSchema = z.object({
     schema: z
@@ -175,6 +203,47 @@ function quoteIdentifier(name: string): string {
     return `"${name}"`;
 }
 
+/**
+ * Compares an information_schema readback row with the definition the caller asked for.
+ *
+ * `ADD COLUMN IF NOT EXISTS` is a no-op when a column of that name already exists, and the
+ * readback row then describes that PRE-EXISTING column. Row existence alone therefore proves
+ * nothing: this returns null only when the row is the requested nullable, default-free column,
+ * and otherwise a description of the first difference (name, type, nullability or default).
+ */
+export function describeReadbackMismatch(
+    expected: { column: string; data_type: string },
+    row: ReadbackRow
+): string | null {
+    const actualColumn = String(row.column_name ?? '');
+    if (actualColumn !== expected.column) {
+        return `column_name: expected "${expected.column}", readback returned "${actualColumn}"`;
+    }
+
+    const expectedType = INFORMATION_SCHEMA_DATA_TYPES[expected.data_type] ?? expected.data_type;
+    const actualType = String(row.data_type ?? '')
+        .trim()
+        .toLowerCase();
+    if (actualType !== expectedType) {
+        return `data_type: requested "${expected.data_type}" (${expectedType}), readback returned "${actualType}"`;
+    }
+
+    const actualNullable = String(row.is_nullable ?? '')
+        .trim()
+        .toUpperCase();
+    if (actualNullable !== 'YES') {
+        return `is_nullable: expected "YES" for a newly added nullable column, readback returned "${actualNullable}"`;
+    }
+
+    const actualDefault =
+        row.column_default === null || row.column_default === undefined ? null : String(row.column_default);
+    if (actualDefault !== null) {
+        return `column_default: expected no default, readback returned "${actualDefault}"`;
+    }
+
+    return null;
+}
+
 export const addNullableColumnTool = {
     name: 'add_nullable_column',
     description:
@@ -236,6 +305,18 @@ export const addNullableColumnTool = {
                     // The ALTER reported success but the column is not visible: abort.
                     throw new Error(
                         `Readback failed: column ${schemaName}.${tableName}.${columnName} was not found after ALTER.`
+                    );
+                }
+
+                // A readback row is not proof: with IF NOT EXISTS the row may describe a
+                // pre-existing column of another type, or a NOT NULL / defaulted one. Only an
+                // exact definition match may be reported as an applied change.
+                const mismatch = describeReadbackMismatch({ column: columnName, data_type }, row);
+                if (mismatch) {
+                    throw new Error(
+                        `Readback mismatch: ${mismatch}. ` +
+                            `ADD COLUMN IF NOT EXISTS was a no-op on ${schemaName}.${tableName}.${columnName}, ` +
+                            'so the requested definition was NOT applied; rolling back instead of reporting success.'
                     );
                 }
 

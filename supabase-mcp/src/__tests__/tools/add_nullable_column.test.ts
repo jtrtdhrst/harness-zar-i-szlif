@@ -18,6 +18,7 @@ import type { SelfhostedSupabaseClient } from '../../client/index.js';
 import {
     addNullableColumnTool,
     DDL_SCHEMA_ALLOWLIST_ENV,
+    describeReadbackMismatch,
     parseSchemaAllowlist,
     resolveDdlTargetSchema,
 } from '../../tools/add_nullable_column.js';
@@ -289,6 +290,188 @@ describe('add_nullable_column', () => {
 
             expect(state.committed).toBe(false);
             expect(state.rolledBack).toBe(true);
+        });
+    });
+
+    describe('readback definition verification', () => {
+        beforeEach(() => {
+            process.env[DDL_SCHEMA_ALLOWLIST_ENV] = 'engineer_test';
+        });
+
+        // ADD COLUMN IF NOT EXISTS is a no-op when the name already exists, so the readback
+        // row describes the PRE-EXISTING column. Reporting success from row existence alone
+        // would present another column's definition as the requested change.
+        test('describeReadbackMismatch accepts the requested nullable, default-free column', () => {
+            expect(
+                describeReadbackMismatch(
+                    { column: 'colour', data_type: 'text' },
+                    { column_name: 'colour', data_type: 'text', is_nullable: 'YES', column_default: null }
+                )
+            ).toBeNull();
+        });
+
+        test('describeReadbackMismatch maps requested types to their information_schema name', () => {
+            expect(
+                describeReadbackMismatch(
+                    { column: 'at', data_type: 'timestamptz' },
+                    {
+                        column_name: 'at',
+                        data_type: 'timestamp with time zone',
+                        is_nullable: 'YES',
+                        column_default: null,
+                    }
+                )
+            ).toBeNull();
+        });
+
+        test('describeReadbackMismatch reports type, nullability, default and name differences', () => {
+            const wrongType = describeReadbackMismatch(
+                { column: 'colour', data_type: 'text' },
+                { column_name: 'colour', data_type: 'integer', is_nullable: 'YES', column_default: null }
+            );
+            expect(wrongType).toContain('data_type');
+
+            const notNull = describeReadbackMismatch(
+                { column: 'colour', data_type: 'text' },
+                { column_name: 'colour', data_type: 'text', is_nullable: 'NO', column_default: null }
+            );
+            expect(notNull).toContain('is_nullable');
+
+            const withDefault = describeReadbackMismatch(
+                { column: 'colour', data_type: 'text' },
+                { column_name: 'colour', data_type: 'text', is_nullable: 'YES', column_default: "'x'::text" }
+            );
+            expect(withDefault).toContain('column_default');
+
+            const otherName = describeReadbackMismatch(
+                { column: 'colour', data_type: 'text' },
+                { column_name: 'colour_old', data_type: 'text', is_nullable: 'YES', column_default: null }
+            );
+            expect(otherName).toContain('column_name');
+        });
+
+        test('commit mode rejects an existing column of a different type instead of reporting success', async () => {
+            const { client, state } = createDdlClient({
+                readbackRow: {
+                    column_name: 'colour',
+                    data_type: 'integer',
+                    is_nullable: 'YES',
+                    column_default: null,
+                },
+            });
+
+            await expect(
+                addNullableColumnTool.execute(
+                    { ...VALID_INPUT, mode: 'commit' },
+                    context(client).ctx
+                )
+            ).rejects.toThrow(/Readback mismatch/);
+
+            // No false success: the transaction must not commit.
+            expect(state.committed).toBe(false);
+            expect(state.rolledBack).toBe(true);
+        });
+
+        test('commit mode rejects a pre-existing NOT NULL column', async () => {
+            const { client, state } = createDdlClient({
+                readbackRow: {
+                    column_name: 'colour',
+                    data_type: 'text',
+                    is_nullable: 'NO',
+                    column_default: null,
+                },
+            });
+
+            await expect(
+                addNullableColumnTool.execute(
+                    { ...VALID_INPUT, mode: 'commit' },
+                    context(client).ctx
+                )
+            ).rejects.toThrow(/Readback mismatch: .*is_nullable/);
+
+            expect(state.committed).toBe(false);
+            expect(state.rolledBack).toBe(true);
+        });
+
+        test('commit mode rejects a pre-existing column that carries a default', async () => {
+            const { client, state } = createDdlClient({
+                readbackRow: {
+                    column_name: 'colour',
+                    data_type: 'text',
+                    is_nullable: 'YES',
+                    column_default: "'red'::text",
+                },
+            });
+
+            await expect(
+                addNullableColumnTool.execute(
+                    { ...VALID_INPUT, mode: 'commit' },
+                    context(client).ctx
+                )
+            ).rejects.toThrow(/Readback mismatch: .*column_default/);
+
+            expect(state.committed).toBe(false);
+            expect(state.rolledBack).toBe(true);
+        });
+
+        test('rollback mode also refuses to report a mismatched column as verified', async () => {
+            const { client, state } = createDdlClient({
+                readbackRow: {
+                    column_name: 'colour',
+                    data_type: 'integer',
+                    is_nullable: 'YES',
+                    column_default: null,
+                },
+            });
+
+            await expect(
+                addNullableColumnTool.execute(VALID_INPUT, context(client).ctx)
+            ).rejects.toThrow(/Readback mismatch/);
+
+            expect(state.committed).toBe(false);
+            expect(state.rolledBack).toBe(true);
+        });
+
+        test('rejects a readback row for a different column name', async () => {
+            const { client, state } = createDdlClient({
+                readbackRow: {
+                    column_name: 'colour_old',
+                    data_type: 'text',
+                    is_nullable: 'YES',
+                    column_default: null,
+                },
+            });
+
+            await expect(
+                addNullableColumnTool.execute(
+                    { ...VALID_INPUT, mode: 'commit' },
+                    context(client).ctx
+                )
+            ).rejects.toThrow(/Readback mismatch: .*column_name/);
+
+            expect(state.committed).toBe(false);
+            expect(state.rolledBack).toBe(true);
+        });
+
+        test('commit mode still succeeds for a definition that matches the request', async () => {
+            const { client, state } = createDdlClient({
+                readbackRow: {
+                    column_name: 'at',
+                    data_type: 'timestamp with time zone',
+                    is_nullable: 'YES',
+                    column_default: null,
+                },
+            });
+
+            const result = await addNullableColumnTool.execute(
+                { ...VALID_INPUT, column: 'at', data_type: 'timestamptz', mode: 'commit' },
+                context(client).ctx
+            );
+
+            expect(result.applied).toBe(true);
+            expect(result.readback?.data_type).toBe('timestamp with time zone');
+            expect(state.committed).toBe(true);
+            expect(state.rolledBack).toBe(false);
         });
     });
 });
