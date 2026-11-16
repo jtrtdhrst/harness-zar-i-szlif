@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { handleSqlResponse } from './utils.js';
 import type { PoolClient } from 'pg';
 import type { SqlSuccessResponse, AuthUser } from '../types/index.js'; // Import AuthUser
@@ -40,6 +40,7 @@ const mcpInputSchema = {
 // Tool definition
 export const getAuthUserTool = {
     name: 'get_auth_user',
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     description: 'Retrieves details for a specific user from auth.users by their ID.',
     inputSchema: GetAuthUserInputSchema,
     mcpInputSchema: mcpInputSchema,

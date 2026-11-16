@@ -61,7 +61,7 @@ const functionIdPattern = /^[a-zA-Z0-9_\-]+$/;
 export const listEdgeFunctionLogsTool = {
     name: 'list_edge_function_logs',
     description: 'Lists execution logs for edge functions from the function_edge_logs table.',
-    privilegeLevel: 'regular' as ToolPrivilegeLevel,
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     inputSchema: ListEdgeFunctionLogsInputSchema,
     mcpInputSchema: mcpInputSchema,
     outputSchema: ListEdgeFunctionLogsOutputSchema,

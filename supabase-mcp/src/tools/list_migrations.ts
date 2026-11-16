@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
 
 // Schema for the output: array of migration details
@@ -24,6 +24,7 @@ const mcpInputSchema = {
 // The tool definition
 export const listMigrationsTool = {
     name: 'list_migrations',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists applied database migrations recorded in supabase_migrations.schema_migrations table.',
     inputSchema: ListMigrationsInputSchema,
     mcpInputSchema: mcpInputSchema,

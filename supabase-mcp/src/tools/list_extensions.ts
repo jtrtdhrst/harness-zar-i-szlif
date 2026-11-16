@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for the output: array of extension details
 const ListExtensionsOutputSchema = z.array(z.object({
@@ -24,6 +24,7 @@ const mcpInputSchema = {
 // The tool definition
 export const listExtensionsTool = {
     name: 'list_extensions',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists all installed PostgreSQL extensions in the database.',
     inputSchema: ListExtensionsInputSchema,
     mcpInputSchema: mcpInputSchema,

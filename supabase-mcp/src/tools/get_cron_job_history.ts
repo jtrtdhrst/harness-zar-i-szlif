@@ -62,7 +62,7 @@ const jobNamePattern = /^[a-zA-Z0-9_\-\s]+$/;
 export const getCronJobHistoryTool = {
     name: 'get_cron_job_history',
     description: 'Gets execution history for pg_cron jobs including status and timing. Requires pg_cron to be installed.',
-    privilegeLevel: 'regular' as ToolPrivilegeLevel,
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     inputSchema: GetCronJobHistoryInputSchema,
     mcpInputSchema: mcpInputSchema,
     outputSchema: GetCronJobHistoryOutputSchema,

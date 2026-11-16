@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Define the schema for the tool's output (an array of table names)
 const ListTablesOutputSchema = z.array(z.object({
@@ -27,6 +27,7 @@ const mcpInputSchema = {
 // Define the tool
 export const listTablesTool = {
     name: 'list_tables',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists all accessible tables in the connected database, grouped by schema.',
     inputSchema: ListTablesInputSchema, // Use defined schema
     mcpInputSchema: mcpInputSchema,     // Add the static JSON schema for MCP

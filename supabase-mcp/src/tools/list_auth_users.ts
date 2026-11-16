@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { handleSqlResponse } from './utils.js';
 import type { SqlSuccessResponse, AuthUser } from '../types/index.js';
 
@@ -48,6 +48,7 @@ const mcpInputSchema = {
 // Tool definition
 export const listAuthUsersTool = {
     name: 'list_auth_users',
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     description: 'Lists users from the auth.users table.',
     inputSchema: ListAuthUsersInputSchema,
     mcpInputSchema: mcpInputSchema,

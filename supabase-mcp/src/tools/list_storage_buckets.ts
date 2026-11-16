@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { handleSqlResponse } from './utils.js';
 import type { SqlSuccessResponse, StorageBucket } from '../types/index.js';
 
@@ -35,6 +35,7 @@ type Input = z.infer<typeof inputSchema>;
 // Tool definition
 export const listStorageBucketsTool = {
     name: 'list_storage_buckets',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists all storage buckets in the project.',
     mcpInputSchema,
     inputSchema,

@@ -9,52 +9,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { SelfhostedSupabaseClient } from './client/index.js';
 import { HttpMcpServer } from './server/http-server.js';
-import { listTablesTool } from './tools/list_tables.js';
-import { listExtensionsTool } from './tools/list_extensions.js';
-import { listMigrationsTool } from './tools/list_migrations.js';
-import { applyMigrationTool } from './tools/apply_migration.js';
-import { executeSqlTool } from './tools/execute_sql.js';
-import { getDatabaseConnectionsTool } from './tools/get_database_connections.js';
-import { getDatabaseStatsTool } from './tools/get_database_stats.js';
-import { getProjectUrlTool } from './tools/get_project_url.js';
-import { generateTypesTool } from './tools/generate_typescript_types.js';
-import { rebuildHooksTool } from './tools/rebuild_hooks.js';
-import { verifyJwtSecretTool } from './tools/verify_jwt_secret.js';
-import { listAuthUsersTool } from './tools/list_auth_users.js';
-import { getAuthUserTool } from './tools/get_auth_user.js';
-import { deleteAuthUserTool } from './tools/delete_auth_user.js';
-import { createAuthUserTool } from './tools/create_auth_user.js';
-import { updateAuthUserTool } from './tools/update_auth_user.js';
+import { ALL_TOOLS, buildToolRegistry, type AppTool } from './tools/registry.js';
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { canAccessTool, type ToolContext, type ToolPrivilegeLevel, type UserContext } from './tools/types.js';
-import listStorageBucketsTool from './tools/list_storage_buckets.js';
-import listStorageObjectsTool from './tools/list_storage_objects.js';
-import listRealtimePublicationsTool from './tools/list_realtime_publications.js';
-import { listCronJobsTool } from './tools/list_cron_jobs.js';
-import { listVectorIndexesTool } from './tools/list_vector_indexes.js';
-import { listEdgeFunctionsTool } from './tools/list_edge_functions.js';
-import { getEdgeFunctionDetailsTool } from './tools/get_edge_function_details.js';
-import { getLogsTool } from './tools/get_logs.js';
-import { getAdvisorsTool } from './tools/get_advisors.js';
-import { getStorageConfigTool } from './tools/get_storage_config.js';
-import { updateStorageConfigTool } from './tools/update_storage_config.js';
-import { listTableColumnsTool } from './tools/list_table_columns.js';
-import { listIndexesTool } from './tools/list_indexes.js';
-import { listConstraintsTool } from './tools/list_constraints.js';
-import { listForeignKeysTool } from './tools/list_foreign_keys.js';
-import { listRlsPoliciesTool } from './tools/list_rls_policies.js';
-import { listTriggersTool } from './tools/list_triggers.js';
-import { listDatabaseFunctionsTool } from './tools/list_database_functions.js';
-import { getFunctionDefinitionTool } from './tools/get_function_definition.js';
-import { getTriggerDefinitionTool } from './tools/get_trigger_definition.js';
-import { getRlsStatusTool } from './tools/get_rls_status.js';
-import { listAvailableExtensionsTool } from './tools/list_available_extensions.js';
-import { getCronJobHistoryTool } from './tools/get_cron_job_history.js';
-import { listEdgeFunctionLogsTool } from './tools/list_edge_function_logs.js';
-import { getIndexStatsTool } from './tools/get_index_stats.js';
-import { getVectorIndexStatsTool } from './tools/get_vector_index_stats.js';
-import { explainQueryTool } from './tools/explain_query.js';
+import { canAccessTool, type ToolContext, type UserContext } from './tools/types.js';
 
 // Node.js built-in modules
 import * as fs from 'node:fs';
@@ -68,16 +25,6 @@ interface McpToolSchema {
     inputSchema: object; 
 }
 
-// Base structure for our tool objects - For Reference
-interface AppTool {
-    name: string;
-    description: string;
-    inputSchema: z.ZodTypeAny; // Zod schema for parsing
-    mcpInputSchema: object;    // Static JSON schema for MCP (Required)
-    outputSchema: z.ZodTypeAny; // Zod schema for output (optional)
-    privilegeLevel?: ToolPrivilegeLevel; // Privilege level for access control
-    execute: (input: unknown, context: ToolContext) => Promise<unknown>;
-}
 
 // Main function
 async function main() {
@@ -139,52 +86,11 @@ async function main() {
 
         console.error('Supabase client initialized successfully.');
 
-        // Use Map for tool registration to avoid object injection patterns
-        const availableTools = new Map<string, AppTool>([
-            [listTablesTool.name, listTablesTool as AppTool],
-            [listExtensionsTool.name, listExtensionsTool as AppTool],
-            [listMigrationsTool.name, listMigrationsTool as AppTool],
-            [applyMigrationTool.name, applyMigrationTool as AppTool],
-            [executeSqlTool.name, executeSqlTool as AppTool],
-            [getDatabaseConnectionsTool.name, getDatabaseConnectionsTool as AppTool],
-            [getDatabaseStatsTool.name, getDatabaseStatsTool as AppTool],
-            [getProjectUrlTool.name, getProjectUrlTool as AppTool],
-            [generateTypesTool.name, generateTypesTool as AppTool],
-            [rebuildHooksTool.name, rebuildHooksTool as AppTool],
-            [verifyJwtSecretTool.name, verifyJwtSecretTool as AppTool],
-            [listAuthUsersTool.name, listAuthUsersTool as AppTool],
-            [getAuthUserTool.name, getAuthUserTool as AppTool],
-            [deleteAuthUserTool.name, deleteAuthUserTool as AppTool],
-            [createAuthUserTool.name, createAuthUserTool as AppTool],
-            [updateAuthUserTool.name, updateAuthUserTool as AppTool],
-            [listStorageBucketsTool.name, listStorageBucketsTool as AppTool],
-            [listStorageObjectsTool.name, listStorageObjectsTool as AppTool],
-            [listRealtimePublicationsTool.name, listRealtimePublicationsTool as AppTool],
-            [listCronJobsTool.name, listCronJobsTool as AppTool],
-            [listVectorIndexesTool.name, listVectorIndexesTool as AppTool],
-            [listEdgeFunctionsTool.name, listEdgeFunctionsTool as AppTool],
-            [getEdgeFunctionDetailsTool.name, getEdgeFunctionDetailsTool as AppTool],
-            [getLogsTool.name, getLogsTool as AppTool],
-            [getAdvisorsTool.name, getAdvisorsTool as AppTool],
-            [getStorageConfigTool.name, getStorageConfigTool as AppTool],
-            [updateStorageConfigTool.name, updateStorageConfigTool as AppTool],
-            [listTableColumnsTool.name, listTableColumnsTool as AppTool],
-            [listIndexesTool.name, listIndexesTool as AppTool],
-            [listConstraintsTool.name, listConstraintsTool as AppTool],
-            [listForeignKeysTool.name, listForeignKeysTool as AppTool],
-            [listRlsPoliciesTool.name, listRlsPoliciesTool as AppTool],
-            [listTriggersTool.name, listTriggersTool as AppTool],
-            [listDatabaseFunctionsTool.name, listDatabaseFunctionsTool as AppTool],
-            [getFunctionDefinitionTool.name, getFunctionDefinitionTool as AppTool],
-            [getTriggerDefinitionTool.name, getTriggerDefinitionTool as AppTool],
-            [getRlsStatusTool.name, getRlsStatusTool as AppTool],
-            [listAvailableExtensionsTool.name, listAvailableExtensionsTool as AppTool],
-            [getCronJobHistoryTool.name, getCronJobHistoryTool as AppTool],
-            [listEdgeFunctionLogsTool.name, listEdgeFunctionLogsTool as AppTool],
-            [getIndexStatsTool.name, getIndexStatsTool as AppTool],
-            [getVectorIndexStatsTool.name, getVectorIndexStatsTool as AppTool],
-            [explainQueryTool.name, explainQueryTool as AppTool],
-        ]);
+        // Tools come from the single registry module so every tool is guaranteed to
+        // declare an explicit privilege level; undeclared tools are refused at startup.
+        const availableTools: Map<string, AppTool> = buildToolRegistry(ALL_TOOLS, (message, level) => {
+            console.error(level === 'error' ? message : `[REGISTRY] ${message}`);
+        });
 
         // --- Tool Filtering Logic ---
         // Use Map for registered tools (copy from available tools initially)
@@ -297,7 +203,15 @@ async function main() {
                 // SECURITY: Check privilege level in HTTP mode
                 // In stdio mode (no userContext), all tools are accessible (trusted local process)
                 if (userContext) {
-                    const toolPrivilegeLevel = tool.privilegeLevel ?? 'regular';
+                    // SECURITY: never default an undeclared level to 'regular'.
+                    const toolPrivilegeLevel = tool.privilegeLevel;
+                    if (!toolPrivilegeLevel) {
+                        console.error(`[SECURITY] Access denied: tool ${toolName} declares no privilege level`);
+                        throw new McpError(
+                            ErrorCode.InvalidRequest,
+                            `Access denied: Tool '${toolName}' has no declared privilege level.`
+                        );
+                    }
                     if (!canAccessTool(userContext.role, toolPrivilegeLevel)) {
                         console.error(`[SECURITY] Access denied: User ${userContext.email || userContext.userId} (role: ${userContext.role}) attempted to access ${toolName} (requires: ${toolPrivilegeLevel})`);
                         throw new McpError(

@@ -22,6 +22,32 @@ The server speaks MCP Streamable HTTP on `:3100/mcp` (transport `http`).
 `supabase_default` network (`docker compose` from the Supabase repo). The MCP server
 reaches PostgREST/Kong through `SUPABASE_URL` and Postgres through `DATABASE_URL`.
 
+## Authorization
+
+HTTP mode (`/mcp`) requires a Supabase JWT signed with `SUPABASE_AUTH_JWT_SECRET`. The
+token's `role` claim selects the tool privilege level; tools are classified in
+`src/tools/registry.ts` and the policy lives in `src/tools/types.ts`:
+
+| privilege level | content | `service_role` | `authenticated` | `anon` | unknown role |
+| --- | --- | --- | --- | --- | --- |
+| `regular` | schema/structure metadata (tables, columns, indexes, policies, extensions) | yes | yes | no | no |
+| `sensitive` | user data and PII (`list_auth_users`, `get_auth_user`), log contents (`get_logs`, `list_edge_function_logs`), storage objects, function source, connection activity | yes | no | no | no |
+| `privileged` | mutations and admin: `execute_sql`, `apply_migration`, auth-user admin, config changes, `add_nullable_column` | yes | no | no | no |
+
+Fail-closed rules:
+
+- An unknown role gets **no** privileges. Roles must be added explicitly to
+  `ROLE_PRIVILEGE_MAP`; there is no fallback to `authenticated`.
+- A token without a (non-empty, string) `role` claim is rejected with `401`.
+- A tool that does not declare a `privilegeLevel` is refused at registration and at call
+  time; nothing defaults to `regular`.
+
+`add_nullable_column` is the only DDL surface. It is disabled unless an operator pins
+`SUPABASE_MCP_DDL_SCHEMA_ALLOWLIST` (comma-separated schema names), always refuses
+reserved schemas (`auth`, `storage`, `pg_catalog`, ...), only adds nullable columns of an
+allowlisted type, and defaults to verifying the change and then rolling the transaction
+back. It requires `DATABASE_URL` and never uses a service_role JWT.
+
 ## Provenance
 
 Upstream: <https://github.com/HenkDz/selfhosted-supabase-mcp> (MIT, `main`,

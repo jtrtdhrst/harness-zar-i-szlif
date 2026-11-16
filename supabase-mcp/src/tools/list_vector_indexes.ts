@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for vector index output
 const VectorIndexSchema = z.object({
@@ -27,6 +27,7 @@ const mcpInputSchema = {
 // Tool definition
 export const listVectorIndexesTool = {
     name: 'list_vector_indexes',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists all pgvector indexes (ivfflat, hnsw) in the database. Returns empty array if pgvector is not installed or no vector indexes exist.',
     inputSchema: ListVectorIndexesInputSchema,
     mcpInputSchema: mcpInputSchema,

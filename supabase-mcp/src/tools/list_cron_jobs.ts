@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for cron job output
 const CronJobSchema = z.object({
@@ -30,6 +30,7 @@ const mcpInputSchema = {
 // Tool definition
 export const listCronJobsTool = {
     name: 'list_cron_jobs',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists all scheduled cron jobs from pg_cron extension. Returns empty array if pg_cron is not installed.',
     inputSchema: ListCronJobsInputSchema,
     mcpInputSchema: mcpInputSchema,

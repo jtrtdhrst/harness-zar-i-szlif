@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for combined stats output
 // Note: Types are often bigint from pg_stat, returned as string by JSON/RPC.
@@ -58,6 +58,7 @@ const mcpInputSchema = {
 // The tool definition
 export const getDatabaseStatsTool = {
     name: 'get_database_stats',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Retrieves statistics about database activity and the background writer from pg_stat_database and pg_stat_bgwriter.',
     inputSchema: GetDbStatsInputSchema,
     mcpInputSchema: mcpInputSchema,
