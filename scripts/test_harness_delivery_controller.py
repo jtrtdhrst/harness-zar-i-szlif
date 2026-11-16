@@ -305,6 +305,31 @@ class ControllerPromotionTests(unittest.TestCase):
         self.assertEqual(report["decisions"][0]["reason"], "post_deploy_source_sha_mismatch")
         self.assertEqual(transport.calls.count("rollback"), 1)
 
+    def test_health_without_a_source_sha_rolls_back_and_keeps_the_previous_digest(self):
+        # CTO finding on f13b6f2: `health.get("source_sha") is not None and ...`
+        # accepted a readback that could not prove provenance. Missing evidence
+        # must be refused exactly like wrong evidence.
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS},
+                                  health_result={"status": "ok", "digest": DIGEST})
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            report = self.authorized(transport, state_path=state)
+            self.assertFalse(state.exists(), "a rolled-back promotion must not record state")
+        decision = report["decisions"][0]
+        self.assertEqual(decision["decision"], "rolled_back")
+        self.assertEqual(decision["reason"], "post_deploy_source_sha_missing")
+        self.assertEqual(transport.calls, ["current", "build", "deploy", "health", "rollback"])
+        self.assertEqual(transport.calls.count("rollback"), 1)
+        self.assertEqual(transport.running["mantic-mcp"], PREVIOUS)
+        self.assertFalse(report["promoted"])
+
+    def test_health_with_a_null_source_sha_is_refused(self):
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS},
+                                  health_result={"status": "ok", "digest": DIGEST, "source_sha": None})
+        report = self.authorized(transport)
+        self.assertEqual(report["decisions"][0]["reason"], "post_deploy_source_sha_missing")
+        self.assertEqual(transport.running["mantic-mcp"], PREVIOUS)
+
     def test_deploy_exception_rolls_back(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS}, deploy_error=RuntimeError("boom"))
         report = self.authorized(transport)

@@ -167,7 +167,13 @@ def _promote(service, record, transport, state, state_path):
         health = transport.health(service, uuid)
         if not isinstance(health, dict) or health.get("status") != "ok" or health.get("digest") != admitted:
             raise Denied("post_deploy_health_failed")
-        if health.get("source_sha") is not None and health.get("source_sha") != record["source_sha"]:
+        # The deployed service must report the exact source SHA it runs. Absent
+        # evidence is not evidence: a health payload without it is refused, so
+        # a readback that cannot prove provenance never counts as promotion.
+        reported_sha = health.get("source_sha")
+        if reported_sha is None:
+            raise Denied("post_deploy_source_sha_missing")
+        if reported_sha != record["source_sha"]:
             raise Denied("post_deploy_source_sha_mismatch")
     except Denied as exc:
         rollback = transport.rollback(service, uuid)
