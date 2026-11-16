@@ -132,7 +132,8 @@ class AttesterTests(unittest.TestCase):
     # --- no caller-supplied execution surface -------------------------------
     def test_cli_rejects_caller_supplied_test_commands(self):
         for argv in (["--test-command", '["/bin/sh","-c","id"]'], ["--repo", "/tmp"],
-                     ["--out-dir", "/tmp"], ["--key-file", "/tmp/k"]):
+                     ["--out-dir", "/tmp"], ["--key-file", "/tmp/k"],
+                     ["--policy", "/tmp/alternate-root-owned-policy.json"]):
             with self.assertRaises(SystemExit) as caught:
                 attest.main(["--service", "mantic-mcp", "--source-sha", SOURCE,
                              "--base-sha", BASE, "--image-digest", DIGEST] + argv)
@@ -158,6 +159,42 @@ class AttesterTests(unittest.TestCase):
         for uid, gid in ((0, 1000), (1000, 0), (None, 1000), (1000, None), ("1000", 1000)):
             with self.assertRaisesRegex(attest.Denied, "policy_privilege_drop_missing"):
                 attest.validate_policy(policy(run_as_uid=uid, run_as_gid=gid))
+
+    def test_prctl_failure_denies_before_privilege_change(self):
+        # A nonzero prctl return or syscall exception must never become a
+        # silent PASS, and no uid/gid transition may occur afterwards.
+        for outcome in ("negative", "exception", "missing"):
+            with self.subTest(outcome=outcome):
+                with patch("ctypes.CDLL") as cdll, \
+                     patch.object(attest.os, "setsid"), \
+                     patch.object(attest.os, "setgroups") as groups, \
+                     patch.object(attest.os, "setgid") as setgid, \
+                     patch.object(attest.os, "setuid") as setuid:
+                    if outcome == "negative":
+                        cdll.return_value.prctl.return_value = -1
+                    elif outcome == "exception":
+                        cdll.return_value.prctl.side_effect = OSError("blocked")
+                    else:
+                        del cdll.return_value.prctl
+                    with self.assertRaisesRegex(OSError, "no_new_privs_unavailable"):
+                        attest.privilege_dropper(NONROOT, os.getegid() or 1000)()
+                    groups.assert_not_called()
+                    setgid.assert_not_called()
+                    setuid.assert_not_called()
+
+    def test_prctl_success_allows_privilege_drop(self):
+        with patch("ctypes.CDLL") as cdll, \
+             patch.object(attest.os, "setsid"), \
+             patch.object(attest.os, "setgroups") as groups, \
+             patch.object(attest.os, "setgid") as setgid, \
+             patch.object(attest.os, "setuid") as setuid, \
+             patch.object(attest.os, "geteuid", return_value=NONROOT), \
+             patch.object(attest.os, "getuid", return_value=NONROOT):
+            cdll.return_value.prctl.return_value = 0
+            attest.privilege_dropper(NONROOT, os.getegid() or 1000)()
+            groups.assert_called_once_with([])
+            setgid.assert_called_once()
+            setuid.assert_called_once_with(NONROOT)
 
     def test_run_tests_refuses_uid_zero(self):
         for uid in (0, None, -1, True, 1000.0):
@@ -279,6 +316,19 @@ class AttesterTests(unittest.TestCase):
                 with self.assertRaisesRegex(attest.Denied, "signing_key_not_root_owned"):
                     attest.read_trusted_file(path, "signing_key")
 
+    def test_fixed_policy_symlink_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "policy.json"
+            real.write_text("{}")
+            os.chmod(real, 0o600)
+            alias = Path(tmp) / "policy-alias"
+            alias.symlink_to(real)
+            with patch.object(attest, "DEFAULT_POLICY", alias):
+                self.assertEqual(attest.main([
+                    "--service", "mantic-mcp", "--source-sha", SOURCE,
+                    "--base-sha", BASE, "--image-digest", DIGEST, "--dry-run"
+                ]), 1)
+
     def test_trusted_file_reads_without_following_a_swap(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "key"
@@ -307,10 +357,11 @@ class AttesterTests(unittest.TestCase):
             stream = io.StringIO()
             with patch.object(attest, "STATE_ROOT", tmp), \
                     patch.object(attest, "changed_paths", return_value=PATHS), \
+                    patch.object(attest, "DEFAULT_POLICY", policy_path), \
                     patch("sys.stdout", stream):
                 code = attest.main(["--service", "mantic-mcp", "--source-sha", SOURCE,
                                     "--base-sha", BASE, "--image-digest", DIGEST,
-                                    "--policy", str(policy_path), "--dry-run"])
+                                    "--dry-run"])
             self.assertEqual(code, 0)
             self.assertFalse(out.exists(), "dry run must not create or write attestations")
             printed = json.loads(stream.getvalue())
