@@ -1,5 +1,6 @@
 """Fail-closed tests for native-reviewed product source -> ci-approved promotion."""
 import contextlib
+import itertools
 import json
 import os
 import shutil
@@ -305,6 +306,105 @@ class ProductPromotionTests(unittest.TestCase):
         with patch.object(p, "github_api", return_value=[billing]):
             self.assertFalse(p.never_started_billing_blocked(long_run))
         self.assertFalse(p.never_started_billing_blocked({**run, "conclusion": "success", "started_at": None}))
+
+    def annotation(self, level="failure", message="m", path=".github", line=1):
+        return {"annotation_level": level, "message": message, "path": path, "start_line": line}
+
+    def failing_run(self):
+        return {"id": 7, "status": "completed", "conclusion": "failure",
+                "started_at": "2026-11-16T14:55:09Z", "completed_at": "2026-11-16T14:55:11Z"}
+
+    BILLING = ("The job was not started because recent account payments have failed "
+               "or your spending limit needs to be increased.")
+
+    def test_later_page_non_billing_failure_cancels_never_started(self):
+        page1 = [self.annotation(message=self.BILLING, line=i) for i in range(p.ANNOTATIONS_PAGE_SIZE)]
+        page2 = [self.annotation(message="Process completed with exit code 1.", line=9001)]
+        requested = []
+
+        def fake(path):
+            requested.append(path)
+            return page2 if "page=2" in path else page1
+
+        with patch.object(p, "github_api", side_effect=fake):
+            self.assertFalse(p.never_started_billing_blocked(self.failing_run()))
+        self.assertEqual(len(requested), 2)
+        self.assertIn("page=1", requested[0])
+        self.assertIn("page=2", requested[1])
+        self.assertTrue(all("per_page=" + str(p.ANNOTATIONS_PAGE_SIZE) in path for path in requested))
+
+    def test_billing_only_across_pages_still_counts_as_never_started(self):
+        page1 = [self.annotation(message=self.BILLING, line=i) for i in range(p.ANNOTATIONS_PAGE_SIZE)]
+        page2 = [self.annotation(message=self.BILLING, line=9001),
+                 self.annotation(level="notice", message="label migration", line=9002)]
+        with patch.object(p, "github_api", side_effect=[page1, page2]):
+            self.assertTrue(p.never_started_billing_blocked(self.failing_run()))
+
+    def test_annotation_pagination_403_fails_closed(self):
+        for reason in ("github_http_403", "github_http_404"):
+            with self.subTest(reason=reason), \
+                 patch.object(p, "github_api", side_effect=p.Denied(reason)):
+                with self.assertRaisesRegex(p.Denied, reason):
+                    p.never_started_billing_blocked(self.failing_run())
+
+    def test_annotation_malformed_or_non_list_page_fails_closed(self):
+        cases = (("not-a-list", "check_annotations_unreadable"),
+                 ([{"annotation_level": "failure"}], "check_annotations_malformed"),
+                 ([{"message": None, "annotation_level": "failure"}], "check_annotations_malformed"),
+                 ([self.annotation(), "raw-string"], "check_annotations_malformed"))
+        for payload, reason in cases:
+            with self.subTest(reason=reason), patch.object(p, "github_api", return_value=payload):
+                with self.assertRaisesRegex(p.Denied, reason):
+                    p._annotations(7)
+
+    def test_annotation_partial_page_after_full_page_is_complete(self):
+        page1 = [self.annotation(line=i) for i in range(p.ANNOTATIONS_PAGE_SIZE)]
+        page2 = [self.annotation(line=9000)]
+        with patch.object(p, "github_api", side_effect=[page1, page2]):
+            self.assertEqual(len(p._annotations(7)), p.ANNOTATIONS_PAGE_SIZE + 1)
+
+    def test_annotation_repeating_page_fails_closed(self):
+        page = [self.annotation(line=i) for i in range(p.ANNOTATIONS_PAGE_SIZE)]
+        with patch.object(p, "github_api", return_value=page):
+            with self.assertRaisesRegex(p.Denied, "check_annotations_pagination_loop"):
+                p._annotations(7)
+
+    def test_annotation_overlapping_pages_fail_closed(self):
+        first = [self.annotation(line=i) for i in range(p.ANNOTATIONS_PAGE_SIZE)]
+        second = first[:-1] + [self.annotation(line=9100)]
+        with patch.object(p, "github_api", side_effect=[first, second]):
+            with self.assertRaisesRegex(p.Denied, "check_annotations_pagination_inconsistent"):
+                p._annotations(7)
+
+    def test_unbounded_annotation_pagination_fails_closed(self):
+        counter = itertools.count()
+
+        def fake(path):
+            base = next(counter) * p.ANNOTATIONS_PAGE_SIZE
+            return [self.annotation(line=base + i) for i in range(p.ANNOTATIONS_PAGE_SIZE)]
+
+        with patch.object(p, "github_api", side_effect=fake):
+            with self.assertRaisesRegex(p.Denied, "check_annotations_pagination_incomplete"):
+                p._annotations(7)
+
+    def test_pagination_query_is_allowlisted_but_arbitrary_queries_are_not(self):
+        calls = []
+
+        def fake_run(argv, timeout=30, allow_fail=False):
+            calls.append(argv)
+            return SimpleNamespace(stdout='{"http":200,"data":[]}', returncode=0)
+
+        allowed = "/repos/" + p.REPO + "/check-runs/7/annotations?per_page=100&page=2"
+        with patch.object(p, "run", side_effect=fake_run):
+            self.assertEqual(p.github_api(allowed), [])
+        rejected = (allowed + "&per_page=500",
+                    "/repos/" + p.REPO + "/check-runs/7/annotations?per_page=100&page=abc",
+                    "/repos/" + p.REPO + "/commits/" + SOURCE + "?per_page=100",
+                    "/repos/" + p.REPO + "/check-runs/7/annotations?page=1")
+        for path in rejected:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(p.Denied, "unsafe_github_resource"):
+                    p.github_api(path)
 
     def test_checks_reports_billing_block_never_as_pass(self):
         run = {"id": 7, "name": "validate-product", "status": "completed", "conclusion": "failure",

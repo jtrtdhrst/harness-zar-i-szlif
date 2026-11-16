@@ -77,9 +77,20 @@ def run(argv, timeout=30, allow_fail=False):
     return result
 
 
+GITHUB_PATH = re.compile(
+    r"^/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
+# Pagination query is allowed only on the check-run annotations resource.
+GITHUB_ANNOTATIONS_PATH = re.compile(
+    r"^/repos/miloszspyrka-code/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
+    r"(\?per_page=[0-9]{1,3}(&page=[0-9]{1,5})?)?$")
+ANNOTATIONS_PAGE_SIZE = 100
+ANNOTATIONS_MAX_PAGES = 20
+ANNOTATIONS_MAX_TOTAL = 2000
+
+
 def github_api(path, method="get", body=None):
     """Existing installed App only. Never return or print installation token."""
-    if not re.fullmatch(r"/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+", path):
+    if not (GITHUB_PATH.fullmatch(path) or GITHUB_ANNOTATIONS_PATH.fullmatch(path)):
         raise Denied("unsafe_github_resource")
     if method not in ("get", "patch"):
         raise Denied("unsafe_github_method")
@@ -149,14 +160,49 @@ def provenance(merge_sha):
     return number, head
 
 
+def _annotation_key(note):
+    """Identity of one annotation, used to detect repeating/overlapping pages."""
+    return (str(note.get("path", "")), str(note.get("start_line", "")),
+            str(note.get("annotation_level", "")), str(note.get("message", "")))
+
+
 def _annotations(check_run_id):
-    """Failure annotations of one check run (read-only GitHub API)."""
+    """Every annotation of one check run, across all result pages.
+
+    The GitHub annotations endpoint is paginated, so one response is not the
+    whole truth: a later page can carry the non-billing failure that
+    disqualifies a "never started" classification. Pages are consumed until a
+    short page arrives; a malformed, repeating, overlapping, erroring or
+    unbounded page set fails closed instead of being treated as complete.
+    """
     if not isinstance(check_run_id, int):
         raise Denied("check_annotations_unreadable")
-    notes = github_api("/repos/" + REPO + "/check-runs/" + str(check_run_id) + "/annotations")
-    if not isinstance(notes, list):
-        raise Denied("check_annotations_unreadable")
-    return notes
+    base = "/repos/" + REPO + "/check-runs/" + str(check_run_id) + "/annotations"
+    collected = []
+    seen = set()
+    seen_pages = set()
+    for page in range(1, ANNOTATIONS_MAX_PAGES + 1):
+        notes = github_api(base + "?per_page=" + str(ANNOTATIONS_PAGE_SIZE)
+                           + "&page=" + str(page))
+        if not isinstance(notes, list):
+            raise Denied("check_annotations_unreadable")
+        for note in notes:
+            if not isinstance(note, dict) or not isinstance(note.get("message"), str):
+                raise Denied("check_annotations_malformed")
+        keys = {_annotation_key(note) for note in notes}
+        fingerprint = tuple(sorted(keys))
+        if notes and fingerprint in seen_pages:
+            raise Denied("check_annotations_pagination_loop")
+        seen_pages.add(fingerprint)
+        if seen & keys:
+            raise Denied("check_annotations_pagination_inconsistent")
+        seen |= keys
+        collected.extend(notes)
+        if len(collected) > ANNOTATIONS_MAX_TOTAL:
+            raise Denied("check_annotations_pagination_incomplete")
+        if len(notes) < ANNOTATIONS_PAGE_SIZE:
+            return collected
+    raise Denied("check_annotations_pagination_incomplete")
 
 
 def never_started_billing_blocked(run):
