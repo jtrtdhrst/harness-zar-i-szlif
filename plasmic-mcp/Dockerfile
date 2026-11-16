@@ -16,6 +16,9 @@ COPY services ./services
 COPY design-sync ./design-sync
 COPY workflows ./workflows
 # non-root (Etap 16/23: dedykowany user, read-only fs w compose)
-RUN adduser -D -u 10001 mcp && chown -R mcp:mcp /app
+# /state jest punktem montowania nazwanego wolumenu: musi istnieć w obrazie i
+# należeć do uid runtime, inaczej Docker tworzy wolumen root:root i pierwszy
+# zapis stanu (znacznik "seen", audit, lock projektu) kończy się EACCES.
+RUN adduser -D -u 10001 mcp && mkdir -p /state && chown -R mcp:mcp /app /state
 USER mcp
 EXPOSE 8091 8092
