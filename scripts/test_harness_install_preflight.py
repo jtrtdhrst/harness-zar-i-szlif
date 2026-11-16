@@ -1,0 +1,174 @@
+"""Tests for the read-only Harness delivery install preflight (ZARI-240).
+
+The preflight is the source-side half of the OPERATOR_ONLY install: it must never
+produce a green light, or an install plan, unless the timer is stopped, the
+installed modules match the exact approved SHA and every privileged file is
+root-owned. These tests use a fake probe; nothing here touches a real unit.
+"""
+import json
+import subprocess
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import harness_install_preflight as preflight
+
+REPO = str(Path(__file__).resolve().parent.parent)
+
+
+def head_sha():
+    return subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True,
+                          text=True, check=True).stdout.strip()
+
+
+SHA = head_sha()
+# One digest is read from a real committed blob; the rest are synthetic so the
+# preflight logic is testable while the current working tree is uncommitted.
+REAL_BLOB = preflight.blob_sha256(REPO, SHA, "scripts/harness_release_admission.py")
+EXPECTED = {name: (REAL_BLOB if name == "harness_release_admission.py" else "d" * 64)
+            for name in preflight.MODULES}
+
+
+class FakeProbe:
+    def __init__(self, active=(), euid=0, files=None):
+        self.active = set(active)
+        self.uid = euid
+        self.files = dict(files or {})
+
+    def is_active(self, unit):
+        return unit in self.active
+
+    def stat(self, path):
+        entry = self.files.get(str(path))
+        if not entry:
+            return {"exists": False, "uid": None, "mode": None}
+        return {"exists": True, "uid": entry.get("uid", 0), "mode": entry.get("mode", 0o644)}
+
+    def sha256(self, path):
+        entry = self.files.get(str(path))
+        return entry.get("sha256") if entry else None
+
+    def euid(self):
+        return self.uid
+
+
+def installed_files(**overrides):
+    files = {}
+    for name, digest in EXPECTED.items():
+        files[str(preflight.LIBEXEC / name)] = {"uid": 0, "mode": 0o644, "sha256": digest}
+    files[str(preflight.LIBEXEC / "harness_image_delivery.py")] = {"uid": 0, "mode": 0o755,
+                                                                   "sha256": "a" * 64}
+    files[str(preflight.POLICY)] = {"uid": 0, "mode": 0o600}
+    files[str(preflight.KEY)] = {"uid": 0, "mode": 0o600}
+    files[str(preflight.STATE)] = {"uid": 0, "mode": 0o755}
+    files.update({key: {**value, **overrides.get(key, {})} for key, value in files.items()})
+    return files
+
+
+class PreflightTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(preflight, "expected_hashes", lambda repo, sha, modules=None: dict(EXPECTED))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_expected_hashes_bind_the_approved_sha(self):
+        self.assertEqual(sorted(EXPECTED), sorted(preflight.MODULES))
+        for digest in EXPECTED.values():
+            self.assertRegex(digest, r"^[a-f0-9]{64}$")
+        self.assertEqual(len(REAL_BLOB), 64)
+        self.assertNotEqual(REAL_BLOB, "d" * 64)
+
+    def test_blob_sha256_reads_the_exact_committed_file(self):
+        digest = preflight.blob_sha256(REPO, SHA, "scripts/harness_release_admission.py")
+        self.assertEqual(digest, REAL_BLOB)
+        with self.assertRaises(RuntimeError):
+            preflight.blob_sha256(REPO, SHA, "scripts/does-not-exist.py")
+
+    def test_ready_when_timer_stopped_and_everything_root_owned(self):
+        probe = FakeProbe(files=installed_files())
+        checks, blockers, installed, expected = preflight.check(probe, REPO, SHA)
+        self.assertEqual(blockers, [])
+        self.assertTrue(all(checks.values()), checks)
+        self.assertEqual(expected, EXPECTED)
+        self.assertEqual(installed["harness_delivery_controller.py"]["uid"], 0)
+
+    def test_active_timer_blocks_the_install(self):
+        probe = FakeProbe(active={preflight.TIMER}, files=installed_files())
+        checks, blockers, _, _ = preflight.check(probe, REPO, SHA)
+        self.assertIn("timer_inactive", blockers)
+        self.assertFalse(checks["timer_inactive"]["ok"])
+
+    def test_running_service_blocks_the_install(self):
+        probe = FakeProbe(active={preflight.SERVICE}, files=installed_files())
+        _, blockers, _, _ = preflight.check(probe, REPO, SHA)
+        self.assertIn("service_inactive", blockers)
+
+    def test_non_root_operator_is_reported(self):
+        probe = FakeProbe(euid=997, files=installed_files())
+        _, blockers, _, _ = preflight.check(probe, REPO, SHA)
+        self.assertIn("operator_root", blockers)
+
+    def test_mismatched_installed_module_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_release_admission.py")]["sha256"] = "b" * 64
+        _, blockers, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("harness_release_admission.py_matches_approved_sha", blockers)
+
+    def test_non_root_owned_installed_module_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_delivery_controller.py")]["uid"] = 997
+        _, blockers, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("harness_delivery_controller.py_root_owned", blockers)
+
+    def test_world_readable_policy_is_a_blocker(self):
+        files = installed_files(**{str(preflight.POLICY): {"mode": 0o644}})
+        _, blockers, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("policy_root_private", blockers)
+
+    def test_missing_legacy_controller_blocks_the_backup_step(self):
+        files = installed_files()
+        files.pop(str(preflight.LIBEXEC / "harness_image_delivery.py"))
+        _, blockers, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("legacy_controller_present_to_back_up", blockers)
+
+    def test_empty_host_is_not_ready(self):
+        _, blockers, _, _ = preflight.check(FakeProbe(files={}), REPO, SHA)
+        for expected_blocker in ("policy_present", "attestation_key_present",
+                                 "legacy_controller_present_to_back_up"):
+            self.assertIn(expected_blocker, blockers)
+
+    def test_plan_starts_with_the_timer_stop_and_ends_with_rollback(self):
+        steps = preflight.install_plan(SHA, EXPECTED)
+        self.assertEqual(steps[0][0], "01_stop_timer")
+        self.assertIn("systemctl stop harness-image-delivery.timer", steps[0][1])
+        self.assertEqual(steps[-1][0], "08_rollback")
+        canary = [step for step in steps if step[0].startswith("06_")][0]
+        self.assertTrue(any("denied" in line for line in canary[1]))
+        verify = [step for step in steps if step[0].startswith("04_")][0]
+        self.assertEqual(len(verify[1]), len(preflight.MODULES))
+
+    def test_main_emits_no_plan_while_a_blocker_exists(self):
+        probe = FakeProbe(active={preflight.TIMER}, files=installed_files())
+        with patch.object(preflight, "Probe", lambda: probe):
+            with patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out:
+                code = preflight.main(["--repo", REPO, "--sha", SHA, "--plan"])
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["plan"], [])
+        self.assertIn("timer_inactive", payload["blockers"])
+
+    def test_main_emits_a_plan_when_ready(self):
+        probe = FakeProbe(files=installed_files())
+        with patch.object(preflight, "Probe", lambda: probe):
+            with patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out:
+                code = preflight.main(["--repo", REPO, "--sha", SHA, "--plan"])
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ready"])
+        self.assertEqual(payload["plan"][0][0], "01_stop_timer")
+        self.assertEqual(len(payload["plan"]), 8)
+
+
+if __name__ == "__main__":
+    unittest.main()

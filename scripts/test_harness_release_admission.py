@@ -255,5 +255,43 @@ class AdmissionTests(unittest.TestCase):
                          "admission gate must expose no promotion/deploy action")
 
 
+class BuildStageAdmissionTests(unittest.TestCase):
+    """`evaluate_build` authorizes the build stage only, never a deploy."""
+
+    def test_admits_a_build_without_an_attestation(self):
+        record = gate.evaluate_build(manifest(promotion_state="approved"), request(),
+                                     grant=grant(), now=NOW)
+        self.assertTrue(record["admit_build"])
+        self.assertNotIn("image_digest", record)
+
+    def test_denies_held_lane_without_grant(self):
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate_build(manifest(), request(), grant=None, now=NOW)
+        self.assertEqual(str(caught.exception), "release_lane_on_hold")
+
+    def test_denies_expired_grant(self):
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate_build(manifest(promotion_state="approved"), request(),
+                                grant=grant(expires_at=(NOW - timedelta(minutes=1)).isoformat()),
+                                now=NOW)
+        self.assertEqual(str(caught.exception), "grant_expired")
+
+    def test_denies_self_review(self):
+        approval = request()["approval"] | {"reviewer_agent_id": "producer-agent"}
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate_build(manifest(promotion_state="approved"), request(approval=approval),
+                                grant=grant(), now=NOW)
+        self.assertEqual(str(caught.exception), "self_review_forbidden")
+
+    def test_build_admission_is_not_deploy_admission(self):
+        # The same inputs that allow a build still cannot deploy: only the full
+        # evaluation demands the root-owned attestation and immutable digest.
+        man, req, gr = manifest(promotion_state="approved"), request(), grant()
+        self.assertTrue(gate.evaluate_build(man, req, grant=gr, now=NOW)["admit_build"])
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate(man, req, grant=gr, attestation=None, now=NOW)
+        self.assertEqual(str(caught.exception), "local_ci_attestation_missing")
+
+
 if __name__ == "__main__":
     unittest.main()

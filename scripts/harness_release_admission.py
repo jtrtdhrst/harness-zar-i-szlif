@@ -196,11 +196,13 @@ def _check_grant(entry, request, grant, source_sha, now):
     return grant["grant_id"]
 
 
-def evaluate(manifest, request, grant=None, attestation=None, now=None):
-    """Return an admission record, or raise :class:`Denied`.
+def _common_request(manifest, request, grant, now):
+    """Checks shared by build admission and release admission.
 
-    Pure and side-effect free so the controller, CI and negative-control tests
-    all exercise the identical decision path.
+    Everything here is required *before* an image exists, so both stages apply
+    it identically: service allowlist, Coolify UUID/kind, PR identity, merged
+    source SHA, authorized branch, lane hold, independent exact-SHA review and a
+    revocable per-UUID grant.
     """
     if not isinstance(request, dict):
         raise Denied("request_invalid")
@@ -237,8 +239,46 @@ def evaluate(manifest, request, grant=None, attestation=None, now=None):
         raise Denied("release_lane_on_hold")
 
     reviewer, head_sha = _check_review(entry, request)
-    digest = _check_attestation(entry, request, attestation, source_sha)
     grant_id = _check_grant(entry, request, grant, source_sha, now)
+    return entry, uuid, kind, pr, source_sha, head_sha, reviewer, grant_id
+
+
+def evaluate_build(manifest, request, grant=None, now=None):
+    """Build-stage admission: may this exact source be built and pushed?
+
+    Identical to :func:`evaluate` except that no root-owned local-CI attestation
+    and no immutable digest are required, because neither can exist before the
+    image is built. This is *not* permission to deploy: only :func:`evaluate`
+    admits a release, and it still demands the attestation, the digest and the
+    per-UUID grant for the deploy path.
+    """
+    entry, uuid, kind, pr, source_sha, head_sha, reviewer, grant_id = _common_request(
+        manifest, request, grant, now)
+    return {
+        "admit_build": True,
+        "service": entry["id"],
+        "coolify_uuid": uuid,
+        "coolify_kind": kind,
+        "repository": REPO,
+        "base_ref": RELEASE_BASE_REF,
+        "pr": pr,
+        "head_sha": head_sha,
+        "source_sha": source_sha,
+        "reviewer_role": entry.get("reviewer_role"),
+        "reviewer_agent_id": reviewer,
+        "grant_id": grant_id,
+    }
+
+
+def evaluate(manifest, request, grant=None, attestation=None, now=None):
+    """Return an admission record, or raise :class:`Denied`.
+
+    Pure and side-effect free so the controller, CI and negative-control tests
+    all exercise the identical decision path.
+    """
+    entry, uuid, kind, pr, source_sha, head_sha, reviewer, grant_id = _common_request(
+        manifest, request, grant, now)
+    digest = _check_attestation(entry, request, attestation, source_sha)
 
     return {
         "admit": True,
