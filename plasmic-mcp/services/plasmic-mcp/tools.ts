@@ -17,6 +17,7 @@ import { plasmicCommentTools } from "./comment-tools.ts";
 import { plasmicUiTools } from "./ui-tools.ts";
 import { plasmicCatalogTools } from "./catalog-tools.ts";
 import { cloneInstanceAsPrivate, plasmicCompositionTools } from "./composition-tools.ts";
+import { plasmicDataQueryTools } from "./data-query-tools.ts";
 
 export interface PlasmicCtx {
   client: PlasmicClient;
@@ -24,6 +25,22 @@ export interface PlasmicCtx {
   auditFile: string;
   agent?: string;
   run?: string;
+  /**
+   * Public base URL of the self-hosted WAB. Used only for read-only capability
+   * probes; no token or session value is ever sent to it.
+   */
+  wabBaseUrl?: string;
+  /**
+   * Injectable read-only probe (tests, and future transports). Defaults to a
+   * plain GET against `wabBaseUrl`.
+   */
+  probeWab?: (path: string) => Promise<WabProbeResult>;
+}
+
+export interface WabProbeResult {
+  status?: number;
+  json?: unknown;
+  error?: string;
 }
 
 const MAX_OUT = 50_000;
@@ -232,6 +249,7 @@ export function plasmicTools(ctx: PlasmicCtx): ToolDef[] {
     ...plasmicUiTools(ctx),
     ...plasmicCatalogTools(ctx),
     ...plasmicCompositionTools(ctx),
+    ...plasmicDataQueryTools(ctx),
 
     {
       name: "plasmic_list_projects",

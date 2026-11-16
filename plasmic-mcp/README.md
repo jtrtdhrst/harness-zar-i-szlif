@@ -8,7 +8,7 @@ CI checks belong to GitHub MCP.
 
 | Server | Command | Port | Function |
 | --- | --- | --- | --- |
-| Plasmic MCP | `node services/plasmic-mcp/server.ts` | 8091 | 30 agent-visible tools (projects, branches, catalog, composition, design reading/editing, validation) |
+| Plasmic MCP | `node services/plasmic-mcp/server.ts` | 8091 | 37 agent-visible tools (projects, branches, catalog, composition, data queries, design reading/editing, validation) |
 | OpenDesign bridge MCP | `node services/opendesign-bridge-mcp/server.ts` | 8092 | OpenDesign brand/design sync |
 
 The Plasmic tool catalog is asserted against a real **local stdio MCP server**
@@ -42,7 +42,7 @@ bypass review. No write/resolve/delete-comment tools are exposed.
 
 Before considering production E2E complete, verify a real disposable Studio
 project with one pinned element comment, a reply and a resolved thread,
-then check `tools/list` returns 30 tools, project+branch isolation,
+then check `tools/list` returns 37 tools, project+branch isolation,
 author/subject data, 401/403 and the same comment texts as Studio. Local
 contract tests use fixtures and do not establish a live WAB read.
 
@@ -51,7 +51,7 @@ save a complete WAB bundle to preserve cross-entry references; tests reject
 dangling fixture references. Verify live disposable-project readback before
 claiming 23/23 E2E.
 
-The MCP catalog has 30 tools. E2E branch cleanup is an opt-in support
+The MCP catalog has 37 tools. E2E branch cleanup is an opt-in support
 script: set `PLASMIC_ALLOW_E2E_BRANCH_DELETE=true` and
 `PLASMIC_E2E_PROJECT_ID`, then run `npm run cleanup:e2e-branch -- <branchId>`.
 It deletes only an existing `mcp-e2e-` branch and verifies its removal; use a
@@ -101,6 +101,55 @@ Local fixture tests prove the contract (`tests/plasmic-catalog-compose.test.ts`)
 They do **not** prove a live WAB write: an authenticated disposable-project
 compose/readback/rollback canary is still required before claiming DOD-05.
 
+## HTTP data queries (`$q.<name>`) — capability-gated (DOD-08)
+
+Plasmic's legacy backend integrations were removed; the current model is a
+revision-stored **HTTP (Fetch)** data query plus a native `$q.<queryName>`
+dynamic expression. This adapter exposes that only when the deployed build
+proves it supports it:
+
+- `plasmic_get_capabilities(projectId?, branchId?)` — read-only. Reports the
+  configured WAB host, the build/version the server publishes on
+  `/healthcheck`, its declared capability features, `modelVersion`/
+  `hostlessDataVersion`, and the entry types actually observed in the live
+  revision. When the build is unreachable or publishes no version it reports
+  `versionStatus: "UNVERIFIED"` — it never assumes support.
+- `plasmic_list_data_queries` / `plasmic_get_data_query` — read-only. They list
+  only entries whose type matches a data-query/HTTP-fetch model, and they never
+  return request header **values** (names only), so an `apikey` is not leaked.
+- `plasmic_create_data_query` / `plasmic_update_data_query` /
+  `plasmic_delete_data_query` / `plasmic_bind_data_query` — writes, `dryRun`
+  by default, `idempotencyKey` required for live, one revision-safe mutation
+  each (a stale revision is rejected by WAB and surfaced, never reported as
+  success).
+
+**Fail-closed rule:** a write is allowed only when *both* preconditions hold —
+(1) `/healthcheck` declares an HTTP/data-query capability, and (2) the live
+revision exposes a query model. Otherwise the call fails with
+`DATA_QUERY_API_UNSUPPORTED` plus the exact observation that failed
+(`WAB_HEALTHCHECK_UNREACHABLE`, `NO_DATA_QUERY_CAPABILITY_DECLARED`,
+`NO_QUERY_MODEL_IN_REVISION`, `WAB_BASE_URL_NOT_CONFIGURED`,
+`REVISION_READ_FAILED`). No undocumented bundle shape is injected to claim
+support.
+
+**No schema invention:** `create` copies an existing query entry as its
+structural template and only overwrites fields that template already exposes
+(`QUERY_FIELD_UNSUPPORTED` otherwise); `update` merges into an existing entry;
+`bind` repoints an existing `$q.` expression on an element that already has a
+dynamic-value binding (`DYNAMIC_VALUE_BINDING_FIELD_UNKNOWN` otherwise) and
+never authors an expression shape from scratch.
+
+**Secret boundary:** `PLASMIC_DATA_QUERY_ALLOWED_HOSTS` (comma-separated) is
+mandatory for writes; non-https URLs, non-allowlisted hosts, `service_role`
+keys, `postgres(ql)://` connection strings and inline `password=`/`secret=`
+values are rejected before any WAB call. Reads expose header names only.
+
+`tests/plasmic-data-queries.test.ts` proves the gate in both directions on a
+fixture: declared-capability + observed model enables writes; an undeclared,
+unreachable or query-less WAB refuses every write with zero mutations. A live
+authenticated run against a disposable TEST project remains a Service Auth
+gate and is **not** claimed here.
+
 ## Local checks
 
 From `mcp/plasmic`:
@@ -143,7 +192,7 @@ host release lane remain required):
    `IMAGE_TAG=<verified-main-SHA>`, snapshot state, pull/recreate the service
    and confirm the resulting image digest. Cloudflare routing alone cannot
    deploy the container.
-5. Run authenticated `initialize`/`tools/list` for all 30 tools, WAB API
+5. Run authenticated `initialize`/`tools/list` for all 37 tools, WAB API
    read and isolated disposable project/branch create/write/readback/rollback,
    plus an unauthorized 401 negative case. **The `base:latest` design
    branch requires a published package in the disposable WAB project;

@@ -33,6 +33,9 @@ const ctx: PlasmicCtx = {
     `${env("PLASMIC_STATE_DIR", "./var/plasmic-mcp")}/audit.jsonl`,
   agent: env("PAPERCLIP_AGENT_ID"),
   run: env("PAPERCLIP_RUN_ID"),
+  // Read-only capability probes (data-query support, build/version) use this
+  // public base URL and never send a token or session cookie to it.
+  wabBaseUrl: PLASMIC_BASE_URL,
 };
 
 // /state jest wolumenem montowanym do obrazu działającego jako uid 10001.
