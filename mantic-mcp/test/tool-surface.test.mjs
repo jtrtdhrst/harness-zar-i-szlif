@@ -9,18 +9,25 @@ import test from 'node:test';
 import { allToolDefinitions } from '../build/tools/index.js';
 
 const BASELINE_TOOL_COUNT = 68;
+// get_instance_identity (DOD-05) and provision_inactive_test_campaign (SECURITY
+// GATE v2 owner directive) are the only two documented additions.
+const DOCUMENTED_ADDITIONS = 2;
 
-test('tool surface matches the recorded baseline plus the documented addition', () => {
+test('tool surface matches the recorded baseline plus the documented additions', () => {
   const names = allToolDefinitions.map((definition) => definition.name);
   const unique = new Set(names);
 
   assert.equal(unique.size, names.length, 'tool names must stay unique');
   assert.equal(
     names.length,
-    BASELINE_TOOL_COUNT + 1,
-    `expected ${BASELINE_TOOL_COUNT} baseline tools + get_instance_identity, got ${names.length}`,
+    BASELINE_TOOL_COUNT + DOCUMENTED_ADDITIONS,
+    `expected ${BASELINE_TOOL_COUNT} baseline tools + ${DOCUMENTED_ADDITIONS} documented additions, got ${names.length}`,
   );
   assert.ok(unique.has('get_instance_identity'), 'the DOD-05 identity tool must be registered');
+  assert.ok(
+    unique.has('provision_inactive_test_campaign'),
+    'the SECURITY GATE v2 inactive-fixture graph tool must be registered',
+  );
 });
 
 test('no tool advertises customFields except the flattened contact tools', () => {

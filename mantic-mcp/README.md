@@ -40,7 +40,8 @@ missing.
 
 ## Tools and API surface
 
-68 baseline tools plus `get_instance_identity` (read-only), 69 in total.
+68 baseline tools plus `get_instance_identity` (read-only) and
+`provision_inactive_test_campaign` (dedicated-TEST graph fixture), 70 in total.
 
 ### Campaign entry sources
 
@@ -81,7 +82,7 @@ unrelated failure. A v1 OAuth client is not automatically valid on `/api/v2`.
 
 Provider mutations are **denied by default** at the transport boundary
 (`dispatchTool`), not in an agent prompt. Every tool is classified explicitly:
-`read` passes, five `test-write` tools are the only grantable mutations, and
+`read` passes, six `test-write` tools are the only grantable mutations, and
 every other mutation is refused unconditionally. An unclassified tool name is
 denied as a mutation, so a tool added later cannot become writable by accident.
 
@@ -89,7 +90,40 @@ denied as a mutation, so a tool added later cannot become writable by accident.
 | --- | --- | --- |
 | `read` | all `list_*`, `get_*`, `search_contacts`, `get_form_submissions`, `get_segment_contacts`, `get_contact_activity`, `list_contact_fields`, `export_campaign`, `get_instance_identity` (34) | unchanged, no grant needed |
 | `test-write` | `create_contact`, `update_contact`, `delete_contact`, `add_contact_tags`, `create_tag` (5) | allowed only under a matching TEST-only grant |
+| `test-write` + **dedicated deployment** | `provision_inactive_test_campaign` (1) | additionally requires `MAUTIC_DEPLOYMENT_CLASS=dedicated-test`; stays denied on the shared transport |
 | `denied` | send, campaign execute/create/clone/import, enrollment, segment/email/content/company/note/points/stage/webhook/file/report and API v2 project mutations (30) | never granted in this build, even if listed |
+
+### Inactive test graph (`provision_inactive_test_campaign`)
+
+The only way to create a campaign/segment/template, and it creates exactly one
+inert shape per call: an unpublished email template (`emailType: "template"`,
+`isPublished: false`), an unpublished segment filtered on one granted tag
+(documented filter form `{glue, field: "tags", object: "lead", type: "text",
+operator: "like", properties: {filter}}`), and an unpublished campaign whose
+**only** contact source is that segment (`lists: [{id}]`, no events). The
+campaign's entry source is the segment — a supported Mautic campaign source; a
+tag-change decision is an in-campaign event and is **not** an entry source, and
+this server never claims tag-triggered enrollment.
+
+It accepts five arguments and **refuses** anything else (`isPublished`,
+`publishUp/Down`, `events`, `lists`, `contactIds`, `recipients`, `send`,
+`activate`, `id`, `emailId`, `campaignId`, `segmentId`) before touching the
+provider, so activation cannot be smuggled in through an unexpected key. Names
+must start with a granted `allowedFixturePrefixes` entry and the tag with a
+granted `allowedTagPrefixes` entry. Every object is read back: a resource that
+persisted published, a campaign whose source list does not reference the new
+segment, an unexpected campaign event or a missing id fails the call instead of
+reporting success. Entry/duplicate/suppression behaviour with real contacts is
+**not run** here and is listed in the response as such.
+
+**Deployment gate:** the shared stdio/HTTP provider carries no trusted per-agent
+identity, so graph creation is refused there with `SHARED_TRANSPORT_DENIED` even
+with a valid grant. Enabling it requires an operator-provisioned,
+single-principal **dedicated TEST deployment** (`MAUTIC_DEPLOYMENT_CLASS=dedicated-test`)
+with its own pinned host/tenant/principal and a short-lived TEST grant. Until such
+a deployment exists this is an infrastructure gate for the owner, not a code gap —
+the general `create_campaign*`, `create_segment` and `create_email_template`
+tools stay permanently denied.
 
 A `test-write` call is authorized only when **all** of these hold:
 

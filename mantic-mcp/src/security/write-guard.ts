@@ -23,6 +23,7 @@
  */
 import { ErrorCode, McpError } from '../errors.js';
 import { flattenContactPayload, normalizeTagList } from '../lib/contact-payload.js';
+import { unexpectedArguments } from '../tools/fixture-graph.js';
 
 export type ToolEffect = 'read' | 'test-write' | 'denied';
 
@@ -39,7 +40,8 @@ export type DenialReason =
   | 'PRINCIPAL_MISMATCH'
   | 'IDENTITY_UNAVAILABLE'
   | 'TOOL_NOT_GRANTED'
-  | 'SCOPE_VIOLATION';
+  | 'SCOPE_VIOLATION'
+  | 'SHARED_TRANSPORT_DENIED';
 
 /** Environment contract. Values are operator-pinned; none of them is a secret
  *  written by an agent, and the grant carries no provider credential. */
@@ -49,7 +51,19 @@ export const GUARD_ENV = {
   principal: 'MAUTIC_PRINCIPAL',
   grant: 'MAUTIC_WRITE_GRANT',
   identityTtlMs: 'MAUTIC_WRITE_GUARD_IDENTITY_TTL_MS',
+  deploymentClass: 'MAUTIC_DEPLOYMENT_CLASS',
 } as const;
+
+/**
+ * The only deployment class allowed to create fixture graphs. The shared
+ * stdio/HTTP provider has no trusted per-agent identity, so graph creation stays
+ * denied there and requires an explicitly dedicated, single-principal TEST
+ * deployment (operator-set environment; a model cannot set it).
+ */
+export const DEDICATED_TEST_CLASS = 'dedicated-test';
+
+/** Tools that additionally require a dedicated TEST deployment. */
+export const DEDICATED_DEPLOYMENT_TOOLS: ReadonlySet<string> = new Set(['provision_inactive_test_campaign']);
 
 const DEFAULT_IDENTITY_TTL_MS = 60_000;
 
@@ -100,6 +114,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffect>> = Object.freeze(
   delete_contact: 'test-write',
   add_contact_tags: 'test-write',
   create_tag: 'test-write',
+  // Inactive email+segment+campaign graph; additionally requires a dedicated
+  // TEST deployment (see DEDICATED_DEPLOYMENT_TOOLS).
+  provision_inactive_test_campaign: 'test-write',
 
   // --- everything else mutating: denied unconditionally --------------------
   send_email: 'denied',
@@ -173,6 +190,7 @@ export interface WriteGrant {
   tools: string[];
   allowedTagPrefixes: string[];
   allowedContactEmails: string[];
+  allowedFixturePrefixes: string[];
   scope: string;
   expiresAt: string;
 }
@@ -193,7 +211,10 @@ const HINTS: Record<DenialReason, string> = {
   IDENTITY_UNAVAILABLE:
     'The target identity could not be verified at the provider (base host or /users/self unavailable), so no mutation is allowed.',
   TOOL_NOT_GRANTED: 'The grant does not include this tool.',
-  SCOPE_VIOLATION: 'The requested resource is outside the grant scope (TEST-only tags/recipients).',
+  SCOPE_VIOLATION: 'The requested resource is outside the grant scope (TEST-only tags/recipients/fixture names).',
+  SHARED_TRANSPORT_DENIED:
+    'Fixture-graph creation requires a dedicated TEST deployment (MAUTIC_DEPLOYMENT_CLASS=dedicated-test). The shared stdio/HTTP ' +
+    'provider has no trusted per-agent identity, so this write stays denied there and is an operator-side infrastructure gate.',
 };
 
 function deny(
@@ -237,6 +258,7 @@ function parseGrant(raw: string | undefined): { grant: WriteGrant | null; error:
     tools: stringArray(parsed.tools),
     allowedTagPrefixes: stringArray(parsed.allowedTagPrefixes),
     allowedContactEmails: stringArray(parsed.allowedContactEmails),
+    allowedFixturePrefixes: stringArray(parsed.allowedFixturePrefixes),
     scope: typeof parsed.scope === 'string' ? parsed.scope : '',
     expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : '',
   };
@@ -290,6 +312,7 @@ export class WriteGuard {
     return (
       `mode=enforce grant=${grantState} pinnedHost=${this.targetHost ?? 'unset'} ` +
       `pinnedTenantSet=${this.targetTenant ? 'yes' : 'no'} principalSet=${this.principal ? 'yes' : 'no'} ` +
+      `deploymentClass=${this.env[GUARD_ENV.deploymentClass]?.trim() || 'unset'} ` +
       `tools: read=${counts.read} test-write=${counts['test-write']} denied=${counts.denied}`
     );
   }
@@ -314,6 +337,19 @@ export class WriteGuard {
     if (Date.parse(grant.expiresAt) <= this.now()) deny(toolName, 'GRANT_EXPIRED', host);
 
     if (!grant.tools.includes(toolName)) deny(toolName, 'TOOL_NOT_GRANTED', host);
+
+    // Fixture-graph creation is refused unless the deployment itself is declared
+    // a dedicated TEST instance: the shared transport cannot prove a per-agent
+    // actor, so it must not be able to create campaigns/segments/templates.
+    if (DEDICATED_DEPLOYMENT_TOOLS.has(toolName)) {
+      const deploymentClass = this.env[GUARD_ENV.deploymentClass]?.trim();
+      if (deploymentClass !== DEDICATED_TEST_CLASS) {
+        deny(toolName, 'SHARED_TRANSPORT_DENIED', host, {
+          requiredDeploymentClass: DEDICATED_TEST_CLASS,
+          observedDeploymentClass: deploymentClass ?? null,
+        });
+      }
+    }
 
     const identity = await this.verifyIdentity(client);
     if (!identity.ok) deny(toolName, identity.reason, host);
@@ -461,6 +497,28 @@ export class WriteGuard {
 
     if (toolName === 'delete_contact') {
       return targetViolation(args?.id);
+    }
+
+    if (toolName === 'provision_inactive_test_campaign') {
+      // Fail-closed argument surface: activation/send/recipient/update keys are
+      // not "ignored", they are a denial.
+      const unexpected = unexpectedArguments(args);
+      if (unexpected.length > 0) {
+        return { field: 'arguments', reason: 'unsupported-argument', rejectedNames: unexpected };
+      }
+      const prefixOk = (value: unknown) =>
+        typeof value === 'string' &&
+        grant.allowedFixturePrefixes.some((prefix) => prefix !== '' && value.startsWith(prefix));
+      for (const field of ['emailName', 'segmentName', 'campaignName'] as const) {
+        if (!prefixOk(args?.[field])) {
+          return { field, reason: 'fixture-name-not-in-grant-scope', rejectedCount: 1 };
+        }
+      }
+      const tagName = typeof args?.tagName === 'string' ? args.tagName.trim() : '';
+      if (tagName === '' || !grant.allowedTagPrefixes.some((prefix) => prefix !== '' && tagName.startsWith(prefix))) {
+        return { field: 'tagName', reason: 'tag-not-in-grant-scope', rejectedCount: 1 };
+      }
+      return null;
     }
 
     return null;

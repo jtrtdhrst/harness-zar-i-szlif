@@ -13,6 +13,7 @@ import * as advanced from './advanced.js';
 import * as integration from './integration.js';
 import * as projects from './projects.js';
 import * as instance from './instance.js';
+import * as fixtureGraph from './fixture-graph.js';
 
 const modules = [
   contacts,
@@ -26,6 +27,7 @@ const modules = [
   integration,
   projects,
   instance,
+  fixtureGraph,
 ];
 
 export const allToolDefinitions: ToolDefinition[] = modules.flatMap(m => m.toolDefinitions);
