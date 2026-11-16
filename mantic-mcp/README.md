@@ -96,25 +96,40 @@ denied as a mutation, so a tool added later cannot become writable by accident.
 ### Inactive test graph (`provision_inactive_test_campaign`)
 
 The only way to create a campaign/segment/template, and it creates exactly one
-inert shape per call: an unpublished email template (`emailType: "template"`,
-`isPublished: false`), an unpublished segment filtered on one granted tag
-(documented filter form `{glue, field: "tags", object: "lead", type: "text",
-operator: "like", properties: {filter}}`), and an unpublished campaign whose
-**only** contact source is that segment (`lists: [{id}]`, no events). The
-campaign's entry source is the segment — a supported Mautic campaign source; a
-tag-change decision is an in-campaign event and is **not** an entry source, and
-this server never claims tag-triggered enrollment.
+inert graph per call: an unpublished email template (`emailType: "template"`,
+`isPublished: false`, body = the pinned artifact), an unpublished segment
+filtered on one granted tag (documented filter form `{glue, field: "tags",
+object: "lead", type: "text", operator: "like", properties: {filter}}`), and an
+unpublished campaign whose **only** contact source is that segment
+(`lists: [{id}]`) and whose **only** action is one non-executing `email.send`
+event whose `properties.email` is the email created by the same call. Because the
+campaign and segment are unpublished, nothing executes: no send, no cron, no
+trigger, no enrollment. The campaign's entry source is the segment — a supported
+Mautic campaign source; a tag-change decision is an in-campaign event and is
+**not** an entry source, and this server never claims tag-triggered enrollment.
 
-It accepts five arguments and **refuses** anything else (`isPublished`,
+**Artifact binding (ZARI-208):** the caller must send `customHtml` together with
+its `artifactSha256`; the body must hash to that digest, and the guard requires
+the digest to appear in the grant's operator-pinned `pinnedArtifactSha256`. A
+missing pin, an unpinned digest or a body that does not match the claim is
+refused, and no HTML is ever manufactured.
+
+**Idempotent and compensatable:** an exact-name lookup runs before each create, so
+a retry reuses the existing email/segment/campaign instead of duplicating it. If a
+step fails after something was created, the handler deletes only the ids this
+invocation created (never pre-existing objects, never a reused one) and reports
+anything the provider refused to delete.
+
+It accepts seven arguments and **refuses** anything else (`isPublished`,
 `publishUp/Down`, `events`, `lists`, `contactIds`, `recipients`, `send`,
 `activate`, `id`, `emailId`, `campaignId`, `segmentId`) before touching the
 provider, so activation cannot be smuggled in through an unexpected key. Names
 must start with a granted `allowedFixturePrefixes` entry and the tag with a
-granted `allowedTagPrefixes` entry. Every object is read back: a resource that
-persisted published, a campaign whose source list does not reference the new
-segment, an unexpected campaign event or a missing id fails the call instead of
-reporting success. Entry/duplicate/suppression behaviour with real contacts is
-**not run** here and is listed in the response as such.
+granted `allowedTagPrefixes` entry. Every predicate is then re-established from
+provider readback — explicit publication state per object, the persisted tag
+filter, the campaign source list, and the single `email.send` event bound to the
+email id. A missing, omitted or ambiguous value is `NOT_VERIFIED` (no success, and
+the created objects are compensated), never "assumed fine".
 
 **Deployment gate:** the shared stdio/HTTP provider carries no trusted per-agent
 identity, so graph creation is refused there with `SHARED_TRANSPORT_DENIED` even

@@ -191,6 +191,8 @@ export interface WriteGrant {
   allowedTagPrefixes: string[];
   allowedContactEmails: string[];
   allowedFixturePrefixes: string[];
+  /** Operator-pinned ZARI-208 creative artifact digests; empty means no artifact may be used. */
+  pinnedArtifactSha256: string[];
   scope: string;
   expiresAt: string;
 }
@@ -259,6 +261,7 @@ function parseGrant(raw: string | undefined): { grant: WriteGrant | null; error:
     allowedTagPrefixes: stringArray(parsed.allowedTagPrefixes),
     allowedContactEmails: stringArray(parsed.allowedContactEmails),
     allowedFixturePrefixes: stringArray(parsed.allowedFixturePrefixes),
+    pinnedArtifactSha256: stringArray(parsed.pinnedArtifactSha256).map((value) => value.trim().toLowerCase()),
     scope: typeof parsed.scope === 'string' ? parsed.scope : '',
     expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : '',
   };
@@ -517,6 +520,15 @@ export class WriteGuard {
       const tagName = typeof args?.tagName === 'string' ? args.tagName.trim() : '';
       if (tagName === '' || !grant.allowedTagPrefixes.some((prefix) => prefix !== '' && tagName.startsWith(prefix))) {
         return { field: 'tagName', reason: 'tag-not-in-grant-scope', rejectedCount: 1 };
+      }
+      // Artifact binding (ZARI-208): the email body must be the operator-pinned
+      // creative artifact, and the caller must state the digest it is sending.
+      if (typeof args?.customHtml !== 'string' || args.customHtml.trim() === '') {
+        return { field: 'customHtml', reason: 'artifact-not-pinned', rejectedCount: 1 };
+      }
+      const claimedArtifact = typeof args?.artifactSha256 === 'string' ? args.artifactSha256.trim().toLowerCase() : '';
+      if (!/^[0-9a-f]{64}$/.test(claimedArtifact) || !grant.pinnedArtifactSha256.includes(claimedArtifact)) {
+        return { field: 'artifactSha256', reason: 'artifact-not-pinned', rejectedCount: 1 };
       }
       return null;
     }
