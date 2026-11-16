@@ -51,19 +51,20 @@ export const GUARD_ENV = {
   principal: 'MAUTIC_PRINCIPAL',
   grant: 'MAUTIC_WRITE_GRANT',
   identityTtlMs: 'MAUTIC_WRITE_GUARD_IDENTITY_TTL_MS',
-  deploymentClass: 'MAUTIC_DEPLOYMENT_CLASS',
+  testIdentityClass: 'MAUTIC_TEST_IDENTITY_CLASS',
 } as const;
 
 /**
- * The only deployment class allowed to create fixture graphs. The shared
- * stdio/HTTP provider has no trusted per-agent identity, so graph creation stays
- * denied there and requires an explicitly dedicated, single-principal TEST
- * deployment (operator-set environment; a model cannot set it).
+ * Graph creation is allowed only for a deployment whose credential is an
+ * isolated TEST principal (owner directive 2026-11-16: fixtures run against the
+ * real production Mautic, with a separate isolated test principal rather than a
+ * separate installation). The shared stdio/HTTP provider has no trusted
+ * per-agent identity, so it must not set this — its writes stay denied.
  */
-export const DEDICATED_TEST_CLASS = 'dedicated-test';
+export const ISOLATED_TEST_PRINCIPAL = 'isolated-test-principal';
 
-/** Tools that additionally require a dedicated TEST deployment. */
-export const DEDICATED_DEPLOYMENT_TOOLS: ReadonlySet<string> = new Set(['provision_inactive_test_campaign']);
+/** Tools that additionally require an isolated TEST principal. */
+export const ISOLATED_IDENTITY_TOOLS: ReadonlySet<string> = new Set(['provision_inactive_test_campaign']);
 
 const DEFAULT_IDENTITY_TTL_MS = 60_000;
 
@@ -114,8 +115,8 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffect>> = Object.freeze(
   delete_contact: 'test-write',
   add_contact_tags: 'test-write',
   create_tag: 'test-write',
-  // Inactive email+segment+campaign graph; additionally requires a dedicated
-  // TEST deployment (see DEDICATED_DEPLOYMENT_TOOLS).
+  // Inactive email+segment+campaign graph; additionally requires an isolated
+  // TEST principal (see ISOLATED_IDENTITY_TOOLS).
   provision_inactive_test_campaign: 'test-write',
 
   // --- everything else mutating: denied unconditionally --------------------
@@ -193,6 +194,8 @@ export interface WriteGrant {
   allowedFixturePrefixes: string[];
   /** Operator-pinned ZARI-208 creative artifact digests; empty means no artifact may be used. */
   pinnedArtifactSha256: string[];
+  /** Must equal the pinned MAUTIC_PRINCIPAL: the grant is bound to the isolated test identity. */
+  testPrincipal: string;
   scope: string;
   expiresAt: string;
 }
@@ -215,8 +218,9 @@ const HINTS: Record<DenialReason, string> = {
   TOOL_NOT_GRANTED: 'The grant does not include this tool.',
   SCOPE_VIOLATION: 'The requested resource is outside the grant scope (TEST-only tags/recipients/fixture names).',
   SHARED_TRANSPORT_DENIED:
-    'Fixture-graph creation requires a dedicated TEST deployment (MAUTIC_DEPLOYMENT_CLASS=dedicated-test). The shared stdio/HTTP ' +
-    'provider has no trusted per-agent identity, so this write stays denied there and is an operator-side infrastructure gate.',
+    'Fixture-graph creation requires a deployment carrying an isolated TEST principal (MAUTIC_TEST_IDENTITY_CLASS=' +
+    'isolated-test-principal) whose grant names that principal. The shared stdio/HTTP provider has no trusted per-agent identity, ' +
+    'so this write stays denied there and is an operator-side infrastructure action.',
 };
 
 function deny(
@@ -262,6 +266,7 @@ function parseGrant(raw: string | undefined): { grant: WriteGrant | null; error:
     allowedContactEmails: stringArray(parsed.allowedContactEmails),
     allowedFixturePrefixes: stringArray(parsed.allowedFixturePrefixes),
     pinnedArtifactSha256: stringArray(parsed.pinnedArtifactSha256).map((value) => value.trim().toLowerCase()),
+    testPrincipal: typeof parsed.testPrincipal === 'string' ? parsed.testPrincipal.trim() : '',
     scope: typeof parsed.scope === 'string' ? parsed.scope : '',
     expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : '',
   };
@@ -315,7 +320,7 @@ export class WriteGuard {
     return (
       `mode=enforce grant=${grantState} pinnedHost=${this.targetHost ?? 'unset'} ` +
       `pinnedTenantSet=${this.targetTenant ? 'yes' : 'no'} principalSet=${this.principal ? 'yes' : 'no'} ` +
-      `deploymentClass=${this.env[GUARD_ENV.deploymentClass]?.trim() || 'unset'} ` +
+      `testIdentityClass=${this.env[GUARD_ENV.testIdentityClass]?.trim() || 'unset'} ` +
       `tools: read=${counts.read} test-write=${counts['test-write']} denied=${counts.denied}`
     );
   }
@@ -344,18 +349,27 @@ export class WriteGuard {
     // Fixture-graph creation is refused unless the deployment itself is declared
     // a dedicated TEST instance: the shared transport cannot prove a per-agent
     // actor, so it must not be able to create campaigns/segments/templates.
-    if (DEDICATED_DEPLOYMENT_TOOLS.has(toolName)) {
-      const deploymentClass = this.env[GUARD_ENV.deploymentClass]?.trim();
-      if (deploymentClass !== DEDICATED_TEST_CLASS) {
+    if (ISOLATED_IDENTITY_TOOLS.has(toolName)) {
+      const identityClass = this.env[GUARD_ENV.testIdentityClass]?.trim();
+      if (identityClass !== ISOLATED_TEST_PRINCIPAL) {
         deny(toolName, 'SHARED_TRANSPORT_DENIED', host, {
-          requiredDeploymentClass: DEDICATED_TEST_CLASS,
-          observedDeploymentClass: deploymentClass ?? null,
+          requiredIdentityClass: ISOLATED_TEST_PRINCIPAL,
+          observedIdentityClass: identityClass ?? null,
         });
       }
     }
 
     const identity = await this.verifyIdentity(client);
     if (!identity.ok) deny(toolName, identity.reason, host);
+
+    // The grant must name the same principal the guard just proved at the
+    // provider, so a TEST grant cannot be replayed against another identity.
+    if (ISOLATED_IDENTITY_TOOLS.has(toolName)) {
+      const pinned = (this.principal ?? '').toLowerCase();
+      if (grant.testPrincipal === '' || grant.testPrincipal.toLowerCase() !== pinned) {
+        deny(toolName, 'PRINCIPAL_MISMATCH', host, { grantPrincipalMatchesPinned: false });
+      }
+    }
 
     const violation = await this.checkScope(toolName, client, args, grant);
     if (violation) deny(toolName, 'SCOPE_VIOLATION', host, { scopeDetail: violation });

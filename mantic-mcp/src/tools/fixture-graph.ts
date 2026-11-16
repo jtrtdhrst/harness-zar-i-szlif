@@ -217,22 +217,36 @@ export const toolHandlers: Record<string, ToolHandler> = {
       );
     };
 
-    const findExisting = async (listPath: string, collectionKey: string, name: string) => {
+    const findExisting = async (
+      listPath: string,
+      collectionKey: string,
+      name: string,
+    ): Promise<{ state: 'found'; id: string | number } | { state: 'absent' } | { state: 'inconclusive'; reason: string }> => {
+      let response;
       try {
-        const response = await client.v1.get(listPath, { params: { search: `name:${name}`, limit: 5 } });
-        const found = pickByName(response?.data?.[collectionKey], name);
-        if (found && found.id !== undefined && found.id !== null) return found.id as string | number;
-      } catch {
-        // A provider that cannot search by name gives no reuse candidate.
+        response = await client.v1.get(listPath, { params: { search: `name:${name}`, limit: 5 } });
+      } catch (error) {
+        // A transient or refused lookup must not be read as "does not exist":
+        // creating blind here would defeat idempotency and duplicate fixtures.
+        return { state: 'inconclusive', reason: (error as Error)?.message ?? String(error) };
       }
-      return null;
+      const collection = response?.data?.[collectionKey];
+      if (!collection || typeof collection !== 'object') {
+        return { state: 'inconclusive', reason: 'provider returned no collection for the name search' };
+      }
+      const found = pickByName(collection, name);
+      if (found && found.id !== undefined && found.id !== null) return { state: 'found', id: found.id };
+      return { state: 'absent' };
     };
 
     // ---- 1. email template (reuse an exact-name template when present)
     let emailId: string | number;
     const existingEmail = await findExisting('/emails', 'emails', emailName);
-    if (existingEmail !== null) {
-      emailId = existingEmail;
+    if (existingEmail.state === 'inconclusive') {
+      return fail(`email name lookup was inconclusive (${existingEmail.reason}); refusing to create blind`, { lookup: 'email' });
+    }
+    if (existingEmail.state === 'found') {
+      emailId = existingEmail.id;
       reused.email = emailId;
     } else {
       let response;
@@ -257,15 +271,27 @@ export const toolHandlers: Record<string, ToolHandler> = {
     const emailState = publicationState(emailPersisted.isPublished);
     if (emailState === null) return fail(`email template ${emailId} read back without a publication state`, { emailId });
     if (emailState === true) return fail(`email template ${emailId} persisted as PUBLISHED`, { emailId });
-    if (emailPersisted.customHtml !== undefined && emailPersisted.customHtml !== customHtml) {
-      return fail(`email template ${emailId} read back with different HTML than the pinned artifact`, { emailId });
+    // The persisted body must itself be the pinned artifact: hashing the request
+    // we sent is not evidence about what the provider stored.
+    if (typeof emailPersisted.customHtml !== 'string' || emailPersisted.customHtml === '') {
+      return fail(`email template ${emailId} read back without its persisted body; the artifact cannot be verified`, { emailId });
+    }
+    const persistedArtifact = sha256Hex(emailPersisted.customHtml);
+    if (persistedArtifact !== actualArtifact) {
+      return fail(`email template ${emailId} persisted a body that does not hash to the pinned artifact`, {
+        emailId,
+        persistedArtifact,
+      });
     }
 
     // ---- 2. segment filtered on exactly one granted tag
     let segmentId: string | number;
     const existingSegment = await findExisting('/segments', 'lists', segmentName);
-    if (existingSegment !== null) {
-      segmentId = existingSegment;
+    if (existingSegment.state === 'inconclusive') {
+      return fail(`segment name lookup was inconclusive (${existingSegment.reason}); refusing to create blind`, { lookup: 'segment' });
+    }
+    if (existingSegment.state === 'found') {
+      segmentId = existingSegment.id;
       reused.segment = segmentId;
     } else {
       let response;
@@ -296,8 +322,11 @@ export const toolHandlers: Record<string, ToolHandler> = {
     const event = emailSendEvent(emailId, campaignName);
     let campaignId: string | number;
     const existingCampaign = await findExisting('/campaigns', 'campaigns', campaignName);
-    if (existingCampaign !== null) {
-      campaignId = existingCampaign;
+    if (existingCampaign.state === 'inconclusive') {
+      return fail(`campaign name lookup was inconclusive (${existingCampaign.reason}); refusing to create blind`, { lookup: 'campaign' });
+    }
+    if (existingCampaign.state === 'found') {
+      campaignId = existingCampaign.id;
       reused.campaign = campaignId;
     } else {
       let response;
@@ -348,7 +377,7 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
     const payload = {
       provisioned: true,
-      artifact: { sha256: actualArtifact, verified: true },
+      artifact: { sha256: actualArtifact, persistedSha256: persistedArtifact, verified: true },
       created: {
         email: {
           id: emailId,

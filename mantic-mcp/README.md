@@ -110,15 +110,19 @@ Mautic campaign source; a tag-change decision is an in-campaign event and is
 
 **Artifact binding (ZARI-208):** the caller must send `customHtml` together with
 its `artifactSha256`; the body must hash to that digest, and the guard requires
-the digest to appear in the grant's operator-pinned `pinnedArtifactSha256`. A
-missing pin, an unpinned digest or a body that does not match the claim is
-refused, and no HTML is ever manufactured.
+the digest to appear in the grant's operator-pinned `pinnedArtifactSha256`. The
+**persisted** email body is then re-hashed from the provider readback and must
+match as well — a provider that omits the body or stores something else is
+`NOT_VERIFIED`, because hashing the request we sent is not evidence about what
+was stored. No HTML is ever manufactured.
 
 **Idempotent and compensatable:** an exact-name lookup runs before each create, so
-a retry reuses the existing email/segment/campaign instead of duplicating it. If a
-step fails after something was created, the handler deletes only the ids this
-invocation created (never pre-existing objects, never a reused one) and reports
-anything the provider refused to delete.
+a retry reuses the existing email/segment/campaign instead of duplicating it. An
+inconclusive lookup (provider error or no collection returned) fails closed with
+`NOT_VERIFIED` rather than creating blind. If a step fails after something was
+created, the handler deletes only the ids this invocation created (never
+pre-existing objects, never a reused one) and reports anything the provider
+refused to delete.
 
 It accepts seven arguments and **refuses** anything else (`isPublished`,
 `publishUp/Down`, `events`, `lists`, `contactIds`, `recipients`, `send`,
@@ -131,14 +135,18 @@ filter, the campaign source list, and the single `email.send` event bound to the
 email id. A missing, omitted or ambiguous value is `NOT_VERIFIED` (no success, and
 the created objects are compensated), never "assumed fine".
 
-**Deployment gate:** the shared stdio/HTTP provider carries no trusted per-agent
-identity, so graph creation is refused there with `SHARED_TRANSPORT_DENIED` even
-with a valid grant. Enabling it requires an operator-provisioned,
-single-principal **dedicated TEST deployment** (`MAUTIC_DEPLOYMENT_CLASS=dedicated-test`)
-with its own pinned host/tenant/principal and a short-lived TEST grant. Until such
-a deployment exists this is an infrastructure gate for the owner, not a code gap —
-the general `create_campaign*`, `create_segment` and `create_email_template`
-tools stay permanently denied.
+**Identity gate (owner directive 2026-11-16):** fixtures run against the real
+production Mautic instance — a separate TEST installation is no longer required.
+What is required is a *separate isolated TEST principal*: the deployment that
+serves the tool must carry `MAUTIC_TEST_IDENTITY_CLASS=isolated-test-principal`,
+pin that principal in `MAUTIC_PRINCIPAL`, and receive a grant whose
+`testPrincipal` names the same principal (verified by `GET /users/self`). The
+shared stdio/HTTP provider — the one all agents use with the ordinary lifecycle
+credential — has no trusted per-agent identity and must not set that flag, so
+graph creation there stays refused with `SHARED_TRANSPORT_DENIED` even with a
+valid grant. The general `create_campaign*`, `create_segment` and
+`create_email_template` tools stay permanently denied, and nothing in this tool
+can send, publish or activate anything.
 
 A `test-write` call is authorized only when **all** of these hold:
 

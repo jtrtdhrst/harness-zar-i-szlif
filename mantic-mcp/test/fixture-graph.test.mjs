@@ -50,6 +50,7 @@ function grant(overrides = {}) {
     allowedContactEmails: ['*@example.invalid'],
     allowedFixturePrefixes: [PREFIX],
     pinnedArtifactSha256: [ARTIFACT],
+    testPrincipal: PRINCIPAL,
     scope: 'test-only',
     expiresAt: '2099-01-01T00:00:00Z',
     ...overrides,
@@ -61,7 +62,7 @@ function env(overrides = {}) {
     MAUTIC_TARGET_HOST: HOST,
     MAUTIC_TARGET_TENANT: TENANT,
     MAUTIC_PRINCIPAL: PRINCIPAL,
-    MAUTIC_DEPLOYMENT_CLASS: 'dedicated-test',
+    MAUTIC_TEST_IDENTITY_CLASS: 'isolated-test-principal',
     MAUTIC_WRITE_GRANT: JSON.stringify(grant()),
     ...overrides,
   };
@@ -189,13 +190,29 @@ test('a dedicated TEST deployment creates the full inactive graph including one 
 // ------------------------------------------------- shared transport is closed
 
 test('the shared transport cannot create a graph even with an otherwise valid grant', async () => {
-  for (const deploymentClass of [undefined, '', 'shared']) {
+  for (const identityClass of [undefined, '', 'shared', 'dedicated-test']) {
     const c = client();
     await expectDenied(
-      dispatchTool('provision_inactive_test_campaign', c, ARGS, new WriteGuard(env({ MAUTIC_DEPLOYMENT_CLASS: deploymentClass }))),
+      dispatchTool('provision_inactive_test_campaign', c, ARGS, new WriteGuard(env({ MAUTIC_TEST_IDENTITY_CLASS: identityClass }))),
       'SHARED_TRANSPORT_DENIED',
     );
     assert.equal(c.calls.length, 0);
+  }
+});
+
+test('a grant that does not name the pinned principal cannot enable graph creation', async () => {
+  for (const testPrincipal of ['', 'someone-else']) {
+    const c = client();
+    await expectDenied(
+      dispatchTool(
+        'provision_inactive_test_campaign',
+        c,
+        ARGS,
+        new WriteGuard(env({ MAUTIC_WRITE_GRANT: JSON.stringify(grant({ testPrincipal })) })),
+      ),
+      'PRINCIPAL_MISMATCH',
+    );
+    assert.equal(writes(c).length, 0);
   }
 });
 
@@ -369,7 +386,7 @@ test('a campaign source that does not reference the segment, or a wrong event, i
 
 // ------------------------------------------------------- F4: artifact binding
 
-test('the artifact claim must match the body that is actually sent', async () => {
+test('the tool refuses a body that does not match the claimed artifact', async () => {
   const c = client();
   await assert.rejects(
     () =>
@@ -385,6 +402,44 @@ test('the artifact claim must match the body that is actually sent', async () =>
     },
   );
   assert.equal(c.calls.filter((call) => call.method !== 'GET').length, 0);
+});
+
+test('the persisted body must itself be the pinned artifact (CTO review input)', async () => {
+  // provider omits the persisted body -> cannot be verified
+  const missing = client({
+    'v1:GET:/emails/101': { status: 200, data: { email: { id: 101, isPublished: false } } },
+  });
+  await expectNotVerified(
+    dispatchTool('provision_inactive_test_campaign', missing, ARGS, new WriteGuard(env())),
+    /without its persisted body/,
+  );
+  assert.deepEqual(deletes(missing).map((call) => call.path), ['/emails/101/delete']);
+
+  // provider persists a different body than the one we sent (and claimed)
+  const drifted = client({
+    'v1:GET:/emails/101': { status: 200, data: { email: { id: 101, isPublished: false, customHtml: '<p>drifted</p>' } } },
+  });
+  await expectNotVerified(
+    dispatchTool('provision_inactive_test_campaign', drifted, ARGS, new WriteGuard(env())),
+    /does not hash to the pinned artifact/,
+  );
+  assert.deepEqual(deletes(drifted).map((call) => call.path), ['/emails/101/delete']);
+});
+
+test('an inconclusive name lookup fails closed instead of creating a duplicate (CTO review input)', async () => {
+  const cases = [
+    ['search error', { 'v1:GET:/emails': () => { throw axiosError(503, {}); } }],
+    ['empty collection', { 'v1:GET:/emails': { status: 200, data: { total: 0 } } }],
+  ];
+  for (const [label, routes] of cases) {
+    const c = client(routes);
+    await expectNotVerified(
+      dispatchTool('provision_inactive_test_campaign', c, ARGS, new WriteGuard(env())),
+      /refusing to create blind/,
+    );
+    assert.equal(posts(c).length, 0, `${label} must not create anything`);
+    assert.equal(writes(c).length, 0, `${label} must not mutate the provider`);
+  }
 });
 
 // ------------------------------------------------- F3: idempotency + compensation
@@ -414,7 +469,7 @@ test('a failure after the email create compensates only that email', async () =>
 test('a failure after the segment create compensates segment then email, and never a pre-existing object', async () => {
   const c = client({
     'v1:GET:/emails': { status: 200, data: { total: 1, emails: { 55: { id: 55, name: ARGS.emailName } } } },
-    'v1:GET:/emails/55': { status: 200, data: { email: { id: 55, isPublished: false } } },
+    'v1:GET:/emails/55': { status: 200, data: { email: { id: 55, isPublished: false, customHtml: HTML } } },
     'v1:POST:/campaigns/new': () => { throw axiosError(500, {}); },
   });
   await expectNotVerified(dispatchTool('provision_inactive_test_campaign', c, ARGS, new WriteGuard(env())), /campaign creation failed/);
