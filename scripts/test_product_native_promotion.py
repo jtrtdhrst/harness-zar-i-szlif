@@ -1,4 +1,6 @@
 """Fail-closed tests for native-reviewed product source -> ci-approved promotion."""
+import json
+import tempfile
 import unittest
 from unittest.mock import patch
 import product_native_promotion as p
@@ -54,7 +56,7 @@ class ProductPromotionTests(unittest.TestCase):
         }
         with patch.object(p,"commit",side_effect=lambda sha:parents[sha]),\
              patch.object(p,"provenance",side_effect=lambda sha:(12,SOURCE) if sha==MID else (13,SOURCE)),\
-             patch.object(p,"checks") as checks,\
+             patch.object(p,"checks",return_value={"billing_blocked":False}) as checks,\
              patch.object(p,"native_approval",side_effect=lambda pr,head,merge: (_ for _ in ()).throw(p.Denied("missing_review")) if pr==12 else None):
             with self.assertRaisesRegex(p.Denied,"missing_review"):
                 p.candidate_history(OLD,NEW)
@@ -135,6 +137,129 @@ class ProductPromotionTests(unittest.TestCase):
         expected="json_decode(" + json.dumps(json.dumps(body)) + ", true)"
         self.assertIn(expected,php)
         self.assertNotIn("patch(" + json.dumps("/repos/"+p.REPO+"/git/refs/heads/ci-approved") + ", {",php)
+
+    def attestation(self, **overrides):
+        data = {"sha": SOURCE, "exit_code": 0, "runner": "zis-local-build",
+                "source": "product_local_ci", "verified_at": "2026-11-16T15:05Z"}
+        data.update(overrides)
+        return data
+
+    def write_attestation(self, directory, data):
+        p.Path(directory, SOURCE + ".json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_local_ci_attestation_accepts_exact_root_owned_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_attestation(tmp, self.attestation())
+            with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
+                self.assertEqual(p.local_ci_attestation(SOURCE)["sha"], SOURCE)
+
+    def test_local_ci_attestation_negative_controls(self):
+        cases = {
+            "local_ci_attestation_sha_mismatch": {"sha": NEW},
+            "local_ci_attestation_not_green": {"exit_code": 1},
+            "local_ci_attestation_runner_untrusted": {"runner": "untrusted-runner"},
+            "local_ci_attestation_source_untrusted": {"source": "untrusted-source"},
+            "local_ci_attestation_undated": {"verified_at": ""},
+        }
+        for reason, override in cases.items():
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp:
+                self.write_attestation(tmp, self.attestation(**override))
+                with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
+                    with self.assertRaisesRegex(p.Denied, reason):
+                        p.local_ci_attestation(SOURCE)
+
+    def test_local_ci_attestation_missing_and_unreadable_deny(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
+                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
+                    p.local_ci_attestation(SOURCE)
+            p.Path(tmp, SOURCE + ".json").write_text("{not json", encoding="utf-8")
+            with patch.object(p, "LOCAL_CI_DIR", p.Path(tmp)):
+                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_unreadable"):
+                    p.local_ci_attestation(SOURCE)
+
+    def test_never_started_billing_blocked_needs_the_exact_billing_annotation(self):
+        run = {"id": 7, "status": "completed", "conclusion": "failure",
+               "started_at": "2026-11-16T14:55:09Z", "completed_at": "2026-11-16T14:55:11Z"}
+        billing = {"annotation_level": "failure", "message": "The job was not started because recent account payments have failed or your spending limit needs to be increased."}
+        notice = {"annotation_level": "notice", "message": "ubuntu-latest label migration"}
+        real = {"annotation_level": "failure", "message": "Process completed with exit code 1."}
+        with patch.object(p, "github_api", return_value=[billing, notice]):
+            self.assertTrue(p.never_started_billing_blocked(run))
+        for annotations in ([real], [billing, real], []):
+            with self.subTest(annotations=annotations), patch.object(p, "github_api", return_value=annotations):
+                self.assertFalse(p.never_started_billing_blocked(run))
+        long_run = {**run, "completed_at": "2026-11-16T15:30:00Z"}
+        with patch.object(p, "github_api", return_value=[billing]):
+            self.assertFalse(p.never_started_billing_blocked(long_run))
+        self.assertFalse(p.never_started_billing_blocked({**run, "conclusion": "success", "started_at": None}))
+
+    def test_checks_reports_billing_block_never_as_pass(self):
+        run = {"id": 7, "name": "validate-product", "status": "completed", "conclusion": "failure",
+               "started_at": "2026-11-16T14:55:09Z", "completed_at": "2026-11-16T14:55:11Z"}
+        with patch.object(p, "never_started_billing_blocked", return_value=True), \
+             patch.object(p, "github_api", return_value={"check_runs": [run], "total_count": 1}):
+            self.assertEqual(p.checks(SOURCE), {"billing_blocked": True})
+        with patch.object(p, "never_started_billing_blocked", return_value=False), \
+             patch.object(p, "github_api", return_value={"check_runs": [run], "total_count": 1}):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.checks(SOURCE)
+        green = {"id": 8, "name": "validate-product", "status": "completed", "conclusion": "success"}
+        with patch.object(p, "github_api", return_value={"check_runs": [green], "total_count": 1}):
+            self.assertEqual(p.checks(SOURCE), {"billing_blocked": False})
+
+    def history_nodes(self, head_tree, merge_tree):
+        node = {"sha": NEW, "parents": [{"sha": OLD}], "files": [{"filename": "app/web/index.html", "status": "modified"}],
+                "commit": {"tree": {"sha": merge_tree}}}
+        head = {"sha": SOURCE, "commit": {"tree": {"sha": head_tree}}}
+        return lambda sha: {NEW: node, SOURCE: head}.get(sha, {"sha": sha})
+
+    def test_billing_blocked_runtime_merge_uses_exact_sha_attestation(self):
+        with patch.object(p, "commit", side_effect=self.history_nodes("t" * 40, "t" * 40)), \
+             patch.object(p, "provenance", return_value=(178, SOURCE)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "local_ci_attestation", return_value={"sha": SOURCE}) as attestation, \
+             patch.object(p, "native_approval"):
+            self.assertEqual(p.candidate_history(OLD, NEW), [
+                {"pr": 178, "head": SOURCE, "merge": NEW, "ci_evidence": "local_ci_attestation"}])
+        attestation.assert_called_once_with(SOURCE)
+
+    def test_attestation_never_replaces_native_approval(self):
+        with patch.object(p, "commit", side_effect=self.history_nodes("t" * 40, "t" * 40)), \
+             patch.object(p, "provenance", return_value=(178, SOURCE)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "local_ci_attestation", return_value={"sha": SOURCE}), \
+             patch.object(p, "native_approval", side_effect=p.Denied("native_approval_unverified")):
+            with self.assertRaisesRegex(p.Denied, "native_approval_unverified"):
+                p.candidate_history(OLD, NEW)
+
+    def test_billing_blocked_without_attestation_denies(self):
+        with patch.object(p, "commit", side_effect=self.history_nodes("t" * 40, "t" * 40)), \
+             patch.object(p, "provenance", return_value=(178, SOURCE)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "local_ci_attestation", side_effect=p.Denied("local_ci_attestation_missing")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("must not be reached")):
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
+                p.candidate_history(OLD, NEW)
+
+    def test_billing_blocked_with_tree_drift_denies(self):
+        with patch.object(p, "commit", side_effect=self.history_nodes("t" * 40, "u" * 40)), \
+             patch.object(p, "provenance", return_value=(178, SOURCE)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "local_ci_attestation", return_value={"sha": SOURCE}), \
+             patch.object(p, "native_approval", side_effect=AssertionError("must not be reached")):
+            with self.assertRaisesRegex(p.Denied, "head_merge_tree_mismatch"):
+                p.candidate_history(OLD, NEW)
+
+    def test_docs_only_merge_stays_strict_under_billing_block(self):
+        node = {"sha": NEW, "parents": [{"sha": OLD}], "files": [{"filename": "docs/RELEASE-POLICY.md", "status": "modified"}],
+                "commit": {"tree": {"sha": "t" * 40}}}
+        with patch.object(p, "commit", side_effect=lambda sha: node if sha == NEW else {"sha": sha}), \
+             patch.object(p, "provenance", return_value=(178, SOURCE)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "local_ci_attestation", side_effect=AssertionError("must not be reached")):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.candidate_history(OLD, NEW)
 
 if __name__=="__main__":
     unittest.main()
