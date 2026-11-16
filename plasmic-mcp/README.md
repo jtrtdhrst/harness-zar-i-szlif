@@ -129,3 +129,183 @@ Writing tools default to \`dryRun=true\` and require an \`idempotencyKey\` for \
 ### WAB identity is separate from MCP bearer auth
 
 The MCP's \`MCP_AUTH_TOKEN\` secures the transport but does **not** authenticate to WAB. For real project access configure a WAB-authorized \`PLASMIC_EMAIL\` and \`PLASMIC_PASSWORD\`, or a supported WAB team identity where the endpoint permits it. The underlying user must have project permission. \`/health=200\` checks the transport only; \`/ready=200\` requires WAB health **and** authenticated \`listProjects()\`. A \`403 Must be a normal user\` is not an MCP outage and must not be bypassed by disabling authorization.
+
+## State volume ownership (/state)
+
+The image runs as the unprivileged `mcp` user (uid/gid **10001**) with a
+read-only root filesystem; only the `plasmic_mcp_state` volume mounted at
+`/state` is writable. The image creates `/state` owned by `mcp` so a **new**
+volume inherits that owner.
+
+A volume created by an earlier root-running image stays `root:root`, and the
+first state write (`plasmic_get_changes` seen marker, audit log, project lock)
+then fails with `EACCES`.
+
+The `chown` must cover **every descendant**, not only the mount root. A legacy
+volume already holds `root`-owned children — `/state/seen/<project>__main.json`
+(seen markers), `/state/locks` (project locks) and `audit.jsonl` — and the MCP
+process needs write access to those files and directories, not merely to
+`/state`. `chown 10001:10001 /state` alone leaves them root-owned, so the same
+`EACCES` comes back on the first `get_changes` even though the documented
+"fix" was applied.
+
+### Migrating a populated volume (host owner, once)
+
+Chowning a directory tree under a live writer races with it and can leave
+half-owned state, so the service must be **stopped and verified stopped**, and
+the volume **backed up and the archive verified**, before any ownership change.
+The block below is fail-fast: `set -euo pipefail` plus explicit guard checks
+mean a failed stop, a missing volume mapping or a missing backup archive aborts
+the procedure **before** `chown` runs. Do not strip the guards to "get it done".
+
+```bash
+set -euo pipefail
+
+# 0. resolve the exact container and the volume it really mounts at /state
+CONTAINER=<container id or name>        # find it: docker ps --filter name=plasmic-mcp
+STATE_VOLUME=<state volume name>
+BACKUP_DIR=<absolute host path with free space>
+
+# 1. verify the binding before touching anything: the container must exist,
+#    must mount a volume at /state, and it must be THIS volume
+docker inspect --type container "$CONTAINER" >/dev/null
+MOUNTED=$(docker inspect --type container \
+  -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Name}}{{end}}{{end}}' "$CONTAINER")
+if [ -z "$MOUNTED" ]; then
+  echo "container $CONTAINER mounts no volume at /state — aborting" >&2
+  exit 1
+fi
+if [ "$MOUNTED" != "$STATE_VOLUME" ]; then
+  echo "container $CONTAINER mounts $MOUNTED at /state, not $STATE_VOLUME — aborting" >&2
+  exit 1
+fi
+docker volume inspect "$STATE_VOLUME" >/dev/null
+
+# 2. stop writers, then PROVE the container is stopped
+docker stop "$CONTAINER"
+if [ "$(docker inspect --type container -f '{{.State.Running}}' "$CONTAINER")" != "false" ]; then
+  echo "container $CONTAINER is still running — aborting before touching the volume" >&2
+  exit 1
+fi
+
+# 3. back up, then PROVE the archive exists and is not empty
+mkdir -p "$BACKUP_DIR"
+ARCHIVE="$BACKUP_DIR/plasmic_mcp_state-$(date +%Y%m%dT%H%M%S).tgz"
+docker run --rm -v "$STATE_VOLUME":/state -v "$BACKUP_DIR":/backup alpine \
+  tar czf "/backup/$(basename "$ARCHIVE")" -C /state .
+if [ ! -s "$ARCHIVE" ]; then
+  echo "backup archive $ARCHIVE is missing or empty — aborting before chown" >&2
+  exit 1
+fi
+
+# 4. only now: fix ownership of the whole tree, not the mount root
+docker run --rm -v "$STATE_VOLUME":/state alpine chown -R 10001:10001 /state
+
+# 5. verify every descendant, not just /state
+docker run --rm -v "$STATE_VOLUME":/state alpine sh -c '
+  bad=$(find /state \( ! -user 10001 -o ! -group 10001 \) -print)
+  if [ -n "$bad" ]; then
+    echo "still not owned by 10001:10001:" >&2
+    echo "$bad" >&2
+    exit 1
+  fi'
+
+# 6. start the service again and check /ready (the stateDir check must pass)
+docker start "$CONTAINER"
+```
+
+If the stack is Compose-managed, use this procedure instead. It is **complete on
+its own** — do not splice it with the block above, which targets a single
+container ID and would leave `$CONTAINER` undefined. It performs the same
+binding check, the same backup-then-verify, and the same ownership verification,
+with a Compose-scoped stop:
+
+```bash
+set -euo pipefail
+
+COMPOSE_PROJECT=<compose project>       # docker compose ls
+COMPOSE_SERVICE=<service name>          # docker compose -p "$COMPOSE_PROJECT" config --services
+STATE_VOLUME=<state volume name>
+BACKUP_DIR=<absolute host path with free space>
+
+# 1. binding check: find the container Compose actually runs for this service,
+#    and prove it mounts THIS volume at /state before anything is touched
+if ! IDS=$(docker compose -p "$COMPOSE_PROJECT" ps --all --quiet "$COMPOSE_SERVICE"); then
+  echo "cannot enumerate containers for $COMPOSE_PROJECT/$COMPOSE_SERVICE — aborting" >&2
+  exit 1
+fi
+CONTAINER=$(printf '%s\n' "$IDS" | head -n1)
+if [ -z "$CONTAINER" ]; then
+  echo "no container for $COMPOSE_PROJECT/$COMPOSE_SERVICE — aborting" >&2
+  exit 1
+fi
+MOUNTED=$(docker inspect --type container \
+  -f '{{range .Mounts}}{{if eq .Destination "/state"}}{{.Name}}{{end}}{{end}}' "$CONTAINER")
+if [ -z "$MOUNTED" ]; then
+  echo "service container $CONTAINER mounts no volume at /state — aborting" >&2
+  exit 1
+fi
+if [ "$MOUNTED" != "$STATE_VOLUME" ]; then
+  echo "service container mounts $MOUNTED at /state, not $STATE_VOLUME — aborting" >&2
+  exit 1
+fi
+docker volume inspect "$STATE_VOLUME" >/dev/null
+
+# 2. stop writers, then PROVE it — a `compose ps` error is NOT evidence that the
+#    service is stopped, so a failed query aborts instead of falling through
+docker compose -p "$COMPOSE_PROJECT" stop "$COMPOSE_SERVICE"
+if ! RUNNING=$(docker compose -p "$COMPOSE_PROJECT" ps --status running --services); then
+  echo "cannot verify that $COMPOSE_SERVICE is stopped — aborting" >&2
+  exit 1
+fi
+if printf '%s\n' "$RUNNING" | grep -qx "$COMPOSE_SERVICE"; then
+  echo "$COMPOSE_SERVICE is still running — aborting before touching the volume" >&2
+  exit 1
+fi
+
+# 3. back up, then PROVE the archive exists and is not empty
+mkdir -p "$BACKUP_DIR"
+ARCHIVE="$BACKUP_DIR/plasmic_mcp_state-$(date +%Y%m%dT%H%M%S).tgz"
+docker run --rm -v "$STATE_VOLUME":/state -v "$BACKUP_DIR":/backup alpine \
+  tar czf "/backup/$(basename "$ARCHIVE")" -C /state .
+if [ ! -s "$ARCHIVE" ]; then
+  echo "backup archive $ARCHIVE is missing or empty — aborting before chown" >&2
+  exit 1
+fi
+
+# 4. only now: fix ownership of the whole tree, not the mount root
+docker run --rm -v "$STATE_VOLUME":/state alpine chown -R 10001:10001 /state
+
+# 5. verify every descendant, not just /state
+docker run --rm -v "$STATE_VOLUME":/state alpine sh -c '
+  bad=$(find /state \( ! -user 10001 -o ! -group 10001 \) -print)
+  if [ -n "$bad" ]; then
+    echo "still not owned by 10001:10001:" >&2
+    echo "$bad" >&2
+    exit 1
+  fi'
+
+# 6. start the service again and check /ready (the stateDir check must pass)
+docker compose -p "$COMPOSE_PROJECT" start "$COMPOSE_SERVICE"
+```
+
+In both variants the rule is the same: a command whose **success you have not
+observed** is a failure. Do not replace the guard checks with `|| true`, a bare
+`&&` list, or a pipeline whose exit status you discard — under `set -e` those
+turn "could not verify" into "verified safe".
+
+### New or empty volume
+
+Nothing to migrate: the image creates `/state` owned by `mcp` before dropping
+privileges, so a fresh volume inherits `10001:10001`. Do not run the `chown`
+steps above on a fresh volume; verify with `/ready` instead.
+
+If the platform creates the volume itself (root-owned), the same recursive
+`chown` applies — with the service stopped and a backup taken — before the
+first start that writes state.
+
+The server does not disable the seen marker or skip auditing on a read-only
+state dir. It logs `STATE_DIR not writable` at start, reports it as a failing
+check on `/ready`, and every state-writing tool fails with
+`STATE_DIR_UNWRITABLE (<tool>): EACCES: <path> must be owned by the container
+user (uid 10001 / mcp); ...` instead of a bare `EACCES`.

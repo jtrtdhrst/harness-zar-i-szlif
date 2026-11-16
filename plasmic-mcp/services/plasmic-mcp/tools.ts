@@ -1,6 +1,7 @@
 import { idempotent } from "@design-stack/contracts/idempotency";
 import { withProjectLock } from "@design-stack/contracts/locks";
 import { auditLog } from "@design-stack/contracts/audit";
+import { requireWritableStateDir } from "@design-stack/contracts/state";
 import { sha256 } from "@design-stack/contracts/sync";
 import {
   PlasmicClient,
@@ -172,6 +173,11 @@ export async function writeOp<T extends Record<string, unknown>>(
   before: string,
   fn: () => Promise<T & { revision: number }>,
 ): Promise<T> {
+  // Wolumen /state musi należeć do uid kontenera; inaczej każdy zapis kończy
+  // się gołym EACCES gdzieś w głębi handlera. Sprawdzamy z góry i nazywamy
+  // ścieżkę, uid oraz naprawę.
+  await requireWritableStateDir(ctx.stateDir + "/locks", `${tool} project lock`);
+  await requireWritableStateDir(dirname(ctx.auditFile), `${tool} audit log`);
   return withProjectLock(ctx.stateDir + "/locks", projectId, async () => {
     const result = await fn();
     await auditLog(ctx.auditFile, {
@@ -786,10 +792,12 @@ export function plasmicTools(ctx: PlasmicCtx): ToolDef[] {
       handler: async (a) => {
         const rev = await c.getProjectRev(a.projectId as string, a.branchId as string | undefined);
         const hash = sha256(JSON.stringify(rev.bundle.map));
-        const { readFile, writeFile, mkdir } = await import("node:fs/promises");
+        const { readFile, writeFile } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const dir = ctx.stateDir + "/seen";
-        await mkdir(dir, { recursive: true });
+        // Zapis znacznika "seen" jest jedynym miejscem, które realnie zawiodło
+        // produkcyjnie (EACCES na /state/seen/<project>__main.json).
+        await requireWritableStateDir(dir, "plasmic_get_changes seen marker");
         const cacheKey = `${String(a.projectId)}__${String(a.branchId ?? "main")}`.replace(/[^a-zA-Z0-9_-]/g, "_");
         const f = join(dir, `${cacheKey}.json`);
         const prev = JSON.parse((await readFile(f, "utf8").catch(() => "null")) as string) as {
