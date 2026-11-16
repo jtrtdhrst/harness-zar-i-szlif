@@ -131,6 +131,24 @@ def _audit_id(report):
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def _restore(transport, service, uuid, decision, reason):
+    """Attempt exactly one rollback; a failed restore must never escape.
+
+    Every failure path goes through here so the controller always returns an
+    auditable report: the rollback attempt is recorded, and a rollback that
+    raises becomes ``rollback_failed`` with the error class instead of an
+    exception that loses the audit id and the promotion state.
+    """
+    try:
+        rollback = transport.rollback(service, uuid)
+    except Exception as inner:
+        decision.update(decision="rollback_failed", reason=reason,
+                        rollback_error=type(inner).__name__)
+        return decision
+    decision.update(decision="rolled_back", reason=reason, rollback=rollback)
+    return decision
+
+
 def _promote(service, record, transport, state, state_path):
     """Build -> verify digest -> deploy -> verify health; one rollback on failure."""
     uuid = record["coolify_uuid"]
@@ -176,24 +194,20 @@ def _promote(service, record, transport, state, state_path):
         if reported_sha != record["source_sha"]:
             raise Denied("post_deploy_source_sha_mismatch")
     except Denied as exc:
-        rollback = transport.rollback(service, uuid)
-        decision.update(decision="rolled_back", reason=str(exc), rollback=rollback)
-        return decision
+        return _restore(transport, service, uuid, decision, str(exc))
     except Exception as exc:  # transport/proxy failure: restore, never leave a half release
-        try:
-            rollback = transport.rollback(service, uuid)
-        except Exception as inner:  # the rollback itself failed: report, keep state unchanged
-            decision.update(decision="rollback_failed", reason=type(exc).__name__,
-                            rollback_error=type(inner).__name__)
-            return decision
-        decision.update(decision="rolled_back", reason="transport_failed:" + type(exc).__name__,
-                        rollback=rollback)
-        return decision
+        return _restore(transport, service, uuid, decision, "transport_failed:" + type(exc).__name__)
     decision.update(decision="promoted", health=health)
     state[service] = {"coolify_uuid": uuid, "source_sha": record["source_sha"],
                       "image_digest": admitted, "deployment": deployment,
                       "promoted_at": datetime.now(timezone.utc).isoformat()}
-    _write_state(state_path, state)
+    try:
+        _write_state(state_path, state)
+    except OSError:
+        # An unrecordable promotion is not a completed promotion: restore the
+        # previous image rather than leave an unrecorded release running.
+        state.pop(service, None)
+        return _restore(transport, service, uuid, decision, "promotion_state_unwritable")
     return decision
 
 

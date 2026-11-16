@@ -104,12 +104,13 @@ class FakeTransport:
     """Records every transport call and models the running image per service."""
 
     def __init__(self, running=None, build_digest=None, health=None,
-                 deploy_error=None, health_result=None):
+                 deploy_error=None, health_result=None, rollback_error=None):
         self.calls = []
         self.running = dict(running or {})
         self.build_digest = build_digest or DIGEST
         self.health_result = health_result
         self.deploy_error = deploy_error
+        self.rollback_error = rollback_error
         self.rollback_target = dict(running or {})
 
     def current(self, service, uuid):
@@ -135,6 +136,8 @@ class FakeTransport:
 
     def rollback(self, service, uuid):
         self.calls.append("rollback")
+        if self.rollback_error:
+            raise self.rollback_error
         if service in self.rollback_target:
             self.running[service] = self.rollback_target[service]
         else:
@@ -329,6 +332,56 @@ class ControllerPromotionTests(unittest.TestCase):
         report = self.authorized(transport)
         self.assertEqual(report["decisions"][0]["reason"], "post_deploy_source_sha_missing")
         self.assertEqual(transport.running["mantic-mcp"], PREVIOUS)
+
+    def test_missing_source_sha_with_a_failing_rollback_still_returns_a_report(self):
+        # CTO finding on 1fca137: the Denied branch called rollback unguarded,
+        # so a failing restore escaped as RuntimeError and lost the audit id.
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS},
+                                  health_result={"status": "ok", "digest": DIGEST},
+                                  rollback_error=RuntimeError("rollback down"))
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            report = self.authorized(transport, state_path=state)
+            self.assertFalse(state.exists())
+        decision = report["decisions"][0]
+        self.assertEqual(decision["decision"], "rollback_failed")
+        self.assertEqual(decision["reason"], "post_deploy_source_sha_missing")
+        self.assertEqual(decision["rollback_error"], "RuntimeError")
+        self.assertEqual(transport.calls.count("rollback"), 1)
+        self.assertTrue(report["audit_id"].startswith("sha256:"))
+        self.assertTrue(report["mutated"])
+        self.assertFalse(report["promoted"])
+
+    def test_deploy_exception_with_a_failing_rollback_still_returns_a_report(self):
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS},
+                                  deploy_error=RuntimeError("deploy down"),
+                                  rollback_error=RuntimeError("rollback down"))
+        report = self.authorized(transport)
+        decision = report["decisions"][0]
+        self.assertEqual(decision["decision"], "rollback_failed")
+        self.assertEqual(decision["reason"], "transport_failed:RuntimeError")
+        self.assertEqual(decision["rollback_error"], "RuntimeError")
+        self.assertEqual(transport.calls.count("rollback"), 1)
+        self.assertTrue(report["audit_id"].startswith("sha256:"))
+
+    def test_unwritable_promotion_state_restores_the_previous_image(self):
+        # Same failure class: an unrecordable promotion must not be reported as
+        # promoted, and must not escape as an OSError.
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
+        with tempfile.TemporaryDirectory() as tmp:
+            readonly = Path(tmp) / "readonly"
+            readonly.mkdir()
+            os.chmod(readonly, 0o500)
+            try:
+                report = self.authorized(transport, state_path=str(readonly / "state.json"))
+            finally:
+                os.chmod(readonly, 0o700)
+        decision = report["decisions"][0]
+        self.assertEqual(decision["reason"], "promotion_state_unwritable")
+        self.assertEqual(decision["decision"], "rolled_back")
+        self.assertEqual(transport.calls.count("rollback"), 1)
+        self.assertEqual(transport.running["mantic-mcp"], PREVIOUS)
+        self.assertFalse(report["promoted"])
 
     def test_deploy_exception_rolls_back(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS}, deploy_error=RuntimeError("boom"))
