@@ -131,6 +131,29 @@ class Host:
         return completed.stdout.strip()
 
 
+def verify_source(repo, source_sha):
+    """The build must run on the reviewed tree: exact SHA, clean worktree.
+
+    A build from an unchecked working tree could ship code that no reviewer and
+    no attester ever saw, so this refuses before docker is invoked at all.
+    """
+    try:
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=60)
+        status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain",
+                                 "--untracked-files=no"],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("source_check_unavailable") from None
+    if head.returncode != 0 or status.returncode != 0:
+        raise Denied("source_unreadable")
+    if head.stdout.strip() != source_sha:
+        raise Denied("source_not_at_approved_sha")
+    if status.stdout.strip():
+        raise Denied("source_worktree_dirty")
+    return True
+
+
 def image_pattern(service, spec, registry=REGISTRY):
     """Match the previously pinned image or this registry's image already deployed."""
     current = f"{registry}/harness-{service}"
@@ -205,7 +228,12 @@ class Transport:
         self.host = host
         self.registry = registry
 
+    def _known(self, service):
+        if service not in SERVICES:
+            raise RuntimeError(f"{service}: not in the reviewed transport map")
+
     def current(self, service, uuid):
+        self._known(service)
         try:
             raw = compose_for(self.host, uuid)
         except Exception:
@@ -222,6 +250,7 @@ class Transport:
         return out.split("@", 1)[1] if "@" in out else None
 
     def build(self, service, source_sha):
+        self._known(service)
         tag = image_tag(service, source_sha, self.registry)
         reference = self.host.docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", tag)
         if "@" not in reference:
@@ -232,6 +261,7 @@ class Transport:
         return digest
 
     def deploy(self, service, uuid, kind, digest):
+        self._known(service)
         revision = running_revision(self.host, service, digest, self.registry)
         if not isinstance(revision, str) or len(revision) != 40:
             raise RuntimeError(f"{service}: prepared image carries no exact source revision")
@@ -241,6 +271,7 @@ class Transport:
 
     def health(self, service, uuid):
         """Read back what is actually running: image digest, revision label, health."""
+        self._known(service)
         _, service_state = self.host.coolify("GET", f"/services/{uuid}")
         raw = service_state.get("docker_compose_raw") or ""
         match = image_pattern(service, SERVICES[service], self.registry).search(raw)
@@ -260,6 +291,7 @@ class Transport:
                 "source_sha": revision or None}
 
     def rollback(self, service, uuid):
+        self._known(service)
         backups = sorted((STATE_ROOT / "backups").glob(f"{service}-*.yml"))
         if not backups:
             raise RuntimeError(f"{service}: no compose backup to roll back to")
@@ -275,6 +307,7 @@ class Transport:
 def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
     """Build and push one service at the exact source SHA, returning its digest."""
     spec = SERVICES[service]
+    verify_source(repo, source_sha)
     folder = Path(repo) / spec["folder"]
     if not folder.is_dir():
         raise RuntimeError(f"{service}: source folder missing in {repo}")
@@ -309,6 +342,17 @@ def main(argv=None):
     try:
         manifest = load_gate_file(args.manifest, "manifest", require_root=False)
         paths = git_changed_paths(args.repo, args.base_sha, args.source_sha)
+        entries = {entry.get("id"): entry
+                   for entry in (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
+                   if isinstance(entry, dict)}
+        # A manifest service this transport does not implement must stop the run
+        # rather than be skipped: the changed source would be unreleasable and an
+        # attempt to promote it must fail before any host call.
+        unmodelled = sorted(service for service in entries
+                            if service not in SERVICES
+                            and any(path == service or path.startswith(service + "/") for path in paths))
+        if unmodelled:
+            raise Denied("service_not_in_transport:" + ",".join(unmodelled))
         attributed = {}
         for path in paths:
             for service, spec in SERVICES.items():
@@ -322,9 +366,6 @@ def main(argv=None):
             report["result"] = "no_service_change"
             print(json.dumps(report, sort_keys=True))
             return 0
-        entries = {entry.get("id"): entry
-                   for entry in (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
-                   if isinstance(entry, dict)}
         bundles = {}
         for service in sorted(attributed):
             spec = entries.get(service)

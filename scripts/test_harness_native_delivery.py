@@ -198,7 +198,8 @@ class BuildStageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "mantic-mcp").mkdir()
             (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
-            with patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            with patch.object(delivery, "STATE_ROOT", Path(tmp)), \
+                    patch.object(delivery, "verify_source", lambda *a: True):
                 tag, digest = delivery.prepare(host, tmp, "mantic-mcp", SOURCE)
         self.assertIn("build", [call[0] for call in host.calls])
         self.assertIn(("docker", "push", tag), host.calls)
@@ -332,6 +333,95 @@ class TransportTests(unittest.TestCase):
     def test_current_reads_the_deployed_digest(self):
         host = FakeHost(images={"local/mantic-mcp:old": PREVIOUS})
         self.assertEqual(transport_for(host).current("mantic-mcp", UUID), PREVIOUS)
+
+
+class SourceVerificationTests(unittest.TestCase):
+    """The build must run on the reviewed tree, verified before docker is invoked."""
+
+    def repo(self):
+        import subprocess
+
+        tmp = tempfile.mkdtemp()
+        run = lambda *a: subprocess.run(list(a), cwd=tmp, capture_output=True, text=True, check=True)
+        run("git", "init", "-q")
+        run("git", "config", "user.email", "t@example.invalid")
+        run("git", "config", "user.name", "test")
+        (Path(tmp) / "mantic-mcp").mkdir()
+        (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
+        run("git", "add", "-A")
+        run("git", "commit", "-q", "-m", "reviewed tree")
+        sha = run("git", "rev-parse", "HEAD").stdout.strip()
+        return tmp, sha, run
+
+    def test_clean_tree_at_the_exact_sha_passes(self):
+        repo, sha, _ = self.repo()
+        self.assertTrue(delivery.verify_source(repo, sha))
+
+    def test_foreign_head_is_refused(self):
+        repo, sha, _ = self.repo()
+        with self.assertRaises(Denied) as caught:
+            delivery.verify_source(repo, "f" * 40)
+        self.assertEqual(str(caught.exception), "source_not_at_approved_sha")
+
+    def test_dirty_worktree_is_refused(self):
+        repo, sha, _ = self.repo()
+        (Path(repo) / "mantic-mcp" / "Dockerfile.http").write_text("FROM busybox\n", encoding="utf-8")
+        with self.assertRaises(Denied) as caught:
+            delivery.verify_source(repo, sha)
+        self.assertEqual(str(caught.exception), "source_worktree_dirty")
+
+    def test_non_repository_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Denied) as caught:
+                delivery.verify_source(tmp, SOURCE)
+        self.assertEqual(str(caught.exception), "source_unreadable")
+
+    def test_prepare_refuses_before_docker_when_the_tree_is_foreign(self):
+        repo, _sha, _ = self.repo()
+        host = FakeHost()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            with self.assertRaises(Denied) as caught:
+                delivery.prepare(host, repo, "mantic-mcp", "f" * 40)
+        self.assertEqual(str(caught.exception), "source_not_at_approved_sha")
+        self.assertEqual(host.calls, [], "no docker call may happen before the source is verified")
+
+
+class TransportMapTests(unittest.TestCase):
+    """A manifest service the transport does not model must stop the run."""
+
+    def test_transport_rejects_an_unmodelled_service(self):
+        host = FakeHost()
+        transport = transport_for(host)
+        for call in (lambda: transport.build("mcp-edge", SOURCE),
+                     lambda: transport.deploy("mcp-edge", UUID, "service", DIGEST),
+                     lambda: transport.health("mcp-edge", UUID),
+                     lambda: transport.rollback("mcp-edge", UUID)):
+            with self.assertRaises(RuntimeError):
+                call()
+        self.assertEqual(host.calls, [])
+
+    def test_deploy_run_refuses_a_manifest_service_outside_the_transport(self):
+        host = FakeHost()
+        man = manifest("approved")
+        man["other_resources"].append({"id": "mcp-edge", "platform": "coolify",
+                                       "coolify_kind": "service", "coolify_uuid": "z" * 24,
+                                       "review_required": True, "exact_sha_required": True,
+                                       "reviewer_role": "CHO", "promotion_state": "approved"})
+        documents = {"request": request(), "grant": grant(), "attestation": attestation()}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
+                patch.object(delivery, "Host", lambda *a, **k: host), \
+                patch.object(delivery, "git_changed_paths",
+                             lambda *a, **k: ["mantic-mcp/src/server.ts", "mcp-edge/src/x.ts"]), \
+                patch.object(delivery, "load_gate_file",
+                             side_effect=lambda path, label, require_root=False: (
+                                 man if label == "manifest" else documents.get(label))):
+            stderr = io.StringIO()
+            with patch.object(sys, "stdout", io.StringIO()), patch.object(sys, "stderr", stderr):
+                code = delivery.main(["--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
+                                      "--source-sha", SOURCE, "--artifact-dir", tmp])
+        self.assertEqual(code, 1)
+        self.assertIn("service_not_in_transport", stderr.getvalue())
+        self.assertEqual(host.mutations(), [])
 
 
 class MainWiringTests(unittest.TestCase):
