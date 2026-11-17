@@ -1,5 +1,6 @@
 // ubuntu-mcp-bridge: private authenticated Streamable HTTP MCP -> mcp-ssh-manager stdio.
 // Paperclip Tool Gateway -> POST /mcp (Bearer) -> stdio child -> SSH -> Ubuntu.
+// URL clients -> POST /mcp?key=<url-key> (query, for clients that cannot set headers).
 // No secrets in code/logs. Audit JSONL with redaction. Stateless HTTP (multi-session safe).
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -11,10 +12,18 @@ const TOKEN_FILE = process.env.BRIDGE_TOKEN_FILE || "/bridge-config/bridge-beare
 const CHILD_CMD = process.env.BRIDGE_CHILD_CMD || "node";
 const CHILD_ARGS = (process.env.BRIDGE_CHILD_ARGS || "/opt/mcp-ssh-manager/src/index.js").split(" ").filter(Boolean);
 const AUDIT_FILE = process.env.BRIDGE_AUDIT_FILE || "/audit/ubuntu-mcp-audit.jsonl";
-const CALL_TIMEOUT_MS = Number(process.env.BRIDGE_CALL_TIMEOUT_MS || "120000");
+// mcp-ssh-manager caps ssh_execute at 300s; keep the bridge above that so the
+// tool's own timeout wins instead of a generic bridge timeout.
+const CALL_TIMEOUT_MS = Number(process.env.BRIDGE_CALL_TIMEOUT_MS || "310000");
 
 const token = readFileSync(TOKEN_FILE, "utf8").trim();
 if (!token) { console.error("empty bearer token"); process.exit(1); }
+// Optional separate key for URL clients (?key=); absent file means header auth only.
+const URL_KEY_FILE = process.env.BRIDGE_URL_KEY_FILE || "";
+let urlKey = "";
+if (URL_KEY_FILE) {
+  try { urlKey = readFileSync(URL_KEY_FILE, "utf8").trim(); } catch (e) { console.error("url key read failed", e.message); }
+}
 
 function redact(value) {
   if (typeof value === "string") {
@@ -76,6 +85,15 @@ function childCall(payload) {
 function childNotify(payload) {
   if (child && child.exitCode === null) child.stdin.write(JSON.stringify(payload) + "\n");
 }
+// mcp-ssh-manager keeps one shared SSH connection per stdio child, so tools/call
+// requests are serialized; the call timeout starts when the call runs, not in queue.
+let callQueue = Promise.resolve();
+function childCallQueued(payload) {
+  const run = () => childCall(payload);
+  const queued = callQueue.then(run, run);
+  callQueue = queued.then(() => undefined, () => undefined);
+  return queued;
+}
 
 // ---- HTTP ----
 function readBody(req) {
@@ -86,27 +104,43 @@ function readBody(req) {
     req.on("error", reject);
   });
 }
+function requestPath(req) {
+  try { return new URL(req.url, "http://localhost").pathname; } catch { return req.url; }
+}
+function check(got, want) {
+  if (!got || !want) return false;
+  const a = Buffer.from(got); const b = Buffer.from(want);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 function authed(req) {
+  // Both secrets are equally trusted: the bridge bearer (header-native clients)
+  // and the URL key (query-native clients). Accept either one in either place.
+  const wanted = [token, urlKey].filter(Boolean);
   const h = req.headers.authorization || "";
-  if (!h.startsWith("Bearer ")) return false;
-  const got = Buffer.from(h.slice(7)); const want = Buffer.from(token);
-  return got.length === want.length && timingSafeEqual(got, want);
+  if (h.startsWith("Bearer ") && wanted.some((want) => check(h.slice(7), want))) return true;
+  try {
+    const u = new URL(req.url, "http://localhost");
+    const k = u.searchParams.get("key") || u.searchParams.get("token");
+    return wanted.some((want) => check(k, want));
+  } catch { return false; }
 }
 
 const server = createServer(async (req, res) => {
-  if (req.url === "/healthz" && req.method === "GET") {
+  const path = requestPath(req);
+  if (path === "/healthz" && req.method === "GET") {
     const ok = child && child.exitCode === null;
     res.writeHead(ok ? 200 : 503, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok, service: "ubuntu-mcp-bridge", sshManager: "3.8.6", childAlive: ok, pending: pending.size }));
     return;
   }
-  if (req.url !== "/mcp" || req.method !== "POST") {
+  if (path !== "/mcp" || req.method !== "POST") {
     res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "not_found" })); return;
   }
   if (!authed(req)) {
     const h = req.headers.authorization || "";
     const scheme = h ? h.split(" ")[0] : "none";
-    audit({ event: "http_auth_denied", scheme, path: req.url, method: req.method });
+    // path without the query string: the URL key must never reach the audit log.
+    audit({ event: "http_auth_denied", scheme, ua: String(req.headers["user-agent"] || "").slice(0, 120), path, method: req.method });
     res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); return;
   }
   let payload;
@@ -117,7 +151,7 @@ const server = createServer(async (req, res) => {
   const isCall = payload.method === "tools/call" && payload.params?.name;
   try {
     if (payload.id === undefined) { childNotify(payload); res.writeHead(202, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true })); return; }
-    const out = await childCall(payload);
+    const out = await (isCall ? childCallQueued(payload) : childCall(payload));
     if (isCall) {
       const err = out.error ? String(out.error.message || out.error).slice(0, 500) : null;
       audit({ event: "tool_call", tool: payload.params.name, args: payload.params.arguments || {}, error: err, ms: Date.now() - t0, pending: pending.size });

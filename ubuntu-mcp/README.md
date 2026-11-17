@@ -28,6 +28,7 @@ docker build -t ubuntu-mcp-bridge:local .
 docker run --rm -p 8765:8765 \
   --env-file .env \
   -v "$PWD/secrets/bridge-bearer-token:/bridge-config/bridge-bearer-token:ro" \
+  -v "$PWD/secrets/url-key:/bridge-config/url-key:ro" \
   -v "$PWD/secrets/harness-ops:/bridge-config/harness-ops:ro" \
   -v "$PWD/secrets/known_hosts:/bridge-config/known_hosts:ro" \
   -v "$PWD/audit:/audit" \
@@ -35,7 +36,9 @@ docker run --rm -p 8765:8765 \
 ```
 
 Secrets are files, not env vars: `bridge-bearer-token` (Bearer for `/mcp`),
-`harness-ops` (SSH private key), `known_hosts` (SSH host keys).
+`url-key` (optional, `POST /mcp?key=<url-key>` for clients without headers),
+`harness-ops` (SSH private key), `known_hosts` (SSH host keys). `test-auth.mjs`
+(`node test-auth.mjs`) checks the auth boundary with a stub stdio child.
 
 ## Coolify
 
