@@ -20,6 +20,7 @@ grant, the independent exact-SHA approval or the root-owned local-CI attestation
 | `scripts/harness_local_ci_attest.py` | `/usr/local/libexec/harness_local_ci_attest.py` | `0644 root:root` |
 | `scripts/harness_delivery_controller.py` | `/usr/local/libexec/harness_delivery_controller.py` | `0644 root:root` |
 | `scripts/harness_native_delivery.py` | `/usr/local/libexec/harness_native_delivery.py` | `0644 root:root` |
+| `scripts/harness_legacy_disabled.py` | `/usr/local/libexec/harness_image_delivery.py` (REPLACES old entrypoint) | `0755 root:root` |
 | `ops/systemd/harness-image-delivery.service` | `/etc/systemd/system/harness-image-delivery.service` | `0644 root:root` |
 | operator-written source range | `/var/lib/harness-image-delivery/source-range.env` | `0600 root:root` |
 | operator-authored policy | `/etc/paperclip-gitops/harness-ci-policy.json` | `0600 root:root` |
@@ -103,9 +104,11 @@ attestation bound to that exact SHA.
    Then run `install -o root -g root -m 0600 /usr/local/libexec/harness_image_delivery.py /var/lib/harness-image-delivery/backups/harness_image_delivery-<sha12>.py`
    `install -o root -g root -m 0600 /etc/systemd/system/harness-image-delivery.service /var/lib/harness-image-delivery/backups/harness-image-delivery.service-<sha12>.bak`
    `sha256sum` every file and record the digests in the issue.
-3. **Stage the four reviewed modules** from the exact SHA, not from a branch head:
+3. **Stage the four reviewed modules and permanently disable the old executable path** from the exact approved SHA (after step 2 backups):
    `git -C <approved checkout> show <sha>:scripts/<module> | install -o root -g root -m 0644 /dev/stdin /usr/local/libexec/<module>`
-4. **Verify the four staged modules** against the expected digests printed by
+   `git -C <approved checkout> show <sha>:scripts/harness_legacy_disabled.py | install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/harness_image_delivery.py`
+   Direct calls of the **old** controller must now exit 78 without Docker/Coolify, even if the old systemd unit is accidentally restored.
+4. **Verify the four staged modules plus the old-path denial shim** against the expected digests printed by
    preflight (step 0). Do not verify the replacement systemd unit yet: it is
    deliberately installed in step 6. Any mismatch = stop and roll back.
 5. **Install the policy and key** you authored: per-service fixed argv commands,
@@ -124,10 +127,14 @@ attestation bound to that exact SHA.
    the controller or an agent):
    `printf 'HARNESS_BASE_SHA=%s\nHARNESS_SOURCE_SHA=%s\n' <previous-main> <approved-main> > /var/lib/harness-image-delivery/source-range.env`
    `chown root:root /var/lib/harness-image-delivery/source-range.env && chmod 0600 /var/lib/harness-image-delivery/source-range.env`.
-   Only **now**, once the unit, policy, key, directories and range exist,
-   rerun `scripts/harness_install_preflight.py --sha <sha>` and require
-   `ready: true` with no `blockers` and no `pending`.
+   Only **now**, once the unit, policy, key, directories, range and old-path
+   denial shim exist, rerun `scripts/harness_install_preflight.py --sha <sha>`
+   and require `ready: true` with no `blockers` and no `pending`, especially
+   `legacy_controller_disabled=true` and `delivery_unit_wired=true`.
 7. **Negative canaries before re-enabling anything** (root, no secrets printed):
+   - `python3 /usr/local/libexec/harness_image_delivery.py --auto` MUST exit 78 with
+     `legacy_hold_blind_controller_disabled` and **zero** Docker/Coolify calls.
+     If not, leave the timer disabled and mark installation FAIL.
    - `harness_delivery_controller.py --plan` on a **held** lane → `denied`,
      `release_lane_on_hold`, and **zero** docker build/push and zero Coolify
      PATCH/POST in the log.
@@ -149,24 +156,25 @@ attestation bound to that exact SHA.
    with digest/health readback recorded. Attested `local_ci` must appear in
    `multica-release-status --sha <sha>`.
 9. **Rollback** if any of the above fails: stop the timer and service, restore
-   the backed-up controller and unit, and `systemctl daemon-reload`. **Leave the
-   timer stopped**. The legacy controller bypasses HOLD and must never be
-   automatically reactivated by rollback. Record restored digests and verify
+   the backed-up **unit only**, retaining the denial shim at the legacy executable
+   path, then `systemctl daemon-reload`. **Leave the timer stopped**. Do NOT
+   restore the old hold-blind executable to its old callable path. Record restored digests and verify
    `systemctl is-active harness-image-delivery.timer` remains `inactive`.
    A new production activation requires a separately approved safe controller.
 
 ## Rollback
 
 1. `systemctl stop harness-image-delivery.timer`
-2. `install -o root -g root -m 0755 /var/lib/harness-image-delivery/backups/harness_image_delivery-<sha12>.py /usr/local/libexec/harness_image_delivery.py`
+2. `python3 /usr/local/libexec/harness_image_delivery.py --auto` MUST still deny with exit 78 (do **not** restore the unsafe backup to this path).
 3. `install -o root -g root -m 0644 /var/lib/harness-image-delivery/backups/harness-image-delivery.service-<sha12>.bak /etc/systemd/system/harness-image-delivery.service`
 4. `systemctl daemon-reload`
 5. `systemctl is-active harness-image-delivery.timer` must report `inactive`.
 6. Record restored digests and disabled timer state; keep the release lane `BLOCKED`.
 
-Restoring the backup reinstates the **hold-blind code on disk**, but keeping
-its timer stopped prevents the rollback itself from reactivating that unsafe
-release path. Never restart it without an independently approved replacement.
+The old controller is retained only in a **root-private, non-executable backup**
+for forensics. Its original entrypoint remains the reviewed fail-closed shim,
+including after restoring the old unit. A disabled timer alone is insufficient
+protection against accidental manual invocation; the shim must remain in place.
 
 ## Not claimed by the source change
 
