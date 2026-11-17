@@ -18,9 +18,11 @@ permissions:
 
 jobs:
   validate-release-lanes:
-    # GitHub-hosted minutes are blocked by billing on this account; keep the
-    # release gate running on the local runner instead of skipping it.
-    runs-on: [self-hosted, linux, x64, local-build]
+    # PR-controlled source is untrusted: never run it on the Docker-group local runner.
+    # Only reviewed main push/manual jobs may use local-build; hosted PR failures
+    # remain fail-closed until billing or an isolated runner is genuinely ready.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["self-hosted","linux","x64","local-build"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
