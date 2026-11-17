@@ -39,7 +39,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from harness_release_admission import DIGEST, Denied, evaluate, load_gate_file
+from harness_release_admission import (DIGEST, SHA, Denied, evaluate, load_gate_file,
+                                       read_trusted_bytes, verified_attestation)
 
 STATE_ROOT = "/var/lib/paperclip-gitops"
 STATE_FILE = "harness-delivery.json"
@@ -212,16 +213,20 @@ def _promote(service, record, transport, state, state_path):
 
 
 def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
-                  state_path=None, lock_path=None):
+                  state_path=None, lock_path=None, *, source_sha):
     """Return an audit report; mutate nothing unless every gate admits.
 
     ``artifacts(service)`` returns ``{"request": ..., "grant": ..., "attestation": ...}``
     loaded from root-owned files. ``transport`` is the host unit's build/deploy
-    adapter. A held or unapproved change yields a report with ``promoted: False``
-    and no transport call whatsoever.
+    adapter. ``source_sha`` is the exact SHA this promotion is for and is
+    mandatory: every service's request and grant must name it, so admission of
+    one SHA can never build or deploy another. A held or unapproved change
+    yields a report with ``promoted: False`` and no transport call whatsoever.
     """
+    if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha):
+        raise Denied("invalid_source_sha")
     attributed, unclassified = {}, []
-    report = {"source_sha": None, "unclassified_paths": unclassified, "decisions": [],
+    report = {"source_sha": source_sha, "unclassified_paths": unclassified, "decisions": [],
               "promoted": False, "mutated": False}
     lock_handle = None
     try:
@@ -247,12 +252,12 @@ def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
                     raise Denied("gate_artifacts_invalid")
                 request = bundle.get("request")
                 record = evaluate(manifest, request, grant=bundle.get("grant"),
-                                  attestation=bundle.get("attestation"), now=now)
+                                  attestation=bundle.get("attestation"), now=now,
+                                  expected_source_sha=source_sha)
             except Denied as exc:
                 decision.update(decision="denied", reason=str(exc))
                 report["decisions"].append(decision)
                 continue
-            report["source_sha"] = record["source_sha"]
             if transport is None:
                 decision.update(decision="admissible_no_transport",
                                 image_digest=record["image_digest"],
@@ -297,8 +302,16 @@ def git_changed_paths(repo, base_sha, source_sha):
     return paths
 
 
-def load_artifacts(artifact_dir, service, attestation_key=None):
-    """Load the three gate artifacts for one service from root-owned files."""
+def load_artifacts(artifact_dir, service, attestation_key, *, allow_missing_attestation=False):
+    """Load the three gate artifacts for one service from root-owned files.
+
+    An attestation is only evidence after its HMAC was verified with real key
+    material, so ``attestation_key`` is mandatory whenever an attestation file is
+    present: there is no code path that returns a raw JSON attestation for
+    admission. ``allow_missing_attestation`` is used by the prepare stage, where
+    nothing is deployed, and simply returns ``None`` so the release evaluation
+    denies with ``local_ci_attestation_missing``.
+    """
     base = Path(artifact_dir)
     bundle = {}
     for kind in KINDS:
@@ -309,15 +322,16 @@ def load_artifacts(artifact_dir, service, attestation_key=None):
             if kind == "grant" and str(exc) == "grant_unavailable":
                 bundle[kind] = None
                 continue
+            if kind == "attestation" and allow_missing_attestation:
+                bundle[kind] = None
+                continue
             raise
-    if attestation_key:
-        from harness_local_ci_attest import verify_attestation
-        from harness_release_admission import read_trusted_bytes
-
-        key = read_trusted_bytes(attestation_key, "attestation_key", require_root=True)
-        if not verify_attestation(bundle["attestation"], key):
-            raise Denied("attestation_signature_invalid")
-        bundle["attestation"]["signature_verified"] = True
+    if bundle.get("attestation") is None:
+        return bundle
+    if not attestation_key:
+        raise Denied("attestation_key_missing")
+    key = read_trusted_bytes(attestation_key, "attestation_key", require_root=True)
+    bundle["attestation"] = verified_attestation(bundle["attestation"], key)
     return bundle
 
 
@@ -340,7 +354,8 @@ def main(argv=None):
             from harness_release_admission import parse_time
 
             now = parse_time(args.now)
-        report = run_promotion(manifest, paths, artifacts, transport=None, now=now)
+        report = run_promotion(manifest, paths, artifacts, transport=None, now=now,
+                               source_sha=args.source_sha)
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:

@@ -1,0 +1,30 @@
+# Reviewed replacement for /etc/systemd/system/harness-image-delivery.service
+# (ZARI-240). OPERATOR-ONLY: installed by the root operator following
+# ops/harness/INSTALL-RUNBOOK.md, never by an agent.
+#
+# The ExecStart line is parsed by scripts/harness_install_preflight.py with the
+# adapter's own argparse (harness_native_delivery.build_parser), so the installed
+# invocation and the adapter's CLI cannot drift apart: before this unit existed
+# the timer still ran the hold-blind `harness_image_delivery.py --auto`, an
+# invocation the reviewed adapter rejected with CLI exit 2.
+#
+# --auto exists because a 120-second timer cannot know a merge SHA in advance.
+# It resolves the source SHA from the checkout HEAD and the base SHA from
+# /var/lib/harness-image-delivery/delivery/auto-main.json, and it grants nothing:
+# every service still needs its own request, per-UUID grant, independent
+# exact-SHA review and HMAC-verified attestation bound to that exact SHA.
+#
+# The timer unit (harness-image-delivery.timer) is unchanged: same 120-second
+# cadence, same oneshot semantics.
+[Unit]
+Description=Harness image delivery from main (hold-aware admission)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/var/lib/harness-image-delivery/checkout
+ExecStart=/usr/bin/python3 /usr/local/libexec/harness_native_delivery.py --mode deploy --auto --artifact-dir /var/lib/harness-image-delivery/gates --attestation-key /etc/paperclip-gitops/harness-attestation.key --state-dir /var/lib/harness-image-delivery/delivery
+Nice=10
+TimeoutStartSec=1800

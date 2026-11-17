@@ -76,7 +76,9 @@ def attestation(**overrides):
         "artifact_manifest_digest": "sha256:" + "d" * 64,
     }
     base.update(overrides)
-    return base
+    # A verified attestation is a typed marker produced after the HMAC check;
+    # a plain dict - whatever it claims - is not evidence.
+    return gate.VerifiedAttestation(base)
 
 
 def grant(**overrides):
@@ -150,10 +152,11 @@ PREVIOUS = "sha256:" + "9" * 64
 
 class ControllerRefusalTests(unittest.TestCase):
     def run_controller(self, transport, artifacts=None, paths=("mantic-mcp/src/server.ts",),
-                       man=None, state_path=None, lock_path=None):
+                       man=None, state_path=None, lock_path=None, source_sha=SOURCE):
         return controller.run_promotion(man or manifest(), list(paths),
                                         artifacts or (lambda service: bundle()), transport,
-                                        now=NOW, state_path=state_path, lock_path=lock_path)
+                                        now=NOW, state_path=state_path, lock_path=lock_path,
+                                        source_sha=source_sha)
 
     def assert_no_mutation(self, report, transport):
         self.assertFalse(report["promoted"])
@@ -227,7 +230,8 @@ class ControllerRefusalTests(unittest.TestCase):
 
     def test_empty_changed_paths_are_refused(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
-        report = controller.run_promotion(manifest(), [], lambda service: bundle(), transport, now=NOW)
+        report = controller.run_promotion(manifest(), [], lambda service: bundle(), transport, now=NOW,
+                                          source_sha=SOURCE)
         self.assertEqual(report["reason"], "changed_paths_invalid")
         self.assertEqual(transport.calls, [])
 
@@ -256,6 +260,22 @@ class ControllerRefusalTests(unittest.TestCase):
             self.assertEqual(report["reason"], "controller_locked")
             self.assertEqual(transport.calls, [])
 
+    def test_request_for_another_source_sha_never_reaches_the_transport(self):
+        # CTO finding on d3f4055: the promotion SHA is the authority, so a
+        # request/grant for SHA A can never build or deploy SHA B.
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
+        report = self.run_controller(transport, source_sha="9" * 40)
+        self.assertEqual(report["decisions"][0]["reason"], "admission_source_sha_mismatch")
+        self.assertEqual(report["source_sha"], "9" * 40)
+        self.assert_no_mutation(report, transport)
+
+    def test_invalid_source_sha_denies_before_any_decision(self):
+        with self.assertRaises(gate.Denied) as caught:
+            controller.run_promotion(manifest(), ["mantic-mcp/src/server.ts"],
+                                     lambda service: bundle(), FakeTransport(), now=NOW,
+                                     source_sha="not-a-sha")
+        self.assertEqual(str(caught.exception), "invalid_source_sha")
+
     def test_incomplete_transport_never_mutates(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
         transport.rollback = None
@@ -268,7 +288,7 @@ class ControllerPromotionTests(unittest.TestCase):
     def authorized(self, transport, **kwargs):
         return controller.run_promotion(
             manifest(promotion_state="approved"), ["mantic-mcp/src/server.ts"],
-            lambda service: bundle(), transport, now=NOW, **kwargs)
+            lambda service: bundle(), transport, now=NOW, source_sha=SOURCE, **kwargs)
 
     def test_authorized_change_is_built_deployed_and_read_back(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
@@ -404,7 +424,8 @@ class ControllerPromotionTests(unittest.TestCase):
     def test_plan_mode_reports_admissible_without_transport(self):
         report = controller.run_promotion(manifest(promotion_state="approved"),
                                           ["mantic-mcp/src/server.ts"],
-                                          lambda service: bundle(), None, now=NOW)
+                                          lambda service: bundle(), None, now=NOW,
+                                          source_sha=SOURCE)
         self.assertEqual(report["decisions"][0]["decision"], "admissible_no_transport")
         self.assertFalse(report["promoted"])
 
@@ -534,7 +555,8 @@ class AttestationKeyTests(unittest.TestCase):
                 patch.object(sys, "stdout", io.StringIO()), \
                 patch.object(sys, "stderr", stderr):
             code = gate.main(["--manifest", "m", "--request", "r", "--grant", "g",
-                              "--attestation", "a", "--attestation-key", str(key_path)])
+                              "--attestation", "a", "--attestation-key", str(key_path),
+                              "--source-sha", SOURCE])
         return code, stderr.getvalue()
 
     def test_symlinked_attestation_key_is_refused(self):
@@ -560,6 +582,70 @@ class AttestationKeyTests(unittest.TestCase):
             else:
                 self.assertEqual(code, 1)
                 self.assertIn("attestation_key_not_root_owned", stderr)
+
+
+class ArtifactLoadingTests(unittest.TestCase):
+    """load_artifacts is the only file-to-admission path, and it verifies the HMAC."""
+
+    KEY = b"k" * 32
+
+    def signed(self):
+        import harness_local_ci_attest as attester
+
+        return attester.build_attestation(
+            "mantic-mcp", SOURCE, [{"command": "true", "exit": 0}],
+            ["mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
+            policy_digest=attestation()["policy_digest"])
+
+    def load(self, attestation_doc, key_path="key", key=None):
+        documents = {"request": request(), "grant": grant(), "attestation": attestation_doc}
+        material = self.KEY if key is None else key
+        with patch.object(controller, "load_gate_file",
+                          side_effect=lambda path, label, require_root=True: dict(documents[label])), \
+                patch.object(controller, "read_trusted_bytes",
+                             lambda path, label, require_root=True: material):
+            return controller.load_artifacts("/root-owned-gates", "mantic-mcp", key_path)
+
+    def test_requires_an_attestation_key(self):
+        # CTO finding 2: the adapter parsed --attestation-key but never used it,
+        # so a deploy could admit an unverified artifact. The key is mandatory.
+        with self.assertRaises(gate.Denied) as caught:
+            self.load(self.signed(), key_path=None)
+        self.assertEqual(str(caught.exception), "attestation_key_missing")
+
+    def test_rejects_a_forged_signature_verified_artifact(self):
+        forged = dict(attestation())               # plain dict claiming the flag
+        self.assertIs(forged["signature_verified"], True)
+        with self.assertRaises(gate.Denied) as caught:
+            self.load(forged)
+        self.assertEqual(str(caught.exception), "attestation_signature_invalid")
+
+    def test_rejects_a_signature_made_with_another_key(self):
+        with self.assertRaises(gate.Denied) as caught:
+            self.load(self.signed(), key=b"z" * 32)
+        self.assertEqual(str(caught.exception), "attestation_signature_invalid")
+
+    def test_returns_a_verified_attestation_for_a_real_signature(self):
+        bundle = self.load(self.signed())
+        self.assertIsInstance(bundle["attestation"], gate.VerifiedAttestation)
+        self.assertIs(bundle["attestation"]["signature_verified"], True)
+
+    def test_missing_attestation_is_reported_not_verified(self):
+        documents = {"request": request(), "grant": grant()}
+
+        def loader(path, label, require_root=True):
+            if label not in documents:
+                raise gate.Denied(label + "_unavailable")
+            return dict(documents[label])
+
+        with patch.object(controller, "load_gate_file", side_effect=loader), \
+                patch.object(controller, "read_trusted_bytes",
+                             lambda path, label, require_root=True: self.KEY):
+            bundle = controller.load_artifacts("/root-owned-gates", "mantic-mcp", "key",
+                                               allow_missing_attestation=True)
+            self.assertIsNone(bundle["attestation"])
+            with self.assertRaises(gate.Denied):
+                controller.load_artifacts("/root-owned-gates", "mantic-mcp", "key")
 
 
 if __name__ == "__main__":

@@ -5,10 +5,12 @@ could otherwise reach Coolify. A denial is the admission gate's only output in
 that case, so no image is promoted and the previously running image stays
 untouched; the controller must never see an admission record to act on.
 """
+import io
 import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import harness_release_admission as gate
 
@@ -72,7 +74,10 @@ def attestation(**overrides):
         "artifact_manifest_digest": "sha256:" + "d" * 64,
     }
     base.update(overrides)
-    return base
+    # Admission accepts only an attestation whose HMAC was verified in-process,
+    # which load_artifacts/verified_attestation marks with this type. A plain
+    # dict - whatever it claims - is not evidence.
+    return gate.VerifiedAttestation(base)
 
 
 def grant(**overrides):
@@ -94,13 +99,14 @@ class AdmissionTests(unittest.TestCase):
     def deny(self, reason, **kwargs):
         kwargs.setdefault("grant", grant())
         kwargs.setdefault("attestation", attestation())
+        kwargs.setdefault("expected_source_sha", SOURCE)
         with self.assertRaises(gate.Denied) as caught:
             gate.evaluate(kwargs.pop("manifest", manifest()), kwargs.pop("request", request()),
                           now=kwargs.pop("now", NOW), **kwargs)
         self.assertEqual(str(caught.exception), reason)
 
     def test_admits_fully_evidenced_promotion(self):
-        record = gate.evaluate(manifest(), request(), grant=grant(), attestation=attestation(), now=NOW)
+        record = gate.evaluate(manifest(), request(), grant=grant(), attestation=attestation(), now=NOW, expected_source_sha=SOURCE)
         self.assertTrue(record["admit"])
         self.assertEqual(record["source_sha"], SOURCE)
         self.assertEqual(record["image_digest"], DIGEST)
@@ -220,7 +226,7 @@ class AdmissionTests(unittest.TestCase):
         entry["source_commit_required_when_source_built"] = True
         entry["exact_image_digest_required"] = True
         self.assertTrue(gate.evaluate(alt, request(), grant=grant(), attestation=attestation(),
-                                      now=NOW)["admit"])
+                                      now=NOW, expected_source_sha=SOURCE)["admit"])
 
     def test_denies_manifest_with_weakened_digest_gate(self):
         broken = manifest()
@@ -245,12 +251,12 @@ class AdmissionTests(unittest.TestCase):
             with self.assertRaises(gate.Denied) as caught:
                 gate.evaluate(data, request(service=service, coolify_uuid=entry["coolify_uuid"],
                                             coolify_kind=entry["coolify_kind"]),
-                              attestation=attestation(service=service), now=NOW)
+                              attestation=attestation(service=service), now=NOW, expected_source_sha=SOURCE)
             self.assertEqual(str(caught.exception), "release_lane_on_hold")
 
     def test_denial_returns_no_admission_record(self):
         with self.assertRaises(gate.Denied):
-            gate.evaluate(manifest(), request(), grant=None, attestation=attestation(), now=NOW)
+            gate.evaluate(manifest(), request(), grant=None, attestation=attestation(), now=NOW, expected_source_sha=SOURCE)
         self.assertFalse(hasattr(gate, "promote") or hasattr(gate, "deploy"),
                          "admission gate must expose no promotion/deploy action")
 
@@ -260,37 +266,136 @@ class BuildStageAdmissionTests(unittest.TestCase):
 
     def test_admits_a_build_without_an_attestation(self):
         record = gate.evaluate_build(manifest(promotion_state="approved"), request(),
-                                     grant=grant(), now=NOW)
+                                     grant=grant(), now=NOW, expected_source_sha=SOURCE)
         self.assertTrue(record["admit_build"])
         self.assertNotIn("image_digest", record)
 
     def test_denies_held_lane_without_grant(self):
         with self.assertRaises(gate.Denied) as caught:
-            gate.evaluate_build(manifest(), request(), grant=None, now=NOW)
+            gate.evaluate_build(manifest(), request(), grant=None, now=NOW, expected_source_sha=SOURCE)
         self.assertEqual(str(caught.exception), "release_lane_on_hold")
 
     def test_denies_expired_grant(self):
         with self.assertRaises(gate.Denied) as caught:
             gate.evaluate_build(manifest(promotion_state="approved"), request(),
                                 grant=grant(expires_at=(NOW - timedelta(minutes=1)).isoformat()),
-                                now=NOW)
+                                now=NOW, expected_source_sha=SOURCE)
         self.assertEqual(str(caught.exception), "grant_expired")
 
     def test_denies_self_review(self):
         approval = request()["approval"] | {"reviewer_agent_id": "producer-agent"}
         with self.assertRaises(gate.Denied) as caught:
             gate.evaluate_build(manifest(promotion_state="approved"), request(approval=approval),
-                                grant=grant(), now=NOW)
+                                grant=grant(), now=NOW, expected_source_sha=SOURCE)
         self.assertEqual(str(caught.exception), "self_review_forbidden")
 
     def test_build_admission_is_not_deploy_admission(self):
         # The same inputs that allow a build still cannot deploy: only the full
         # evaluation demands the root-owned attestation and immutable digest.
         man, req, gr = manifest(promotion_state="approved"), request(), grant()
-        self.assertTrue(gate.evaluate_build(man, req, grant=gr, now=NOW)["admit_build"])
+        self.assertTrue(gate.evaluate_build(man, req, grant=gr, now=NOW, expected_source_sha=SOURCE)["admit_build"])
         with self.assertRaises(gate.Denied) as caught:
-            gate.evaluate(man, req, grant=gr, attestation=None, now=NOW)
+            gate.evaluate(man, req, grant=gr, attestation=None, now=NOW, expected_source_sha=SOURCE)
         self.assertEqual(str(caught.exception), "local_ci_attestation_missing")
+
+    def test_denies_build_evidence_bound_to_another_source_sha(self):
+        # CTO finding on d3f4055: a request/grant for SHA A must not admit a
+        # build of SHA B. The build's SHA is now an argument, not a claim.
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate_build(manifest(promotion_state="approved"), request(), grant=grant(),
+                                now=NOW, expected_source_sha="9" * 40)
+        self.assertEqual(str(caught.exception), "admission_source_sha_mismatch")
+
+    def test_denies_release_evidence_bound_to_another_source_sha(self):
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate(manifest(), request(), grant=grant(), attestation=attestation(),
+                          now=NOW, expected_source_sha="9" * 40)
+        self.assertEqual(str(caught.exception), "admission_source_sha_mismatch")
+
+    def test_denies_an_invalid_promoted_source_sha(self):
+        for value in (None, "", "xyz", "a" * 39, "A" * 40):
+            with self.assertRaises(gate.Denied) as caught:
+                gate.evaluate_build(manifest(promotion_state="approved"), request(), grant=grant(),
+                                    now=NOW, expected_source_sha=value)
+            self.assertEqual(str(caught.exception), "invalid_expected_source_sha")
+
+    def test_the_sha_binding_cannot_be_omitted(self):
+        # Keyword-only and without a default: a caller cannot silently skip the
+        # binding, which is how the d3f4055 delivery path admitted SHA B.
+        with self.assertRaises(TypeError):
+            gate.evaluate_build(manifest(promotion_state="approved"), request(), grant=grant())
+        with self.assertRaises(TypeError):
+            gate.evaluate(manifest(), request(), grant=grant(), attestation=attestation())
+
+
+class AttestationVerificationTests(unittest.TestCase):
+    """The delivery path must verify the HMAC; a claimed flag is never proof."""
+
+    KEY = b"k" * 32
+
+    def signed(self):
+        import harness_local_ci_attest as attester
+
+        return attester.build_attestation(
+            "mantic-mcp", SOURCE, [{"command": "true", "exit": 0}],
+            ["mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
+            policy_digest=attestation()["policy_digest"])
+
+    def test_a_verified_attestation_is_admitted(self):
+        record = gate.evaluate(manifest(), request(), grant=grant(),
+                               attestation=gate.verified_attestation(self.signed(), self.KEY),
+                               now=NOW, expected_source_sha=SOURCE)
+        self.assertTrue(record["admit"])
+        self.assertEqual(record["image_digest"], DIGEST)
+
+    def test_a_forged_signature_verified_flag_is_not_evidence(self):
+        # Exactly the CTO finding: raw JSON claiming signature_verified=true.
+        forged = dict(attestation())
+        self.assertIs(forged["signature_verified"], True)
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate(manifest(), request(), grant=grant(), attestation=forged,
+                          now=NOW, expected_source_sha=SOURCE)
+        self.assertEqual(str(caught.exception), "attestation_signature_unverified")
+
+    def test_a_signature_from_another_key_is_refused(self):
+        with self.assertRaises(gate.Denied) as caught:
+            gate.verified_attestation(self.signed(), b"z" * 32)
+        self.assertEqual(str(caught.exception), "attestation_signature_invalid")
+
+    def test_a_tampered_field_breaks_the_signature(self):
+        tampered = self.signed()
+        tampered["tests"] = [{"command": "true", "exit": 0}]
+        tampered["image_digest"] = "sha256:" + "7" * 64
+        with self.assertRaises(gate.Denied) as caught:
+            gate.verified_attestation(tampered, self.KEY)
+        self.assertEqual(str(caught.exception), "attestation_signature_invalid")
+
+    def test_a_verified_attestation_still_cannot_switch_source_sha(self):
+        verified = gate.verified_attestation(self.signed(), self.KEY)
+        with self.assertRaises(gate.Denied) as caught:
+            gate.evaluate(manifest(), request(), grant=grant(), attestation=verified,
+                          now=NOW, expected_source_sha="f" * 40)
+        self.assertEqual(str(caught.exception), "admission_source_sha_mismatch")
+
+
+class CliBindingTests(unittest.TestCase):
+    """The operator CLI applies the same binding as the library."""
+
+    def test_cli_requires_the_promoted_source_sha(self):
+        with self.assertRaises(SystemExit):
+            gate.main(["--manifest", "m", "--request", "r"])
+
+    def test_cli_denies_a_source_sha_that_differs_from_the_request(self):
+        documents = {"manifest": manifest(promotion_state="approved"),
+                     "request": request(), "grant": grant()}
+        stderr = io.StringIO()
+        with patch.object(gate, "load_gate_file",
+                          side_effect=lambda path, label, require_root=False: dict(documents[label])), \
+                patch("sys.stdout", io.StringIO()), patch("sys.stderr", stderr):
+            code = gate.main(["--manifest", "m", "--request", "r", "--grant", "g",
+                              "--source-sha", "9" * 40])
+        self.assertEqual(code, 1)
+        self.assertIn("admission_source_sha_mismatch", stderr.getvalue())
 
 
 if __name__ == "__main__":

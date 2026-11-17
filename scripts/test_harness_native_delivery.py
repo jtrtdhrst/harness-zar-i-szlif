@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 import harness_delivery_controller as controller
 import harness_native_delivery as delivery
+import harness_release_admission as gate
 from harness_release_admission import Denied, evaluate_build
 
 NOW = datetime(2026, 11, 16, 12, 0, 0, tzinfo=timezone.utc)
@@ -72,7 +73,9 @@ def attestation(**overrides):
             "changed_paths": ["mantic-mcp/src/server.ts"],
             "artifact_manifest_digest": "sha256:" + "d" * 64}
     base.update(overrides)
-    return base
+    # Only an attestation verified against real key material is admitted; the
+    # fixture models that outcome, exactly like load_artifacts does.
+    return gate.VerifiedAttestation(base)
 
 
 class FakeHost:
@@ -149,7 +152,8 @@ class BuildStageTests(unittest.TestCase):
         bundle = kwargs.pop("bundle", None) or {"request": request(), "grant": grant()}
         with patch.object(delivery, "STATE_ROOT", Path(tempfile.mkdtemp())):
             return evaluate_build(kwargs.pop("manifest", manifest("approved")), bundle["request"],
-                                  grant=bundle.get("grant"), now=NOW)
+                                  grant=bundle.get("grant"), now=NOW,
+                                  expected_source_sha=kwargs.pop("expected_source_sha", SOURCE))
 
     def test_build_admission_needs_no_attestation(self):
         record = self.prepare(FakeHost())
@@ -221,7 +225,8 @@ class DeployStageTests(unittest.TestCase):
                 patch.object(delivery, "POLL_SECONDS", 0):
             return controller.run_promotion(manifest(promotion_state), ["mantic-mcp/src/server.ts"],
                                             lambda service: bundle, transport_for(host),
-                                            now=NOW, state_path=state_path, lock_path=lock_path)
+                                            now=NOW, state_path=state_path, lock_path=lock_path,
+                                            source_sha=SOURCE)
 
     def assert_nothing_happened(self, report, host):
         self.assertFalse(report["promoted"])
@@ -271,7 +276,7 @@ class DeployStageTests(unittest.TestCase):
             with patch.object(delivery, "STATE_ROOT", Path(tmp)), patch.object(delivery, "POLL_SECONDS", 0):
                 report = controller.run_promotion(
                     manifest("approved"), ["mantic-mcp/src/server.ts"], lambda service: self.bundle(),
-                    transport_for(host), now=NOW, state_path=state)
+                    transport_for(host), now=NOW, state_path=state, source_sha=SOURCE)
             self.assertTrue(state.exists())
         self.assertTrue(report["promoted"], report)
         self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose)
@@ -424,46 +429,77 @@ class TransportMapTests(unittest.TestCase):
         self.assertEqual(host.mutations(), [])
 
 
+KEY = b"k" * 32
+
+
+def signed_attestation(source_sha=SOURCE, results=None, **overrides):
+    """A real HMAC attestation for the fixture service, as the attester writes it.
+
+    The SHA is a parameter rather than an override because the signature covers
+    every field: patching it after signing produces a (correctly) invalid artifact.
+    """
+    import harness_local_ci_attest as attester
+
+    document = attester.build_attestation(
+        "mantic-mcp", source_sha,
+        results if results is not None else [{"command": "true", "exit": 0}],
+        ["mantic-mcp/src/server.ts"], DIGEST, KEY, runner_uid=1000,
+        policy_digest="sha256:" + "e" * 64)
+    document.update(overrides)
+    return document
+
+
+def deliverables(documents):
+    """Patch the artifact loader the delivery path uses: controller.load_artifacts."""
+    return patch.object(controller, "load_gate_file",
+                        side_effect=lambda path, label, require_root=True: documents.get(label))
+
+
 class MainWiringTests(unittest.TestCase):
     """main() must route prepare through evaluate_build and deploy through run_promotion."""
 
-    def run_main(self, mode, host, *, artifacts=True, changed=("mantic-mcp/src/server.ts",)):
-        documents = {"request": request(), "grant": grant(), "attestation": attestation()}
+    def run_main(self, mode, host, *, documents=None, changed=("mantic-mcp/src/server.ts",),
+                 extra=(), source_sha=SOURCE, attestation_key=True):
+        documents = documents if documents is not None else {
+            "request": request(), "grant": grant(), "attestation": signed_attestation()}
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "git_changed_paths", lambda *a, **k: list(changed)), \
                 patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: (
-                                 manifest() if label == "manifest" else documents[label])):
+                             side_effect=lambda path, label, require_root=False: manifest()), \
+                deliverables(documents), \
+                patch.object(controller, "read_trusted_bytes",
+                             lambda path, label, require_root=True: KEY):
             if mode == "prepare":
                 (Path(tmp) / "mantic-mcp").mkdir()
                 (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
+            argv = ["--mode", mode, "--repo", ".", "--base-sha", "0" * 40,
+                    "--source-sha", source_sha, "--artifact-dir", tmp]
+            if attestation_key:
+                argv += ["--attestation-key", str(Path(tmp) / "key")]
+            argv += list(extra)
             stdout = io.StringIO()
             with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", io.StringIO()):
-                code = delivery.main(["--mode", mode, "--repo", ".",
-                                      "--base-sha", "0" * 40, "--source-sha", SOURCE,
-                                      "--artifact-dir" if artifacts else "--repo",
-                                      tmp if artifacts else "."])
+                code = delivery.main(argv)
         return code, stdout.getvalue()
 
     def test_prepare_mode_denies_a_held_lane_and_builds_nothing(self):
         host = FakeHost()
-        documents = {"request": request(), "grant": None, "attestation": attestation()}
-        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
-                patch.object(delivery, "Host", lambda *a, **k: host), \
-                patch.object(delivery, "git_changed_paths", lambda *a, **k: ["mantic-mcp/src/server.ts"]), \
-                patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: (
-                                 manifest() if label == "manifest" else documents.get(label))):
-            (Path(tmp) / "mantic-mcp").mkdir()
-            (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
-            stdout = io.StringIO()
-            with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", io.StringIO()):
-                code = delivery.main(["--mode", "prepare", "--repo", ".", "--base-sha", "0" * 40,
-                                      "--source-sha", SOURCE, "--artifact-dir", tmp])
+        code, out = self.run_main("prepare", host,
+                                  documents={"request": request(), "grant": None,
+                                             "attestation": signed_attestation()})
         self.assertEqual(code, 0)
         self.assertEqual(host.mutations(), [])
-        self.assertIn("release_lane_on_hold", stdout.getvalue())
+        self.assertIn("release_lane_on_hold", out)
+
+    def test_prepare_refuses_evidence_for_another_source_sha(self):
+        # CTO finding 1: the CLI --source-sha decides what is built, so a request
+        # and grant naming SHA A must deny a build of SHA B before docker runs.
+        host = FakeHost()
+        code, out = self.run_main("prepare", host, source_sha="9" * 40)
+        self.assertEqual(code, 0)
+        self.assertEqual(host.mutations(), [])
+        self.assertIn("admission_source_sha_mismatch", out)
 
     def test_plan_mode_never_mutates(self):
         host = FakeHost()
@@ -477,24 +513,185 @@ class MainWiringTests(unittest.TestCase):
 
     def test_deploy_mode_denies_without_attestation_and_never_deploys(self):
         host = FakeHost()
-        documents = {"request": request(), "grant": grant(), "attestation": None}
-        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
-                patch.object(delivery, "Host", lambda *a, **k: host), \
-                patch.object(delivery, "git_changed_paths", lambda *a, **k: ["mantic-mcp/src/server.ts"]), \
-                patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: (
-                                 manifest() if label == "manifest" else documents.get(label))):
-            stdout = io.StringIO()
-            with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", io.StringIO()):
-                code = delivery.main(["--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
-                                      "--source-sha", SOURCE, "--artifact-dir", tmp,
-                                      "--now", NOW.isoformat()])
-        payload = json.loads(stdout.getvalue() or "{}")
+        code, out = self.run_main("deploy", host,
+                                  documents={"request": request(), "grant": grant(),
+                                             "attestation": None},
+                                  extra=["--now", NOW.isoformat()])
+        payload = json.loads(out or "{}")
         self.assertEqual(code, 0)
         self.assertEqual(host.mutations(), [])
         deployed = payload.get("deployed") or {}
         self.assertFalse(deployed.get("promoted"))
         self.assertEqual(deployed["decisions"][0]["reason"], "local_ci_attestation_missing")
+
+    def test_deploy_denies_a_forged_signature_verified_artifact(self):
+        # CTO finding 2: a raw JSON artifact claiming signature_verified=true used
+        # to satisfy admission. It is now refused before any transport call.
+        host = FakeHost()
+        forged = dict(attestation())
+        self.assertIs(forged["signature_verified"], True)
+        code, out = self.run_main("deploy", host,
+                                  documents={"request": request(), "grant": grant(),
+                                             "attestation": forged})
+        payload = json.loads(out or "{}")
+        self.assertEqual(code, 1)
+        self.assertEqual(host.mutations(), [])
+        self.assertIn("attestation_signature_invalid", json.dumps(payload["denied"]))
+        self.assertEqual(payload["result"], "denied")
+
+    def test_deploy_denies_when_the_attestation_key_is_missing(self):
+        host = FakeHost()
+        code, out = self.run_main("deploy", host, attestation_key=False)
+        payload = json.loads(out or "{}")
+        self.assertEqual(code, 1)
+        self.assertEqual(host.mutations(), [])
+        self.assertIn("attestation_key_missing", json.dumps(payload["denied"]))
+
+    def test_attestation_test_commands_are_never_executed(self):
+        # "never invoke root-host arbitrary commands": an attestation carries the
+        # commands the attester ran, and the delivery path only ever reads them.
+        marker = "/bin/sh -c touch /root/pwned"
+        host = FakeHost()
+        documents = {"request": request(), "grant": grant(),
+                     "attestation": signed_attestation(results=[{"command": marker, "exit": 0}])}
+        code, out = self.run_main("deploy", host, documents=documents)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("pwned", json.dumps([str(call) for call in host.calls]))
+
+
+class AutoModeTests(unittest.TestCase):
+    """`--auto` is the mode the installed timer runs; it resolves, never widens."""
+
+    def repo(self, commits=2):
+        import subprocess
+
+        tmp = tempfile.mkdtemp()
+        run = lambda *a: subprocess.run(list(a), cwd=tmp, capture_output=True, text=True, check=True)
+        run("git", "init", "-q")
+        run("git", "config", "user.email", "t@example.invalid")
+        run("git", "config", "user.name", "test")
+        (Path(tmp) / "mantic-mcp").mkdir()
+        target = Path(tmp) / "mantic-mcp" / "Dockerfile.http"
+        target.write_text("FROM scratch\n", encoding="utf-8")
+        run("git", "add", "-A")
+        run("git", "commit", "-q", "-m", "base")
+        first = run("git", "rev-parse", "HEAD").stdout.strip()
+        for index in range(1, commits):
+            target.write_text(f"FROM scratch\n# {index}\n", encoding="utf-8")
+            run("git", "add", "-A")
+            run("git", "commit", "-q", "-m", f"change {index}")
+        return tmp, first, run("git", "rev-parse", "HEAD").stdout.strip()
+
+    def state(self, baseline=None):
+        tmp = tempfile.mkdtemp()
+        if baseline:
+            path = Path(tmp) / "auto-main.json"
+            path.write_text(json.dumps({"main": baseline}), encoding="utf-8")
+            path.chmod(0o600)
+        return tmp
+
+    def documents_for(self, source_sha):
+        """Evidence bound to the SHA the checkout actually resolves to."""
+        return {"request": request(source_sha=source_sha, merge_sha=source_sha),
+                "grant": grant(source_sha=source_sha),
+                "attestation": signed_attestation(source_sha=source_sha)}
+
+    def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None, source_sha=None):
+        host = host or FakeHost()
+        if documents is None:
+            documents = self.documents_for(source_sha or delivery.checkout_sha(repo))
+        with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
+                patch.object(delivery, "POLL_SECONDS", 0), \
+                patch.object(delivery, "Host", lambda *a, **k: host), \
+                patch.object(delivery, "load_gate_file",
+                             side_effect=lambda path, label, require_root=False: manifest()), \
+                deliverables(documents), \
+                patch.object(controller, "read_trusted_bytes",
+                             lambda path, label, require_root=True: KEY):
+            argv = ["--mode", mode, "--auto", "--repo", repo, "--state-dir", state_dir,
+                    "--artifact-dir", state_dir, "--attestation-key", str(Path(state_dir) / "key"),
+                    "--now", NOW.isoformat()]
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
+                code = delivery.main(argv)
+        return code, stdout.getvalue() + stderr.getvalue(), host
+
+    def test_the_installed_timer_invocation_is_accepted(self):
+        # The legacy unit ran `--auto` with nothing else; the adapter used to exit
+        # 2 on that. The reviewed unit's invocation must parse now.
+        delivery.build_parser().parse_args(["--mode", "deploy", "--auto"])
+        delivery.build_parser().parse_args(["--auto"])
+
+    def test_auto_resolves_head_and_baseline_without_cli_shas(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(repo, self.state(base))
+        payload = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(payload["source_sha"], head)
+        self.assertEqual(list(payload["services"]), ["mantic-mcp"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_denies_without_a_baseline(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(repo, self.state())
+        self.assertEqual(code, 1)
+        self.assertIn("auto_baseline_missing", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_reports_no_change_when_the_baseline_is_head(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(repo, self.state(head))
+        payload = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["result"], "no_change")
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_never_writes_a_baseline_on_a_denied_cycle(self):
+        repo, base, head = self.repo()
+        state_dir = self.state(base)
+        documents = self.documents_for(head)
+        documents["grant"] = None
+        code, out, host = self.run_auto(repo, state_dir, mode="deploy", documents=documents)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(host.mutations(), [])
+        baseline = Path(state_dir) / "auto-main.json"
+        self.assertEqual(json.loads(baseline.read_text(encoding="utf-8"))["main"], base,
+                         "a held lane must be re-evaluated on the next tick")
+
+    def test_auto_advances_the_baseline_only_after_a_clean_deploy(self):
+        repo, base, head = self.repo()
+        state_dir = self.state(base)
+        tag = f"127.0.0.1:5000/harness-mantic-mcp:{head[:12]}"
+        host = FakeHost(revision=head, images={tag: DIGEST})
+        code, out, host = self.run_auto(repo, state_dir, mode="deploy", host=host, source_sha=head)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(json.loads(out)["deployed"]["promoted"], out)
+        baseline = Path(state_dir) / "auto-main.json"
+        self.assertEqual(json.loads(baseline.read_text(encoding="utf-8"))["main"], head)
+
+    def test_a_prepare_cycle_leaves_the_baseline_for_the_deploy(self):
+        # Otherwise the deploy that follows would report "no_change" and the
+        # images the prepare stage just built would never be promoted.
+        repo, base, head = self.repo()
+        state_dir = self.state(base)
+        code, out, _ = self.run_auto(repo, state_dir, mode="prepare", source_sha=head)
+        self.assertEqual(code, 0, out)
+        baseline = Path(state_dir) / "auto-main.json"
+        self.assertEqual(json.loads(baseline.read_text(encoding="utf-8"))["main"], base)
+
+    def test_explicit_mode_still_requires_both_shas(self):
+        args = delivery.build_parser().parse_args(["--mode", "plan"])
+        with self.assertRaises(Denied) as caught:
+            delivery.resolve_source_range(args)
+        self.assertEqual(str(caught.exception), "sha_arguments_required")
+
+    def test_auto_refuses_an_explicit_source_sha(self):
+        # --auto means "take the SHA from the checkout"; an explicit --source-sha
+        # would be silently ignored, so the mismatch is denied instead.
+        args = delivery.build_parser().parse_args(["--auto", "--source-sha", SOURCE, "--repo", "."])
+        with self.assertRaises(Denied) as caught:
+            delivery.resolve_source_range(args)
+        self.assertEqual(str(caught.exception), "auto_source_sha_conflict")
 
 
 if __name__ == "__main__":

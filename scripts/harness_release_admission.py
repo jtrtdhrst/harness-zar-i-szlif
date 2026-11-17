@@ -48,6 +48,39 @@ class Denied(Exception):
     """Non-admissible release. The message is a stable audit reason code."""
 
 
+class VerifiedAttestation(dict):
+    """An attestation whose HMAC was verified in this very process.
+
+    Only :func:`verified_attestation` constructs this type, and it does so after
+    :func:`harness_local_ci_attest.verify_attestation` accepted the signature.
+    A JSON file - however it is shaped - can never be an instance, so a forged
+    ``signature_verified: true`` field, a missing key or a wrong key cannot reach
+    admission: trusting a self-asserted flag is the defect this type removes.
+    """
+
+    __slots__ = ()
+
+
+def verified_attestation(attestation, key):
+    """Return a :class:`VerifiedAttestation` for ``attestation`` signed by ``key``.
+
+    Verification is performed here and nowhere else, so every caller that wants
+    an attestation admitted must present real key material. The signature covers
+    every field except ``signature`` itself, which is why splicing a
+    ``signature_verified`` flag into an artifact breaks the HMAC instead of
+    satisfying the gate.
+    """
+    from harness_local_ci_attest import verify_attestation
+
+    if not isinstance(attestation, dict) or not isinstance(key, bytes):
+        raise Denied("attestation_signature_invalid")
+    if not verify_attestation(attestation, key):
+        raise Denied("attestation_signature_invalid")
+    verified = VerifiedAttestation(attestation)
+    verified["signature_verified"] = True
+    return verified
+
+
 def _text(value):
     return isinstance(value, str) and 0 < len(value) <= 200
 
@@ -124,12 +157,17 @@ def _check_review(entry, request):
 
 
 def _check_attestation(entry, request, attestation, source_sha):
-    if not isinstance(attestation, dict):
+    if attestation is None:
         raise Denied("local_ci_attestation_missing")
+    # Only an attestation verified against real key material in this process is
+    # evidence. A raw JSON artifact cannot construct VerifiedAttestation, so a
+    # forged `signature_verified: true` is refused before any field is read.
+    if not isinstance(attestation, VerifiedAttestation):
+        raise Denied("attestation_signature_unverified")
     if attestation.get("schema_version") != ATTESTATION_SCHEMA:
         raise Denied("attestation_schema_invalid")
-    # Set only by a verifying caller after HMAC/provenance validation; a raw
-    # JSON file can never assert its own authenticity.
+    # Set by :func:`verified_attestation` after the HMAC check; belt and braces
+    # only, because the type check above is what actually proves verification.
     if attestation.get("signature_verified") is not True:
         raise Denied("attestation_signature_unverified")
     if attestation.get("attestor_uid") != 0:
@@ -196,13 +234,17 @@ def _check_grant(entry, request, grant, source_sha, now):
     return grant["grant_id"]
 
 
-def _common_request(manifest, request, grant, now):
+def _common_request(manifest, request, grant, now, expected_source_sha):
     """Checks shared by build admission and release admission.
 
     Everything here is required *before* an image exists, so both stages apply
     it identically: service allowlist, Coolify UUID/kind, PR identity, merged
     source SHA, authorized branch, lane hold, independent exact-SHA review and a
     revocable per-UUID grant.
+
+    ``expected_source_sha`` is the exact SHA the caller is about to build or
+    deploy (the controller's ``--source-sha``). It is mandatory, so an approved
+    request/grant for SHA A can never admit a build of SHA B.
     """
     if not isinstance(request, dict):
         raise Denied("request_invalid")
@@ -222,6 +264,11 @@ def _common_request(manifest, request, grant, now):
     if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
         raise Denied("invalid_pr")
     source_sha = _require_sha(request.get("source_sha"), "invalid_source_sha")
+    # The SHA being built/deployed must be the SHA the evidence names. Without
+    # this binding a request for SHA A would admit any other tree.
+    _require_sha(expected_source_sha, "invalid_expected_source_sha")
+    if source_sha != expected_source_sha:
+        raise Denied("admission_source_sha_mismatch")
     merge_sha = _require_sha(request.get("merge_sha"), "invalid_merge_sha")
     # The reviewed tree is squash-merged, so the merged main SHA *is* the
     # source SHA. Any other relationship means an unreviewed tree is deployed.
@@ -243,7 +290,7 @@ def _common_request(manifest, request, grant, now):
     return entry, uuid, kind, pr, source_sha, head_sha, reviewer, grant_id
 
 
-def evaluate_build(manifest, request, grant=None, now=None):
+def evaluate_build(manifest, request, grant=None, now=None, *, expected_source_sha):
     """Build-stage admission: may this exact source be built and pushed?
 
     Identical to :func:`evaluate` except that no root-owned local-CI attestation
@@ -251,9 +298,13 @@ def evaluate_build(manifest, request, grant=None, now=None):
     image is built. This is *not* permission to deploy: only :func:`evaluate`
     admits a release, and it still demands the attestation, the digest and the
     per-UUID grant for the deploy path.
+
+    ``expected_source_sha`` is keyword-only and has no default, so a caller
+    cannot omit the SHA binding by accident: admission of SHA B against SHA A's
+    evidence raises ``Denied("admission_source_sha_mismatch")``.
     """
     entry, uuid, kind, pr, source_sha, head_sha, reviewer, grant_id = _common_request(
-        manifest, request, grant, now)
+        manifest, request, grant, now, expected_source_sha)
     return {
         "admit_build": True,
         "service": entry["id"],
@@ -270,14 +321,16 @@ def evaluate_build(manifest, request, grant=None, now=None):
     }
 
 
-def evaluate(manifest, request, grant=None, attestation=None, now=None):
+def evaluate(manifest, request, grant=None, attestation=None, now=None, *, expected_source_sha):
     """Return an admission record, or raise :class:`Denied`.
 
     Pure and side-effect free so the controller, CI and negative-control tests
-    all exercise the identical decision path.
+    all exercise the identical decision path. ``expected_source_sha`` is the
+    exact SHA the caller is promoting and is mandatory (keyword-only, no
+    default); ``attestation`` must be a :class:`VerifiedAttestation`.
     """
     entry, uuid, kind, pr, source_sha, head_sha, reviewer, grant_id = _common_request(
-        manifest, request, grant, now)
+        manifest, request, grant, now, expected_source_sha)
     digest = _check_attestation(entry, request, attestation, source_sha)
 
     return {
@@ -363,6 +416,8 @@ def main(argv=None):
     parser.add_argument("--grant")
     parser.add_argument("--attestation")
     parser.add_argument("--attestation-key")
+    parser.add_argument("--source-sha", required=True,
+                        help="exact SHA the caller promotes; must match the request")
     parser.add_argument("--now")
     args = parser.parse_args(argv)
     try:
@@ -376,15 +431,13 @@ def main(argv=None):
                 raise Denied("attestation_key_missing")
             # Key material is held to the same descriptor-validated, no-follow
             # rule as the artifacts: an attacker-controlled key path would
-            # otherwise verify an attestation the attacker signed.
+            # otherwise verify an attestation the attacker signed. The HMAC is
+            # then verified here, and only a VerifiedAttestation is admitted.
             key = read_trusted_bytes(args.attestation_key, "attestation_key", require_root=True)
-            from harness_local_ci_attest import verify_attestation
-
-            if not verify_attestation(attestation, key):
-                raise Denied("attestation_signature_invalid")
-            attestation["signature_verified"] = True
+            attestation = verified_attestation(attestation, key)
         now = parse_time(args.now) if args.now else datetime.now(timezone.utc)
-        record = evaluate(manifest, request, grant=grant, attestation=attestation, now=now)
+        record = evaluate(manifest, request, grant=grant, attestation=attestation, now=now,
+                          expected_source_sha=args.source_sha)
         print(json.dumps(record, sort_keys=True))
         return 0
     except Denied as exc:
