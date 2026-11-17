@@ -79,7 +79,7 @@ test('list tools return record structuredContent over MCP', async (t) => {
   }
 
   const agentList = await rpc('tools/call', { name: 'multica__agent__list', arguments: { output: 'json', workspace_id: WS } });
-  assert.equal(agentList.result.isError, false);
+  assert.equal(agentList.result.isError, false, agentList.result.content?.[0]?.text ?? 'CLI failed without diagnostic');
   assert.equal(Array.isArray(agentList.result.structuredContent), false, 'structuredContent must not be a top-level array');
   assert(isRecord(agentList.result.structuredContent));
   assert.deepEqual(agentList.result.structuredContent, { items: [{ id: 'agent-1', name: 'engineer' }, { id: 'agent-2', name: 'cto' }] });
