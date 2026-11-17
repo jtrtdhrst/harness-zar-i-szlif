@@ -389,6 +389,24 @@ class TransportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no snapshot from this deployment attempt"):
                 transport.rollback("mantic-mcp", UUID)
 
+    def test_rollback_coolify_accepted_is_not_success_without_live_health(self):
+        host = FakeHost(service_status="running:unhealthy")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            transport = transport_for(host)
+            delivery.patch_compose(
+                host, UUID, "mantic-mcp", delivery.SERVICES["mantic-mcp"],
+                f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}",
+                on_backup=lambda backup: transport._rollback_snapshots.__setitem__(
+                    ("mantic-mcp", UUID), backup))
+            with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
+                 patch.object(delivery, "POLL_SECONDS", 0), \
+                 patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
+                with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
+                    transport.rollback("mantic-mcp", UUID)
+        self.assertEqual(host.compose, COMPOSE, "Compose must be restored even on failed QA")
+        self.assertEqual(host.calls.count(("coolify", "POST", "/deploy")), 1,
+                         "an accepted rollback POST must not be repeated or declared healthy")
+
     def test_compose_patch_refuses_an_ambiguous_image_set(self):
         host = FakeHost(compose=COMPOSE + "  second:\n    image: local/mantic-mcp:also-old\n")
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
