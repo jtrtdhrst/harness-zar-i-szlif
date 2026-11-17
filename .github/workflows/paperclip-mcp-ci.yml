@@ -19,7 +19,9 @@ permissions:
 
 jobs:
   validate-paperclip-mcp:
-    runs-on: ubuntu-latest
+    # GitHub-hosted minutes are blocked by billing on this account; the required
+    # check must run on the local runner, which has Docker preinstalled.
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 30
     steps:
       # This job is a required status check. Keep it on every PR, but do not
