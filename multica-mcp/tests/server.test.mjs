@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 
-const dir = mkdtempSync(join(import.meta.dirname, '..', '.multica-mcp-server-test-'));
+const dir = mkdtempSync(join(tmpdir(), 'multica-mcp-test-'));
 const fakeCli = join(dir, 'fake-multica.mjs');
 writeFileSync(fakeCli, `#!/usr/bin/env node
 const args = process.argv.slice(2);
@@ -23,6 +24,8 @@ console.log(JSON.stringify({ argv: args, tokenPresent: Boolean(process.env.MULTI
 `);
 chmodSync(fakeCli, 0o755);
 process.env.MULTICA_CLI = fakeCli;
+// Each test process owns a private CLI HOME; never reuse the global /tmp/multica-mcp-home.
+process.env.MULTICA_MCP_HOME = join(dir, 'home');
 
 const { startHttpServer } = await import('../server.mjs');
 
