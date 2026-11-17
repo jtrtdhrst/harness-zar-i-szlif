@@ -56,6 +56,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -195,17 +196,28 @@ def compose_for(host, uuid):
     return raw
 
 
-def patch_compose(host, uuid, service, spec, tag):
-    """Point the service's image line at ``tag``; keep a restorable backup."""
+def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
+    """Patch one image and persist a unique, private snapshot for this attempt."""
     raw = compose_for(host, uuid)
     pattern = image_pattern(service, spec)
     patched, count = pattern.subn(lambda match: f"{match.group(1)}{match.group(2)}{tag}{match.group(2)}", raw)
     if count != 1:
         raise RuntimeError(f"expected exactly one {spec['image_prefix']} image line, found {count}")
-    backup = STATE_ROOT / "backups" / f"{service}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.yml"
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    backup.write_text(raw)
-    backup.chmod(0o600)
+    # A second promotion in the same second must never overwrite the first
+    # snapshot. The controller is privileged; the raw compose may contain
+    # secrets, so no world-readable file may exist even during the write.
+    backup = STATE_ROOT / "backups" / f"{service}-{time.time_ns()}-{secrets.token_hex(8)}.yml"
+    backup.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(backup, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    # Register the snapshot BEFORE the first provider mutation. If PATCH
+    # succeeds but POST fails, rollback must target this exact attempt.
+    if on_backup is not None:
+        on_backup(backup)
     status, _ = host.coolify("PATCH", f"/services/{uuid}",
                              {"docker_compose_raw": base64.b64encode(patched.encode()).decode()})
     if status not in (200, 201):
@@ -213,27 +225,24 @@ def patch_compose(host, uuid, service, spec, tag):
     return raw, backup
 
 
-def deploy_service(host, uuid, service, spec, tag):
-    raw, backup = patch_compose(host, uuid, service, spec, tag)
-    try:
-        status, body = host.coolify("POST", "/deploy", {"uuid": uuid})
-        if status not in (200, 201):
-            raise RuntimeError(f"deploy http {status}")
-        deadline = time.time() + HEALTH_DEADLINE
-        state = ""
-        while time.time() < deadline:
-            time.sleep(POLL_SECONDS)
-            running = host.docker("ps", "--filter", f"ancestor={tag}", "--format", "{{.Status}}")
-            _, current = host.coolify("GET", f"/services/{uuid}")
-            state = str(current.get("status") or "")
-            if "(healthy)" in running and state.startswith("running:healthy"):
-                return raw, backup, body
-        raise RuntimeError(f"{service} did not become healthy (status={state})")
-    except Exception:
-        host.coolify("PATCH", f"/services/{uuid}",
-                     {"docker_compose_raw": base64.b64encode(raw.encode()).decode()})
-        host.coolify("POST", "/deploy", {"uuid": uuid})
-        raise
+def deploy_service(host, uuid, service, spec, tag, *, on_backup=None):
+    raw, backup = patch_compose(host, uuid, service, spec, tag, on_backup=on_backup)
+    # No internal rollback here: the release controller owns the ONE restore
+    # attempt and records its result in the audit log. A nested restore would
+    # apply twice and could silently select a snapshot from a different run.
+    status, body = host.coolify("POST", "/deploy", {"uuid": uuid})
+    if status not in (200, 201):
+        raise RuntimeError(f"deploy http {status}")
+    deadline = time.time() + HEALTH_DEADLINE
+    state = ""
+    while time.time() < deadline:
+        time.sleep(POLL_SECONDS)
+        running = host.docker("ps", "--filter", f"ancestor={tag}", "--format", "{{.Status}}")
+        _, current = host.coolify("GET", f"/services/{uuid}")
+        state = str(current.get("status") or "")
+        if "(healthy)" in running and state.startswith("running:healthy"):
+            return raw, backup, body
+    raise RuntimeError(f"{service} did not become healthy (status={state})"
 
 
 def running_revision(host, service, digest, registry=REGISTRY):
@@ -252,6 +261,9 @@ class Transport:
     def __init__(self, host, registry=REGISTRY):
         self.host = host
         self.registry = registry
+        # Transaction-scoped snapshots: never guess using the newest glob on
+        # disk, which can belong to another release or Coolify service UUID.
+        self._rollback_snapshots = {}
 
     def _known(self, service):
         if service not in SERVICES:
@@ -291,7 +303,12 @@ class Transport:
         if not isinstance(revision, str) or len(revision) != 40:
             raise RuntimeError(f"{service}: prepared image carries no exact source revision")
         tag = image_tag(service, revision, self.registry)
-        _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], tag)
+        key = (service, uuid)
+        self._rollback_snapshots.pop(key, None)
+        def record_snapshot(path):
+            self._rollback_snapshots[key] = path
+        _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], tag,
+                                    on_backup=record_snapshot)
         return str(body.get("deployment_uuid") or body.get("uuid") or "deploy")
 
     def health(self, service, uuid):
@@ -317,10 +334,10 @@ class Transport:
 
     def rollback(self, service, uuid):
         self._known(service)
-        backups = sorted((STATE_ROOT / "backups").glob(f"{service}-*.yml"))
-        if not backups:
-            raise RuntimeError(f"{service}: no compose backup to roll back to")
-        raw = backups[-1].read_text(encoding="utf-8")
+        backup = self._rollback_snapshots.pop((service, uuid), None)
+        if backup is None:
+            raise RuntimeError(f"{service}: no snapshot from this deployment attempt")
+        raw = backup.read_text(encoding="utf-8")
         self.host.coolify("PATCH", f"/services/{uuid}",
                           {"docker_compose_raw": base64.b64encode(raw.encode()).decode()})
         status, body = self.host.coolify("POST", "/deploy", {"uuid": uuid})
