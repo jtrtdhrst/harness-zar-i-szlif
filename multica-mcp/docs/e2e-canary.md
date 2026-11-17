@@ -30,4 +30,4 @@ Treat nonzero exit, API 401/403/5xx, malformed `structuredContent`, or failed cl
 
 ## Boundaries
 
-The CI workflow `.github/workflows/multica-mcp-ci.yml` runs `npm test` on a PR touching `multica-mcp/**`. It intentionally does **not** invoke this mutating canary. CI check enforcement, branch rules and actual GitHub-hosted job execution require separate administrative verification. An unstarted job (for example due to billing) is **NOT_RUN**, never PASS.
+The existing `.github/workflows/release-lanes-policy.yml` runs `npm test` under `multica-mcp/` on every PR and push to `main`, using the configured self-hosted runner. The structural policy check rejects removal or conditional bypass of this required step. The CI intentionally does **not** invoke this mutating canary. Branch protection and independent exact-SHA review remain separate release gates; successful test execution alone is not deployment evidence. A queued or unstarted job is **NOT_RUN**, never PASS.
