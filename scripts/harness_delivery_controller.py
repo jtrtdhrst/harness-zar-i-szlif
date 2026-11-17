@@ -34,6 +34,7 @@ import fcntl
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -117,13 +118,17 @@ def _write_state(state_path, state):
         return
     target = Path(state_path)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = target.with_suffix(".tmp")
-    fd = os.open(str(tmp), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(state, handle, sort_keys=True, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, target)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(tmp), flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, sort_keys=True, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _audit_id(report):
