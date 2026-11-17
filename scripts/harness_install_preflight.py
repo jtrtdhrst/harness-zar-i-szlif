@@ -41,6 +41,8 @@ ADAPTER = "harness_native_delivery.py"
 SOURCE_RANGE = STATE / "source-range.env"
 CHECKOUT = STATE / "checkout"
 GATES = STATE / "gates"
+LEGACY_ENTRYPOINT = "harness_image_delivery.py"
+LEGACY_SHIM_SOURCE = "scripts/harness_legacy_disabled.py"
 MODULES = ("harness_release_admission.py", "harness_local_ci_attest.py",
            "harness_delivery_controller.py", "harness_native_delivery.py")
 UNITS = (REVIEWED_UNIT,)
@@ -170,6 +172,9 @@ def expected_hashes(repo, sha, modules=MODULES, units=UNITS):
     """Immutable expected digests for the modules and units approved at ``sha``."""
     digests = {name: blob_sha256(repo, sha, f"scripts/{name}") for name in modules}
     digests.update({unit: blob_sha256(repo, sha, unit) for unit in units})
+    # The old executable path is ALSO part of the approved install contract.
+    # New unit wiring alone cannot stop manual invocation of the HOLD-blind code.
+    digests[LEGACY_ENTRYPOINT] = blob_sha256(repo, sha, LEGACY_SHIM_SOURCE)
     return digests
 
 
@@ -248,10 +253,17 @@ def check(probe, repo, sha):
                source_range["uid"] == 0 and source_range["mode"] == 0o600,
                f"uid={source_range['uid']} mode={oct(source_range['mode'] or 0)}")
 
-    legacy = LIBEXEC / "harness_image_delivery.py"
+    legacy = LIBEXEC / LEGACY_ENTRYPOINT
     info = probe.stat(legacy)
     record("legacy_controller_present_to_back_up", info["exists"],
-           "the hold-blind controller must be backed up before replacement")
+           "the legacy path must exist for an operator-controlled backup/replacement")
+    legacy_digest = probe.sha256(legacy) if info["exists"] else None
+    install_assertion("legacy_controller_disabled",
+                      bool(info["exists"] and info["uid"] == 0 and
+                           legacy_digest == expected.get(LEGACY_ENTRYPOINT)),
+                      "installed=%s expected=%s" % (
+                          legacy_digest, expected.get(LEGACY_ENTRYPOINT)),
+                      wired_to_adapter)
 
     policy = probe.stat(POLICY)
     install_assertion("policy_present", policy["exists"], str(POLICY), False)
@@ -283,10 +295,12 @@ def install_plan(sha, expected):
          "legacy_controller_present_to_back_up"),
         ("03_stage_modules",
          [f"git -C <repo> show {sha}:scripts/{name} | install -o root -g root -m 0644 /dev/stdin {LIBEXEC / name}"
-          for name in MODULES],
+          for name in MODULES] +
+         [f"git -C <repo> show {sha}:{LEGACY_SHIM_SOURCE} | install -o root -g root -m 0755 /dev/stdin {LIBEXEC / LEGACY_ENTRYPOINT}"],
          "approved_sha_present"),
         ("04_verify_staged_hashes",
-         [f"test \"$(sha256sum {LIBEXEC / name} | cut -d' ' -f1)\" = {expected[name]}" for name in MODULES],
+         [f"test \"$(sha256sum {LIBEXEC / name} | cut -d' ' -f1)\" = {expected[name]}" for name in MODULES] +
+         [f"test \"$(sha256sum {LIBEXEC / LEGACY_ENTRYPOINT} | cut -d' ' -f1)\" = {expected[LEGACY_ENTRYPOINT]}"],
          "every staged module matches the exact approved SHA digest"),
         ("05_install_policy_and_key",
          [f"install -o root -g root -m 0700 -d {ETC}",
@@ -306,7 +320,8 @@ def install_plan(sha, expected):
           "expect: decision=denied reason=release_lane_on_hold; zero docker/coolify calls in the log",
           "expect: unattested merge -> local_ci_attestation_missing; wrong UUID -> coolify_uuid_mismatch",
           "expect: python3 /usr/local/libexec/harness_native_delivery.py --mode plan --auto "
-          "-> no_change or denied with zero docker/coolify calls"],
+          "-> no_change or denied with zero docker/coolify calls",
+          f"python3 {LIBEXEC / LEGACY_ENTRYPOINT} --auto  # MUST exit 78, zero provider calls"],
          "all negative canaries denied before the timer is re-enabled"),
         ("08_enable_after_canary",
          ["systemctl start harness-image-delivery.timer",
@@ -315,11 +330,11 @@ def install_plan(sha, expected):
          "canaries denied AND one authorized lane promoted with digest readback"),
         ("09_rollback",
          [f"systemctl stop harness-image-delivery.timer",
-          f"install -o root -g root -m 0755 {backup} {LIBEXEC / 'harness_image_delivery.py'}",
+          f"test \"$(sha256sum {LIBEXEC / LEGACY_ENTRYPOINT} | cut -d' ' -f1)\" = {expected[LEGACY_ENTRYPOINT]}",
           f"install -o root -g root -m 0644 {STATE / 'backups' / ('harness-image-delivery.service-' + sha[:12] + '.bak')} {UNIT}",
           "systemctl daemon-reload",
           "systemctl is-active harness-image-delivery.timer  # must remain inactive"],
-         "restore backup for emergency recovery only; keep timer STOPPED because the legacy controller bypasses HOLD"),
+         "restore old unit only; KEEP THE FAIL-CLOSED SHIM at the legacy executable path; timer STOPPED"),
     ]
     return steps
 
