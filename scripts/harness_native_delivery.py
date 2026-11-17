@@ -349,7 +349,19 @@ class Transport:
         status, body = self.host.coolify("POST", "/deploy", {"uuid": uuid})
         if status not in (200, 201):
             raise RuntimeError(f"rollback deploy http {status}")
-        return str(body.get("deployment_uuid") or body.get("uuid") or "rollback")
+        # A 200/201 only proves Coolify accepted the request. It does NOT prove
+        # the old service came back. Read back exact Compose and live health;
+        # failed restoration remains rollback_failed in the controller audit.
+        deadline = time.monotonic() + HEALTH_DEADLINE
+        while time.monotonic() < deadline:
+            try:
+                current_compose = compose_for(self.host, uuid)
+                if current_compose == raw and self.health(service, uuid).get("status") == "ok":
+                    return str(body.get("deployment_uuid") or body.get("uuid") or "rollback")
+            except (OSError, RuntimeError, ValueError):
+                pass
+            time.sleep(POLL_SECONDS)
+        raise RuntimeError(f"{service}: rollback compose or live health not verified")
 
 
 def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
