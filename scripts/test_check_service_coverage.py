@@ -71,5 +71,41 @@ class ServiceCoverageTests(unittest.TestCase):
                 check(root, config)
 
 
+    def test_required_test_step_rejects_missing_or_bypassed_tests(self):
+        workflow = (
+            "name: test\\non:\\n  pull_request:\\njobs:\\n  guard:\\n"
+            "    runs-on: ubuntu-latest\\n    steps:\\n"
+            "      - name: MCP tests\\n"
+            "        working-directory: svc\\n"
+            "        run: npm test\\n"
+        )
+        entry = {
+            "mode": "workflow",
+            "workflows": [".github/workflows/test.yml"],
+            "required_test_step": {
+                "job": "guard",
+                "name": "MCP tests",
+                "working_directory": "svc",
+                "run": "npm test",
+            },
+        }
+        temp, root, config = self.fixture(entry, workflow)
+        with temp:
+            self.assertEqual(check(root, config), (3, 1))
+        for altered in (
+            workflow.replace("run: npm test", "run: echo skipped"),
+            workflow.replace("name: MCP tests", "name: renamed"),
+            workflow.replace("working-directory: svc", "working-directory: other"),
+            workflow.replace("run: npm test", "if: false\\n        run: npm test"),
+            workflow.replace("run: npm test", "continue-on-error: true\\n        run: npm test"),
+            workflow.replace("run: npm test", "run: npm test || true"),
+            workflow.replace("  guard:\\n", "  another_job:\\n"),
+        ):
+            temp, root, config = self.fixture(entry, altered)
+            with temp:
+                with self.assertRaisesRegex(ValueError, "missing mandatory unconditional test step"):
+                    check(root, config)
+
+
 if __name__ == "__main__":
     unittest.main()

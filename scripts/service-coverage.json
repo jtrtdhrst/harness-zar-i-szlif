@@ -77,7 +77,13 @@
       "mode": "workflow",
       "workflows": [
         ".github/workflows/release-lanes-policy.yml"
-      ]
+      ],
+      "required_test_step": {
+        "job": "validate-release-lanes",
+        "name": "Test Multica MCP adapter (required on every PR)",
+        "working_directory": "multica-mcp",
+        "run": "npm test"
+      }
     },
     "opik": {
       "mode": "manual_only",
