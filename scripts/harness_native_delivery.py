@@ -301,15 +301,19 @@ class Transport:
 
     def deploy(self, service, uuid, kind, digest):
         self._known(service)
+        # The attested SHA-256 digest, not the mutable :sha12 tag, is the
+        # deployment identity. A tag can be retargeted after attestation.
+        if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise RuntimeError(f"{service}: invalid immutable image digest")
         revision = running_revision(self.host, service, digest, self.registry)
-        if not isinstance(revision, str) or len(revision) != 40:
+        if not isinstance(revision, str) or not SHA.fullmatch(revision):
             raise RuntimeError(f"{service}: prepared image carries no exact source revision")
-        tag = image_tag(service, revision, self.registry)
+        pinned_ref = image_reference(service, digest, self.registry)
         key = (service, uuid)
         self._rollback_snapshots.pop(key, None)
         def record_snapshot(path):
             self._rollback_snapshots[key] = path
-        _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], tag,
+        _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], pinned_ref,
                                     on_backup=record_snapshot)
         return str(body.get("deployment_uuid") or body.get("uuid") or "deploy")
 
