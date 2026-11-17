@@ -442,6 +442,18 @@ class SourceVerificationTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), "source_worktree_dirty")
         self.assertEqual(host.calls, [], "untracked content must not reach Docker")
 
+    def test_gitignored_build_context_file_is_refused(self):
+        repo, sha, _ = self.repo()
+        # .git/info/exclude is not committed; this file would be invisible
+        # to ordinary git status but still present in a Docker COPY context.
+        (Path(repo) / ".git" / "info" / "exclude").write_text(
+            "mantic-mcp/ignored-build-input.js\\n", encoding="utf-8")
+        (Path(repo) / "mantic-mcp" / "ignored-build-input.js").write_text(
+            "console.log('unreviewed');\\n", encoding="utf-8")
+        with self.assertRaises(Denied) as caught:
+            delivery.verify_source(repo, sha)
+        self.assertEqual(str(caught.exception), "source_worktree_dirty")
+
     def test_non_repository_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Denied) as caught:
