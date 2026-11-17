@@ -363,6 +363,14 @@ class AttesterTests(unittest.TestCase):
             os.chmod(path, 0o600)
             self.assertEqual(attest.read_trusted_file(path, "signing_key", require_root=False), KEY)
 
+    def test_publicly_readable_hmac_key_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "key"
+            key.write_bytes(KEY)
+            os.chmod(key, 0o644)
+            with self.assertRaisesRegex(attest.Denied, "signing_key_not_private"):
+                attest.read_trusted_file(key, "signing_key", require_root=False)
+
     def test_weak_key_is_rejected(self):
         with self.assertRaisesRegex(attest.Denied, "signing_key_weak"):
             attest.sign({"schema_version": 1}, b"short")
