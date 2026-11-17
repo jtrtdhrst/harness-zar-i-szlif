@@ -244,7 +244,7 @@ def deploy_service(host, uuid, service, spec, tag, *, on_backup=None):
         state = str(current.get("status") or "")
         if "(healthy)" in running and state.startswith("running:healthy"):
             return raw, backup, body
-    raise RuntimeError(f"{service} did not become healthy (status={state})"
+    raise RuntimeError(f"{service} did not become healthy (status={state})")
 
 
 def running_revision(host, service, digest, registry=REGISTRY):

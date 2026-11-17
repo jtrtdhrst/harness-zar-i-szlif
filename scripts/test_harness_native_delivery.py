@@ -335,7 +335,7 @@ class TransportTests(unittest.TestCase):
             backup_dir = Path(tmp) / "backups"
             backup_dir.mkdir()
             (backup_dir / "mantic-mcp-stale.yml").write_text(
-                "services:\\n  mantic:\\n    image: malicious-stale\\n", encoding="utf-8")
+                "services:\n  mantic:\n    image: malicious-stale\n", encoding="utf-8")
             transport = transport_for(host)
             with self.assertRaisesRegex(RuntimeError, "no snapshot from this deployment attempt"):
                 transport.rollback("mantic-mcp", UUID)
@@ -435,7 +435,7 @@ class SourceVerificationTests(unittest.TestCase):
         repo, sha, _ = self.repo()
         # An untracked file is not in the reviewed SHA but may enter COPY .
         (Path(repo) / "mantic-mcp" / "unreviewed.js").write_text(
-            "process.exit(1)\\n", encoding="utf-8")
+            "process.exit(1)\n", encoding="utf-8")
         host = FakeHost()
         with self.assertRaises(Denied) as caught:
             delivery.verify_source(repo, sha)
@@ -447,9 +447,9 @@ class SourceVerificationTests(unittest.TestCase):
         # .git/info/exclude is not committed; this file would be invisible
         # to ordinary git status but still present in a Docker COPY context.
         (Path(repo) / ".git" / "info" / "exclude").write_text(
-            "mantic-mcp/ignored-build-input.js\\n", encoding="utf-8")
+            "mantic-mcp/ignored-build-input.js\n", encoding="utf-8")
         (Path(repo) / "mantic-mcp" / "ignored-build-input.js").write_text(
-            "console.log('unreviewed');\\n", encoding="utf-8")
+            "console.log('unreviewed');\n", encoding="utf-8")
         with self.assertRaises(Denied) as caught:
             delivery.verify_source(repo, sha)
         self.assertEqual(str(caught.exception), "source_worktree_dirty")

@@ -288,8 +288,8 @@ class AttesterTests(unittest.TestCase):
 
     # --- checked-out tree -----------------------------------------------
     def test_ci_rejects_gitignored_checkout_inputs(self):
-        head = type("R", (), {"returncode": 0, "stdout": SOURCE + "\\n"})()
-        ignored = type("R", (), {"returncode": 0, "stdout": "!! ignored-build-input.js\\n"})()
+        head = type("R", (), {"returncode": 0, "stdout": SOURCE + "\n"})()
+        ignored = type("R", (), {"returncode": 0, "stdout": "!! ignored-build-input.js\n"})()
         with patch.object(attest.subprocess, "run", side_effect=[head, ignored]) as run:
             with self.assertRaisesRegex(attest.Denied, "checkout_dirty"):
                 attest.verify_checkout(".", SOURCE)
