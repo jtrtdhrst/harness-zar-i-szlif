@@ -312,6 +312,62 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(backup.read_text(encoding="utf-8"), raw)
         self.assertIn("127.0.0.1:5000/harness-mantic-mcp:" + SOURCE[:12], host.compose)
 
+    def test_backup_filenames_are_unique_and_never_overwrite_a_previous_snapshot(self):
+        host = FakeHost()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            _, first = delivery.patch_compose(host, UUID, "mantic-mcp",
+                                              delivery.SERVICES["mantic-mcp"],
+                                              "127.0.0.1:5000/harness-mantic-mcp:" + SOURCE[:12])
+            first_content = first.read_text(encoding="utf-8")
+            _, second = delivery.patch_compose(host, UUID, "mantic-mcp",
+                                               delivery.SERVICES["mantic-mcp"],
+                                               "127.0.0.1:5000/harness-mantic-mcp:" + ("f" * 12))
+            self.assertNotEqual(first, second)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertEqual(first.read_text(encoding="utf-8"), first_content)
+            self.assertEqual(first.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(second.stat().st_mode & 0o777, 0o600)
+
+    def test_stale_disk_backup_cannot_be_used_as_rollback_authority(self):
+        host = FakeHost()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            backup_dir = Path(tmp) / "backups"
+            backup_dir.mkdir()
+            (backup_dir / "mantic-mcp-stale.yml").write_text(
+                "services:\\n  mantic:\\n    image: malicious-stale\\n", encoding="utf-8")
+            transport = transport_for(host)
+            with self.assertRaisesRegex(RuntimeError, "no snapshot from this deployment attempt"):
+                transport.rollback("mantic-mcp", UUID)
+            self.assertEqual(host.calls, [], "stale backup must never authorize a PATCH/POST")
+
+    def test_failed_deployment_restores_exact_snapshot_once(self):
+        class FailingHost(FakeHost):
+            def __init__(self):
+                super().__init__()
+                self.deploy_attempts = 0
+
+            def coolify(self, method, path, body=None):
+                if method == "POST" and path == "/deploy":
+                    self.deploy_attempts += 1
+                    if self.deploy_attempts == 1:
+                        self.calls.append(("coolify", method, path))
+                        raise RuntimeError("simulated deployment failure")
+                return super().coolify(method, path, body)
+
+        host = FailingHost()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            transport = transport_for(host)
+            with self.assertRaisesRegex(RuntimeError, "simulated deployment failure"):
+                transport.deploy("mantic-mcp", UUID, "service", DIGEST)
+            self.assertNotEqual(host.compose, COMPOSE, "PATCH must have executed")
+            transport.rollback("mantic-mcp", UUID)
+            self.assertEqual(host.compose, COMPOSE)
+            self.assertEqual(host.deploy_attempts, 2,
+                             "one failing deploy and exactly one rollback deploy")
+            with self.assertRaisesRegex(RuntimeError, "no snapshot from this deployment attempt"):
+                transport.rollback("mantic-mcp", UUID)
+
     def test_compose_patch_refuses_an_ambiguous_image_set(self):
         host = FakeHost(compose=COMPOSE + "  second:\n    image: local/mantic-mcp:also-old\n")
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
