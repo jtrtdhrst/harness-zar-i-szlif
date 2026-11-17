@@ -28,6 +28,7 @@ REAL_BLOB = preflight.blob_sha256(REPO, SHA, "scripts/harness_release_admission.
 EXPECTED = {name: (REAL_BLOB if name == "harness_release_admission.py" else "d" * 64)
             for name in preflight.MODULES}
 EXPECTED[preflight.REVIEWED_UNIT] = "e" * 64
+EXPECTED[preflight.LEGACY_ENTRYPOINT] = "f" * 64
 
 ADAPTER = str(Path(REPO) / "scripts" / "harness_native_delivery.py")
 REVIEWED_UNIT_TEXT = f"""[Unit]
@@ -77,7 +78,7 @@ def installed_files(**overrides):
     for name, digest in EXPECTED.items():
         files[str(preflight.LIBEXEC / name)] = {"uid": 0, "mode": 0o644, "sha256": digest}
     files[str(preflight.LIBEXEC / "harness_image_delivery.py")] = {"uid": 0, "mode": 0o755,
-                                                                   "sha256": "a" * 64}
+                                                                   "sha256": EXPECTED[preflight.LEGACY_ENTRYPOINT]}
     files[str(preflight.POLICY)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.KEY)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.STATE)] = {"uid": 0, "mode": 0o755}
@@ -97,7 +98,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_expected_hashes_bind_the_approved_sha(self):
         self.assertEqual(sorted(EXPECTED),
-                         sorted(preflight.MODULES + preflight.UNITS))
+                         sorted(preflight.MODULES + preflight.UNITS + (preflight.LEGACY_ENTRYPOINT,)))
         for digest in EXPECTED.values():
             self.assertRegex(digest, r"^[a-f0-9]{64}$")
         self.assertEqual(len(REAL_BLOB), 64)
@@ -150,6 +151,29 @@ class PreflightTests(unittest.TestCase):
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
         self.assertIn("policy_root_private", blockers)
 
+    def test_original_hold_blind_controller_cannot_count_as_installed(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_image_delivery.py")]["sha256"] = "a" * 64
+        checks, blockers, _, _, pending = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("legacy_controller_disabled", blockers)
+        self.assertNotIn("legacy_controller_disabled", pending)
+        self.assertFalse(checks["legacy_controller_disabled"]["ok"])
+
+    def test_original_legacy_controller_is_pending_during_safe_install(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_image_delivery.py")]["sha256"] = "a" * 64
+        files[str(preflight.UNIT)]["text"] = LEGACY_UNIT_TEXT
+        _, blockers, _, _, pending = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertNotIn("legacy_controller_disabled", blockers)
+        self.assertIn("legacy_controller_disabled", pending)
+
+    def test_legacy_shim_has_no_provider_action_and_denies_auto(self):
+        script = Path(REPO) / preflight.LEGACY_SHIM_SOURCE
+        completed = subprocess.run(["python3", str(script), "--auto"],
+                                   capture_output=True, text=True, timeout=10)
+        self.assertEqual(completed.returncode, 78)
+        self.assertIn("legacy_hold_blind_controller_disabled", completed.stderr)
+
     def test_missing_legacy_controller_blocks_the_backup_step(self):
         files = installed_files()
         files.pop(str(preflight.LIBEXEC / "harness_image_delivery.py"))
@@ -171,8 +195,8 @@ class PreflightTests(unittest.TestCase):
         canary = [step for step in steps if step[0].startswith("07_")][0]
         self.assertTrue(any("denied" in line for line in canary[1]))
         verify = [step for step in steps if step[0].startswith("04_")][0]
-        self.assertEqual(len(verify[1]), len(preflight.MODULES),
-                         "only staged modules may be verified before unit installation")
+        self.assertEqual(len(verify[1]), len(preflight.MODULES) + 1,
+                         "staged modules AND legacy denial shim must be verified")
         unit_step = [step for step in steps if step[0].startswith("06_")][0]
         self.assertTrue(any("daemon-reload" in line for line in unit_step[1]))
         self.assertTrue(any(str(preflight.UNIT) in line for line in unit_step[1]))
@@ -184,6 +208,9 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(any("systemctl start" in line for line in rollback),
                          "rollback must never restart the HOLD-blind controller")
         self.assertTrue(any("systemctl stop" in line for line in rollback))
+        self.assertFalse(any("harness_image_delivery-" in line and " -m 0755 " in line
+                             for line in rollback),
+                         "rollback must not restore executable HOLD-blind controller")
 
     def test_missing_installable_artifacts_are_pending_not_plan_blockers(self):
         files = installed_files()
