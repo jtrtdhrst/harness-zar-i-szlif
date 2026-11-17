@@ -22,7 +22,7 @@ export MULTICA_API_URL='https://multica.zariszlif.pl'
 npm --prefix multica-mcp run e2e
 ```
 
-The script authenticates `initialize` / `tools/list`, creates a disposable project and issue, checks issue readback and the `structuredContent.items` envelope for list tools, then attempts cleanup. Expected success output is JSON with `status: "PASS"`, `writeReadback: true` and `disposableProjectCleaned: true`.
+The script authenticates `initialize` / `tools/list`, creates a disposable project and issue, checks issue readback and the `structuredContent.items` envelope for list tools, then deletes the disposable issue first (with HTTP 404 readback) and only then deletes the disposable project. **Cleanup failure makes the whole canary fail; `PASS` is emitted only after both fixtures are cleaned.** Expected success output is JSON with `status: "PASS"`, `writeReadback: true` and `disposableIssueCleaned: true` and `disposableProjectCleaned: true`.
 
 ## Failure and post-run checks
 
