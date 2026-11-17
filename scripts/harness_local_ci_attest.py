@@ -353,7 +353,8 @@ def verify_checkout(repo, source_sha):
     try:
         head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                               capture_output=True, text=True, timeout=60)
-        status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+        status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain",
+                                 "--untracked-files=all", "--ignored"],
                                 capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         raise Denied("git_unavailable") from None
