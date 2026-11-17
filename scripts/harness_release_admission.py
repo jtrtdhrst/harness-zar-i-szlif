@@ -377,6 +377,11 @@ def read_trusted_bytes(path, label, require_root=True):
             raise Denied(label + "_world_writable")
         if require_root and info.st_uid != 0:
             raise Denied(label + "_not_root_owned")
+        # Root ownership alone does not protect a readable HMAC key or Coolify
+        # bearer token. Secret files must be 0600 or stricter, regardless of
+        # whether an untrusted user can write them.
+        if label in ("attestation_key", "signing_key", "coolify_token") and info.st_mode & 0o077:
+            raise Denied(label + "_not_private")
         if info.st_size <= 0 or info.st_size > 262144:
             raise Denied(label + "_invalid_size")
         chunks = []
