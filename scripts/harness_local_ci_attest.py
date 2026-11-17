@@ -406,9 +406,9 @@ def main(argv=None):
         policy = json.loads(policy_bytes.decode("utf-8"))
         validate_policy(policy)
         commands = policy_commands(policy, args.service)
-        key = read_trusted_file(policy["key_file"], "signing_key", require_root=os.geteuid() == 0)
-        if len(key) < 32:
-            raise Denied("signing_key_weak")
+        # The read-only plan does not sign anything and must never open the
+        # root-owned signing key. A missing/unavailable key must not prevent a
+        # nonprivileged operator from inspecting the safe test plan.
         repo = policy["repo_root"]
         if not Path(repo).is_dir():
             raise Denied("repo_path_outside_allowlist")
@@ -423,6 +423,11 @@ def main(argv=None):
                               "runner_uid": policy["run_as_uid"], "policy_digest": policy_digest,
                               "target": str(target)}, sort_keys=True))
             return 0
+        # Key access is intentionally after the dry-run return and before the
+        # first test execution or attestation write.
+        key = read_trusted_file(policy["key_file"], "signing_key", require_root=True)
+        if len(key) < 32:
+            raise Denied("signing_key_weak")
         verify_checkout(repo, args.source_sha)
         Path(policy["out_dir"]).mkdir(parents=True, exist_ok=True, mode=0o700)
         with open(Path(policy["out_dir"]) / (args.service + ".lock"), "a+", encoding="utf-8") as handle:
