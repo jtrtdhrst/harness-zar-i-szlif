@@ -63,7 +63,7 @@ import urllib.request
 from pathlib import Path
 
 from harness_delivery_controller import git_changed_paths, load_artifacts, run_promotion
-from harness_release_admission import SHA, Denied, evaluate_build, load_gate_file
+from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
@@ -447,52 +447,65 @@ def main(argv=None):
             report["result"] = "no_service_change"
             print(json.dumps(report, sort_keys=True))
             return 0
+        # Phase 1: admit EVERY changed service before ANY preparation or
+        # deployment. A partial set of valid grants must not cause a partial
+        # production release. Plan mode checks the same real evidence as deploy
+        # (including an HMAC-verified attestation), without touching the host.
         bundles = {}
         for service in sorted(attributed):
-            spec = entries.get(service)
-            if not spec:
+            if not entries.get(service):
                 report["denied"][service] = "unknown_service"
                 continue
             bundle = {}
             if args.artifact_dir:
                 try:
-                    # Verification of the attestation HMAC happens here, in the
-                    # delivery path, and requires the root-owned key: a raw JSON
-                    # artifact claiming `signature_verified` is never admitted.
                     bundle = load_artifacts(args.artifact_dir, service, args.attestation_key,
-                                            allow_missing_attestation=True)
+                                            allow_missing_attestation=args.mode == "prepare")
                 except Denied as exc:
                     report["denied"][service] = str(exc)
                     continue
-                bundles[service] = bundle
+            bundles[service] = bundle
             try:
                 if args.mode == "prepare":
                     evaluate_build(manifest, bundle.get("request"), grant=bundle.get("grant"),
                                    now=now, expected_source_sha=source_sha)
-                    tag, digest = prepare(host, args.repo, service, source_sha)
-                    report["prepared"][service] = {"tag": tag, "image_digest": digest}
                 else:
-                    report["admitted"].append(service)
+                    evaluate(manifest, bundle.get("request"), grant=bundle.get("grant"),
+                             attestation=bundle.get("attestation"), now=now,
+                             expected_source_sha=source_sha)
+                report["admitted"].append(service)
             except Denied as exc:
                 report["denied"][service] = str(exc)
-        if args.mode == "deploy":
-            if not bundles:
-                # Nothing was loadable at all (missing key, forged artifact, ...).
-                # Report every per-service reason before failing: the operator needs
-                # to see which gate refused, not just that the run stopped.
-                report["result"] = "denied"
-                report["reason"] = "gate_artifacts_missing"
-                print(json.dumps(report, sort_keys=True))
-                print(json.dumps({"result": "denied", "reason": "gate_artifacts_missing"}),
-                      file=sys.stderr)
-                return 1
+
+        if report["denied"] or len(report["admitted"]) != len(attributed):
+            report["result"] = "denied"
+            print(json.dumps(report, sort_keys=True))
+            return 1
+
+        # Phase 2: mutate only after complete admission. In particular, an
+        # automation runner must never interpret an admission refusal as a
+        # successful exit status (the old code returned 0 for held lanes).
+        if args.mode == "prepare":
+            for service in report["admitted"]:
+                tag, digest = prepare(host, args.repo, service, source_sha)
+                report["prepared"][service] = {"tag": tag, "image_digest": digest}
+        elif args.mode == "deploy":
             report["deployed"] = run_promotion(
-                manifest, paths, lambda service: bundles.get(service, {}), Transport(host),
+                manifest, paths, lambda service: bundles[service], Transport(host),
                 now=now,
                 lock_path=str(Path(args.state_dir) / "delivery.lock"),
                 state_path=str(Path(args.state_dir) / "delivery.json"),
                 source_sha=source_sha)
-        report["result"] = "ok" if not report["denied"] else "partially_denied"
+            decisions = report["deployed"].get("decisions", [])
+            good = {"promoted", "already_delivered"}
+            if (len(decisions) != len(attributed)
+                    or any(decision.get("decision") not in good for decision in decisions)
+                    or report["deployed"].get("result") == "denied"):
+                report["result"] = "denied"
+                print(json.dumps(report, sort_keys=True))
+                return 1
+
+        report["result"] = "ok"
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
