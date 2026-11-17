@@ -220,8 +220,8 @@ def check(probe, repo, sha):
         installed[name] = {"exists": info["exists"], "uid": info["uid"],
                            "mode": info["mode"], "sha256": digest}
         if info["exists"]:
-            record(f"{name}_root_owned", info["uid"] == 0,
-                   f"uid={info['uid']} mode={oct(info['mode'] or 0)}")
+            record(f"{name}_root_owned", info["uid"] == 0 and info["mode"] == 0o644,
+                   f"uid={info['uid']} mode={oct(info['mode'] or 0)} (expected root:root 0644)")
             record(f"{name}_matches_approved_sha", digest == expected.get(name),
                    "installed=%s expected=%s" % (digest, expected.get(name)))
 
@@ -242,8 +242,9 @@ def check(probe, repo, sha):
                       "installed=%s expected=%s" % (unit_digest, expected_unit),
                       wired_to_adapter)
     if unit_info["exists"]:
-        record("delivery_unit_root_owned", unit_info["uid"] == 0,
-               f"uid={unit_info['uid']} mode={oct(unit_info['mode'] or 0)}")
+        record("delivery_unit_root_owned",
+               unit_info["uid"] == 0 and unit_info["mode"] == 0o644,
+               f"uid={unit_info['uid']} mode={oct(unit_info['mode'] or 0)} (expected root:root 0644)")
     # The unit's ExecStart is only meaningful together with the operator-written
     # range it reads; --auto denies the cycle when that file is absent.
     source_range = probe.stat(SOURCE_RANGE)
@@ -259,7 +260,7 @@ def check(probe, repo, sha):
            "the legacy path must exist for an operator-controlled backup/replacement")
     legacy_digest = probe.sha256(legacy) if info["exists"] else None
     install_assertion("legacy_controller_disabled",
-                      bool(info["exists"] and info["uid"] == 0 and
+                      bool(info["exists"] and info["uid"] == 0 and info["mode"] == 0o755 and
                            legacy_digest == expected.get(LEGACY_ENTRYPOINT)),
                       "installed=%s expected=%s" % (
                           legacy_digest, expected.get(LEGACY_ENTRYPOINT)),
