@@ -303,6 +303,20 @@ class ControllerPromotionTests(unittest.TestCase):
         self.assertEqual(written["mantic-mcp"]["source_sha"], SOURCE)
         self.assertTrue(report["audit_id"].startswith("sha256:"))
 
+    def test_state_write_does_not_follow_an_attacker_controlled_tmp_symlink(self):
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            victim = Path(tmp) / "victim"
+            victim.write_text("untouched", encoding="utf-8")
+            state.with_suffix(".tmp").symlink_to(victim)
+            report = self.authorized(transport, state_path=state)
+            self.assertTrue(report["promoted"])
+            self.assertEqual(victim.read_text(encoding="utf-8"), "untouched")
+            self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["mantic-mcp"]["source_sha"],
+                             SOURCE)
+            self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+
     def test_build_digest_mismatch_is_never_deployed(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS},
                                   build_digest="sha256:" + "8" * 64)
