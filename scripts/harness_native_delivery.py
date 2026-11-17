@@ -239,7 +239,9 @@ def deploy_service(host, uuid, service, spec, tag, *, on_backup=None):
     state = ""
     while time.time() < deadline:
         time.sleep(POLL_SECONDS)
-        running = host.docker("ps", "--filter", f"ancestor={tag}", "--format", "{{.Status}}")
+        running = host.docker("ps", "--filter", f"ancestor={tag}",
+                              "--filter", f"label=coolify.serviceUuid={uuid}",
+                              "--format", "{{.Status}}")
         _, current = host.coolify("GET", f"/services/{uuid}")
         state = str(current.get("status") or "")
         if "(healthy)" in running and state.startswith("running:healthy"):
@@ -327,7 +329,12 @@ class Transport:
             return {"status": "no_image", "digest": None, "source_sha": None}
         reference = match.group(0).split("image:", 1)[-1].strip().strip("'\"")
         image_id = self.host.docker("image", "inspect", "--format", "{{.Id}}", reference)
-        running = self.host.docker("ps", "--filter", f"ancestor={image_id}", "--format", "{{.Status}}")
+        # Do not count an unrelated healthy container using the same image.
+        # Coolify's own resource identity is carried in coolify.serviceUuid.
+        # Missing legacy labels fail closed until a verified redeployment.
+        running = self.host.docker("ps", "--filter", f"ancestor={image_id}",
+                                   "--filter", f"label=coolify.serviceUuid={uuid}",
+                                   "--format", "{{.Status}}")
         repo_digests = self.host.docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", reference)
         revision = self.host.docker("image", "inspect", "--format",
                                     '{{index .Config.Labels "' + REVISION_LABEL + '"}}', reference)
