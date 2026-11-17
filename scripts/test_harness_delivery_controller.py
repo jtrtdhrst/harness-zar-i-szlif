@@ -490,6 +490,19 @@ class GateFileLoadingTests(unittest.TestCase):
             path = self.write(tmp, "request.json", {"ok": True})
             self.assertEqual(gate.load_gate_file(path, "request", require_root=False), {"ok": True})
 
+    def test_root_owned_but_publicly_readable_secret_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "attestation.key"
+            key.write_bytes(KEY)
+            os.chmod(key, 0o644)
+            with self.assertRaisesRegex(gate.Denied, "attestation_key_not_private"):
+                gate.read_trusted_bytes(key, "attestation_key", require_root=False)
+            token = Path(tmp) / "coolify-token"
+            token.write_bytes(b"fake-bearer-token")
+            os.chmod(token, 0o640)
+            with self.assertRaisesRegex(gate.Denied, "coolify_token_not_private"):
+                gate.read_trusted_bytes(token, "coolify_token", require_root=False)
+
     def test_symlinked_artifact_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             real = self.write(tmp, "real.json", {"ok": True})
