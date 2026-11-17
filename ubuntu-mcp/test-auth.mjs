@@ -25,6 +25,7 @@ const port = 18000 + Math.floor(Math.random() * 2000);
 const server = spawn(process.execPath, [join(here, "server.mjs")], {
   env: {
     ...process.env, BRIDGE_PORT: String(port),
+    BRIDGE_PUBLIC_URL: `http://127.0.0.1:${port}`,
     BRIDGE_TOKEN_FILE: join(dir, "token"), BRIDGE_URL_KEY_FILE: join(dir, "key"),
     BRIDGE_AUDIT_FILE: join(dir, "audit.jsonl"),
     BRIDGE_CHILD_CMD: process.execPath, BRIDGE_CHILD_ARGS: join(dir, "child.mjs"),
@@ -44,6 +45,20 @@ function expect(name, actual, want) {
   if (actual !== want) { failed++; console.log(`FAIL ${name}: got ${actual}, want ${want}`); }
   else console.log(`ok   ${name}`);
 }
+async function oauthFlow(verifier, key) {
+  const challenge = (await import("node:crypto")).createHash("sha256").update(verifier).digest("base64url");
+  const authorize = new URLSearchParams({
+    response_type: "code", client_id: "https://chatgpt.com/oauth/client.json",
+    redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect", state: "st-1",
+    code_challenge: challenge, code_challenge_method: "S256",
+    resource: `http://127.0.0.1:${port}/mcp`, scope: "mcp",
+  });
+  const form = new URLSearchParams({ key });
+  const authRes = await fetch(`${url}/authorize?${authorize}`, {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form, redirect: "manual",
+  });
+  return { authRes, authorize };
+}
 
 try {
   for (let i = 0; i < 50; i++) {
@@ -58,6 +73,50 @@ try {
   expect("POST /mcp?key=wrong", await call("/mcp?key=wrong"), 401);
   expect("GET /healthz", (await fetch(url + "/healthz")).status, 200);
   expect("GET /mcp?key=<url-key>", (await fetch(`${url}/mcp?key=${URL_KEY}`)).status, 404);
+
+  const meta = await fetch(url + "/.well-known/oauth-protected-resource");
+  const metaJson = await meta.json();
+  expect("GET protected-resource metadata", meta.status, 200);
+  expect("metadata resource is /mcp", metaJson.resource, `${url}/mcp`);
+  const as = await fetch(url + "/.well-known/oauth-authorization-server");
+  const asJson = await as.json();
+  expect("GET authorization-server metadata", as.status, 200);
+  expect("metadata advertises S256", (asJson.code_challenge_methods_supported || []).includes("S256"), true);
+  expect("metadata token auth none", (asJson.token_endpoint_auth_methods_supported || []).includes("none"), true);
+
+  const unauthorized = await fetch(url + "/mcp", { method: "POST", headers: { "content-type": "application/json" }, body });
+  expect("401 carries resource_metadata", /resource_metadata=/.test(unauthorized.headers.get("www-authenticate") || ""), true);
+
+  const formFlow = await oauthFlow("form-verifier", URL_KEY);
+  expect("GET /authorize form", (await fetch(`${url}/authorize?${formFlow.authorize}`)).status, 200);
+  expect("POST /authorize wrong key", (await oauthFlow("verifier-1", "wrong")).authRes.status, 401);
+  const evil = new URLSearchParams({
+    response_type: "code", client_id: "x", redirect_uri: "https://evil.example/cb", state: "s",
+    code_challenge: "abc", code_challenge_method: "S256", scope: "mcp",
+  });
+  expect("foreign redirect_uri rejected", (await fetch(`${url}/authorize?${evil}`)).status, 400);
+  const goodFlow = await oauthFlow("verifier-2", URL_KEY);
+  const location = goodFlow.authRes.headers.get("location") || "";
+  const code = new URL(location).searchParams.get("code");
+  expect("POST /authorize issues code", Boolean(code), true);
+  expect("authorize returns state", new URL(location).searchParams.get("state"), "st-1");
+
+  async function token(codeValue, verifier) {
+    const res = await fetch(url + "/token", {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", code: codeValue, code_verifier: verifier, resource: `${url}/mcp` }),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+  const fresh = await oauthFlow("verifier-3", URL_KEY);
+  const freshCode = new URL(fresh.authRes.headers.get("location")).searchParams.get("code");
+  const issued = await token(freshCode, "verifier-3");
+  expect("POST /token PKCE exchange", issued.status, 200);
+  expect("access token accepted", await call("/mcp", { authorization: `Bearer ${issued.body.access_token}` }), 200);
+  expect("code is single-use", (await token(freshCode, "verifier-3")).status, 400);
+  expect("wrong verifier rejected", (await token(code, "nope")).body.error, "invalid_grant");
+  expect("garbage token rejected", await call("/mcp", { authorization: "Bearer abc.def" }), 401);
+
   const audit = readFileSync(join(dir, "audit.jsonl"), "utf8");
   expect("audit has no secrets", audit.includes(TOKEN) || audit.includes(URL_KEY), false);
 } finally {
