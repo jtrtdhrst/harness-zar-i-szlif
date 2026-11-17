@@ -1,0 +1,5 @@
+# Build-time and smoke-test artifacts. The image installs dependencies itself
+# from package-lock.json; a committed node_modules would hide version skew.
+node_modules/
+pw-browsers/
+.playwright-mcp/

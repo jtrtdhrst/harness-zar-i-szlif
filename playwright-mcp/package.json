@@ -4,7 +4,11 @@
   "private": true,
   "description": "Playwright MCP with idle HTTP proxy",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check:pairing": "node scripts/check-browser-pairing.cjs",
+    "smoke:chromium": "node scripts/smoke-chromium.cjs",
+    "smoke:mcp": "node scripts/smoke-mcp.cjs",
+    "docker:smoke": "bash scripts/docker-smoke.sh"
   },
   "dependencies": {
     "@playwright/mcp": "0.0.83"
