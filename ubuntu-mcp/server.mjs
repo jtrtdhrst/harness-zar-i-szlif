@@ -117,10 +117,11 @@ ${error ? `<p><strong>${escapeHtml(error)}</strong></p>` : ""}
 function redirectAllowed(uri) {
   try {
     const u = new URL(uri);
-    // Only OpenAI's connector callbacks: the authorize form is where the URL key is entered.
-    return u.protocol === "https:" &&
-      (u.hostname === "chatgpt.com" || u.hostname.endsWith(".chatgpt.com")) &&
-      (u.pathname === "/connector_platform_oauth_redirect" || u.pathname.startsWith("/connector/oauth/"));
+    // Only OpenAI callback hosts: the authorize form is where the URL key is entered.
+    const openaiHost = (h) => h === "chatgpt.com" || h === "chat.openai.com" || h === "platform.openai.com" ||
+      h.endsWith(".chatgpt.com") || h.endsWith(".openai.com");
+    return u.protocol === "https:" && openaiHost(u.hostname) &&
+      /^\/(connector_platform_oauth_redirect|connector\/oauth\/|aip\/)/.test(u.pathname);
   } catch { return false; }
 }
 function authorizeParams(u) {
