@@ -81,6 +81,7 @@ def installed_files(**overrides):
     files[str(preflight.POLICY)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.KEY)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.STATE)] = {"uid": 0, "mode": 0o755}
+    files[str(preflight.SOURCE_RANGE)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.UNIT)] = {"uid": 0, "mode": 0o644,
                                   "sha256": EXPECTED[preflight.REVIEWED_UNIT],
                                   "text": REVIEWED_UNIT_TEXT}

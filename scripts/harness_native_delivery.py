@@ -35,14 +35,15 @@ preflight:
 
 * explicit - the operator passes ``--base-sha`` and ``--source-sha``;
 * ``--auto`` - the mode the installed 120-second timer uses, because a unit
-  cannot know a merge SHA in advance. It takes the reviewed checkout's HEAD as
-  the source SHA and the recorded baseline (``<state-dir>/auto-main.json``, the
-  equivalent of the installed controller's ``state["main"]``) as the base. Auto
-  mode resolves *which* range to look at; it never weakens admission, because
-  each service still needs its own request, per-UUID grant, independent
-  exact-SHA review and HMAC-verified attestation bound to that same SHA. The
-  baseline advances only after a cycle that denied nothing, so a held change is
-  retried on the next tick instead of being skipped.
+  cannot know a merge SHA in advance. It takes the exact pair from the unit's
+  ``EnvironmentFile`` (``HARNESS_BASE_SHA`` / ``HARNESS_SOURCE_SHA``), which the
+  operator writes when the checkout advances. There is no SHA reconstruction and
+  no delivery baseline: an absent or malformed range is denied
+  (``auto_source_range_missing``), because inventing which tree to promote is
+  precisely what this adapter must not do. Auto mode chooses *which* range to
+  look at; it never weakens admission, since each service still needs its own
+  request, per-UUID grant, independent exact-SHA review and HMAC-verified
+  attestation bound to that same SHA.
 
 The attestation is loaded through
 :func:`harness_delivery_controller.load_artifacts`, which verifies the HMAC with
@@ -69,7 +70,9 @@ REGISTRY = "127.0.0.1:5000"
 COOLIFY = "http://127.0.0.1:8001/api/v1"
 COOLIFY_TOKEN = Path("/root/coolify-secrets/coolify_api_token")
 STATE_ROOT = Path("/var/lib/harness-image-delivery")
-AUTO_BASELINE = "auto-main.json"
+# The reviewed unit's EnvironmentFile carries the exact pair; nothing is derived.
+AUTO_BASE_ENV = "HARNESS_BASE_SHA"
+AUTO_SOURCE_ENV = "HARNESS_SOURCE_SHA"
 REVISION_LABEL = "org.opencontainers.image.revision"
 POLL_SECONDS = 6
 HEALTH_DEADLINE = 240
@@ -347,110 +350,34 @@ def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
     return tag, reference.split("@", 1)[1]
 
 
-def checkout_sha(repo):
-    """Exact HEAD of the reviewed checkout, used by the timer's ``--auto`` mode."""
-    try:
-        completed = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                                   capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
-        raise Denied("source_check_unavailable") from None
-    if completed.returncode != 0:
-        raise Denied("source_unreadable")
-    sha = completed.stdout.strip()
-    if not SHA.fullmatch(sha):
-        raise Denied("invalid_source_sha")
-    return sha
+def resolve_source_range(args, environ=None):
+    """Return ``(base_sha, source_sha)`` - supplied, never reconstructed.
 
-
-def auto_baseline_path(state_dir):
-    return Path(state_dir) / AUTO_BASELINE
-
-
-def read_auto_baseline(state_dir):
-    """The last main SHA this host finished processing.
-
-    Mirrors the installed controller's ``state["main"]`` so the 120 s timer keeps
-    working without the unit knowing any SHA. The native baseline file wins; on
-    the very first auto cycle it falls back to the hold-blind controller's own
-    ``state.json`` so the diff starts exactly where the old transport left off.
-    Nothing that is missing, untrusted or unreadable is guessed: that denies.
+    The installed 120-second timer cannot know a merge SHA in advance, so the
+    reviewed unit passes the exact pair through systemd's ``EnvironmentFile``
+    (``HARNESS_BASE_SHA`` / ``HARNESS_SOURCE_SHA``), written by the operator when
+    the checkout advances. When that range is absent or malformed the cycle
+    fails closed with ``auto_source_range_missing`` instead of inventing a range
+    from host state: guessing which tree to promote is exactly what this gate
+    must never do. Explicit ``--base-sha``/``--source-sha`` always win, and the
+    range is only *which* commits to consider - each service still needs its own
+    request, grant, review and verified attestation bound to that exact SHA.
     """
-    from harness_release_admission import read_trusted_bytes
-
-    for path, label in ((auto_baseline_path(state_dir), "auto_baseline"),
-                        (STATE_ROOT / "state.json", "legacy_delivery_state")):
-        try:
-            raw = read_trusted_bytes(path, label, require_root=False)
-        except Denied:
-            continue
-        try:
-            data = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            raise Denied("auto_baseline_invalid") from None
-        if isinstance(data, dict) and SHA.fullmatch(str(data.get("main") or "")):
-            return data["main"]
-    raise Denied("auto_baseline_missing")
-
-
-def write_auto_baseline(state_dir, source_sha):
-    target = auto_baseline_path(state_dir)
-    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = target.with_suffix(".tmp")
-    fd = os.open(str(tmp), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({"main": source_sha}, handle, sort_keys=True)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, target)
-
-
-def resolve_source_range(args):
-    """Return ``(base_sha, source_sha)`` for this cycle.
-
-    The installed timer invokes the controller with no per-run arguments, so
-    ``--auto`` derives the pair from host state instead of argv: the reviewed
-    checkout's HEAD is the source SHA, and the recorded baseline is the previous
-    one. Neither value widens admission - every service still needs its own
-    request, grant and attestation bound to that exact SHA.
-    """
-    if not args.auto:
-        if not (args.base_sha and args.source_sha):
+    environ = os.environ if environ is None else environ
+    if args.auto:
+        base_sha = args.base_sha or environ.get(AUTO_BASE_ENV)
+        source_sha = args.source_sha or environ.get(AUTO_SOURCE_ENV)
+        if not (base_sha and source_sha):
+            raise Denied("auto_source_range_missing")
+    else:
+        base_sha, source_sha = args.base_sha, args.source_sha
+        if not (base_sha and source_sha):
             raise Denied("sha_arguments_required")
-        return args.base_sha, args.source_sha
-    if args.source_sha:
-        # In auto mode the SHA comes from the checkout; an explicit --source-sha
-        # would be silently ignored, and a silent disagreement about which tree is
-        # being promoted is exactly what this adapter must never allow.
-        raise Denied("auto_source_sha_conflict")
-    source_sha = checkout_sha(args.repo)
-    base_sha = args.base_sha or read_auto_baseline(args.state_dir)
     if not isinstance(base_sha, str) or not SHA.fullmatch(base_sha):
         raise Denied("invalid_base_sha")
+    if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha):
+        raise Denied("invalid_source_sha")
     return base_sha, source_sha
-
-
-def advance_auto_baseline(args, source_sha, report):
-    """Record the processed SHA only for a clean *deploy* cycle.
-
-    The baseline means "this main SHA has been through the releasing stage", so
-    only ``--mode deploy`` may move it; a build-only ``prepare`` cycle must leave
-    it alone or the deploy that follows would see no change. A held or denied
-    service also leaves it untouched, so its change is re-evaluated on the next
-    timer tick instead of being silently skipped.
-    """
-    if args.mode != "deploy" or not args.auto:
-        return False
-    if report.get("denied"):
-        return False
-    deployed = report.get("deployed")
-    if isinstance(deployed, dict):
-        if deployed.get("result") not in ("promoted", "no_service_change"):
-            return False
-        for decision in deployed.get("decisions") or []:
-            if decision.get("decision") not in ("promoted", "already_delivered"):
-                return False
-    write_auto_baseline(args.state_dir, source_sha)
-    return True
 
 
 def build_parser():
@@ -467,8 +394,9 @@ def build_parser():
     parser.add_argument("--base-sha", help="previous delivered main SHA (required unless --auto)")
     parser.add_argument("--source-sha", help="exact SHA to build/deploy (required unless --auto)")
     parser.add_argument("--auto", action="store_true",
-                        help="timer mode: resolve --base-sha/--source-sha from the checkout "
-                             "and the recorded delivery baseline")
+                        help="timer mode: take --base-sha/--source-sha from the unit's "
+                             "EnvironmentFile (HARNESS_BASE_SHA/HARNESS_SOURCE_SHA); "
+                             "absent or malformed = denied, never reconstructed")
     parser.add_argument("--artifact-dir")
     parser.add_argument("--attestation-key")
     parser.add_argument("--state-dir", default=str(STATE_ROOT / "delivery"))
@@ -517,7 +445,6 @@ def main(argv=None):
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
         if not attributed:
             report["result"] = "no_service_change"
-            advance_auto_baseline(args, source_sha, report)
             print(json.dumps(report, sort_keys=True))
             return 0
         bundles = {}
@@ -555,7 +482,6 @@ def main(argv=None):
                 # to see which gate refused, not just that the run stopped.
                 report["result"] = "denied"
                 report["reason"] = "gate_artifacts_missing"
-                advance_auto_baseline(args, source_sha, report)
                 print(json.dumps(report, sort_keys=True))
                 print(json.dumps({"result": "denied", "reason": "gate_artifacts_missing"}),
                       file=sys.stderr)
@@ -567,7 +493,6 @@ def main(argv=None):
                 state_path=str(Path(args.state_dir) / "delivery.json"),
                 source_sha=source_sha)
         report["result"] = "ok" if not report["denied"] else "partially_denied"
-        advance_auto_baseline(args, source_sha, report)
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:

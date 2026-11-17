@@ -38,7 +38,7 @@ SERVICE = "harness-image-delivery.service"
 UNIT = Path("/etc/systemd/system") / SERVICE
 REVIEWED_UNIT = "ops/systemd/" + SERVICE
 ADAPTER = "harness_native_delivery.py"
-BASELINE = STATE / "delivery" / "auto-main.json"
+SOURCE_RANGE = STATE / "source-range.env"
 CHECKOUT = STATE / "checkout"
 GATES = STATE / "gates"
 MODULES = ("harness_release_admission.py", "harness_local_ci_attest.py",
@@ -239,6 +239,14 @@ def check(probe, repo, sha):
     if unit_info["exists"]:
         record("delivery_unit_root_owned", unit_info["uid"] == 0,
                f"uid={unit_info['uid']} mode={oct(unit_info['mode'] or 0)}")
+    # The unit's ExecStart is only meaningful together with the operator-written
+    # range it reads; --auto denies the cycle when that file is absent.
+    source_range = probe.stat(SOURCE_RANGE)
+    install_assertion("source_range_present", source_range["exists"], str(SOURCE_RANGE), False)
+    if source_range["exists"]:
+        record("source_range_root_private",
+               source_range["uid"] == 0 and source_range["mode"] == 0o600,
+               f"uid={source_range['uid']} mode={oct(source_range['mode'] or 0)}")
 
     legacy = LIBEXEC / "harness_image_delivery.py"
     info = probe.stat(legacy)

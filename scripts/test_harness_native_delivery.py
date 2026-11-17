@@ -560,7 +560,7 @@ class MainWiringTests(unittest.TestCase):
 
 
 class AutoModeTests(unittest.TestCase):
-    """`--auto` is the mode the installed timer runs; it resolves, never widens."""
+    """`--auto` is the timer's invocation: exact operator input or a denial."""
 
     def repo(self, commits=2):
         import subprocess
@@ -582,24 +582,17 @@ class AutoModeTests(unittest.TestCase):
             run("git", "commit", "-q", "-m", f"change {index}")
         return tmp, first, run("git", "rev-parse", "HEAD").stdout.strip()
 
-    def state(self, baseline=None):
-        tmp = tempfile.mkdtemp()
-        if baseline:
-            path = Path(tmp) / "auto-main.json"
-            path.write_text(json.dumps({"main": baseline}), encoding="utf-8")
-            path.chmod(0o600)
-        return tmp
-
     def documents_for(self, source_sha):
-        """Evidence bound to the SHA the checkout actually resolves to."""
+        """Evidence bound to the SHA the operator's range names."""
         return {"request": request(source_sha=source_sha, merge_sha=source_sha),
                 "grant": grant(source_sha=source_sha),
                 "attestation": signed_attestation(source_sha=source_sha)}
 
-    def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None, source_sha=None):
+    def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
+                 source_sha=SOURCE, environ=None):
         host = host or FakeHost()
-        if documents is None:
-            documents = self.documents_for(source_sha or delivery.checkout_sha(repo))
+        documents = documents if documents is not None else self.documents_for(source_sha)
+        environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
@@ -607,7 +600,11 @@ class AutoModeTests(unittest.TestCase):
                              side_effect=lambda path, label, require_root=False: manifest()), \
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
-                             lambda path, label, require_root=True: KEY):
+                             lambda path, label, require_root=True: KEY), \
+                patch.dict(os.environ, environment, clear=False), \
+                patch.dict(os.environ, {k: v for k, v in {"HARNESS_BASE_SHA": "",
+                                                          "HARNESS_SOURCE_SHA": ""}.items()
+                                        if k not in environment}):
             argv = ["--mode", mode, "--auto", "--repo", repo, "--state-dir", state_dir,
                     "--artifact-dir", state_dir, "--attestation-key", str(Path(state_dir) / "key"),
                     "--now", NOW.isoformat()]
@@ -617,81 +614,78 @@ class AutoModeTests(unittest.TestCase):
         return code, stdout.getvalue() + stderr.getvalue(), host
 
     def test_the_installed_timer_invocation_is_accepted(self):
-        # The legacy unit ran `--auto` with nothing else; the adapter used to exit
-        # 2 on that. The reviewed unit's invocation must parse now.
+        # The legacy unit ran `--auto` with nothing else; the old adapter exited 2
+        # on that. The reviewed invocation must parse.
         delivery.build_parser().parse_args(["--mode", "deploy", "--auto"])
         delivery.build_parser().parse_args(["--auto"])
 
-    def test_auto_resolves_head_and_baseline_without_cli_shas(self):
+    def test_auto_uses_the_exact_range_from_the_unit_environment(self):
         repo, base, head = self.repo()
-        code, out, host = self.run_auto(repo, self.state(base))
+        code, out, host = self.run_auto(repo, tempfile.mkdtemp(), source_sha=head,
+                                        environ={"HARNESS_BASE_SHA": base,
+                                                 "HARNESS_SOURCE_SHA": head})
         payload = json.loads(out)
         self.assertEqual(code, 0, out)
         self.assertEqual(payload["source_sha"], head)
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertEqual(host.mutations(), [])
 
-    def test_auto_denies_without_a_baseline(self):
+    def test_auto_without_an_operator_range_fails_closed(self):
         repo, base, head = self.repo()
-        code, out, host = self.run_auto(repo, self.state())
+        code, out, host = self.run_auto(repo, tempfile.mkdtemp(), environ={})
         self.assertEqual(code, 1)
-        self.assertIn("auto_baseline_missing", out)
+        self.assertIn("auto_source_range_missing", out)
         self.assertEqual(host.mutations(), [])
 
-    def test_auto_reports_no_change_when_the_baseline_is_head(self):
+    def test_auto_rejects_a_malformed_range(self):
         repo, base, head = self.repo()
-        code, out, host = self.run_auto(repo, self.state(head))
+        code, out, host = self.run_auto(repo, tempfile.mkdtemp(),
+                                        environ={"HARNESS_BASE_SHA": "not-a-sha",
+                                                 "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1)
+        self.assertIn("invalid_base_sha", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_invents_no_state_and_keeps_no_baseline(self):
+        # Owner constraint: no additional state system. Nothing is written that a
+        # later run could mistake for a delivery baseline.
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        code, out, host = self.run_auto(repo, state_dir, mode="prepare", source_sha=head,
+                                        environ={"HARNESS_BASE_SHA": base,
+                                                 "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 0, out)
+        state_files = sorted(p.name for p in Path(state_dir).iterdir() if p.suffix == ".json")
+        self.assertEqual(state_files, [],
+                         "the cycle must not create a baseline or any other JSON state")
+
+    def test_auto_reports_no_change_when_the_range_is_empty(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(repo, tempfile.mkdtemp(), source_sha=head,
+                                        environ={"HARNESS_BASE_SHA": head,
+                                                 "HARNESS_SOURCE_SHA": head})
         payload = json.loads(out)
         self.assertEqual(code, 0)
         self.assertEqual(payload["result"], "no_change")
         self.assertEqual(host.mutations(), [])
 
-    def test_auto_never_writes_a_baseline_on_a_denied_cycle(self):
+    def test_auto_denies_a_held_lane_without_touching_the_host(self):
         repo, base, head = self.repo()
-        state_dir = self.state(base)
         documents = self.documents_for(head)
         documents["grant"] = None
-        code, out, host = self.run_auto(repo, state_dir, mode="deploy", documents=documents)
+        code, out, host = self.run_auto(repo, tempfile.mkdtemp(), mode="deploy", documents=documents,
+                                        source_sha=head,
+                                        environ={"HARNESS_BASE_SHA": base,
+                                                 "HARNESS_SOURCE_SHA": head})
         self.assertEqual(code, 0, out)
         self.assertEqual(host.mutations(), [])
-        baseline = Path(state_dir) / "auto-main.json"
-        self.assertEqual(json.loads(baseline.read_text(encoding="utf-8"))["main"], base,
-                         "a held lane must be re-evaluated on the next tick")
-
-    def test_auto_advances_the_baseline_only_after_a_clean_deploy(self):
-        repo, base, head = self.repo()
-        state_dir = self.state(base)
-        tag = f"127.0.0.1:5000/harness-mantic-mcp:{head[:12]}"
-        host = FakeHost(revision=head, images={tag: DIGEST})
-        code, out, host = self.run_auto(repo, state_dir, mode="deploy", host=host, source_sha=head)
-        self.assertEqual(code, 0, out)
-        self.assertTrue(json.loads(out)["deployed"]["promoted"], out)
-        baseline = Path(state_dir) / "auto-main.json"
-        self.assertEqual(json.loads(baseline.read_text(encoding="utf-8"))["main"], head)
-
-    def test_a_prepare_cycle_leaves_the_baseline_for_the_deploy(self):
-        # Otherwise the deploy that follows would report "no_change" and the
-        # images the prepare stage just built would never be promoted.
-        repo, base, head = self.repo()
-        state_dir = self.state(base)
-        code, out, _ = self.run_auto(repo, state_dir, mode="prepare", source_sha=head)
-        self.assertEqual(code, 0, out)
-        baseline = Path(state_dir) / "auto-main.json"
-        self.assertEqual(json.loads(baseline.read_text(encoding="utf-8"))["main"], base)
+        self.assertIn("release_lane_on_hold", out)
 
     def test_explicit_mode_still_requires_both_shas(self):
         args = delivery.build_parser().parse_args(["--mode", "plan"])
         with self.assertRaises(Denied) as caught:
-            delivery.resolve_source_range(args)
+            delivery.resolve_source_range(args, environ={})
         self.assertEqual(str(caught.exception), "sha_arguments_required")
-
-    def test_auto_refuses_an_explicit_source_sha(self):
-        # --auto means "take the SHA from the checkout"; an explicit --source-sha
-        # would be silently ignored, so the mismatch is denied instead.
-        args = delivery.build_parser().parse_args(["--auto", "--source-sha", SOURCE, "--repo", "."])
-        with self.assertRaises(Denied) as caught:
-            delivery.resolve_source_range(args)
-        self.assertEqual(str(caught.exception), "auto_source_sha_conflict")
 
 
 if __name__ == "__main__":
