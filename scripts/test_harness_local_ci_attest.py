@@ -287,6 +287,15 @@ class AttesterTests(unittest.TestCase):
             attest.validate_policy(policy(services={}))
 
     # --- checked-out tree -----------------------------------------------
+    def test_ci_rejects_gitignored_checkout_inputs(self):
+        head = type("R", (), {"returncode": 0, "stdout": SOURCE + "\\n"})()
+        ignored = type("R", (), {"returncode": 0, "stdout": "!! ignored-build-input.js\\n"})()
+        with patch.object(attest.subprocess, "run", side_effect=[head, ignored]) as run:
+            with self.assertRaisesRegex(attest.Denied, "checkout_dirty"):
+                attest.verify_checkout(".", SOURCE)
+            self.assertIn("--ignored", run.call_args_list[1].args[0])
+            self.assertIn("--untracked-files=all", run.call_args_list[1].args[0])
+
     def test_checkout_must_be_at_the_source_sha(self):
         head = type("R", (), {"returncode": 0, "stdout": "f" * 40 + "\n"})()
         clean = type("R", (), {"returncode": 0, "stdout": ""})()
