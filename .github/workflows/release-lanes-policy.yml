@@ -29,3 +29,10 @@ jobs:
         run: python scripts/check-release-lanes.py --self-test
       - name: Guard against non-MCP automatic image builds
         run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
+      - name: Set up Node.js 24 for Multica MCP adapter
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test Multica MCP adapter (required on every PR)
+        working-directory: multica-mcp
+        run: npm test
