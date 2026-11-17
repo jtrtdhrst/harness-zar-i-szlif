@@ -418,7 +418,53 @@ class ControllerPromotionTests(unittest.TestCase):
                              encoding="utf-8")
             report = self.authorized(transport, state_path=state)
         self.assertEqual(report["decisions"][0]["decision"], "already_delivered")
-        self.assertEqual(transport.calls, ["current"])
+        self.assertEqual(transport.calls, ["current", "health"],
+                         "a matching saved SHA must still undergo live readback")
+        self.assertFalse(report["mutated"])
+
+    def test_already_delivered_unhealthy_is_not_accepted(self):
+        transport = FakeTransport(running={"mantic-mcp": DIGEST},
+                                  health_result={"status": "unhealthy",
+                                                 "digest": DIGEST, "source_sha": SOURCE})
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"mantic-mcp": {"source_sha": SOURCE,
+                                                        "image_digest": DIGEST}}), encoding="utf-8")
+            report = self.authorized(transport, state_path=state)
+        decision = report["decisions"][0]
+        self.assertEqual(decision["decision"], "denied")
+        self.assertEqual(decision["reason"], "already_delivered_unhealthy")
+        self.assertEqual(transport.calls, ["current", "health"])
+        self.assertFalse(report["mutated"])
+
+    def test_already_delivered_wrong_live_revision_is_not_accepted(self):
+        transport = FakeTransport(running={"mantic-mcp": DIGEST},
+                                  health_result={"status": "ok",
+                                                 "digest": DIGEST, "source_sha": "f" * 40})
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"mantic-mcp": {"source_sha": SOURCE,
+                                                        "image_digest": DIGEST}}), encoding="utf-8")
+            report = self.authorized(transport, state_path=state)
+        decision = report["decisions"][0]
+        self.assertEqual(decision["decision"], "denied")
+        self.assertEqual(decision["reason"], "already_delivered_revision_mismatch")
+        self.assertEqual(transport.calls, ["current", "health"])
+        self.assertFalse(report["mutated"])
+
+    def test_already_delivered_readback_exception_denies_without_mutation(self):
+        transport = FakeTransport(running={"mantic-mcp": DIGEST})
+        def broken_health(service, uuid):
+            transport.calls.append("health")
+            raise TimeoutError("connection failed")
+        transport.health = broken_health
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"mantic-mcp": {"source_sha": SOURCE,
+                                                        "image_digest": DIGEST}}), encoding="utf-8")
+            report = self.authorized(transport, state_path=state)
+        self.assertEqual(report["decisions"][0]["reason"], "already_delivered_health_unavailable")
+        self.assertEqual(transport.calls, ["current", "health"])
         self.assertFalse(report["mutated"])
 
     def test_plan_mode_reports_admissible_without_transport(self):
