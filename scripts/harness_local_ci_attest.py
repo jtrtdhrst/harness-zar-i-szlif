@@ -108,6 +108,8 @@ def read_trusted_file(path, label, require_root=True):
             raise Denied(label + "_world_writable")
         if require_root and info.st_uid != 0:
             raise Denied(label + "_not_root_owned")
+        if label == "signing_key" and info.st_mode & 0o077:
+            raise Denied("signing_key_not_private")
         if info.st_size <= 0 or info.st_size > 262144:
             raise Denied(label + "_invalid_size")
         chunks = []
