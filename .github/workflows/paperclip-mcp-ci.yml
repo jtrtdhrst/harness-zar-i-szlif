@@ -19,9 +19,11 @@ permissions:
 
 jobs:
   validate-paperclip-mcp:
-    # GitHub-hosted minutes are blocked by billing on this account; the required
-    # check must run on the local runner, which has Docker preinstalled.
-    runs-on: [self-hosted, linux, x64, local-build]
+    # PR-controlled source is untrusted: never run it on the Docker-group local runner.
+    # Only reviewed main push/manual jobs may use local-build; hosted PR failures
+    # remain fail-closed until billing or an isolated runner is genuinely ready.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["self-hosted","linux","x64","local-build"]') }}
     timeout-minutes: 30
     steps:
       # This job is a required status check. Keep it on every PR, but do not
