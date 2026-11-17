@@ -134,6 +134,7 @@ try {
   const code = new URL(location).searchParams.get("code");
   expect("POST /authorize issues code", Boolean(code), true);
   expect("authorize returns state", new URL(location).searchParams.get("state"), "st-1");
+  expect("authorize returns iss", new URL(location).searchParams.get("iss"), `${url}`);
 
   async function token(codeValue, verifier) {
     const res = await fetch(url + "/token", {
@@ -146,7 +147,18 @@ try {
   const freshCode = new URL(fresh.authRes.headers.get("location")).searchParams.get("code");
   const issued = await token(freshCode, "verifier-3");
   expect("POST /token PKCE exchange", issued.status, 200);
+  expect("token response has refresh_token", typeof issued.body.refresh_token === "string" && issued.body.refresh_token.length > 20, true);
+  expect("token response token_type Bearer", issued.body.token_type, "Bearer");
   expect("access token accepted", await call("/mcp", { authorization: `Bearer ${issued.body.access_token}` }), 200);
+  // refresh token is domain-separated: it must NOT be accepted as an access token.
+  expect("refresh token rejected as access", await call("/mcp", { authorization: `Bearer ${issued.body.refresh_token}` }), 401);
+  const refreshed = await fetch(url + "/token", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: issued.body.refresh_token }),
+  });
+  expect("refresh grant returns access token", refreshed.status, 200);
+  const refreshedJson = await refreshed.json();
+  expect("refreshed access token accepted", await call("/mcp", { authorization: `Bearer ${refreshedJson.access_token}` }), 200);
   expect("code is single-use", (await token(freshCode, "verifier-3")).status, 400);
   expect("wrong verifier rejected", (await token(code, "nope")).body.error, "invalid_grant");
   expect("garbage token rejected", await call("/mcp", { authorization: "Bearer abc.def" }), 401);
