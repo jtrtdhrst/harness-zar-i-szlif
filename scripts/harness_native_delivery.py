@@ -166,8 +166,10 @@ def verify_source(repo, source_sha):
     try:
         head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                               capture_output=True, text=True, timeout=60)
+        # Build context can contain untracked files; ignoring them lets Docker
+        # ship bytes that the reviewed commit and CI attestation never saw.
         status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain",
-                                 "--untracked-files=no"],
+                                 "--untracked-files=all"],
                                 capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         raise Denied("source_check_unavailable") from None
