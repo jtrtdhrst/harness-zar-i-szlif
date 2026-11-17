@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-const dir = mkdtempSync(join(tmpdir(), 'multica-mcp-test-'));
+const dir = mkdtempSync(join(import.meta.dirname, '..', '.multica-mcp-server-test-'));
 const fakeCli = join(dir, 'fake-multica.mjs');
 writeFileSync(fakeCli, `#!/usr/bin/env node
 const args = process.argv.slice(2);
