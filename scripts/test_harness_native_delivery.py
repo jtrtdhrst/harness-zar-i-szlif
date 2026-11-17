@@ -431,6 +431,17 @@ class SourceVerificationTests(unittest.TestCase):
             delivery.verify_source(repo, sha)
         self.assertEqual(str(caught.exception), "source_worktree_dirty")
 
+    def test_untracked_build_context_file_is_refused(self):
+        repo, sha, _ = self.repo()
+        # An untracked file is not in the reviewed SHA but may enter COPY .
+        (Path(repo) / "mantic-mcp" / "unreviewed.js").write_text(
+            "process.exit(1)\\n", encoding="utf-8")
+        host = FakeHost()
+        with self.assertRaises(Denied) as caught:
+            delivery.verify_source(repo, sha)
+        self.assertEqual(str(caught.exception), "source_worktree_dirty")
+        self.assertEqual(host.calls, [], "untracked content must not reach Docker")
+
     def test_non_repository_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Denied) as caught:
