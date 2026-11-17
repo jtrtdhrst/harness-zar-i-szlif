@@ -91,7 +91,9 @@ function spawnBackend() {
 
 function backendRequest(be, options, body, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port: be.port, timeout: timeoutMs, ...options }, (res) => {
+    // agent:false keeps the session-less path on the same rule as the proxied
+    // paths: one socket per request, never a reused keep-alive socket.
+    const req = http.request({ host: "127.0.0.1", port: be.port, timeout: timeoutMs, agent: false, ...options }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -181,7 +183,12 @@ async function handleMcp(clientReq, clientRes, chunks) {
       inFlight++;
       let released = false;
       const release = () => { if (released) return; released = true; inFlight--; };
-      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: "POST", path: "/mcp", headers, timeout: REQUEST_TIMEOUT_MS },
+      // agent:false = one fresh socket per proxied request. The MCP backend
+      // keeps a POST response stream (SSE) open per connection, so reusing a
+      // keep-alive socket made every second call on a session fail with a bare
+      // empty-body HTTP 400 and made GET /mcp unusable. Measured: 200/400/200/400
+      // through a reusing socket vs 4/4 200 with a dedicated socket.
+      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: "POST", path: "/mcp", headers, timeout: REQUEST_TIMEOUT_MS, agent: false },
         (bRes) => {
           const h = { ...bRes.headers };
           delete h["connection"]; delete h["transfer-encoding"];
@@ -255,6 +262,9 @@ function handler(clientReq, clientRes) {
       let released = false;
       const release = () => { if (released) return; released = true; openStreams--; };
       const proxy = http.request({ host: "127.0.0.1", port: be.port, method: clientReq.method, path: "/mcp",
+        // Same dedicated-socket rule as the POST path: a client-held SSE channel
+        // must not share a keep-alive socket with request/response traffic.
+        agent: false,
         // No `timeout` here on purpose. A GET stream is client-held and may stay
         // silent for as long as the server has no event to send; imposing the
         // POST deadline on it severed live event channels and dropped
