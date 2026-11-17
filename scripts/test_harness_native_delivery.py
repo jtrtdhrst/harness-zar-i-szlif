@@ -488,7 +488,7 @@ class MainWiringTests(unittest.TestCase):
         code, out = self.run_main("prepare", host,
                                   documents={"request": request(), "grant": None,
                                              "attestation": signed_attestation()})
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(host.mutations(), [])
         self.assertIn("release_lane_on_hold", out)
 
@@ -497,13 +497,13 @@ class MainWiringTests(unittest.TestCase):
         # and grant naming SHA A must deny a build of SHA B before docker runs.
         host = FakeHost()
         code, out = self.run_main("prepare", host, source_sha="9" * 40)
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(host.mutations(), [])
         self.assertIn("admission_source_sha_mismatch", out)
 
     def test_plan_mode_never_mutates(self):
         host = FakeHost()
-        code, out = self.run_main("plan", host)
+        code, out = self.run_main("plan", host, extra=["--now", NOW.isoformat()])
         payload = json.loads(out)
         self.assertEqual(code, 0)
         self.assertEqual(host.mutations(), [])
@@ -518,11 +518,21 @@ class MainWiringTests(unittest.TestCase):
                                              "attestation": None},
                                   extra=["--now", NOW.isoformat()])
         payload = json.loads(out or "{}")
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(host.mutations(), [])
-        deployed = payload.get("deployed") or {}
-        self.assertFalse(deployed.get("promoted"))
-        self.assertEqual(deployed["decisions"][0]["reason"], "local_ci_attestation_missing")
+        self.assertEqual(payload["result"], "denied")
+        self.assertIn("attestation", json.dumps(payload["denied"]))
+        self.assertIsNone(payload.get("deployed"))
+
+    def test_plan_with_missing_attestation_denies_without_host_mutation(self):
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+                                  documents={"request": request(), "grant": grant(),
+                                             "attestation": None},
+                                  extra=["--now", NOW.isoformat()])
+        self.assertEqual(code, 1)
+        self.assertIn("attestation", out)
+        self.assertEqual(host.mutations(), [])
 
     def test_deploy_denies_a_forged_signature_verified_artifact(self):
         # CTO finding 2: a raw JSON artifact claiming signature_verified=true used
@@ -554,8 +564,9 @@ class MainWiringTests(unittest.TestCase):
         host = FakeHost()
         documents = {"request": request(), "grant": grant(),
                      "attestation": signed_attestation(results=[{"command": marker, "exit": 0}])}
-        code, out = self.run_main("deploy", host, documents=documents)
-        self.assertEqual(code, 0, out)
+        code, out = self.run_main("deploy", host, documents=documents,
+                                  extra=["--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
         self.assertNotIn("pwned", json.dumps([str(call) for call in host.calls]))
 
 
@@ -677,7 +688,7 @@ class AutoModeTests(unittest.TestCase):
                                         source_sha=head,
                                         environ={"HARNESS_BASE_SHA": base,
                                                  "HARNESS_SOURCE_SHA": head})
-        self.assertEqual(code, 0, out)
+        self.assertEqual(code, 1, out)
         self.assertEqual(host.mutations(), [])
         self.assertIn("release_lane_on_hold", out)
 
