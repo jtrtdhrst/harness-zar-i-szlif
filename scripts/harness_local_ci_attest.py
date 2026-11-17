@@ -36,6 +36,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import socket
 import stat
 import subprocess
@@ -381,13 +382,18 @@ def changed_paths(repo, base_sha, source_sha):
 
 
 def write_atomic(path, payload):
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(str(tmp), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, sort_keys=True, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    """Persist one attestation without following or truncating a predictable tmp symlink."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(tmp), flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def main(argv=None):
