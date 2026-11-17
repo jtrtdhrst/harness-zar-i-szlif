@@ -279,9 +279,30 @@ class DeployStageTests(unittest.TestCase):
                     transport_for(host), now=NOW, state_path=state, source_sha=SOURCE)
             self.assertTrue(state.exists())
         self.assertTrue(report["promoted"], report)
-        self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose)
+        self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}", host.compose)
+        self.assertNotIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose,
+                         "a mutable tag must never be the deployed image reference")
         self.assertEqual([call[0] for call in host.calls].count("build"), 0,
                          "the deploy transport must never rebuild")
+
+    def test_transport_deploys_attested_digest_not_retargetable_tag(self):
+        host = FakeHost(images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": PREVIOUS})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            deployment = transport_for(host).deploy("mantic-mcp", UUID, "service", DIGEST)
+        self.assertEqual(deployment, "dep-1")
+        self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}", host.compose)
+        self.assertNotIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose)
+        self.assertEqual([call for call in host.calls if call[0] == "build"], [])
+
+    def test_transport_rejects_invalid_digest_without_any_host_call(self):
+        host = FakeHost()
+        for invalid in ("sha256:abc", "not-a-digest", None, "sha256:" + "z" * 64):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(RuntimeError, "invalid immutable image digest"):
+                    transport_for(host).deploy("mantic-mcp", UUID, "service", invalid)
+        self.assertEqual(host.calls, [])
+        self.assertEqual(host.compose, COMPOSE)
 
     def test_transport_refuses_an_image_with_a_foreign_revision(self):
         host = FakeHost(revision="f" * 40)
