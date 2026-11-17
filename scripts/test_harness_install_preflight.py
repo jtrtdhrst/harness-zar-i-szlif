@@ -146,6 +146,24 @@ class PreflightTests(unittest.TestCase):
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
         self.assertIn("harness_delivery_controller.py_root_owned", blockers)
 
+    def test_world_writable_controller_source_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_native_delivery.py")]["mode"] = 0o666
+        _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("harness_native_delivery.py_root_owned", blockers)
+
+    def test_world_writable_systemd_unit_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.UNIT)]["mode"] = 0o666
+        _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("delivery_unit_root_owned", blockers)
+
+    def test_world_writable_legacy_shim_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_image_delivery.py")]["mode"] = 0o777
+        _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("legacy_controller_disabled", blockers)
+
     def test_world_readable_policy_is_a_blocker(self):
         files = installed_files(**{str(preflight.POLICY): {"mode": 0o644}})
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
