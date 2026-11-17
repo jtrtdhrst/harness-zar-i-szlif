@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 // Regression coverage for the MCP output-schema boundary: `structuredContent` must
 // always be a JSON object (record). List operations emit a top-level CLI array and
@@ -12,7 +13,7 @@ const NL = String.fromCharCode(10);
 const WS = '28378cc8-2c3a-4f8e-af1c-63e308407b17';
 const TOKEN = 'mat_listcontent0123456789ab';
 
-const dir = mkdtempSync(join(import.meta.dirname, '..', '.multica-mcp-list-test-'));
+const dir = mkdtempSync(join(tmpdir(), 'multica-mcp-list-'));
 const fakeCli = join(dir, 'fake-multica.mjs');
 
 const helpText = {
@@ -43,6 +44,8 @@ const source = [
 writeFileSync(fakeCli, source);
 chmodSync(fakeCli, 0o755);
 process.env.MULTICA_CLI = fakeCli;
+// Each test process owns a private CLI HOME; never reuse the global /tmp/multica-mcp-home.
+process.env.MULTICA_MCP_HOME = join(dir, 'home');
 
 const { startHttpServer, toStructuredContent } = await import('../server.mjs');
 
