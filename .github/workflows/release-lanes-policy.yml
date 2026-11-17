@@ -18,8 +18,9 @@ permissions:
 
 jobs:
   validate-release-lanes:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Keep using the existing local-build runner; GitHub-hosted minutes are blocked.
+    runs-on: [self-hosted, linux, x64, local-build]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
