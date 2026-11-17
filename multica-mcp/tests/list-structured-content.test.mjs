@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Regression coverage for the MCP output-schema boundary: `structuredContent` must
 // always be a JSON object (record). List operations emit a top-level CLI array and
@@ -44,8 +44,6 @@ const source = [
 writeFileSync(fakeCli, source);
 chmodSync(fakeCli, 0o755);
 process.env.MULTICA_CLI = fakeCli;
-// Each test process owns a private CLI HOME; never reuse the global /tmp/multica-mcp-home.
-process.env.MULTICA_MCP_HOME = join(dir, 'home');
 
 const { startHttpServer, toStructuredContent } = await import('../server.mjs');
 
@@ -82,7 +80,7 @@ test('list tools return record structuredContent over MCP', async (t) => {
   }
 
   const agentList = await rpc('tools/call', { name: 'multica__agent__list', arguments: { output: 'json', workspace_id: WS } });
-  assert.equal(agentList.result.isError, false, agentList.result.content?.[0]?.text ?? 'CLI failed without diagnostic');
+  assert.equal(agentList.result.isError, false);
   assert.equal(Array.isArray(agentList.result.structuredContent), false, 'structuredContent must not be a top-level array');
   assert(isRecord(agentList.result.structuredContent));
   assert.deepEqual(agentList.result.structuredContent, { items: [{ id: 'agent-1', name: 'engineer' }, { id: 'agent-2', name: 'cto' }] });

@@ -36,4 +36,6 @@ jobs:
           node-version: "24"
       - name: Test Multica MCP adapter (required on every PR)
         working-directory: multica-mcp
+        env:
+          MULTICA_MCP_HOME: ${{ runner.temp }}/multica-mcp-ci-home
         run: npm test
