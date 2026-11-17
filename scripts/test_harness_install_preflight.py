@@ -158,9 +158,10 @@ class PreflightTests(unittest.TestCase):
 
     def test_empty_host_is_not_ready(self):
         _, blockers, _, _, _ = preflight.check(FakeProbe(files={}), REPO, SHA)
-        for expected_blocker in ("policy_present", "attestation_key_present",
-                                 "legacy_controller_present_to_back_up"):
-            self.assertIn(expected_blocker, blockers)
+        self.assertIn("legacy_controller_present_to_back_up", blockers)
+        self.assertNotIn("policy_present", blockers)
+        self.assertNotIn("attestation_key_present", blockers)
+        self.assertNotIn("state_dir_present", blockers)
 
     def test_plan_starts_with_the_timer_stop_and_ends_with_rollback(self):
         steps = preflight.install_plan(SHA, EXPECTED)
@@ -170,11 +171,39 @@ class PreflightTests(unittest.TestCase):
         canary = [step for step in steps if step[0].startswith("07_")][0]
         self.assertTrue(any("denied" in line for line in canary[1]))
         verify = [step for step in steps if step[0].startswith("04_")][0]
-        self.assertEqual(len(verify[1]), len(preflight.MODULES) + 1,
-                         "the reviewed unit's digest is verified alongside the modules")
+        self.assertEqual(len(verify[1]), len(preflight.MODULES),
+                         "only staged modules may be verified before unit installation")
         unit_step = [step for step in steps if step[0].startswith("06_")][0]
         self.assertTrue(any("daemon-reload" in line for line in unit_step[1]))
         self.assertTrue(any(str(preflight.UNIT) in line for line in unit_step[1]))
+        self.assertTrue(any("sha256sum" in line and str(preflight.UNIT) in line
+                            for line in unit_step[1]), "verify unit only after staging")
+        self.assertTrue(any("install -o root -g root -m 0700 -d" in line
+                            for line in steps[1][1]), "backup directory must be created")
+        rollback = steps[-1][1]
+        self.assertFalse(any("systemctl start" in line for line in rollback),
+                         "rollback must never restart the HOLD-blind controller")
+        self.assertTrue(any("systemctl stop" in line for line in rollback))
+
+    def test_missing_installable_artifacts_are_pending_not_plan_blockers(self):
+        files = installed_files()
+        for path in (preflight.POLICY, preflight.KEY, preflight.STATE,
+                     preflight.SOURCE_RANGE):
+            files.pop(str(path))
+        probe = FakeProbe(files=files)
+        checks, blockers, _, _, pending = preflight.check(probe, REPO, SHA)
+        self.assertEqual(blockers, [])
+        for item in ("policy_present", "attestation_key_present",
+                     "state_dir_present", "source_range_present"):
+            self.assertIn(item, pending)
+            self.assertFalse(checks[item]["ok"])
+        with patch.object(preflight, "Probe", lambda: probe):
+            with patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out:
+                code = preflight.main(["--repo", REPO, "--sha", SHA, "--plan"])
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertFalse(payload["ready"])
+        self.assertEqual(len(payload["plan"]), 9)
 
     def test_main_emits_no_plan_while_a_blocker_exists(self):
         probe = FakeProbe(active={preflight.TIMER}, files=installed_files())
