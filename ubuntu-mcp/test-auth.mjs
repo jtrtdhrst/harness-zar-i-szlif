@@ -83,6 +83,7 @@ try {
   expect("GET authorization-server metadata", as.status, 200);
   expect("metadata advertises S256", (asJson.code_challenge_methods_supported || []).includes("S256"), true);
   expect("metadata token auth none", (asJson.token_endpoint_auth_methods_supported || []).includes("none"), true);
+  expect("metadata advertises CIMD", asJson.client_id_metadata_document_supported, true);
 
   const unauthorized = await fetch(url + "/mcp", { method: "POST", headers: { "content-type": "application/json" }, body });
   expect("401 carries resource_metadata", /resource_metadata=/.test(unauthorized.headers.get("www-authenticate") || ""), true);
