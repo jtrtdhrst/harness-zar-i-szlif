@@ -185,6 +185,13 @@ The root-owned local-CI attestation must bind to the **same digest** found in
 the running image. A tag-only Compose deployment is an E2E FAIL even when its
 repository SHA label happens to match.
 
+Live image health MUST also be attributed to the actual Coolify Service UUID
+using `docker ps --filter label=coolify.serviceUuid=<uuid>` together with the
+expected image ancestor. A healthy container from another service, even if it
+uses the identical image, is not evidence that this service was deployed.
+Older unlabeled containers fail closed; confirm UUID labels on the approved
+redeployment rather than guessing a healthy container from the whole host.
+
 Rollback acceptance is likewise not a Coolify API POST 200/201: the controller
 must read back the exact previous Compose bytes and independently verify live
 healthy service state. On timeout, `rollback_failed` is the required verdict,
