@@ -129,6 +129,33 @@ class AttesterTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
             self.assertEqual(json.loads(target.read_text())["service"], "mantic-mcp")
 
+    def test_atomic_attestation_write_never_follows_predictable_tmp_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "attest.json"
+            victim = Path(tmp) / "victim"
+            victim.write_text("leave untouched", encoding="utf-8")
+            # Old implementation used attest.tmp with O_TRUNC, following
+            # this link and destroying an unrelated file as root.
+            (Path(tmp) / "attest.tmp").symlink_to(victim)
+            attest.write_atomic(target, self.build())
+            self.assertEqual(victim.read_text(encoding="utf-8"), "leave untouched")
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["service"],
+                             "mantic-mcp")
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    def test_attestation_output_directory_must_be_root_private_and_not_a_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            out.mkdir()
+            out.chmod(0o777)
+            with self.assertRaisesRegex(attest.Denied, "attestation_output_dir_not_root_private"):
+                attest.require_root_private_output_dir(out)
+            out.chmod(0o700)
+            alias = Path(tmp) / "alias"
+            alias.symlink_to(out, target_is_directory=True)
+            with self.assertRaisesRegex(attest.Denied, "attestation_output_dir_not_root_private"):
+                attest.require_root_private_output_dir(alias)
+
     # --- no caller-supplied execution surface -------------------------------
     def test_cli_rejects_caller_supplied_test_commands(self):
         for argv in (["--test-command", '["/bin/sh","-c","id"]'], ["--repo", "/tmp"],
@@ -345,9 +372,9 @@ class AttesterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             root.mkdir()
-            key_file = Path(tmp) / "key"
-            key_file.write_bytes(KEY)
-            os.chmod(key_file, 0o600)
+            # A dry-run must be able to inspect the plan without opening
+            # or requiring the privileged signing secret.
+            key_file = Path(tmp) / "missing-signing-key"
             out = Path(tmp) / "out"
             manifest = policy(repo_root=str(root), out_dir=str(out), key_file=str(key_file),
                               services={"mantic-mcp": [["/bin/sh", "-c", "exit 0"]]})
@@ -364,6 +391,7 @@ class AttesterTests(unittest.TestCase):
                                     "--dry-run"])
             self.assertEqual(code, 0)
             self.assertFalse(out.exists(), "dry run must not create or write attestations")
+            self.assertFalse(key_file.exists(), "dry run must not need or create the signing key")
             printed = json.loads(stream.getvalue())
             self.assertEqual(printed["commands"], ["/bin/sh -c exit 0"])
             self.assertEqual(printed["runner_uid"], NONROOT)
