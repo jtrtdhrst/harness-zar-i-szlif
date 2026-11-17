@@ -24,9 +24,11 @@ freshness check below use the SHA fetched from GitHub instead.
 is already full and no upgrade is needed; treating it as incomplete rejects
 every sync after the first full index (`stage-seed-not-full`).
 
-The staged indexer runs with `--index-only`. Without it the network-isolated
-stage tries LLM page generation, fails without a key, and leaves
-`repositories.head_commit` and `.repowise-workspace.yaml` at the old SHA.
+## Why the staged indexer uses `--index-only`
+
+Without it the network-isolated stage tries LLM page generation, fails without
+a key, and leaves `repositories.head_commit` and `.repowise-workspace.yaml` at
+the old SHA.
 
 ## Verification
 
