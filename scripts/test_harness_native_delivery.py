@@ -284,6 +284,10 @@ class DeployStageTests(unittest.TestCase):
                          "a mutable tag must never be the deployed image reference")
         self.assertEqual([call[0] for call in host.calls].count("build"), 0,
                          "the deploy transport must never rebuild")
+        ps_calls = [call for call in host.calls if call[:2] == ("docker", "ps")]
+        self.assertTrue(ps_calls)
+        self.assertTrue(all(f"label=coolify.serviceUuid={UUID}" in call for call in ps_calls),
+                        "a healthy container from another Coolify service is not release evidence")
 
     def test_transport_deploys_attested_digest_not_retargetable_tag(self):
         host = FakeHost(images={
@@ -422,6 +426,25 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(health["status"], "ok")
         self.assertEqual(health["digest"], DIGEST)
         self.assertEqual(health["source_sha"], SOURCE)
+
+    def test_other_coolify_service_container_cannot_satisfy_health(self):
+        host = FakeHost(compose=COMPOSE.replace(
+            "local/mantic-mcp:old",
+            f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}"))
+        original_docker = host.docker
+
+        def only_other_service_is_healthy(*args, **kwargs):
+            if args[0] == "ps":
+                self.assertIn(f"label=coolify.serviceUuid={UUID}", args,
+                              "ps must bind healthy container to this exact resource")
+                host.calls.append(("docker",) + args)
+                return ""  # target UUID has no matching running container
+            return original_docker(*args, **kwargs)
+
+        host.docker = only_other_service_is_healthy
+        status = transport_for(host).health("mantic-mcp", UUID)
+        self.assertEqual(status["status"], "unhealthy")
+        self.assertTrue(any(call[0:2] == ("docker", "ps") for call in host.calls))
 
     def test_health_is_not_ok_when_the_service_is_unhealthy(self):
         host = FakeHost(service_status="running:unhealthy",
