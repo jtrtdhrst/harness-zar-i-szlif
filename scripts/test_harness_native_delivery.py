@@ -580,6 +580,18 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(host.mutations(), [])
         self.assertIn("admission_source_sha_mismatch", out)
 
+    def test_multi_service_batch_denial_prevents_any_partial_release(self):
+        # One authorized service + an unregistered changed service must not
+        # build/push/deploy even the authorized one before the full preflight.
+        changes = ("mantic-mcp/src/server.ts", "playwright-mcp/src/unreviewed.js")
+        for mode in ("prepare", "deploy"):
+            host = FakeHost()
+            code, out = self.run_main(mode, host, changed=changes,
+                                      extra=["--now", NOW.isoformat()])
+            self.assertEqual(code, 1, out)
+            self.assertIn("unknown_service", out)
+            self.assertEqual(host.calls, [], "admission failure must precede all host calls")
+
     def test_plan_mode_never_mutates(self):
         host = FakeHost()
         code, out = self.run_main("plan", host, extra=["--now", NOW.isoformat()])
