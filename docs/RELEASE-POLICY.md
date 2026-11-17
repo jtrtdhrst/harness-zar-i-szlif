@@ -2,6 +2,8 @@
 
 Owner/orchestrator: CHO. Independent native reviewer: CTO for release infrastructure; relevant CPO/CTO for product. **CI passing is not equivalent to independent review**. A recorded `changes_requested` decision stays binding until reworked and independently approved.
 
+The four-stage index (code → tests → deploy → acceptance, one PASS condition per stage) lives in `docs/DELIVERY-CONTRACT.md`. It is the entry point; this file remains the detailed policy.
+
 ## Release immutable artifact, not an arbitrary branch
 
 Approved **source commit and immutable image digest** (or Cloudflare version ID) is the release identity, never merely a branch name. Each service may have its own integration ref, candidate ref and approved release ref. **No system-wide requirement for production `main`.** A PR merge does not itself deploy a pinned-image service.
