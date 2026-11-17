@@ -18,8 +18,7 @@ permissions:
 
 jobs:
   validate-release-lanes:
-    # GitHub-hosted minutes are blocked by billing on this account; keep the
-    # release gate running on the local runner instead of skipping it.
+    # Keep using the existing local-build runner; GitHub-hosted minutes are blocked.
     runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 10
     steps:
@@ -31,3 +30,12 @@ jobs:
         run: python scripts/check-release-lanes.py --self-test
       - name: Guard against non-MCP automatic image builds
         run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
+      - name: Set up Node.js 24 for Multica MCP adapter
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test Multica MCP adapter (required on every PR)
+        working-directory: multica-mcp
+        env:
+          MULTICA_MCP_HOME: ${{ runner.temp }}/multica-mcp-ci-home
+        run: npm test
