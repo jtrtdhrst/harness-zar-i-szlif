@@ -381,6 +381,17 @@ def changed_paths(repo, base_sha, source_sha):
     return paths
 
 
+def require_root_private_output_dir(path):
+    """Reject a pre-existing symlink or untrusted attestation directory."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        raise Denied("attestation_output_dir_unavailable") from None
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+            or stat.S_IMODE(info.st_mode) & 0o077):
+        raise Denied("attestation_output_dir_not_root_private")
+
+
 def write_atomic(path, payload):
     """Persist one attestation without following or truncating a predictable tmp symlink."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
@@ -436,6 +447,7 @@ def main(argv=None):
             raise Denied("signing_key_weak")
         verify_checkout(repo, args.source_sha)
         Path(policy["out_dir"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+        require_root_private_output_dir(policy["out_dir"])
         with open(Path(policy["out_dir"]) / (args.service + ".lock"), "a+", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             if target.exists():
