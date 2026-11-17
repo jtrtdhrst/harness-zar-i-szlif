@@ -27,6 +27,7 @@ const server = spawn(process.execPath, [join(here, "server.mjs")], {
     ...process.env, BRIDGE_PORT: String(port),
     BRIDGE_PUBLIC_URL: `http://127.0.0.1:${port}`,
     BRIDGE_TOKEN_FILE: join(dir, "token"), BRIDGE_URL_KEY_FILE: join(dir, "key"),
+    BRIDGE_ACCESS_JWKS_URL: "http://127.0.0.1:9/certs", // dead port: fail closed, no network
     BRIDGE_AUDIT_FILE: join(dir, "audit.jsonl"),
     BRIDGE_CHILD_CMD: process.execPath, BRIDGE_CHILD_ARGS: join(dir, "child.mjs"),
   },
@@ -90,6 +91,10 @@ try {
 
   const formFlow = await oauthFlow("form-verifier", URL_KEY);
   expect("GET /authorize form", (await fetch(`${url}/authorize?${formFlow.authorize}`)).status, 200);
+  // A spoofed/unsigned Access JWT must never grant approval (no form bypass).
+  const spoofedJwt = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2UifQ.eyJzdWIiOiJhdHRhY2tlciIsImF1ZCI6IjU5MDhiMzNiNTkzNTAzMTIwODUxNzM2N2ZhNTcxMmI0OWZiNjhmMWI5ZWU4MjMzZDA1ODRiOWMzZmNmMjkyMDEiLCJpc3MiOiJodHRwczovL2ZsYXNoYXV0b21hdGUuY2xvdWRmbGFyZWFjY2Vzcy5jb20ifQ.fake-signature";
+  expect("GET /authorize spoofed Access JWT stays form", (await fetch(`${url}/authorize?${formFlow.authorize}`, { headers: { "cf-access-jwt-assertion": spoofedJwt } })).status, 200);
+  expect("POST /authorize spoofed Access JWT rejected", (await fetch(`${url}/authorize?${formFlow.authorize}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "cf-access-jwt-assertion": spoofedJwt }, body: new URLSearchParams({ key: "wrong" }), redirect: "manual" })).status, 401);
   expect("POST /authorize wrong key", (await oauthFlow("verifier-1", "wrong")).authRes.status, 401);
   const evil = new URLSearchParams({
     response_type: "code", client_id: "x", redirect_uri: "https://evil.example/cb", state: "s",
