@@ -28,6 +28,7 @@ const ACCESS_ISSUER = process.env.BRIDGE_ACCESS_ISSUER || "https://flashautomate
 const ACCESS_AUD = process.env.BRIDGE_ACCESS_AUD || "5908b33b5935031208517367fa5712b49fb68f1b9ee8233d0584b9c3fcf29201";
 const ACCESS_JWKS_URL = process.env.BRIDGE_ACCESS_JWKS_URL || `${ACCESS_ISSUER}/cdn-cgi/access/certs`;
 const TOKEN_TTL_S = 3600;
+const REFRESH_TTL_S = 30 * 24 * 3600;
 const AUTHORIZE_CODE_TTL_MS = 5 * 60 * 1000;
 
 const token = readFileSync(TOKEN_FILE, "utf8").trim();
@@ -61,22 +62,29 @@ function audit(entry) {
 }
 
 // ---- OAuth (MCP authorization spec: protected-resource metadata, CIMD/none + PKCE) ----
-// Tokens are HMAC-signed and in-memory-free: a restart only forces clients to reauthorize.
+// Tokens are HMAC-signed and stateless. Access tokens are short-lived; refresh
+// tokens are long-lived and domain-separated so one cannot be used as the other.
+// OpenAI custom connectors declare refresh_token in their client metadata and
+// expect it in the token response; without it ChatGPT reports missing OAuth data.
 const MCP_PATH = "/mcp";
 function base64url(buf) { return Buffer.from(buf).toString("base64url"); }
-function hmac(input) { return createHash("sha256").update(token).update("\0").update(input).digest(); }
-function signToken(exp) {
-  const payload = base64url(JSON.stringify({ exp, jti: randomBytes(9).toString("base64url") }));
-  return `${payload}.${base64url(hmac(payload))}`;
+function hmac(input, domain) { return createHash("sha256").update(token).update("\0").update(domain).update("\0").update(input).digest(); }
+function signToken(exp, domain, kind) {
+  const payload = base64url(JSON.stringify({ exp, kind, jti: randomBytes(9).toString("base64url") }));
+  return `${payload}.${base64url(hmac(payload, domain))}`;
 }
-function validToken(tok) {
+function validToken(tok, domain, kind) {
   const dot = tok.indexOf(".");
   if (dot <= 0) return false;
   const payload = tok.slice(0, dot);
-  if (!check(tok.slice(dot + 1), base64url(hmac(payload)))) return false;
-  try { return JSON.parse(Buffer.from(payload, "base64url").toString()).exp > Date.now() / 1000; }
-  catch { return false; }
+  if (!check(tok.slice(dot + 1), base64url(hmac(payload, domain)))) return false;
+  try {
+    const p = JSON.parse(Buffer.from(payload, "base64url").toString());
+    return p.kind === kind && typeof p.exp === "number" && p.exp > Date.now() / 1000;
+  } catch { return false; }
 }
+function accessToken() { return signToken(Math.floor(Date.now() / 1000) + TOKEN_TTL_S, "access", "at"); }
+function refreshTokenValue() { return signToken(Math.floor(Date.now() / 1000) + REFRESH_TTL_S, "refresh", "rt"); }
 // One-time authorization codes: code -> { challenge, resource, exp }.
 const codes = new Map();
 function pruneCodes() {
@@ -145,6 +153,8 @@ function authorizeParams(u) {
 }
 function redirectWith(params, values) {
   const target = new URL(params.redirect_uri);
+  // RFC 9207: OpenAI validates the issuer on the authorization response.
+  target.searchParams.set("iss", PUBLIC_ORIGIN());
   for (const [k, v] of Object.entries(values)) if (v) target.searchParams.set(k, v);
   return target.toString();
 }
@@ -230,7 +240,7 @@ function authed(req) {
   if (h.startsWith("Bearer ")) {
     const got = h.slice(7);
     if (wanted.some((want) => check(got, want))) return true;
-    if (validToken(got)) return true;
+    if (validToken(got, "access", "at")) return true;
   }
   try {
     const u = new URL(req.url, "http://localhost");
@@ -295,8 +305,10 @@ function handleOAuth(req, res, path) {
       grant_types_supported: ["authorization_code"],
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
       client_id_metadata_document_supported: true,
       scopes_supported: ["mcp"],
+      authorization_response_iss_parameter_supported: true,
     });
     return true;
   }
@@ -359,9 +371,22 @@ const server = createServer(async (req, res) => {
     let form;
     try { form = new URLSearchParams(await readBody(req)); }
     catch { sendJson(res, 400, { error: "invalid_request" }); return; }
+    const grant = form.get("grant_type");
+    const tokens = () => ({
+      access_token: accessToken(), refresh_token: refreshTokenValue(),
+      token_type: "Bearer", expires_in: TOKEN_TTL_S, scope: "mcp",
+    });
+    if (grant === "refresh_token") {
+      // Stateless signed refresh token: HMAC domain-separated from access tokens.
+      const presented = form.get("refresh_token") || "";
+      if (!validToken(presented, "refresh", "rt")) { sendJson(res, 400, { error: "invalid_grant" }); return; }
+      sendJson(res, 200, tokens());
+      return;
+    }
+    if (grant !== "authorization_code") { sendJson(res, 400, { error: "unsupported_grant_type" }); return; }
     const entry = codes.get(form.get("code") || "");
     codes.delete(form.get("code") || "");
-    if (form.get("grant_type") !== "authorization_code" || !entry || entry.exp < Date.now()) {
+    if (!entry || entry.exp < Date.now()) {
       sendJson(res, 400, { error: "invalid_grant" });
       return;
     }
@@ -372,7 +397,7 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: "invalid_grant", error_description: "resource mismatch" });
       return;
     }
-    sendJson(res, 200, { access_token: signToken(Math.floor(Date.now() / 1000) + TOKEN_TTL_S), token_type: "Bearer", expires_in: TOKEN_TTL_S, scope: "mcp" });
+    sendJson(res, 200, tokens());
     return;
   }
 
