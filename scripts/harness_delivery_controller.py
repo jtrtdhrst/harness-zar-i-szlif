@@ -164,7 +164,22 @@ def _promote(service, record, transport, state, state_path):
         return decision
     decision["previous_image_digest"] = previous
     if isinstance(previous, str) and previous == admitted and state.get(service, {}).get("source_sha") == record["source_sha"]:
-        decision.update(decision="already_delivered")
+        # Idempotence is not a substitute for live acceptance. The image may
+        # still be pinned while the container is unhealthy, stopped or running
+        # another revision. No rebuild/deploy is needed, but the readback must
+        # prove both image digest and exact source SHA before returning success.
+        try:
+            health = transport.health(service, uuid)
+        except Exception:
+            decision.update(decision="denied", reason="already_delivered_health_unavailable")
+            return decision
+        if not isinstance(health, dict) or health.get("status") != "ok":
+            decision.update(decision="denied", reason="already_delivered_unhealthy")
+            return decision
+        if health.get("digest") != admitted or health.get("source_sha") != record["source_sha"]:
+            decision.update(decision="denied", reason="already_delivered_revision_mismatch")
+            return decision
+        decision.update(decision="already_delivered", health=health)
         return decision
     try:
         built = transport.build(service, record["source_sha"])
