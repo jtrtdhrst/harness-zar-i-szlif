@@ -5,7 +5,7 @@
 // key once, so a human approves each connection and no token is stored by ChatGPT.
 // No secrets in code/logs. Audit JSONL with redaction. Stateless HTTP (multi-session safe).
 import { createServer } from "node:http";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual, createPublicKey, verify as verifySignature } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFileSync, appendFileSync } from "node:fs";
 
@@ -21,6 +21,12 @@ const CALL_TIMEOUT_MS = Number(process.env.BRIDGE_CALL_TIMEOUT_MS || "310000");
 const PUBLIC_URL = (process.env.BRIDGE_PUBLIC_URL || "").replace(/\/$/, "");
 // Set only behind the OpenAI Secure MCP Tunnel: avoids OAuth challenges no client can complete.
 const TRUST_TUNNEL = process.env.BRIDGE_TRUST_TUNNEL === "1";
+// Cloudflare Access in front of /authorize issues a One-time PIN by email.
+// Accept a verified Access JWT on /authorize as the human approval, so a
+// signed-in owner no longer has to paste the URL key. Empty AUD disables it.
+const ACCESS_ISSUER = process.env.BRIDGE_ACCESS_ISSUER || "https://flashautomate.cloudflareaccess.com";
+const ACCESS_AUD = process.env.BRIDGE_ACCESS_AUD || "5908b33b5935031208517367fa5712b49fb68f1b9ee8233d0584b9c3fcf29201";
+const ACCESS_JWKS_URL = process.env.BRIDGE_ACCESS_JWKS_URL || `${ACCESS_ISSUER}/cdn-cgi/access/certs`;
 const TOKEN_TTL_S = 3600;
 const AUTHORIZE_CODE_TTL_MS = 5 * 60 * 1000;
 
@@ -107,7 +113,7 @@ function escapeHtml(s) {
 function authorizePage(params, error) {
   const q = new URLSearchParams(params).toString();
   return page(`<h1>Ubuntu MCP</h1>
-<p>ChatGPT asks for SSH access to the Ubuntu host through this bridge. Enter the bridge URL key to approve. It is not sent to ChatGPT.</p>
+<p>ChatGPT asks for SSH access to the Ubuntu host through this bridge. Sign in with the Cloudflare Access code emailed to you, or enter the bridge URL key below to approve. Neither is sent to ChatGPT.</p>
 ${error ? `<p><strong>${escapeHtml(error)}</strong></p>` : ""}
 <form method="POST" action="/authorize?${escapeHtml(q)}">
 <label>URL key <input type="password" name="key" autocomplete="current-password" required autofocus></label>
@@ -141,6 +147,13 @@ function redirectWith(params, values) {
   const target = new URL(params.redirect_uri);
   for (const [k, v] of Object.entries(values)) if (v) target.searchParams.set(k, v);
   return target.toString();
+}
+function issueAuthorizationCode(params, res, event, principal) {
+  const code = randomBytes(24).toString("base64url");
+  codes.set(code, { challenge: params.code_challenge, resource: params.resource, exp: Date.now() + AUTHORIZE_CODE_TTL_MS });
+  audit({ event, client_id: params.client_id.slice(0, 120), resource: params.resource.slice(0, 200), principal: String(principal || "").slice(0, 200) });
+  res.writeHead(302, { location: redirectWith(params, { code, state: params.state }), "cache-control": "no-store" });
+  res.end();
 }
 function check(got, want) {
   if (!got || !want) return false;
@@ -226,6 +239,42 @@ function authed(req) {
   } catch { return false; }
 }
 
+// Cloudflare Access JWT on /authorize: verify signature via Access JWKS so a
+// spoofed header cannot approve a connection. Mirrors comfy-mcp-access-bridge.
+let accessJwks = { at: 0, keys: [] };
+async function verifiedAccessIdentity(req) {
+  if (!ACCESS_AUD) return null;
+  const token = req.headers["cf-access-jwt-assertion"];
+  if (!token || typeof token !== "string" || token.length > 16384) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  let header, payload;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch { return null; }
+  if (header.alg !== "RS256" || !header.kid || !payload) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.iss !== ACCESS_ISSUER || !(Array.isArray(payload.aud) ? payload.aud : [payload.aud]).includes(ACCESS_AUD)) return null;
+  if (typeof payload.exp !== "number" || payload.exp < now || (typeof payload.nbf === "number" && payload.nbf > now + 30)) return null;
+  if (!payload.sub && !payload.email) return null;
+  async function keys(force) {
+    if (!force && accessJwks.keys.length && Date.now() - accessJwks.at < 300000) return accessJwks.keys;
+    const r = await fetch(ACCESS_JWKS_URL, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error("JWKS unavailable");
+    const b = await r.json();
+    accessJwks = { at: Date.now(), keys: (b.keys || []).filter((x) => x.kty === "RSA" && x.kid) };
+    return accessJwks.keys;
+  }
+  try {
+    let key = (await keys(false)).find((x) => x.kid === header.kid);
+    if (!key) key = (await keys(true)).find((x) => x.kid === header.kid);
+    if (!key) return null;
+    if (!verifySignature("RSA-SHA256", Buffer.from(parts[0] + "." + parts[1]), createPublicKey({ key, format: "jwk" }), Buffer.from(parts[2], "base64url"))) return null;
+  } catch { return null; }
+  return payload;
+}
+
 function handleOAuth(req, res, path) {
   const origin = PUBLIC_ORIGIN();
   if (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp") {
@@ -277,6 +326,12 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: "invalid_request", error_description: "redirect_uri not allowed" });
       return;
     }
+    // A verified Cloudflare Access JWT (One-time PIN email) counts as approval.
+    const accessIdentity = await verifiedAccessIdentity(req);
+    if (req.method === "GET" && accessIdentity) {
+      issueAuthorizationCode(params, res, "oauth_authorize_access", accessIdentity.email || accessIdentity.sub || "");
+      return;
+    }
     if (req.method === "GET") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       res.end(authorizePage(params, ""));
@@ -286,17 +341,14 @@ const server = createServer(async (req, res) => {
       let action;
       try { action = new URLSearchParams(await readBody(req)); }
       catch { sendJson(res, 400, { error: "invalid_request" }); return; }
-      if (![token, urlKey].filter(Boolean).some((want) => check(action.get("key") || "", want))) {
+      const keyOk = [token, urlKey].filter(Boolean).some((want) => check(action.get("key") || "", want));
+      if (!accessIdentity && !keyOk) {
         audit({ event: "oauth_authorize_denied", client_id: params.client_id.slice(0, 120), ua: String(req.headers["user-agent"] || "").slice(0, 120) });
         res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
         res.end(authorizePage(params, "Wrong URL key."));
         return;
       }
-      const code = randomBytes(24).toString("base64url");
-      codes.set(code, { challenge: params.code_challenge, resource: params.resource, exp: Date.now() + AUTHORIZE_CODE_TTL_MS });
-      audit({ event: "oauth_authorize", client_id: params.client_id.slice(0, 120), resource: params.resource.slice(0, 200) });
-      res.writeHead(302, { location: redirectWith(params, { code, state: params.state }), "cache-control": "no-store" });
-      res.end();
+      issueAuthorizationCode(params, res, accessIdentity ? "oauth_authorize_access" : "oauth_authorize", accessIdentity ? (accessIdentity.email || accessIdentity.sub) : "");
       return;
     }
     sendJson(res, 405, { error: "method_not_allowed" });
