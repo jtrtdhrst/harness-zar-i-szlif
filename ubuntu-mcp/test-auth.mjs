@@ -72,7 +72,7 @@ try {
   expect("POST /mcp Bearer <url-key>", await call("/mcp", { authorization: `Bearer ${URL_KEY}` }), 200);
   expect("POST /mcp?key=wrong", await call("/mcp?key=wrong"), 401);
   expect("GET /healthz", (await fetch(url + "/healthz")).status, 200);
-  expect("GET /mcp?key=<url-key>", (await fetch(`${url}/mcp?key=${URL_KEY}`)).status, 404);
+  expect("GET /mcp?key=<url-key>", (await fetch(`${url}/mcp?key=${URL_KEY}`)).status, 405);
 
   const meta = await fetch(url + "/.well-known/oauth-protected-resource");
   const metaJson = await meta.json();

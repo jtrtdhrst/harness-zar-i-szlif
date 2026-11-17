@@ -323,6 +323,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (path === "/mcp" && req.method !== "POST") {
+    // MCP Streamable HTTP: this bridge is stateless and opens no GET SSE stream.
+    res.writeHead(405, { "content-type": "application/json", allow: "POST", ...corsHeaders() });
+    res.end(JSON.stringify({ error: "method_not_allowed" }));
+    return;
+  }
   if (path !== "/mcp" || req.method !== "POST") {
     res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "not_found" })); return;
   }
