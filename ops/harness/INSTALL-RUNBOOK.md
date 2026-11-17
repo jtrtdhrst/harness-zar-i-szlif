@@ -176,6 +176,22 @@ for forensics. Its original entrypoint remains the reviewed fail-closed shim,
 including after restoring the old unit. A disabled timer alone is insufficient
 protection against accidental manual invocation; the shim must remain in place.
 
+## Immutable image and rollback acceptance
+
+The transport MUST patch the Coolify Compose image using an exact immutable
+`127.0.0.1:5000/harness-<service>@sha256:<64-hex>` reference, NEVER the
+mutable `harness-<service>:<sha12>` tag. A pushed tag is only a build locator.
+The root-owned local-CI attestation must bind to the **same digest** found in
+the running image. A tag-only Compose deployment is an E2E FAIL even when its
+repository SHA label happens to match.
+
+Rollback acceptance is likewise not a Coolify API POST 200/201: the controller
+must read back the exact previous Compose bytes and independently verify live
+healthy service state. On timeout, `rollback_failed` is the required verdict,
+not a PASS, and the timer must remain disabled pending manual remediation.
+Independent authenticated MCP positive/negative QA and safe recovery evidence
+are additional requirements before a delivery issue becomes Done.
+
 ## Not claimed by the source change
 
 - Nothing here is installed, started, or verified by an agent.
