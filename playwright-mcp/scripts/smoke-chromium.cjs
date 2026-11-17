@@ -9,16 +9,31 @@
 // failure. It is also the container smoke used after a deploy:
 //   docker run --rm --entrypoint node <image> /app/scripts/smoke-chromium.cjs
 //
-// Exit 0 = Chromium launched and ran script; non-zero = image is unusable.
+// Exit 0 = Chromium launched, ran script, and was closed; non-zero = unusable.
+//
+// Cleanup rule: no `process.exit()` on any path. Failures throw, the `finally`
+// closes the browser, and only then is the exit code set. A smoke that dies
+// mid-way must never leave a Chromium process behind.
+//
+// SMOKE_EXPECT_TITLE (default `playwright-mcp-smoke`) overrides only the
+// expected title, not the page content, so an operator can force a post-launch
+// assertion failure to exercise that cleanup path.
 const fs = require("node:fs");
 const path = require("node:path");
 
-const fail = (code, detail) => {
-  console.error(JSON.stringify({ ok: false, code, detail }, null, 2));
-  process.exit(1);
-};
+const PAGE_TITLE = "playwright-mcp-smoke";
+const EXPECTED_TITLE = process.env.SMOKE_EXPECT_TITLE || PAGE_TITLE;
 
-(async () => {
+class SmokeFailure extends Error {
+  constructor(code, detail) {
+    super(detail);
+    this.code = code;
+    this.detail = detail;
+  }
+}
+const fail = (code, detail) => { throw new SmokeFailure(code, detail); };
+
+async function run() {
   const coreDir = path.join(__dirname, "..", "node_modules", "playwright-core");
   const browsersJsonPath = path.join(coreDir, "browsers.json");
   if (!fs.existsSync(browsersJsonPath)) {
@@ -45,19 +60,17 @@ const fail = (code, detail) => {
     fail("REVISION_MISMATCH", `installed browser directory ${revisionDir} does not match pinned revision ${expected.chromium}`);
   }
 
-  let browser;
+  const browser = await chromium.launch({ args: ["--no-sandbox"] });
   try {
-    browser = await chromium.launch({ args: ["--no-sandbox"] });
     const page = await browser.newPage();
-    await page.setContent("<title>playwright-mcp-smoke</title><p id=v>1</p>");
+    await page.setContent(`<title>${PAGE_TITLE}</title><p id=v>1</p>`);
     const value = await page.evaluate(() => 1 + 1);
     const title = await page.title();
     const version = browser.version();
-    if (value !== 2 || title !== "playwright-mcp-smoke") {
-      fail("SCRIPT_FAILED", `page did not evaluate as expected (value=${value}, title=${title})`);
+    if (value !== 2 || title !== EXPECTED_TITLE) {
+      fail("SCRIPT_FAILED", `page did not evaluate as expected (value=${value}, title=${title}, expectedTitle=${EXPECTED_TITLE})`);
     }
-    console.log(JSON.stringify({
-      ok: true,
+    return {
       check: "chromium-launch",
       playwrightCore: expected.playwrightCore,
       chromiumRevision: expected.chromium,
@@ -65,10 +78,31 @@ const fail = (code, detail) => {
       installedRevisionDir: revisionDir,
       executablePath,
       browserVersion: version,
-    }, null, 2));
-  } catch (e) {
-    fail("LAUNCH_FAILED", String((e && e.message) || e).split("\n").slice(0, 6).join(" | "));
+    };
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    // Always release the browser, on success and on every failure path.
+    await browser.close().catch(() => {});
+    if (browser.isConnected && browser.isConnected()) {
+      // close() failing would leave a live Chromium behind: that is a defect
+      // in its own right and must not be reported as a clean run.
+      throw new SmokeFailure("BROWSER_NOT_CLOSED", "Chromium is still connected after close()");
+    }
   }
+}
+
+(async () => {
+  let outcome = null;
+  let failure = null;
+  try {
+    outcome = await run();
+  } catch (e) {
+    failure = e instanceof SmokeFailure ? e : new SmokeFailure("SMOKE_ERROR", String((e && e.message) || e));
+  }
+  if (failure) {
+    console.error(JSON.stringify({ ok: false, code: failure.code, detail: failure.detail }, null, 2));
+    process.exitCode = 1;
+    return;
+  }
+  console.log(JSON.stringify({ ok: true, cleanup: { browserClosed: true }, ...outcome }, null, 2));
+  process.exitCode = 0;
 })();

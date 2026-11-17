@@ -69,6 +69,33 @@ snapshot. Point it at a live container with
 `docker run --rm --entrypoint node <image> /app/scripts/smoke-mcp.cjs`.
 Locally, set `SMOKE_BACKEND_ENTRY=./node_modules/@playwright/mcp/cli.js`.
 
+A pass means a real page came back, not just an HTTP 200:
+
+- `result.isError === true` fails (`TOOL_CALL_IS_ERROR`), even when the error
+  text contains a well-formed snapshot;
+- the payload must contain the snapshot lines `- Page URL: <requested url>` and
+  `- Page Title: <title>` inside `### Page` / `### Snapshot`; the title is
+  compared exactly, so an error that echoes the requested
+  `data:text/html,<title>…</title>` URL cannot pass (`SNAPSHOT_TITLE_MISMATCH`,
+  `SNAPSHOT_URL_MISMATCH`, `SNAPSHOT_MISSING`);
+- `tests/smoke-failure.test.mjs` drives `tests/fixtures/stub-smoke-backend.mjs`
+  in `success`, `error-echo-url`, `error-with-fake-snapshot` and `wrong-title`
+  modes: the error modes must exit non-zero and the success mode must exit 0.
+
+Both helpers clean up on every path. They never call `process.exit()` inside
+their work: failures throw, the `finally` stops the proxy (SIGTERM, then SIGKILL
+to the backend process group, so Chromium dies with it) or closes the browser,
+and the exit code is set afterwards. `smoke-mcp.cjs` then verifies that the
+proxy and backend ports are actually closed and reports `cleanup` in both the
+success and failure output either way; a port still listening is itself a
+failure (`ORPHAN_PROCESS`). `smoke-chromium.cjs` verifies the browser is
+disconnected after `close()` (`BROWSER_NOT_CLOSED`). The failure-path tests
+assert no orphan port, no live stub backend and no surviving Chromium process.
+
+Operator hooks: `SMOKE_EXPECT_TITLE` (expected page title, defaults to
+`playwright-mcp-smoke`), `SMOKE_LISTEN_PORT` (pin the proxy port),
+`SMOKE_BOOT_TIMEOUT_MS`, `SMOKE_BACKEND_ENTRY`.
+
 ## Backend lifecycle contract
 
 The proxy owns the MCP backend process and may stop it only when nothing is
