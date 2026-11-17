@@ -73,7 +73,7 @@ def workflow_has_required_test_step(path, required):
     start = lines.index(job_marker) + 1
     job_lines = []
     for line in lines[start:]:
-        if re.match(r"^  [A-Za-z][\\w-]*:\\s*$", line):
+        if re.match(r"^  [A-Za-z][\w-]*:\s*$", line):
             break
         job_lines.append(line)
     if any(re.match(r"^    (?:if|continue-on-error):", line) for line in job_lines):

@@ -73,11 +73,11 @@ class ServiceCoverageTests(unittest.TestCase):
 
     def test_required_test_step_rejects_missing_or_bypassed_tests(self):
         workflow = (
-            "name: test\\non:\\n  pull_request:\\njobs:\\n  guard:\\n"
-            "    runs-on: ubuntu-latest\\n    steps:\\n"
-            "      - name: MCP tests\\n"
-            "        working-directory: svc\\n"
-            "        run: npm test\\n"
+            "name: test\non:\n  pull_request:\njobs:\n  guard:\n"
+            "    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: MCP tests\n"
+            "        working-directory: svc\n"
+            "        run: npm test\n"
         )
         entry = {
             "mode": "workflow",
@@ -96,10 +96,10 @@ class ServiceCoverageTests(unittest.TestCase):
             workflow.replace("run: npm test", "run: echo skipped"),
             workflow.replace("name: MCP tests", "name: renamed"),
             workflow.replace("working-directory: svc", "working-directory: other"),
-            workflow.replace("run: npm test", "if: false\\n        run: npm test"),
-            workflow.replace("run: npm test", "continue-on-error: true\\n        run: npm test"),
+            workflow.replace("run: npm test", "if: false\n        run: npm test"),
+            workflow.replace("run: npm test", "continue-on-error: true\n        run: npm test"),
             workflow.replace("run: npm test", "run: npm test || true"),
-            workflow.replace("  guard:\\n", "  another_job:\\n"),
+            workflow.replace("  guard:\n", "  another_job:\n"),
         ):
             temp, root, config = self.fixture(entry, altered)
             with temp:
