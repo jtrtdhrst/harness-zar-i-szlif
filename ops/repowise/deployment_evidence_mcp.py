@@ -242,7 +242,13 @@ def serve_http() -> None:
     host = os.environ.get("DEPLOY_EVIDENCE_HTTP_HOST", "127.0.0.1")
     if host not in ("127.0.0.1", "::1"):
         raise RuntimeError("http_host_not_loopback")
-    uvicorn.run(app, host=host, port=7339, log_level="warning")
+    port_raw = os.environ.get("DEPLOY_EVIDENCE_HTTP_PORT", "7339")
+    if not port_raw.isascii() or not port_raw.isdecimal():
+        raise RuntimeError("http_port_invalid")
+    port = int(port_raw)
+    if port < 1024 or port > 65535:
+        raise RuntimeError("http_port_invalid")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":
