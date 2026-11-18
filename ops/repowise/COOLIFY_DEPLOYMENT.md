@@ -25,9 +25,12 @@ checkout; `REPOWISE_EPISODES_HOST_PATH` points to the nested native
 (not its contents). `REPOWISE_WRITER_PORT` defaults to staging 7342.
 All host paths must exist and be owner-authorized. Do not set a public domain.
 
-The actual bearer must stay in a root-controlled mode-0600 file read by
-the nonroot image via a read-only bind; never put tokens in Git, issue
-text, logs or plain Compose env. The writer must not run as root and
+The actual bearer must stay in a root-managed directory as a mode-0600
+regular file **owned by service UID:GID 999:999**, so the nonroot image can
+read it via a read-only bind. Root administers the mount path and can revoke it;
+the secret's inode is not root-owned. Never put token values in Git, issues,
+logs or plain Compose env. A root:root 0600 file would be unreadable by UID 999
+and is an invalid staging configuration, not a reason to widen permissions. The writer must not run as root and
 may never mount Product `.git` writable. The host path for Product
 must be RO and only episodes nested bind RW. The existing sync timer
 remains the only indexer; publisher shares its exact lock inode.
@@ -65,3 +68,53 @@ independently PASS/FAIL/NOT_RUN. A native episode marked
 ZARI-240 Done requires authorized reviewed service deploy, digest
 attestation, independent authenticated QA and rollback — in addition
 to ZARI-213 isolation protections.
+
+## Coolify host-volume validation — confirmed 2026-11-18
+
+The initial Git-backed staging app `gl8bvfjtw2af8hkox4mguzzr` rejected
+`compose.publisher.yaml` **before building**, because Coolify's Compose
+security parser disallows `${...}` substitution in the `volumes[].source`
+field (deployment `fdl8ixqv6ydb0qcxnrjchpvl`, status FAILED).
+Do not disable the validator, enable raw Compose bypass, or make the
+Product Git mount writable to get around this check.
+
+Use `compose.publisher.coolify.yaml` for this specific verified VPS:
+all four bind sources are static and match preflight readback of the
+already running operator writer. No bearer content is in Git; the
+root-controlled mode-0600 file itself remains a read-only bind.
+The portable `compose.publisher.yaml` remains available for local
+`docker compose config` and repeatable source tests.
+
+For the staging app, pin the exact reviewed source SHA and set
+`docker_compose_location=/ops/repowise/compose.publisher.coolify.yaml`.
+Keep auto-deploy and preview deploys disabled; retain no public domain,
+loopback port 7342 and the existing independent writer at 7339.
+Verify `docker compose config --quiet`, Coolify's runtime status,
+actual image digest, mounts, 401 without bearer and authenticated
+native MCP read/negative tool results before any cutover.
+The new app has NO release authority while ZARI-213 and parent
+ZARI-240 controls remain unproven; no rollback or production QA claim
+follows from successfully creating this application.
+
+### Live host identity / ACL proof, 2026-11-18 (no token contents read)
+
+Exact UID-999 non-secret canary on the existing manual writer container
+`repowise-deployment-publisher-product` using `docker exec --user 999:999`
+opened `/run/secrets/repowise-token` with `os.open(O_RDONLY|O_NOFOLLOW)`,
+returned **PASS**, `fileuid=999`, `mode=0600`, `regular=True`;
+`/run/lock/repowise-github-sync.lock` opened the same way **PASS**
+(`uid=0,mode=0640`, explicit existing read ACL for the mapped UID 999).
+No token bytes were read. Actual host token path
+`/etc/repowise-publisher/product.token` is a regular, non-symlink file
+(`uid=999,gid=999,mode=0600`). Host Product directory and episodes directory
+are canonical, non-symlink paths owned by UID 999; the lock and token source
+also resolve canonically without symlinks. All four mounts are already present
+on the independently running manual service. Their actual functionality does
+not by itself prove a newly built Coolify staging instance is started, and
+must be checked again on that instance's newly built image before cutover.
+
+Unauthorized HTTP on manual writer port 7339 remains 401. The original failed
+Coolify staging attempt used the portable Compose and created NO runtime;
+new staging build/test/startup at port 7342 and digest/rollback remain pending
+independent approval. The owner of the *file* must not be confused with the
+operator who administratively manages the protected path.
