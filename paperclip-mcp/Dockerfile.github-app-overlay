@@ -1,6 +1,0 @@
-# Reproducible overlay for the existing verified Paperclip MCP image on the VPS.
-# Never vend private key or a generated GitHub installation token into this build.
-FROM paperclip-mcp:github-role-policy-20261103
-COPY src/workspace-native.ts /opt/paperclip-mcp/src/workspace-native.ts
-COPY src/p1-git.ts /opt/paperclip-mcp/src/p1-git.ts
-LABEL org.opencontainers.image.description="Scoped, rotating GitHub App installation credentials for Paperclip MCP"

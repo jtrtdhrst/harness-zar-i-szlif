@@ -58,6 +58,46 @@ def workflow_covers_root(path, root_name):
     return False
 
 
+
+def workflow_has_required_test_step(path, required):
+    """Check the exact unguarded command in the named CI job (not a comment)."""
+    if not isinstance(required, dict) or not all(
+        isinstance(required.get(k), str) and required[k].strip()
+        for k in ("job", "name", "working_directory", "run")
+    ):
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines()
+    job_marker = f"  {required['job']}:"
+    if job_marker not in lines:
+        return False
+    start = lines.index(job_marker) + 1
+    job_lines = []
+    for line in lines[start:]:
+        if re.match(r"^  [A-Za-z][\w-]*:\s*$", line):
+            break
+        job_lines.append(line)
+    if any(re.match(r"^    (?:if|continue-on-error):", line) for line in job_lines):
+        return False
+    step_marker = f"      - name: {required['name']}"
+    for index, line in enumerate(job_lines):
+        if line != step_marker:
+            continue
+        step_lines = []
+        for step_line in job_lines[index + 1:]:
+            if step_line.startswith("      - "):
+                break
+            if step_line and not step_line.startswith("        ") and not step_line.lstrip().startswith("#"):
+                break
+            step_lines.append(step_line)
+        if any(re.match(r"^        (?:if|continue-on-error):", s) for s in step_lines):
+            continue
+        if (
+            f"        working-directory: {required['working_directory']}" in step_lines
+            and f"        run: {required['run']}" in step_lines
+        ):
+            return True
+    return False
+
 def check(root=ROOT, config_path=CONFIG):
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("schema_version") != 1 or not isinstance(config.get("entries"), dict):
@@ -84,6 +124,8 @@ def check(root=ROOT, config_path=CONFIG):
                     raise ValueError(f"{name}: missing workflow {workflow}")
                 if not workflow_covers_root(path, name):
                     raise ValueError(f"{name}: {workflow} does not path-filter this root or cover all pull requests")
+                if entry.get("required_test_step") is not None and not workflow_has_required_test_step(path, entry["required_test_step"]):
+                    raise ValueError(f"{name}: {workflow} missing mandatory unconditional test step")
         else:
             raise ValueError(f"{name}: unknown coverage mode {mode!r}")
 
