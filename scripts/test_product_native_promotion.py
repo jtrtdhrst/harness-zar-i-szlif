@@ -162,6 +162,14 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaises(p.Denied):
                     p.checks(SOURCE)
 
+    def test_tracked_systemd_unit_is_multica_scoped(self):
+        """A future systemd reinstall must not resurrect legacy Paperclip approval."""
+        unit = p.Path(__file__).resolve().parents[1] / "ops/systemd/product-native-promotion.service"
+        text = unit.read_text(encoding="utf-8")
+        self.assertIn("ConditionPathExists=/usr/local/libexec/multica_native_release_gate.py", text)
+        self.assertIn("Environment=PRODUCT_NATIVE_GATE=/usr/local/libexec/multica_native_release_gate.py", text)
+        self.assertNotIn("paperclip_native_release_gate.py", text)
+
     def test_native_gate_is_multica_and_sha_bound(self):
         """Never regress release authority to legacy Paperclip during controller updates."""
         from types import SimpleNamespace
