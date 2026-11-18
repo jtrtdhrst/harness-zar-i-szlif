@@ -114,6 +114,11 @@ the durable deployable unit (mirrors `/opt/comfy` on the host).
   47.36s); `OpenAIGPTImageNodeV2` is a ComfyUI partner node requiring ComfyUI.org
   login (`auth_token_comfy_org`/`api_key_comfy_org`, 401 otherwise) — owner logs the
   server into comfy.org, then re-run validate + enqueue. No paid run without approval.
+  `patches/patch-partner-auth.mjs` now sends `COMFY_API_KEY` (or `~/.comfy-api-key`)
+  as server-side `extra_data.api_key_comfy_org`; without the key an
+  `OpenAIGPTImageNodeV2` graph fails with `COMFY_PARTNER_AUTH_MISSING` before anything
+  is queued. The worker still needs its own bearer token enforced before that key is
+  exposed on the shared `coolify` network.
 
 - Image loop: mandatory 8-step Codex-only pipeline, parity rules, acceptance evidence: docs/comfy-image-loop.md. Brand contract: mcp/comfyui/brand/ (PNG refs live in input/brand/ on the volume).
 - Canvas bridge (`mcp/comfyui/canvas-bridge/`): the MCP can read the OPEN tab — node 1 filename + pixels — via the pack's shipped browser bridge, whose server half was missing (every POST 404'd). `comfy_bridge.py` implements exactly the JS protocol behind `from .mcp_service.comfy_bridge import register_routes` (register/heartbeat+queued read/ack/disconnect/connection-status + agent read/result/sessions). No new MCP tools, no Manager, no panel install: agent enqueues `read`, next tab heartbeat returns the snapshot, node 1 filename → existing `get_image` downloads byte-identical pixels (E2E 13/13 live, `scripts/check-canvas-bridge.py`). Restore: re-copy the two files + `docker restart comfyui` (see `patches/apply.sh`).
