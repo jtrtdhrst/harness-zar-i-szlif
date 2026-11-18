@@ -9,7 +9,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
-AUTO_MCP_IMAGE_WORKFLOWS = {"paperclip-mcp-ci.yml", "opik-mcp-access-guard.yml"}
+AUTO_MCP_IMAGE_WORKFLOWS = {"opik-mcp-access-guard.yml"}
+# Reviewed inventory: deleting a workflow must require an explicit policy update.
+EXPECTED_DOCKER_BUILD_JOBS = {
+    ("hermes-gateway-image.yml", "validate-hermes-gateway-image"),
+    ("hermes-paperclip-adapter-overlay.yml", "validate-and-publish"),
+    ("opik-mcp-access-guard.yml", "jwt-regression"),
+    ("paperclip-core-review-recovery.yml", "validate"),
+}
 DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@")
 
 def image_build_jobs(content):
@@ -37,13 +44,18 @@ def compliant(workflow_name, job):
 
 class NonMcpBuildGuardTests(unittest.TestCase):
     def test_no_automatic_builds_from_non_mcp_sources(self):
-        checked = 0
+        observed = set()
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             for job_name, block in image_build_jobs(workflow.read_text(encoding="utf8")):
-                checked += 1
+                observed.add((workflow.name, job_name))
                 self.assertTrue(compliant(workflow.name, block),
                                 f"{workflow.name}/{job_name} can build outside local manual release")
-        self.assertGreaterEqual(checked, 5, "Expected Docker build workflows missing; guard vacuous")
+        self.assertEqual(observed, EXPECTED_DOCKER_BUILD_JOBS,
+                         "Docker build workflow inventory changed without explicit review")
+
+    def test_retired_paperclip_mcp_ci_stays_absent(self):
+        self.assertFalse((WORKFLOWS / "paperclip-mcp-ci.yml").exists(),
+                         "Paperclip MCP CI must not re-enter the Multica pipeline")
 
     def test_new_non_mcp_workflow_build_is_rejected(self):
         automatic = "jobs:\n  accidental:\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker build .\n"
