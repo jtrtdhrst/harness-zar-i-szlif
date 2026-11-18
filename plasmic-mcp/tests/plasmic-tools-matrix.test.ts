@@ -25,7 +25,12 @@ const seed = (): Map => ({
   rs1: { __type: "RuleSet", values: {} },
   tag1: { __type: "TplTag", name: "div", vsettings: [{ __ref: "vs1" }] },
   holder: { __type: "TplTag", name: "holder", child: { __ref: "tag1" } },
-  inst1: { __type: "TplComponent", name: "Inst", component: { __ref: "comp1" } },
+  inst1: {
+    __type: "TplComponent", name: "Inst", component: { __ref: "comp1" },
+    vsettings: [{ __ref: "inst1Vs" }], children: [],
+  },
+  inst1Vs: { __type: "VariantSetting", attrs: {}, rs: { __ref: "inst1Rs" }, args: [] },
+  inst1Rs: { __type: "RuleSet", values: { color: "red" } },
   tok1: { __type: "StyleToken", name: "brand", uuid: "u-tok1", value: "#fff" },
   orphan: { __type: "TplTag", name: "orphan" },
 });
@@ -178,15 +183,23 @@ test("matrix: set_props writes attrs for TplTag", async () => {
   }
 });
 
-test("matrix: use_component clones an existing instance", async () => {
+test("matrix: use_component clones an existing instance with private style entries", async () => {
   const { tool, mapNow } = await setup();
-  const before = Object.keys(mapNow()).length;
   const out = await tool("plasmic_use_component").handler({
     projectId: "project-1", componentId: "comp1", idempotencyKey: "m4",
-  }) as { changed: string[] };
-  assert.equal(Object.keys(mapNow()).length, before + 1);
-  assert.equal(out.changed.length, 1);
-  assert.equal(mapNow()[out.changed[0]!]!.__type, "TplComponent", "only a TplComponent instance is cloned");
+  }) as { id: string; changed: string[]; parentAttached: boolean };
+  // ZARI-229: the clone owns its VariantSetting/RuleSet chain instead of
+  // sharing the template's entries, so the mutation now writes more than one
+  // entry — the old assertion encoded the sharing defect.
+  const clone = mapNow()[out.id]!;
+  assert.equal(clone.__type, "TplComponent");
+  const cloneVs = ((clone.vsettings as Array<{ __ref: string }>)[0]!).__ref;
+  assert.notEqual(cloneVs, "inst1Vs", "clone must not share the template VariantSetting");
+  const cloneRs = (mapNow()[cloneVs] as { rs: { __ref: string } }).rs.__ref;
+  assert.notEqual(cloneRs, "inst1Rs", "clone must not share the template RuleSet");
+  assert.deepEqual((mapNow()[cloneRs] as { values: unknown }).values, { color: "red" });
+  assert.ok(out.changed.includes(out.id));
+  assert.equal(out.parentAttached, false, "the fixture template has no parent container to attach to");
 });
 
 test("matrix: validate reports a structurally valid fixture", async () => {

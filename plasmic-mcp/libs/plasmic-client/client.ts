@@ -92,7 +92,21 @@ function entryName(raw: Record<string, unknown>, iid: string): string {
 // Hash schematu modelu WAB (src/wab/shared/model/classes-metas.ts).
 // Weryfikowany w ensureSchemaIsUpToDate przy każdym save; przy upgrade
 // Plasmic odczytaj ponownie: node -r esbuild-register gen-hash.ts w kontenerze wab.
-const MODEL_SCHEMA_HASH = Number(process.env.PLASMIC_MODEL_SCHEMA_HASH ?? 639587200);
+// Pinned to the live WAB e2e0b744 model schema (2026-11-18).
+// The deployed Coolify service explicitly sets PLASMIC_MODEL_SCHEMA_HASH.
+// A WAB upgrade must re-derive this from WAB classes-metas.ts and test real writes.
+export function resolveModelSchemaHash(raw: string | undefined): number {
+  if (raw === undefined) return -706852506;
+  if (!/^-?\d+$/.test(raw.trim())) {
+    throw new Error("INVALID_PLASMIC_MODEL_SCHEMA_HASH: expected an integer");
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error("INVALID_PLASMIC_MODEL_SCHEMA_HASH: outside safe integer range");
+  }
+  return value;
+}
+const MODEL_SCHEMA_HASH = resolveModelSchemaHash(process.env.PLASMIC_MODEL_SCHEMA_HASH);
 
 export class PlasmicClient {
   private base: string;

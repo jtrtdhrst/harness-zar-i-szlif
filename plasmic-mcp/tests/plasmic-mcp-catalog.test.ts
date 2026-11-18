@@ -43,6 +43,19 @@ const EXPECTED_TOOLS = [
   "plasmic_read_ui_outline",
   "plasmic_append_ui_tree",
   "plasmic_batch_set_styles",
+  // ZARI-229 DOD-02/DOD-03: component catalog + safe native composition.
+  "plasmic_search_components",
+  "plasmic_get_component_spec",
+  "plasmic_plan_composition",
+  "plasmic_compose_components",
+  // ZARI-229 DOD-08: HTTP Fetch data queries, capability-gated.
+  "plasmic_get_capabilities",
+  "plasmic_list_data_queries",
+  "plasmic_get_data_query",
+  "plasmic_create_data_query",
+  "plasmic_update_data_query",
+  "plasmic_delete_data_query",
+  "plasmic_bind_data_query",
 ];
 
 /** Narzędzia tylko do odczytu — nie zmieniają projektu Plasmic. */
@@ -62,6 +75,12 @@ const READ_ONLY_TOOLS = [
   "plasmic_validate",
   "plasmic_get_changes",
   "plasmic_read_ui_outline",
+  "plasmic_search_components",
+  "plasmic_get_component_spec",
+  "plasmic_plan_composition",
+  "plasmic_get_capabilities",
+  "plasmic_list_data_queries",
+  "plasmic_get_data_query",
 ];
 
 /** Narzędzia zapisujące — platforma musi je widzieć jako zmiany. */
@@ -77,6 +96,11 @@ const WRITE_TOOLS = [
   "plasmic_use_component",
   "plasmic_append_ui_tree",
   "plasmic_batch_set_styles",
+  "plasmic_compose_components",
+  "plasmic_create_data_query",
+  "plasmic_update_data_query",
+  "plasmic_delete_data_query",
+  "plasmic_bind_data_query",
 ];
 
 type ToolAnnotations = {
@@ -178,7 +202,7 @@ async function withServer<T>(
 }
 
 describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
-  it("tools/list zwraca dokładnie 26 narzędzi zgodnych z kontraktem", async () => {
+  it("tools/list zwraca dokładnie 37 narzędzi zgodnych z kontraktem", async () => {
     const tools = await withServer(async (client) => {
       const res = await client.request("tools/list", {});
       assert.ok(res.result, `tools/list nie powiodło się: ${JSON.stringify(res.error)}`);
@@ -244,6 +268,19 @@ describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
     assert.equal(byName.get("plasmic_update")?.destructiveHint, true);
     // set_props tworzy nowe wpisy Expr przy każdym wywołaniu — nie jest idempotentne.
     assert.equal(byName.get("plasmic_set_props")?.idempotentHint, false);
+    // ZARI-229: kompozycja zapisuje jeden revision-safe mutation — idempotentna
+    // po kluczu, nie destrukcyjna (nie nadpisuje istniejących wpisów).
+    assert.equal(byName.get("plasmic_compose_components")?.destructiveHint, false);
+    assert.equal(byName.get("plasmic_compose_components")?.idempotentHint, true);
+    // ZARI-229 DOD-08: data-query writes are non-destructive on create/bind,
+    // destructive on update/delete, and never read-only.
+    for (const name of ["plasmic_create_data_query", "plasmic_update_data_query",
+      "plasmic_delete_data_query", "plasmic_bind_data_query"]) {
+      assert.equal(byName.get(name)?.readOnlyHint, false, `${name} must not be read-only`);
+    }
+    assert.equal(byName.get("plasmic_update_data_query")?.destructiveHint, true);
+    assert.equal(byName.get("plasmic_delete_data_query")?.destructiveHint, true);
+    assert.equal(byName.get("plasmic_get_capabilities")?.readOnlyHint, true);
     // Klucz idempotencji w create_page/create_component/insert/use_component.
     assert.equal(byName.get("plasmic_create_branch")?.idempotentHint, true,
       "plasmic_create_branch must advertise its locked retry/dedup contract");

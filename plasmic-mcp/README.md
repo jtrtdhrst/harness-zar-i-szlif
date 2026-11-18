@@ -8,7 +8,7 @@ CI checks belong to GitHub MCP.
 
 | Server | Command | Port | Function |
 | --- | --- | --- | --- |
-| Plasmic MCP | `node services/plasmic-mcp/server.ts` | 8091 | 26 agent-visible tools (projects, branches, design reading/editing, validation) |
+| Plasmic MCP | `node services/plasmic-mcp/server.ts` | 8091 | 37 agent-visible tools (projects, branches, catalog, composition, data queries, design reading/editing, validation) |
 | OpenDesign bridge MCP | `node services/opendesign-bridge-mcp/server.ts` | 8092 | OpenDesign brand/design sync |
 
 The Plasmic tool catalog is asserted against a real **local stdio MCP server**
@@ -42,7 +42,7 @@ bypass review. No write/resolve/delete-comment tools are exposed.
 
 Before considering production E2E complete, verify a real disposable Studio
 project with one pinned element comment, a reply and a resolved thread,
-then check `tools/list` returns 26 tools, project+branch isolation,
+then check `tools/list` returns 37 tools, project+branch isolation,
 author/subject data, 401/403 and the same comment texts as Studio. Local
 contract tests use fixtures and do not establish a live WAB read.
 
@@ -51,12 +51,104 @@ save a complete WAB bundle to preserve cross-entry references; tests reject
 dangling fixture references. Verify live disposable-project readback before
 claiming 23/23 E2E.
 
-The MCP catalog has 26 tools. E2E branch cleanup is an opt-in support
+The MCP catalog has 37 tools. E2E branch cleanup is an opt-in support
 script: set `PLASMIC_ALLOW_E2E_BRANCH_DELETE=true` and
 `PLASMIC_E2E_PROJECT_ID`, then run `npm run cleanup:e2e-branch -- <branchId>`.
 It deletes only an existing `mcp-e2e-` branch and verifies its removal; use a
 dedicated disposable project because deleting the branch also discards its
 unpublished page/component test changes.
+
+## Component catalog and MCP-only composition (ZARI-229)
+
+Four tools make the adapter a usable component library and composition engine
+without any agent bypassing MCP for WAB REST/Studio calls:
+
+- `plasmic_search_components(projectId, branchId?, query?, kind?, limit?, offset?)`
+  — paginated catalog of pages/components with stable ids, instance counts,
+  declared param names and a `catalogKey` derived from
+  `project@branch#revision`. The index cache is revision-scoped, so a served
+  index can never be older than the revision read in the same call.
+- `plasmic_get_component_spec(projectId, componentId, branchId?)` — declared
+  params (with resolvable type names), slots, instances, subtree dependencies
+  and referenced style tokens for one component of the live revision.
+  `previewAvailable` is `false`: this adapter exposes no preview URL instead of
+  inventing one, and `slotsAvailable` reports when the revision carries no
+  resolvable param types.
+- `plasmic_plan_composition(projectId, parentElementId, items, index?, branchId?)`
+  — read-only plan: validates the parent container, every component id, prop
+  declarations and the insertion index, then returns the exact entries and
+  order that a write would create.
+- `plasmic_compose_components(...)` — the same plan applied in one
+  revision-safe `mutate()` (`saveMode: "full"`). `dryRun` defaults to `true`;
+  a live write requires `idempotencyKey`. Entry ids are derived from the
+  operation key, so a retry is a no-op instead of a duplicate node.
+
+Composition builds each instance by cloning an existing instance of that
+component, then gives the clone **private** `VariantSetting`, `RuleSet`, attrs
+and param args, and wires it into the parent's `children` at the requested
+index. The previous behaviour shared those entries with the template instance
+(editing the clone silently restyled the original) and left the clone
+unreferenced by any parent (unreachable in Studio).
+
+Reported limitations — these fail with a structured error instead of a fake
+success: slot routing by slot name, responsive variant overrides, components
+with no instance in the revision (`NO_INSTANCE_TEMPLATE`), templates carrying
+slot content (`SLOT_CONTENT_CLONE_UNSUPPORTED`), page components as child
+instances, and props whose name is not a declared component param
+(`PROP_UNSUPPORTED`).
+
+Local fixture tests prove the contract (`tests/plasmic-catalog-compose.test.ts`).
+They do **not** prove a live WAB write: an authenticated disposable-project
+compose/readback/rollback canary is still required before claiming DOD-05.
+
+## HTTP data queries (`$q.<name>`) — capability-gated (DOD-08)
+
+Plasmic's legacy backend integrations were removed; the current model is a
+revision-stored **HTTP (Fetch)** data query plus a native `$q.<queryName>`
+dynamic expression. This adapter exposes that only when the deployed build
+proves it supports it:
+
+- `plasmic_get_capabilities(projectId?, branchId?)` — read-only. Reports the
+  configured WAB host, the build/version the server publishes on
+  `/healthcheck`, its declared capability features, `modelVersion`/
+  `hostlessDataVersion`, and the entry types actually observed in the live
+  revision. When the build is unreachable or publishes no version it reports
+  `versionStatus: "UNVERIFIED"` — it never assumes support.
+- `plasmic_list_data_queries` / `plasmic_get_data_query` — read-only. They list
+  only entries whose type matches a data-query/HTTP-fetch model, and they never
+  return request header **values** (names only), so an `apikey` is not leaked.
+- `plasmic_create_data_query` / `plasmic_update_data_query` /
+  `plasmic_delete_data_query` / `plasmic_bind_data_query` — writes, `dryRun`
+  by default, `idempotencyKey` required for live, one revision-safe mutation
+  each (a stale revision is rejected by WAB and surfaced, never reported as
+  success).
+
+**Fail-closed rule:** a write is allowed only when *both* preconditions hold —
+(1) `/healthcheck` declares an HTTP/data-query capability, and (2) the live
+revision exposes a query model. Otherwise the call fails with
+`DATA_QUERY_API_UNSUPPORTED` plus the exact observation that failed
+(`WAB_HEALTHCHECK_UNREACHABLE`, `NO_DATA_QUERY_CAPABILITY_DECLARED`,
+`NO_QUERY_MODEL_IN_REVISION`, `WAB_BASE_URL_NOT_CONFIGURED`,
+`REVISION_READ_FAILED`). No undocumented bundle shape is injected to claim
+support.
+
+**No schema invention:** `create` copies an existing query entry as its
+structural template and only overwrites fields that template already exposes
+(`QUERY_FIELD_UNSUPPORTED` otherwise); `update` merges into an existing entry;
+`bind` repoints an existing `$q.` expression on an element that already has a
+dynamic-value binding (`DYNAMIC_VALUE_BINDING_FIELD_UNKNOWN` otherwise) and
+never authors an expression shape from scratch.
+
+**Secret boundary:** `PLASMIC_DATA_QUERY_ALLOWED_HOSTS` (comma-separated) is
+mandatory for writes; non-https URLs, non-allowlisted hosts, `service_role`
+keys, `postgres(ql)://` connection strings and inline `password=`/`secret=`
+values are rejected before any WAB call. Reads expose header names only.
+
+`tests/plasmic-data-queries.test.ts` proves the gate in both directions on a
+fixture: declared-capability + observed model enables writes; an undeclared,
+unreachable or query-less WAB refuses every write with zero mutations. A live
+authenticated run against a disposable TEST project remains a Service Auth
+gate and is **not** claimed here.
 
 ## Local checks
 
@@ -100,7 +192,7 @@ host release lane remain required):
    `IMAGE_TAG=<verified-main-SHA>`, snapshot state, pull/recreate the service
    and confirm the resulting image digest. Cloudflare routing alone cannot
    deploy the container.
-5. Run authenticated `initialize`/`tools/list` for all 26 tools, WAB API
+5. Run authenticated `initialize`/`tools/list` for all 37 tools, WAB API
    read and isolated disposable project/branch create/write/readback/rollback,
    plus an unauthorized 401 negative case. **The `base:latest` design
    branch requires a published package in the disposable WAB project;
