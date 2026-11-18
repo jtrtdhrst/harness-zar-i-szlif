@@ -8,13 +8,17 @@ The stdio MCP transport is intentionally private to a trusted caller.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
+import sqlite3
+import stat
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
+from contextlib import contextmanager
 
 from mcp.server.fastmcp import FastMCP
 from repowise.core.precedent.store import Episode, EpisodeStore, TIER_GIT, default_store_path
@@ -66,10 +70,45 @@ def _path(repo: str) -> Path:
         raise ValueError("server_repo_scope_missing")
     if repo != assigned:
         raise ValueError("repo_out_of_scope")
-    path = (ROOT / REPOS[repo]).resolve()
-    if not path.is_relative_to(ROOT) or not (path / ".repowise").is_dir():
+    expected = ROOT / REPOS[repo]
+    path = expected.resolve()
+    sidecar = expected / ".repowise"
+    # An internal product -> harness symlink must not turn product-scoped
+    # credentials into an implicit read/write of another repository.
+    if (expected.is_symlink() or sidecar.is_symlink()
+            or path != expected or sidecar.resolve() != sidecar
+            or not sidecar.is_dir()):
         raise ValueError("indexed_repo_unavailable")
     return path
+
+
+@contextmanager
+def _sync_write_lock():
+    """Use the very same advisory flock as the root-owned RepoWise promoter.
+
+    The service receives read-only permission to open this one regular lock
+    inode. Linux permits LOCK_EX on an O_RDONLY fd; it does not require
+    global root or granting write access to the whole /run/lock directory.
+    A missing/mismatched/locked file refuses the write.
+    """
+    path = Path(os.environ.get(
+        "DEPLOY_EVIDENCE_SYNC_LOCK", "/run/lock/repowise-github-sync.lock"
+    ))
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        raise ValueError("sync_lock_unavailable") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or os.stat(path, follow_symlinks=False).st_ino != info.st_ino:
+            raise ValueError("sync_lock_unavailable")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("sync_in_progress") from None
+        yield
+    finally:
+        os.close(fd)
 
 
 def report(repo: str, source_sha: str, issue: str, deployment_id: str) -> dict:
@@ -105,18 +144,19 @@ def report(repo: str, source_sha: str, issue: str, deployment_id: str) -> dict:
         evidence=f"source=git,live_release={PUBLIC_RELEASE if repo == 'product' else 'NOT_RUN'}",
         nodes=(), birth_commit=source_sha,
     )
-    store = EpisodeStore(default_store_path(path))
-    try:
-        prior = store.get_episode(ep.id, tiers=(TIER_GIT,))
-        if prior is None:
-            store.append_tier(tier=TIER_GIT, episodes=[ep])
-        elif prior["body"] != ep.body:
-            raise ValueError("immutable_id_conflict")
-        found = store.get_episode(ep.id, tiers=(TIER_GIT,))
-        if not found or found["body"] != ep.body:
-            raise RuntimeError("readback_mismatch")
-    finally:
-        store.close()
+    with _sync_write_lock():
+        store = EpisodeStore(default_store_path(path))
+        try:
+            prior = store.get_episode(ep.id, tiers=(TIER_GIT,))
+            if prior is None:
+                store.append_tier(tier=TIER_GIT, episodes=[ep])
+            elif prior["body"] != ep.body:
+                raise ValueError("immutable_id_conflict")
+            found = store.get_episode(ep.id, tiers=(TIER_GIT,))
+            if not found or found["body"] != ep.body:
+                raise RuntimeError("readback_mismatch")
+        finally:
+            store.close()
     return {"stored": True, "created": prior is None, "episode_id": ep.id, **evidence}
 
 
@@ -143,15 +183,23 @@ def get_deployment_observation(repo: str, episode_id: str) -> dict:
         db_path = default_store_path(path)
         if not db_path.is_file():
             return {"found": False}
-        store = EpisodeStore(db_path)
+        # Unlike EpisodeStore construction, a query-only SQLite connection
+        # never runs schema DDL/backfills when an agent reads one record.
+        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
         try:
-            row = store.get_episode(episode_id, tiers=(TIER_GIT,))
+            db.execute("PRAGMA query_only=ON")
+            row = db.execute(
+                "SELECT body, birth_at FROM episodes "
+                "WHERE id=? AND tier=? AND kind='deployment_observation'",
+                (episode_id, TIER_GIT),
+            ).fetchone()
         finally:
-            store.close()
-        if not row or row.get("kind") != "deployment_observation":
+            db.close()
+        if not row:
             return {"found": False}
-        return {"found": True, "episode_id": episode_id, "evidence": json.loads(row["body"])}
-    except (ValueError, OSError) as exc:
+        return {"found": True, "episode_id": episode_id,
+                "observed_at_unix": row[1], "evidence": json.loads(row[0])}
+    except (ValueError, OSError, sqlite3.Error) as exc:
         return {"found": False, "error": str(exc)}
 
 
@@ -187,28 +235,6 @@ def serve_http() -> None:
         header = request.headers.get("authorization", "")
         supplied = header[7:] if header.startswith("Bearer ") else ""
         if not supplied or not hmac.compare_digest(supplied, secret):
-            return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
-        return await call_next(request)
+            return Response(sta
 
-    app.add_middleware(BaseHTTPMiddleware, dispatch=require_bearer)
-    host = os.environ.get("DEPLOY_EVIDENCE_HTTP_HOST", "127.0.0.1")
-    if host not in ("127.0.0.1", "::1"):
-        raise RuntimeError("http_host_not_loopback")
-    uvicorn.run(app, host=host, port=7339, log_level="warning")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--http", action="store_true")
-    parser.add_argument("--check", action="store_true")
-    parser.add_argument("--repo", default="product")
-    parser.add_argument("--sha", default="")
-    parser.add_argument("--issue", default="ZARI-240")
-    parser.add_argument("--deployment", default="observed-release")
-    args = parser.parse_args()
-    if args.http:
-        serve_http()
-    elif args.check:
-        print(json.dumps(report(args.repo, args.sha, args.issue, args.deployment), sort_keys=True))
-    else:
-        mcp.run(transport="stdio")
+... [1025 characters truncated]
