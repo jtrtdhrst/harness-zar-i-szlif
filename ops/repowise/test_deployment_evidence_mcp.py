@@ -92,6 +92,25 @@ class DeploymentPublisherTests(unittest.TestCase):
             self.assertEqual(pub.get_deployment_observation("harness", "0" * 16)["error"],
                              "indexed_repo_unavailable")
 
+    def test_http_token_required_and_no_public_bind(self):
+        token = self.root / "token"
+        token.write_text("z" * 64)
+        token.chmod(0o600)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_TOKEN_FILE": ""}):
+            with self.assertRaisesRegex(RuntimeError, "token_file_required"):
+                pub.serve_http()
+        token.chmod(0o644)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_TOKEN_FILE": str(token)}):
+            with self.assertRaisesRegex(RuntimeError, "token_file_permissions_invalid"):
+                pub.serve_http()
+        token.chmod(0o600)
+        with patch.dict("os.environ", {
+            "DEPLOY_EVIDENCE_TOKEN_FILE": str(token),
+            "DEPLOY_EVIDENCE_HTTP_HOST": "0.0.0.0",
+        }):
+            with self.assertRaisesRegex(RuntimeError, "http_host_not_loopback"):
+                pub.serve_http()
+
     def test_harness_source_only_not_marked_as_live(self):
         harness = self.root / "harness"
         self.repo.rename(harness)
