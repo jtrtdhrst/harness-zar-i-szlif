@@ -112,10 +112,8 @@
       "reason": "Paperclip Core is upstream/overlay managed and has no repository service CI/release workflow."
     },
     "paperclip-mcp": {
-      "mode": "workflow",
-      "workflows": [
-        ".github/workflows/paperclip-mcp-ci.yml"
-      ]
+      "mode": "manual_only",
+      "reason": "Legacy Paperclip MCP is outside the Multica development pipeline. No automatic CI image build or production promotion; changes require separate explicit manual review."
     },
     "plasmic": {
       "mode": "manual_only",
