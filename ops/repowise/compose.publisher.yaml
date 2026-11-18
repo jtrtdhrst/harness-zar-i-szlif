@@ -1,0 +1,48 @@
+# Git-based Coolify Compose application. Never expose a public domain.
+# Supply host bind paths via Coolify environment variables; no credential values in git.
+name: repowise-deployment-publisher
+services:
+  publisher:
+    build:
+      context: .
+      dockerfile: Dockerfile.publisher
+    image: "repowise-deployment-publisher:${SOURCE_COMMIT:-staging}"
+    restart: unless-stopped
+    network_mode: host
+    user: "999:999"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    environment:
+      DEPLOY_EVIDENCE_ROOT: /workspace
+      DEPLOY_EVIDENCE_ALLOWED_REPO: product
+      DEPLOY_EVIDENCE_HTTP_HOST: 127.0.0.1
+      DEPLOY_EVIDENCE_HTTP_PORT: "${REPOWISE_WRITER_PORT:-7342}"
+      DEPLOY_EVIDENCE_SYNC_LOCK: /run/lock/repowise-github-sync.lock
+      DEPLOY_EVIDENCE_TOKEN_FILE: /run/secrets/repowise-token
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /workspace/product
+    volumes:
+      - type: bind
+        source: "${REPOWISE_PRODUCT_HOST_PATH:?}"
+        target: /workspace/product
+        read_only: true
+      - type: bind
+        source: "${REPOWISE_EPISODES_HOST_PATH:?}"
+        target: /workspace/product/.repowise/episodes
+        read_only: false
+      - type: bind
+        source: "${REPOWISE_SYNC_LOCK_HOST_PATH:?}"
+        target: /run/lock/repowise-github-sync.lock
+        read_only: true
+      - type: bind
+        source: "${REPOWISE_TOKEN_FILE_HOST_PATH:?}"
+        target: /run/secrets/repowise-token
+        read_only: true

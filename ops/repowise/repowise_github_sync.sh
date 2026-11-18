@@ -297,6 +297,34 @@ for name in "${CONSUMERS[@]}"; do
   [[ $name == repowise-mcp-* ]] && has_mcp=1
 done
 [[ $has_api == 1 && $has_mcp == 1 ]] || fail "required-repowise-consumers-not-found"
+# An additional authenticated deployment-publisher sidecar binds the Product
+# directory directly, not the named workspace volume. The live-file guard
+# intentionally rejects promotion while it is running. Admit its exact scoped
+# container to the SAME stop / validate / rollback / restart transaction,
+# never by bypassing the live-file guard or ignoring the sidecar's mount.
+PUBLISHER=repowise-deployment-publisher-product
+if [[ $(docker inspect --format '{{.State.Running}}' "$PUBLISHER" 2>/dev/null || true) == true ]]; then
+  docker inspect "$PUBLISHER" | python3 -c '
+import json, pathlib, sys
+containers=json.load(sys.stdin)
+if len(containers)!=1: raise SystemExit("publisher_container_count_mismatch")
+c=containers[0]
+h=c["HostConfig"]
+if c["Config"]["User"]!="999:999" or not h["ReadonlyRootfs"] or h["NetworkMode"]!="host":
+    raise SystemExit("publisher_isolation_changed")
+live=pathlib.Path("/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product").resolve()
+episodes=live/".repowise"/"episodes"
+mounts=c["Mounts"]
+if not any(pathlib.Path(m["Source"]).resolve()==live and not m["RW"] for m in mounts):
+    raise SystemExit("publisher_scoped_readonly_product_mount_missing")
+if not any(pathlib.Path(m["Source"]).resolve()==episodes and m["RW"] for m in mounts):
+    raise SystemExit("publisher_scoped_episodes_mount_missing")
+if any(m["RW"] and pathlib.Path(m["Source"]).resolve()!=episodes for m in mounts):
+    raise SystemExit("publisher_unexpected_writable_mount")
+' || fail "publisher_mount_or_identity_changed"
+  CONSUMERS+=("$PUBLISHER")
+  echo "SYNC_SCOPED_PUBLISHER_INCLUDED name=$PUBLISHER"
+fi
 prepare_live_sources
 check_live_worktrees
 stop_consumers
