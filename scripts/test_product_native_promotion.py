@@ -53,12 +53,13 @@ class ProductPromotionTests(unittest.TestCase):
             MID:{"sha":MID,"parents":[{"sha":OLD},{"sha":SOURCE}]},
         }
         with patch.object(p,"commit",side_effect=lambda sha:parents[sha]),\
-             patch.object(p,"provenance",side_effect=lambda sha:(12,SOURCE) if sha==MID else (13,SOURCE)),\
+             patch.object(p,"provenance",side_effect=lambda sha:(12,SOURCE,"ZARI-240") if sha==MID else (13,SOURCE,"ZARI-240")),\
              patch.object(p,"checks") as checks,\
-             patch.object(p,"native_approval",side_effect=lambda pr,head,merge: (_ for _ in ()).throw(p.Denied("missing_review")) if pr==12 else None):
+             patch.object(p,"native_approval",side_effect=lambda pr,head,merge,issue: (_ for _ in ()).throw(p.Denied("missing_review")) if pr==12 else None):
             with self.assertRaisesRegex(p.Denied,"missing_review"):
                 p.candidate_history(OLD,NEW)
-            self.assertEqual(checks.call_count,4)
+            self.assertEqual(checks.call_count,2)
+
 
     def test_direct_release_denied_when_production_drifted(self):
         with patch.object(p,"ref",side_effect=[NEW,OLD]),patch.object(p,"live_release",return_value=SOURCE):
@@ -80,14 +81,13 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaisesRegex(p.Denied,"missing_or_ambiguous_main_pr"):
                     p.provenance(NEW)
 
-    def test_missing_ci_status_and_incomplete_pagination_denied(self):
-        scenarios=[{"check_runs":[],"total_count":0},
-                   {"check_runs":[{"name":"validate-product","status":"in_progress","conclusion":None}],"total_count":1},
-                   {"check_runs":[{"name":"validate-product","status":"completed","conclusion":"success"}],"total_count":9}]
-        for row in scenarios:
-            with self.subTest(row=row),patch.object(p,"github_api",return_value=row):
-                with self.assertRaises(p.Denied):
-                    p.checks(SOURCE)
+    def test_missing_trusted_ci_receipt_never_executes_source_as_root(self):
+        with patch.object(p,"local_ci_attestation",return_value=None),\
+             patch.object(p,"run",side_effect=AssertionError("ROOT CODE EXECUTION")),\
+             patch.object(p,"github_api",side_effect=AssertionError("provider call")):
+            with self.assertRaisesRegex(p.Denied,"trusted_local_ci_attestation_missing"):
+                p.checks(SOURCE)
+
 
     def test_missing_native_gate_fails_closed(self):
         with patch.object(p,"NATIVE_GATE",p.Path("/__missing_paperclip_gate__/none.py")):
@@ -103,12 +103,20 @@ class ProductPromotionTests(unittest.TestCase):
         with self.assertRaisesRegex(p.Denied,"unsafe_github_resource"):
             p.github_api("/repos/foreign/repo/commits/"+SOURCE)
 
-    def test_failed_secondary_check_denies_promotion(self):
-        checks=[{"name":"validate-product","status":"completed","conclusion":"success"},
-                {"name":"security-scan","status":"completed","conclusion":"failure"}]
-        with patch.object(p,"github_api",return_value={"check_runs":checks,"total_count":2}):
-            with self.assertRaisesRegex(p.Denied,"nonpassing_checks"):
-                p.checks(SOURCE)
+    def test_root_owned_sha_bound_attestation_is_read_only(self):
+        with patch.object(p,"local_ci_attestation",return_value={"sha":SOURCE,"exit_code":0}),\
+             patch.object(p,"run",side_effect=AssertionError("source must not run")):
+            self.assertIsNone(p.checks(SOURCE))
+
+    def test_runtime_review_rejection_precedes_any_ci_check(self):
+        with patch.object(p,"commit",return_value={"sha":NEW,"parents":[{"sha":OLD}]}),\
+             patch.object(p,"provenance",return_value=(13,SOURCE,"ZARI-240")),\
+             patch.object(p,"non_runtime_files_only",return_value=False),\
+             patch.object(p,"native_approval",side_effect=p.Denied("review_missing")),\
+             patch.object(p,"checks",side_effect=AssertionError("CI before review")):
+            with self.assertRaisesRegex(p.Denied,"review_missing"):
+                p.candidate_history(OLD,NEW)
+
 
     def test_unsupported_github_method_denied(self):
         with self.assertRaisesRegex(p.Denied,"unsafe_github_method"):
