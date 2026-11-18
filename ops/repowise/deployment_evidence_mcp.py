@@ -59,6 +59,13 @@ def _live_product() -> tuple[str | None, int | None]:
 def _path(repo: str) -> Path:
     if repo not in REPOS:
         raise ValueError("repo_not_allowed")
+    # Only the operator can assign this identity through the process env.
+    # Never infer repository write authority from an agent-supplied argument.
+    assigned = os.environ.get("DEPLOY_EVIDENCE_ALLOWED_REPO", "").strip()
+    if assigned not in REPOS:
+        raise ValueError("server_repo_scope_missing")
+    if repo != assigned:
+        raise ValueError("repo_out_of_scope")
     path = (ROOT / REPOS[repo]).resolve()
     if not path.is_relative_to(ROOT) or not (path / ".repowise").is_dir():
         raise ValueError("indexed_repo_unavailable")
