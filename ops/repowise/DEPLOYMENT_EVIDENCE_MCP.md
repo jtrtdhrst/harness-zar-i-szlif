@@ -83,6 +83,27 @@ authenticated HTTP tools/call was **NOT_RUN** because the execution
 environment blocked that credential-bearing test. Staging container
 was removed; no HTTP service was promoted to production.
 
+## Synchronization safety
+
+Publisher writes hold the **same host advisory lock**
+`/run/lock/repowise-github-sync.lock` used by
+`repowise-github-sync.service`; no second indexer or scheduler.
+The trusted service must mount that lock file with **read access** for its
+dedicated identity, and set `DEPLOY_EVIDENCE_SYNC_LOCK` only if the approved
+operator deliberately overrides the default. Linux flock permits an exclusive
+advisory lock on a read-only descriptor. If the lock is held, missing, or
+symlinked, the write fails closed with `sync_in_progress` or
+`sync_lock_unavailable`, *before creating the EpisodeStore*. The lock is
+released after the idempotent write/readback. Repository identities are exact
+non-symlink directories; `.repowise` must not be a symlink.
+The reader uses `sqlite3` `mode=ro` / `query_only=ON` and returns the
+store's actual `observed_at_unix`, without triggering RepoWise's schema
+creation or backfills.
+
+13 focused tests include a racing lock holder, missing and symlink lock,
+internal product-to-harness symlink, real MCP stdio, immutable record repeat,
+and non-mutating reads.
+
 ## Before binding to Multica agents / production
 
 1. Retain ZARI-213 HOLD: do not grant cross-project checkout or GitHub
