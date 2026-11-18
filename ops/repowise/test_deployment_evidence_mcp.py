@@ -30,6 +30,9 @@ class DeploymentPublisherTests(unittest.TestCase):
         self.old_root = pub.ROOT
         pub.ROOT = self.root
         self.addCleanup(setattr, pub, "ROOT", self.old_root)
+        self.scope = patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "product"})
+        self.scope.start()
+        self.addCleanup(self.scope.stop)
 
     def submit(self, **override):
         args = dict(repo="product", source_sha=self.sha,
@@ -65,12 +68,18 @@ class DeploymentPublisherTests(unittest.TestCase):
             ({"issue": "ZARI-0"}, "invalid_issue"),
             ({"issue": "ZARI-240;touch /tmp/pwn"}, "invalid_issue"),
             ({"deployment_id": "../../etc/passwd"}, "invalid_deployment_id"),
-            ({"repo": "harness"}, "indexed_repo_unavailable"),
+            ({"repo": "harness"}, "repo_out_of_scope"),
             ({"repo": "../other"}, "repo_not_allowed"),
         ]
         for changes, expected in bad_cases:
             with self.subTest(changes=changes):
                 self.assertEqual(self.submit(**changes)["error"], expected)
+
+    def test_server_scope_is_required_and_enforced(self):
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": ""}):
+            self.assertEqual(self.submit()["error"], "server_repo_scope_missing")
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "harness"}):
+            self.assertEqual(self.submit()["error"], "repo_out_of_scope")
 
     def test_read_not_found_does_not_create_database(self):
         self.assertFalse(pub.default_store_path(self.repo).exists())
@@ -79,15 +88,17 @@ class DeploymentPublisherTests(unittest.TestCase):
 
     def test_deny_symlink_escape(self):
         (self.root / "harness").symlink_to(self.root.parent, target_is_directory=True)
-        self.assertEqual(pub.get_deployment_observation("harness", "0" * 16)["error"],
-                         "indexed_repo_unavailable")
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "harness"}):
+            self.assertEqual(pub.get_deployment_observation("harness", "0" * 16)["error"],
+                             "indexed_repo_unavailable")
 
     def test_harness_source_only_not_marked_as_live(self):
         harness = self.root / "harness"
         self.repo.rename(harness)
-        with patch.object(pub, "_git_contains", return_value=True):
-            data = pub.publish_deployment_observation(
-                "harness", self.sha, "ZARI-240", "test-harness")
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "harness"}):
+            with patch.object(pub, "_git_contains", return_value=True):
+                data = pub.publish_deployment_observation(
+                    "harness", self.sha, "ZARI-240", "test-harness")
         self.assertTrue(data["stored"])
         self.assertEqual(data["status"], "SOURCE_ONLY_NOT_LIVE_VERIFIED")
         self.assertEqual(data["independent_authenticated_positive_qa"], "NOT_RUN")
