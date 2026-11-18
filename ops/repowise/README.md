@@ -72,3 +72,31 @@ docker exec repowise-mcp-lecwi3emh9hjxir7gphmalie sh -lc 'cd /workspace && repow
 than 30 minutes, or when either live checkout differs from the fetched SHA.
 When the sync lock is held, its `ExecCondition` in `[Service]` skips the
 check rather than reporting stale or misleading evidence.
+
+## 2026-11-18: coherent stale-page refresh and real cross-repo smoke
+
+GitHub indexing and narrative freshness are different checks. After a commit,
+model-written `onboarding` and `repo_overview` pages may become `stale`
+even when the structural code index is current. `repowise_unwritten.py
+--pending` includes these pages and actual unwritten stubs, excluding the
+populated deterministic `active_landscape` page.
+
+Do **not** generate each stale page with `--cascade none`: overview and
+onboarding pages can be mutual dependents, so each individual refresh marks
+the others stale again. `refill-pages.sh` supplies every pending page in
+**one** `repowise generate --cascade full` invocation, verifies that no
+pending pages remain, and `refill-all.sh` then reindexes vectors. A failure
+must propagate a nonzero exit status rather than produce false success.
+
+The installed `repowise-generate.service` uses a nested host-side
+`flock -w 120` on `/run/lock/repowise-github-sync.lock` followed by the
+generate lock. Do not acquire that same sync lock a second time inside
+`refill-all.sh`; doing so prevents actual execution. This serializes
+generation against the GitHub source promotion.
+
+On 2026-11-18, the Harness `paperclip-mcp` source was removed from
+the indexed GitHub repository. The staged MCP regression must therefore
+assert the surviving **structural HTTP dependency** between
+`product::app` and `harness::ubuntu-mcp`, not search for the removed
+`harness::paperclip-mcp` string. A missing or unresolved structural
+edge still fails closed.
