@@ -87,6 +87,65 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaisesRegex(p.Denied,"missing_or_ambiguous_main_pr"):
                     p.provenance(NEW)
 
+    def test_premerge_zero_checkruns_requires_rootless_receipt(self):
+        empty = {"check_runs": [], "total_count": 0}
+        node = {"commit": {"tree": {"sha": "e"*40}}}
+        with patch.object(p, "github_api", return_value=empty), \
+             patch.object(p, "commit", return_value=node), \
+             patch.object(p, "premerge_rootless_attestation", return_value={}) as receipt:
+            result = p.premerge_head_checks(SOURCE, node)
+        self.assertTrue(result["rootless_premerge"])
+        receipt.assert_called_once_with(SOURCE, "e"*40)
+
+    def test_premerge_missing_or_failing_evidence_denies(self):
+        empty = {"check_runs": [], "total_count": 0}
+        node = {"commit": {"tree": {"sha": "e"*40}}}
+        with patch.object(p, "github_api", return_value=empty), \
+             patch.object(p, "commit", return_value=node), \
+             patch.object(p, "premerge_rootless_attestation", side_effect=p.Denied("local_ci_attestation_missing")):
+            with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
+                p.premerge_head_checks(SOURCE, node)
+        broken = {"check_runs": [{"name":"validate-product","status":"completed","conclusion":"failure"}],
+                  "total_count":1}
+        with patch.object(p, "github_api", return_value=broken), \
+             patch.object(p, "premerge_rootless_attestation") as receipt:
+            with self.assertRaises(p.Denied):
+                p.premerge_head_checks(SOURCE, node)
+            receipt.assert_not_called()
+        with patch.object(p,"checks",side_effect=p.Denied("product_ci_not_green")), \
+             patch.object(p,"github_api",side_effect=p.Denied("controlled_command_failed")):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.premerge_head_checks(SOURCE, node)
+
+    def test_premerge_tree_mismatch_denied(self):
+        empty = {"check_runs": [], "total_count": 0}
+        with patch.object(p, "github_api", return_value=empty), \
+             patch.object(p, "commit",return_value={"commit":{"tree":{"sha":"a"*40}}}), \
+             patch.object(p,"premerge_rootless_attestation") as receipt:
+            with self.assertRaisesRegex(p.Denied, "head_merge_tree_mismatch"):
+                p.premerge_head_checks(SOURCE, {"commit":{"tree":{"sha":"b"*40}}})
+            receipt.assert_not_called()
+
+    def test_premerge_receipt_requires_strict_contract_and_secure_file(self):
+        tree="e"*40
+        data={"schema_version":2,"sha":SOURCE,"tree":tree,
+              "runner":"zis-rootless-exact-tree","source":"root-verified-systemd-e2e",
+              "exit_code":0,"verified_at":"2026-11-18T13:41Z",
+              "stages":{"exact_tree":True,"rootless_isolation":True,"full_product_build":True,
+                        "network_none_validation":True,"final_image":True,
+                        "positive_provenance":True,"negative_versionless":True}}
+        with self.trusted_tree() as directory:
+            path=directory/("premerge-"+SOURCE+".json")
+            path.write_text(json.dumps(data));os.chmod(path,0o600)
+            self.assertEqual(p.premerge_rootless_attestation(SOURCE,tree),data)
+            for key,value in [("sha",NEW),("tree",NEW),("exit_code",1),
+                              ("source","agent-reported"),("schema_version",1),
+                              ("stages",{"exact_tree":True})]:
+                with self.subTest(key=key):
+                    path.write_text(json.dumps({**data,key:value}))
+                    with self.assertRaisesRegex(p.Denied,"premerge_attestation_invalid"):
+                        p.premerge_rootless_attestation(SOURCE,tree)
+
     def test_missing_ci_status_and_incomplete_pagination_denied(self):
         scenarios=[{"check_runs":[],"total_count":0},
                    {"check_runs":[{"name":"validate-product","status":"in_progress","conclusion":None}],"total_count":1},

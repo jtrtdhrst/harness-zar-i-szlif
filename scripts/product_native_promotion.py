@@ -376,6 +376,54 @@ def local_ci_attestation(sha):
     return data
 
 
+def premerge_rootless_attestation(sha, tree):
+    """Only a root-owned exact-tree E2E receipt can replace absent PR checks."""
+    if not isinstance(sha, str) or not SHA.fullmatch(sha) or not isinstance(tree, str) or not SHA.fullmatch(tree):
+        raise Denied("invalid_premerge_identity")
+    raw = _secure_attestation_bytes("premerge-" + sha + ".json")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise Denied("premerge_attestation_unreadable") from None
+    expected_stages = {
+        "exact_tree": True, "rootless_isolation": True,
+        "full_product_build": True, "network_none_validation": True,
+        "final_image": True, "positive_provenance": True,
+        "negative_versionless": True,
+    }
+    if (not isinstance(data, dict) or data.get("schema_version") != 2
+            or data.get("sha") != sha or data.get("tree") != tree
+            or data.get("runner") != "zis-rootless-exact-tree"
+            or data.get("source") != "root-verified-systemd-e2e"
+            or data.get("exit_code") != 0 or data.get("stages") != expected_stages
+            or not isinstance(data.get("verified_at"), str)
+            or not data["verified_at"]):
+        raise Denied("premerge_attestation_invalid")
+    return data
+
+
+def premerge_head_checks(head_sha, merge_node):
+    """No PR-controlled runner, no bypass of failing/pending GitHub checks."""
+    try:
+        return checks(head_sha)
+    except Denied as error:
+        if str(error) != "product_ci_not_green":
+            raise
+    try:
+        runs = github_api("/repos/" + REPO + "/commits/" + head_sha + "/check-runs")
+    except Denied:
+        raise Denied("product_ci_not_green") from None
+    if not isinstance(runs, dict) or runs.get("total_count") != 0 or runs.get("check_runs") != []:
+        raise Denied("premerge_head_checkrun_not_empty")
+    head_node = commit(head_sha)
+    head_tree = (((head_node or {}).get("commit") or {}).get("tree") or {}).get("sha")
+    merge_tree = (((merge_node or {}).get("commit") or {}).get("tree") or {}).get("sha")
+    if not isinstance(head_tree, str) or not SHA.fullmatch(head_tree) or head_tree != merge_tree:
+        raise Denied("head_merge_tree_mismatch")
+    premerge_rootless_attestation(head_sha, head_tree)
+    return {"billing_blocked": False, "rootless_premerge": True}
+
+
 def native_approval(pr, head_sha, merge_sha):
     if not NATIVE_GATE.is_file():
         raise Denied("native_gate_not_installed")
@@ -435,7 +483,7 @@ def candidate_history(release_sha, main_sha):
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
         pr, head = provenance(current)
-        head_ci = checks(head)
+        head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
         # Docs-only squash PRs are NOT releases and do not require a Paperclip
         # runtime work product. Everything else, including runtime squashes,
@@ -443,7 +491,7 @@ def candidate_history(release_sha, main_sha):
         if len(parents) == 1 and non_runtime_files_only(pr, current, node):
             # Nothing here can reach a runtime artifact, but a job that never
             # ran is still not evidence: keep the strict rule for this path.
-            if head_ci["billing_blocked"] or merge_ci["billing_blocked"]:
+            if head_ci["billing_blocked"] or merge_ci["billing_blocked"] or head_ci.get("rootless_premerge"):
                 raise Denied("product_ci_not_green")
             current = first
             continue
@@ -459,6 +507,8 @@ def candidate_history(release_sha, main_sha):
             if not isinstance(head_tree, str) or not isinstance(merge_tree, str) or head_tree != merge_tree:
                 raise Denied("head_merge_tree_mismatch")
             evidence = "local_ci_attestation"
+        if head_ci.get("rootless_premerge"):
+            evidence = "rootless_premerge_attestation"
         native_approval(pr, head, current)
         pending.append({"pr": pr, "head": head, "merge": current, "ci_evidence": evidence})
         current = first
