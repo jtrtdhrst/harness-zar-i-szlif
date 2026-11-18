@@ -19,6 +19,7 @@ freshness check below use the SHA fetched from GitHub instead.
 | `ops/repowise/repowise_refill_all.sh` | `/opt/repowise-knowledge/refill-all.sh` |
 | `ops/systemd/repowise-github-sync.{service,timer}` | `/etc/systemd/system/` |
 | `ops/systemd/repowise-freshness-check.{service,timer}` | `/etc/systemd/system/` |
+| `ops/systemd/repowise-generate.{service,timer}` | `/etc/systemd/system/` |
 
 The host's existing `repowise-generate.service` executes `refill-all.sh`.
 If modifying host scripts, update these canonical sources as well; redeploy
