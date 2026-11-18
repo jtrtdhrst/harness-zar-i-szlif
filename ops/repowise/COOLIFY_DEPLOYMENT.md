@@ -65,3 +65,30 @@ independently PASS/FAIL/NOT_RUN. A native episode marked
 ZARI-240 Done requires authorized reviewed service deploy, digest
 attestation, independent authenticated QA and rollback — in addition
 to ZARI-213 isolation protections.
+
+## Coolify host-volume validation — confirmed 2026-11-18
+
+The initial Git-backed staging app `gl8bvfjtw2af8hkox4mguzzr` rejected
+`compose.publisher.yaml` **before building**, because Coolify's Compose
+security parser disallows `${...}` substitution in the `volumes[].source`
+field (deployment `fdl8ixqv6ydb0qcxnrjchpvl`, status FAILED).
+Do not disable the validator, enable raw Compose bypass, or make the
+Product Git mount writable to get around this check.
+
+Use `compose.publisher.coolify.yaml` for this specific verified VPS:
+all four bind sources are static and match preflight readback of the
+already running operator writer. No bearer content is in Git; the
+root-controlled mode-0600 file itself remains a read-only bind.
+The portable `compose.publisher.yaml` remains available for local
+`docker compose config` and repeatable source tests.
+
+For the staging app, pin the exact reviewed source SHA and set
+`docker_compose_location=/ops/repowise/compose.publisher.coolify.yaml`.
+Keep auto-deploy and preview deploys disabled; retain no public domain,
+loopback port 7342 and the existing independent writer at 7339.
+Verify `docker compose config --quiet`, Coolify's runtime status,
+actual image digest, mounts, 401 without bearer and authenticated
+native MCP read/negative tool results before any cutover.
+The new app has NO release authority while ZARI-213 and parent
+ZARI-240 controls remain unproven; no rollback or production QA claim
+follows from successfully creating this application.
