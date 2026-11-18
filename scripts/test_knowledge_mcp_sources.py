@@ -46,6 +46,14 @@ class KnowledgeMcpTests(unittest.TestCase):
         self.assertIn('"streamable-http"', self.repowise)
         self.assertIn("USER repowise", self.repowise)
 
+    def test_overrides_are_part_of_repowise_build(self):
+        self.assertIn("COPY apply_overrides.py", self.repowise)
+        self.assertIn("COPY overrides/", self.repowise)
+        self.assertIn("RUN python /tmp/repowise-custom/apply_overrides.py", self.repowise)
+        source = (ROOT / "repowise-mcp/apply_overrides.py").read_text()
+        self.assertIn("Only .py overrides are allowed", source)
+        self.assertIn("Target must be an existing RepoWise Python module", source)
+
     def test_no_inlined_tokens(self):
         for token_line in re.findall(r'Bearer ([^"\s]+)', self.caddy):
             self.assertTrue(token_line.startswith("{$"), token_line)
