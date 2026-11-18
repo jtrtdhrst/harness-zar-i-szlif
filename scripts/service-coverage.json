@@ -49,14 +49,6 @@
       "mode": "manual_only",
       "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."
     },
-    "kod-aplikacji": {
-      "mode": "manual_only",
-      "reason": "Coolify app project metadata and nested Paperclip platform inventory; no automatic image promotion."
-    },
-    "kod-mcp": {
-      "mode": "manual_only",
-      "reason": "Nested legacy Paperclip MCP gateway source; manual review and explicit image promotion only. No automatic CI build."
-    },
     "mantic-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."

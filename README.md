@@ -1,8 +1,8 @@
 # Harness — active services only
 
-This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Infrastructure services normally own root folders; Paperclip application metadata and its MCP source are grouped under `kod-aplikacji/` and `kod-mcp/`.
+This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Infrastructure services are maintained in their own source folders.
 
-**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The `kod-aplikacji/` and `kod-mcp/` folders also group Paperclip platform metadata and Paperclip MCP source; they are **not** alternative locations for Żar i Szlif product code. The Hermes Gateway receiver and adapter are under review in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
+**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The former `kod-aplikacji/` and `kod-mcp/` inventories, including their legacy Paperclip sources, were removed from this repository; Żar i Szlif product code remains in its separate product repository. The Hermes Gateway receiver and adapter are under review in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
 
 ## Hermes adapter documentation (canonical)
 
@@ -12,8 +12,6 @@ The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-papercl
 
 - `plasmic/` — Plasmic self-hosted application
 - `plasmic-mcp/` — Plasmic MCP
-- `kod-aplikacji/paperclip/` — Paperclip application platform metadata
-- `kod-mcp/paperclip-mcp/` — Paperclip MCP
 - `integrations/hermes-paperclip/` — source-pinned Hermes Gateway receiver, Paperclip adapter and [runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md)
 - `comfyui-mcp/` — ComfyUI engine + MCP (independently versioned image builds; verify each active deployment)
 - `mantic-mcp/` — Mantic MCP
@@ -44,7 +42,6 @@ The table below is a **candidate source layout** for independently verified serv
 
 | Service | Candidate build directory | Dockerfile / build source | Watch paths after verified Git binding |
 | --- | --- | --- | --- |
-| Paperclip MCP | `/kod-mcp/paperclip-mcp` | Dockerfile `/Dockerfile` | `kod-mcp/paperclip-mcp/**` |
 | Plasmic MCP | `/plasmic-mcp` | Dockerfile `/Dockerfile` | `plasmic-mcp/**` |
 | ComfyUI MCP | `/comfyui-mcp` | Dockerfile `/Dockerfile` | `comfyui-mcp/**` |
 | Mantic MCP (HTTP) | `/mantic-mcp` | Dockerfile `/Dockerfile.http` | `mantic-mcp/**` |

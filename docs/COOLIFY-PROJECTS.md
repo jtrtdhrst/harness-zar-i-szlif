@@ -15,8 +15,7 @@ same project.
 4. Each source folder must be buildable from its own directory; no build may use the
    repository root as context.
 5. `comfyui-mcp/` is the temporary combined ComfyUI build folder; the target
-   split is `comfy/` (engine) and `comfy-mcp/` (MCP). Do not add a second
-   Qdrant database to `qdrant-mcp/`.
+   split is `comfy/` (engine) and `comfy-mcp/` (MCP).
 
 ## Projects and data
 
@@ -24,12 +23,12 @@ same project.
 |---|---|---|---|
 | `mautic` | `mautic` (+ `mantic-mcp`) | `*_mautic-prod-db`, `-config`, `-logs`, `-media*` | `mautic/` |
 | `supabase` | `supabase` | `*_supabase-staging-db-data`, storage, deno cache, SQL seed volumes | `supabase/` |
-| `paperclip` | `paperclip` | `*_paperclip-db`, `*_paperclip-home` | `kod-aplikacji/paperclip/` |
+| `paperclip` | `paperclip` | `*_paperclip-db`, `*_paperclip-home` | source removed from this repo; runtime not changed |
 | `Plasmic` | `plasmic` | `*_plasmic-pgdata` | `plasmic/` |
 | `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `comfyui-mcp/` (until split) |
 | `opik` | `opik` | `*_opik-staging-clickhouse-*`, `-mysql`, `-minio-data`, `-redis-data`, `-zookeeper` | `opik/` (planned) |
 | `opik-mcp` | `opik-mcp` | stateless (talks to `opik`) | `opik-mcp/` (planned) |
-| `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | `kod-mcp/paperclip-mcp/` |
+| `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | source removed from this repo; runtime not changed |
 | `plasmic-mcp` | `plasmic-mcp` | `plasmic_mcp_state` | `plasmic-mcp/` |
 | `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `supabase-mcp/` |
 | `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `comfy-mcp/` |
@@ -40,8 +39,8 @@ same project.
 | `multica` | `multica-stack` | `backend-uploads`, `pgdata` | `multica/` |
 | `Cloudflare Ingress i Edge` | `cloudflared-paperclip`, edge | no application data; tunnel token is a mounted secret | `cloudflare-ingress/` (planned) |
 | `shared-ingress` | `opencode`, `oauth-callback-proxy`, `oauth-loopback-bridge` | host bind paths, no Docker data volumes | `shared-ingress/` |
-| `Kod Aplikacji` | `kod-aplikacji` (panel) | panel-owned only | `kod-aplikacji/` (planned) |
-| `Kod MCP` | `playwright-mcp` + dev | browser state ephemeral | `playwright-mcp/` |
+| `Kod Aplikacji` | `kod-aplikacji` (panel) | panel-owned only | source inventory removed from this repo |
+| `Kod MCP` | `playwright-mcp` + dev | browser state ephemeral | `playwright-mcp/` (the old `kod-mcp/` inventory was removed) |
 | `Hermes Gateway POC` | — | disposable, archive | `_archive/hermes-gateway-poc/` |
 | `Staging techniczny i testy` | — | empty after migration, delete | `_archive/staging-techniczny-i-testy/` |
 
@@ -52,7 +51,6 @@ same project.
 | `emailens-mcp` | `docker build -t local/emailens-mcp:0.10.0 emailens-mcp` | `emailens-mcp/Dockerfile` |
 | `playwright-mcp` | `docker build -t local/playwright-mcp:0.0.83 playwright-mcp` | `playwright-mcp/Dockerfile` |
 | `mantic-mcp` | `docker build -f mantic-mcp/Dockerfile.http mantic-mcp` | `Dockerfile.http` |
-| `kod-mcp/paperclip-mcp` | `docker build -t local/paperclip-mcp kod-mcp/paperclip-mcp` | `Dockerfile` |
 | `plasmic` | `docker compose -f plasmic/docker-compose.yml build` | `studio.Dockerfile`, `platform/wab/Dockerfile` |
 | `plasmic-mcp` | `docker build -t local/plasmic-mcp plasmic-mcp` | `Dockerfile` |
 | `comfyui-mcp` | `docker build -f comfyui-mcp/Dockerfile.comfyui comfyui-mcp` / `-f Dockerfile` | engine / MCP |
@@ -69,8 +67,10 @@ These are tracked as migration work, not silently ignored:
   `comfyui-mcp/` folder remains only as historical build source.
 - `mcp-bridges` is split into `emailens-mcp`, `mantic-mcp` (in `mautic`) and
   `ubuntu-mcp`; old app containers removed.
-- platform folders (`mautic`, `supabase`, `paperclip`, `opik`,
+- platform folders (`mautic`, `supabase`, `opik`,
   `comfy`) are metadata/build-contract folders; their upstream images/source
   remain external.
 
 Repository-only removal of the `qdrant/` and `qdrant-mcp/` source directories does not delete any deployed Qdrant services, collections or persistent Docker volumes. Any retirement of live resources requires separate inventory and migration.
+
+The root inventories `kod-aplikacji/` and `kod-mcp/` were removed from Git, including nested legacy Paperclip application and MCP sources. The Coolify inventory above describes **runtime resources only**, not their ownership by this repository. Removing Git paths does not delete services, images, databases, Docker volumes or secrets.
