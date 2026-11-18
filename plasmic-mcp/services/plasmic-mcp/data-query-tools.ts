@@ -283,14 +283,15 @@ function summarizeQuery(iid: string, entry: Entry) {
 export function plasmicDataQueryTools(ctx: PlasmicCtx): ToolDef[] {
   const c = ctx.client;
   const write = async (
-    tool: string, projectId: string, target: string,
+    tool: string, projectId: string, branchId: string | undefined, target: string,
     payload: unknown, idem: string | undefined, preview: boolean,
     perform: () => Promise<{ revision: number; dryRun: boolean; changed: string[] }>,
   ) => {
-    const inputHash = sha256(JSON.stringify({ tool, target, payload }));
-    const op = () => writeOp(ctx, tool, projectId, target, JSON.stringify({ tool, target, inputHash }), perform);
+    const branch = branchId ?? "main";
+    const inputHash = sha256(JSON.stringify({ tool, projectId, branch, target, payload }));
+    const op = () => writeOp(ctx, tool, projectId, target, JSON.stringify({ tool, branch, target, inputHash }), perform);
     if (preview) return { ...(await op()), deduped: false };
-    const cacheKey = ["live", tool, projectId, idem].join(":");
+    const cacheKey = ["live", tool, projectId, branch, idem].join(":");
     const value = await idempotent(ctx.stateDir + "/idempotency", cacheKey, async () => ({ inputHash, effect: await op() }));
     if (value.result.inputHash !== inputHash) {
       throw new Error("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_INPUT");
@@ -386,7 +387,7 @@ export function plasmicDataQueryTools(ctx: PlasmicCtx): ToolDef[] {
         requireSupported(verdict, "plasmic_create_data_query");
         const seed = `dataquery:${projectId}@${branchId ?? "main"}:${a.idempotencyKey ?? sha256(JSON.stringify(a))}`;
         const newId = `mcpdq${sha256(seed).slice(0, 14)}`;
-        return write("plasmic_create_data_query", projectId, a.url as string, a, a.idempotencyKey as string | undefined, preview,
+        return write("plasmic_create_data_query", projectId, branchId, a.url as string, a, a.idempotencyKey as string | undefined, preview,
           async () => {
             const out = await c.mutate(projectId, branchId, (bundle: BundleDoc) => {
               const map = bundle.map as EntryMap;
@@ -449,7 +450,7 @@ export function plasmicDataQueryTools(ctx: PlasmicCtx): ToolDef[] {
         if (isObj(patch.headers)) assertSafeHeaders(patch.headers as Record<string, string>);
         const verdict = await probeCapabilities(ctx, { projectId, branchId });
         requireSupported(verdict, "plasmic_update_data_query");
-        return write("plasmic_update_data_query", projectId, a.queryId as string, patch, a.idempotencyKey as string | undefined, preview,
+        return write("plasmic_update_data_query", projectId, branchId, a.queryId as string, patch, a.idempotencyKey as string | undefined, preview,
           async () => {
             const out = await c.mutate(projectId, branchId, (bundle: BundleDoc) => {
               const map = bundle.map as EntryMap;
@@ -491,7 +492,7 @@ export function plasmicDataQueryTools(ctx: PlasmicCtx): ToolDef[] {
         const verdict = await probeCapabilities(ctx, { projectId, branchId });
         requireSupported(verdict, "plasmic_delete_data_query");
         const queryId = a.queryId as string;
-        return write("plasmic_delete_data_query", projectId, queryId, { force: !!a.force }, a.idempotencyKey as string | undefined, preview,
+        return write("plasmic_delete_data_query", projectId, branchId, queryId, { force: !!a.force }, a.idempotencyKey as string | undefined, preview,
           async () => {
             const out = await c.mutate(projectId, branchId, (bundle: BundleDoc) => {
               const map = bundle.map as EntryMap;
@@ -541,7 +542,7 @@ export function plasmicDataQueryTools(ctx: PlasmicCtx): ToolDef[] {
         if (!preview && !a.idempotencyKey) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
         const verdict = await probeCapabilities(ctx, { projectId, branchId });
         requireSupported(verdict, "plasmic_bind_data_query");
-        return write("plasmic_bind_data_query", projectId, a.elementId as string,
+        return write("plasmic_bind_data_query", projectId, branchId, a.elementId as string,
           { queryId: a.queryId, propName: a.propName }, a.idempotencyKey as string | undefined, preview,
           async () => {
             const out = await c.mutate(projectId, branchId, (bundle: BundleDoc) => {
@@ -580,7 +581,7 @@ export function plasmicDataQueryTools(ctx: PlasmicCtx): ToolDef[] {
                 );
               }
               if (previousVariable === variable) return null;
-              const exprId = `mcpdv${sha256(`${projectId}:${a.queryId}:${previousVariable}:${templateId}`).slice(0, 14)}`;
+              const exprId = `mcpdv${sha256(`${projectId}@${branchId ?? "main"}:${a.queryId}:${previousVariable}:${templateId}`).slice(0, 14)}`;
               if (map[exprId]) return null;
               const clone = JSON.parse(
                 templateText.replace(new RegExp(`\\$q\\.${previousVariable}(?![A-Za-z0-9_])`, "g"), `$q.${variable}`),
