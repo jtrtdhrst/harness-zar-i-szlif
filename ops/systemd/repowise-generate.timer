@@ -1,0 +1,11 @@
+[Unit]
+Description=Fill RepoWise concept pages every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Unit=repowise-generate.service
+
+[Install]
+WantedBy=timers.target
