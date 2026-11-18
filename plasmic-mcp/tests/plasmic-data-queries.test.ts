@@ -44,9 +44,17 @@ const projectWithQuery = (): Map => ({
   plainTag: { __type: "TplTag", tag: "div", name: "plain", children: [], vsettings: [{ __ref: "cardVs" }] },
 });
 
+const scopeKey = (projectId: string, branchId?: string) =>
+  branchId && branchId !== "main" ? `${projectId}@${branchId}` : projectId;
+
 async function setup(options: { capability?: "declared" | "undeclared" | "unreachable" | "none"; failingWrite?: boolean } = {}) {
-  const bundles: Record<string, Map> = { plain: projectPlain(), queries: projectWithQuery() };
-  const revisions: Record<string, number> = { plain: 4, queries: 9 };
+  const bundles: Record<string, Map> = {
+    plain: projectPlain(), queries: projectWithQuery(),
+    "queries@branch-a": projectWithQuery(), "queries@branch-b": projectWithQuery(),
+  };
+  const revisions: Record<string, number> = {
+    plain: 4, queries: 9, "queries@branch-a": 9, "queries@branch-b": 9,
+  };
   let mutations = 0;
   let failNext = options.failingWrite === true;
   const client = new PlasmicClient({
@@ -54,36 +62,38 @@ async function setup(options: { capability?: "declared" | "undeclared" | "unreac
     fetchImpl: async () => { throw new Error("NO_NETWORK_IN_FIXTURE"); },
   });
   Object.assign(client, {
-    getProjectRev: async (projectId: string) => {
-      const bundle = bundles[projectId];
+    getProjectRev: async (projectId: string, branchId?: string) => {
+      const key = scopeKey(projectId, branchId);
+      const bundle = bundles[key];
       if (!bundle) throw new Error(`Plasmic 404 /api/v1/projects/${projectId}: fixture has no such project`);
       return {
-        revision: revisions[projectId], revId: `rev-${projectId}`,
+        revision: revisions[key], revId: `rev-${projectId}`,
         project: { id: projectId, name: projectId }, bundle: { map: structuredClone(bundle) },
         modelVersion: 639587200, hostlessDataVersion: 12,
       };
     },
     mutate: async (
       projectId: string,
-      _branchId: string | undefined,
+      branchId: string | undefined,
       fn: (b: { map: Map }) => { map?: Map; toDeleteIids?: string[] } | null,
       opts?: { dryRun?: boolean },
     ) => {
+      const key = scopeKey(projectId, branchId);
       if (failNext && !opts?.dryRun) {
         failNext = false;
         // Simulate WAB's optimistic revision check.
-        throw new Error(`Plasmic 412 /api/v1/projects/${projectId}/revisions/${revisions[projectId]! + 1}: revision conflict`);
+        throw new Error(`Plasmic 412 /api/v1/projects/${projectId}/revisions/${revisions[key]! + 1}: revision conflict`);
       }
-      const map = bundles[projectId]!;
+      const map = bundles[key]!;
       const patch = fn({ map: structuredClone(map) });
       const changed = [...Object.keys(patch?.map ?? {}), ...(patch?.toDeleteIids ?? []).map((i) => `-${i}`)];
-      if (!patch || changed.length === 0) return { revision: revisions[projectId]!, dryRun: true, changed: [] };
-      if (opts?.dryRun) return { revision: revisions[projectId]!, dryRun: true, changed };
+      if (!patch || changed.length === 0) return { revision: revisions[key]!, dryRun: true, changed: [] };
+      if (opts?.dryRun) return { revision: revisions[key]!, dryRun: true, changed };
       mutations += 1;
-      bundles[projectId] = { ...map, ...(patch.map ?? {}) };
-      for (const iid of patch.toDeleteIids ?? []) delete bundles[projectId]![iid];
-      revisions[projectId] = revisions[projectId]! + 1;
-      return { revision: revisions[projectId]!, dryRun: false, changed };
+      bundles[key] = { ...map, ...(patch.map ?? {}) };
+      for (const iid of patch.toDeleteIids ?? []) delete bundles[key]![iid];
+      revisions[key] = revisions[key]! + 1;
+      return { revision: revisions[key]!, dryRun: false, changed };
     },
   });
   const mode = options.capability ?? "declared";
@@ -110,8 +120,8 @@ async function setup(options: { capability?: "declared" | "undeclared" | "unreac
   return {
     tool,
     toolNames: tools.map((t) => t.name),
-    mapNow: (projectId = "queries") => bundles[projectId]!,
-    revisionNow: (projectId = "queries") => revisions[projectId]!,
+    mapNow: (projectId = "queries", branchId?: string) => bundles[scopeKey(projectId, branchId)]!,
+    revisionNow: (projectId = "queries", branchId?: string) => revisions[scopeKey(projectId, branchId)]!,
     mutationCount: () => mutations,
   };
 }
@@ -398,6 +408,67 @@ test("bind: repoints an existing $q dynamic value and refuses to invent a bindin
     assert.equal((mapNow()[newExprId] as { code: string }).code, "$q.sessions");
     assert.equal((mapNow().exprTasks as { code: string }).code, "$q.tasks", "the previous expression is untouched");
     assert.deepEqual(element.vsettings, [{ __ref: "cardVs" }], "unrelated element fields are preserved");
+  });
+});
+
+
+test("idempotent data-query writes are branch-scoped with independent readback", async () => {
+  const { tool, mapNow, revisionNow, mutationCount } = await setup({ capability: "declared" });
+  const create = tool("plasmic_create_data_query");
+  const update = tool("plasmic_update_data_query");
+  const sameInput = {
+    projectId: "queries", name: "crossBranch",
+    url: "https://supabase.example.pl/rest/v1/cross-branch?select=*",
+    dryRun: false, idempotencyKey: "dataquery-branch-scope-1",
+  };
+  await withAllowlist("supabase.example.pl", async () => {
+    const first = await create.handler({ ...sameInput, branchId: "branch-a" }) as {
+      id: string; deduped: boolean; revision: number;
+    };
+    assert.equal(first.deduped, false);
+    assert.equal(first.revision, 10);
+    assert.ok(mapNow("queries", "branch-a")[first.id]);
+    assert.equal(revisionNow("queries", "branch-b"), 9);
+
+    const second = await create.handler({ ...sameInput, branchId: "branch-b" }) as {
+      id: string; deduped: boolean; revision: number;
+    };
+    assert.equal(second.deduped, false, "same key on another branch must execute");
+    assert.equal(second.revision, 10);
+    assert.notEqual(first.id, second.id, "deterministic ids must include branch identity");
+    assert.ok(mapNow("queries", "branch-b")[second.id]);
+    assert.equal(mapNow("queries", "branch-a")[second.id], undefined);
+    assert.equal(mapNow("queries", "branch-b")[first.id], undefined);
+    assert.equal(mutationCount(), 2);
+
+    const replay = await create.handler({ ...sameInput, branchId: "branch-a" }) as { deduped: boolean };
+    assert.equal(replay.deduped, true, "same-branch replay must be idempotent");
+    assert.equal(mutationCount(), 2);
+
+    const updateInput = {
+      projectId: "queries", queryId: "dsTasks",
+      patch: { url: "https://supabase.example.pl/rest/v1/tasks?select=id" },
+      dryRun: false, idempotencyKey: "dataquery-branch-update-1",
+    };
+    const updatedA = await update.handler({ ...updateInput, branchId: "branch-a" }) as {
+      deduped: boolean; revision: number;
+    };
+    assert.equal(updatedA.deduped, false);
+    assert.equal(updatedA.revision, 11);
+    assert.equal(mapNow("queries", "branch-b").dsTasks!.url, "https://supabase.example.pl/rest/v1/tasks?select=*");
+
+    const updatedB = await update.handler({ ...updateInput, branchId: "branch-b" }) as {
+      deduped: boolean; revision: number;
+    };
+    assert.equal(updatedB.deduped, false);
+    assert.equal(updatedB.revision, 11);
+    assert.equal(mapNow("queries", "branch-a").dsTasks!.url, updateInput.patch.url);
+    assert.equal(mapNow("queries", "branch-b").dsTasks!.url, updateInput.patch.url);
+    assert.equal(mutationCount(), 4);
+    const replayUpdate = await update.handler({ ...updateInput, branchId: "branch-b" }) as { deduped: boolean };
+    assert.equal(replayUpdate.deduped, true);
+    assert.equal(mutationCount(), 4);
+    assert.equal(revisionNow("queries"), 9, "default branch stays unchanged");
   });
 });
 
