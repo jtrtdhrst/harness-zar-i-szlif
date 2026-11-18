@@ -43,10 +43,15 @@ workspace, run:
 python ops/repowise/test_deployment_evidence_mcp.py
 ```
 
-MCP uses **stdio**, not a public HTTP listener:
+MCP uses **stdio**, not a public HTTP listener. Every deployed MCP
+instance MUST be assigned exactly one server-side repository scope:
+`DEPLOY_EVIDENCE_ALLOWED_REPO=product` or
+`DEPLOY_EVIDENCE_ALLOWED_REPO=harness`. With no scope or the wrong scope,
+both tools fail closed. The repository is not selected by trusting agent
+arguments alone.
 
 ```sh
-python ops/repowise/deployment_evidence_mcp.py
+DEPLOY_EVIDENCE_ALLOWED_REPO=product python ops/repowise/deployment_evidence_mcp.py
 ```
 
 The runnable host prototype is at
