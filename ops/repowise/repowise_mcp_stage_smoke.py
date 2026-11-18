@@ -114,9 +114,26 @@ def main():
     print("PASS negative cross-repo ownership check")
 
     blast, blast_text = tool("get_blast_radius", {"targets": ["product::app"], "max_depth": 2, "include_behavioral": False})
-    if "harness::paperclip-mcp" not in blast_text:
-        fail("cross-repo blast radius missing harness::paperclip-mcp")
-    print("PASS cross-repo blast radius")
+    # Paperclip MCP was removed from Harness on 2026-11-18. Verify a
+    # surviving cross-repository HTTP relationship instead of deleted code.
+    if not isinstance(blast, dict):
+        fail("cross-repo blast radius is not structured JSON")
+    if blast.get("unresolved_targets") or blast.get("undetermined_targets"):
+        fail("cross-repo blast radius has unresolved targets")
+    impacted = blast.get("impacted", [])
+    if not isinstance(impacted, list):
+        fail("cross-repo blast radius has invalid impacted list")
+    ubuntu_edges = [
+        item for item in impacted
+        if isinstance(item, dict)
+        and item.get("id") == "harness::ubuntu-mcp"
+        and item.get("repo") == "harness"
+        and item.get("structural") is True
+        and "http" in item.get("edge_kinds", [])
+    ]
+    if not ubuntu_edges:
+        fail("cross-repo blast radius missing structural HTTP edge to harness::ubuntu-mcp")
+    print("PASS cross-repo blast radius (ubuntu-mcp structural HTTP)")
     print("ALL PASS")
 
 
