@@ -92,10 +92,16 @@ test('HTTP transport authenticates, exposes the CLI catalog, and forwards caller
   assert.match(destructive.result.content[0].text, /confirm=true/);
 });
 
-test('stdio transport returns MCP initialization and tool call responses', async () => {
+test('stdio transport returns MCP initialization and tool call responses', async (t) => {
   const proc = spawn(process.execPath, [join(import.meta.dirname, '..', 'server.mjs'), 'stdio'], {
     env: { ...process.env, MULTICA_TOKEN: 'mat_stdio_test_token_123456789' },
     stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // A failed assertion or timeout must never leave a server child running:
+  // Node's test runner waits for inherited pipe handles and otherwise hangs.
+  t.after(() => {
+    if (!proc.stdin.destroyed) proc.stdin.destroy();
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGTERM');
   });
   const lines = [];
   let stderr = '';
@@ -106,10 +112,14 @@ test('stdio transport returns MCP initialization and tool call responses', async
   proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } })}\n`);
   proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'multica__issue__get', arguments: { id: '01a1b749-f45e-73df-b26d-ec906c541ad7' } } })}\n`);
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`stdio timeout: ${stderr}`)), 5000);
+    let pollTimer;
+    const deadline = setTimeout(() => {
+      clearTimeout(pollTimer); // stop the self-rescheduling poll after rejection
+      reject(new Error(`stdio timeout: ${stderr}`));
+    }, 15000);
     const check = () => {
-      if (lines.length >= 2) { clearTimeout(timer); resolve(); }
-      else setTimeout(check, 10);
+      if (lines.length >= 2) { clearTimeout(deadline); resolve(); }
+      else pollTimer = setTimeout(check, 10);
     };
     check();
   });
@@ -120,7 +130,11 @@ test('stdio transport returns MCP initialization and tool call responses', async
   assert.equal(call.result.isError, false);
   assert.equal(call.result.structuredContent.tokenPresent, true);
   assert(call.result.structuredContent.argv.includes('01a1b749-f45e-73df-b26d-ec906c541ad7'));
-  await new Promise((resolve) => proc.once('exit', resolve));
+  await new Promise((resolve, reject) => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
+    const deadline = setTimeout(() => reject(new Error('stdio process did not exit after EOF')), 5000);
+    proc.once('exit', () => { clearTimeout(deadline); resolve(); });
+  });
 });
 
 test.after(() => rmSync(dir, { recursive: true, force: true }));
