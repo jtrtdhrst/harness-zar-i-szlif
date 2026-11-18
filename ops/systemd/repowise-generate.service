@@ -1,0 +1,16 @@
+[Unit]
+Description=Write unwritten and stale RepoWise concept pages with the configured model
+Wants=docker.service
+After=docker.service repowise-github-sync.service
+ConditionPathExists=/opt/repowise-knowledge/refill-all.sh
+
+[Service]
+Type=oneshot
+# The outer lock serializes model generation against GitHub promotion.
+# The inner lock prevents two generator runs. Do not re-acquire the outer lock
+# inside refill-all.sh (flock locks on separate file descriptions would conflict).
+ExecStart=/usr/bin/flock -w 120 /run/lock/repowise-github-sync.lock /usr/bin/flock -n /run/lock/repowise-generate.lock /opt/repowise-knowledge/refill-all.sh
+TimeoutStartSec=5400
+Nice=10
+StandardOutput=journal
+StandardError=journal
