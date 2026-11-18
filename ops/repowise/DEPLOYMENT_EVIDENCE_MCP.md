@@ -64,6 +64,23 @@ The live episode survived a subsequent successful existing
 `repowise-github-sync.service` run. Source of the event is a trusted host
 operator invocation, **not a Multica agent run**.
 
+## Optional private HTTP transport — operator-only staging
+
+`--http` binds on `127.0.0.1:7339`, checks a mode-0600 regular
+token file configured by `DEPLOY_EVIDENCE_TOKEN_FILE`, and requires
+a **server-enforced** `DEPLOY_EVIDENCE_ALLOWED_REPO` scope. It
+fails closed on missing, weak, world-readable tokens and on binding
+to `0.0.0.0`. Never print the token or put it in an agent prompt.
+
+2026-11-18 staging evidence: the disposable container was run with
+`--network none`, so no external or production agent was exposed.
+Requests with no token and invalid token were both **401**. A
+request with the correct bearer passed authentication and received
+**406** (it lacked required MCP content negotiation). A full
+authenticated HTTP tools/call was **NOT_RUN** because the execution
+environment blocked that credential-bearing test. Staging container
+was removed; no HTTP service was promoted to production.
+
 ## Before binding to Multica agents / production
 
 1. Retain ZARI-213 HOLD: do not grant cross-project checkout or GitHub
