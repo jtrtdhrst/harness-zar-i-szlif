@@ -200,6 +200,93 @@ class DeploymentPublisherTests(unittest.TestCase):
         link.symlink_to(self.lock_path)
         with patch.dict("os.environ", {"DEPLOY_EVIDENCE_SYNC_LOCK": str(link)}):
             with patch.object(pub, "_live_product", return_value=(self.sha, 200)):
-                result = self.s
+                result = self.submit()
+            self.assertEqual(result["error"], "sync_lock_unavailable")
+            self.assertFalse(pub.default_store_path(self.repo).exists())
 
-... [4372 characters truncated]
+    def test_deny_internal_product_to_harness_symlink(self):
+        harness = self.root / "harness"
+        self.repo.rename(harness)
+        self.repo.symlink_to(harness, target_is_directory=True)
+        self.assertEqual(self.submit()["error"], "indexed_repo_unavailable")
+
+    def test_readback_includes_native_observed_timestamp(self):
+        with patch.object(pub, "_live_product", return_value=(self.sha, 200)):
+            created = self.submit()
+        got = pub.get_deployment_observation("product", created["episode_id"])
+        self.assertTrue(got["found"])
+        self.assertIsInstance(got["observed_at_unix"], float)
+        self.assertGreater(got["observed_at_unix"], 0)
+
+    def test_deny_symlink_escape(self):
+        (self.root / "harness").symlink_to(self.root.parent, target_is_directory=True)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "harness"}):
+            self.assertEqual(pub.get_deployment_observation("harness", "0" * 16)["error"],
+                             "indexed_repo_unavailable")
+
+    def test_real_mcp_stdio_transport_is_scoped(self):
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        async def probe():
+            env = dict(os.environ)
+            env["DEPLOY_EVIDENCE_ROOT"] = str(self.root)
+            env["DEPLOY_EVIDENCE_ALLOWED_REPO"] = "product"
+            params = StdioServerParameters(
+                command=sys.executable, args=[str(Path(pub.__file__).resolve())], env=env
+            )
+            async with stdio_client(params) as (reader, writer):
+                async with ClientSession(reader, writer) as session:
+                    await session.initialize()
+                    catalog = await session.list_tools()
+                    self.assertIn(
+                        "publish_deployment_observation", [t.name for t in catalog.tools]
+                    )
+                    ret = await session.call_tool(
+                        "get_deployment_observation",
+                        {"repo": "product", "episode_id": "0" * 16},
+                    )
+                    result = json.loads("".join(getattr(c, "text", "") for c in ret.content))
+                    self.assertFalse(result["found"])
+                    ret = await session.call_tool(
+                        "get_deployment_observation",
+                        {"repo": "harness", "episode_id": "0" * 16},
+                    )
+                    result = json.loads("".join(getattr(c, "text", "") for c in ret.content))
+                    self.assertEqual(result["error"], "repo_out_of_scope")
+
+        asyncio.run(probe())
+
+    def test_http_token_required_and_no_public_bind(self):
+        token = self.root / "token"
+        token.write_text("z" * 64)
+        token.chmod(0o600)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_TOKEN_FILE": ""}):
+            with self.assertRaisesRegex(RuntimeError, "token_file_required"):
+                pub.serve_http()
+        token.chmod(0o644)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_TOKEN_FILE": str(token)}):
+            with self.assertRaisesRegex(RuntimeError, "token_file_permissions_invalid"):
+                pub.serve_http()
+        token.chmod(0o600)
+        with patch.dict("os.environ", {
+            "DEPLOY_EVIDENCE_TOKEN_FILE": str(token),
+            "DEPLOY_EVIDENCE_HTTP_HOST": "0.0.0.0",
+        }):
+            with self.assertRaisesRegex(RuntimeError, "http_host_not_loopback"):
+                pub.serve_http()
+
+    def test_harness_source_only_not_marked_as_live(self):
+        harness = self.root / "harness"
+        self.repo.rename(harness)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "harness"}):
+            with patch.object(pub, "_git_contains", return_value=True):
+                data = pub.publish_deployment_observation(
+                    "harness", self.sha, "ZARI-240", "test-harness")
+        self.assertTrue(data["stored"])
+        self.assertEqual(data["status"], "SOURCE_ONLY_NOT_LIVE_VERIFIED")
+        self.assertEqual(data["independent_authenticated_positive_qa"], "NOT_RUN")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
