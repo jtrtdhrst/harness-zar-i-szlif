@@ -137,6 +137,31 @@ test('F1: an in-scope fixture update is still allowed, with the target resolved 
   assert.match(result.content[0].text, /Contact updated successfully/);
 });
 
+test('F3: test-scoped update_contact denies nonallowlisted top-level and custom field aliases with zero PATCH', async () => {
+  const attempts = [
+    { id: 2, company: 'Other company' },
+    { id: 2, phone: '123456789' },
+    { id: 2, customFields: { company: 'Other company' } },
+    { id: 2, customFields: { owner: 3 } },
+    { id: 2, customFields: { isPublished: true } },
+    { id: 2, firstName: 'Fixture', customFields: { customer_status: 'VIP' } },
+    { id: 2, customFields: { firstName: 'Fixture', company: 'Other company' } },
+  ];
+  for (const args of attempts) {
+    const c = client({ 'v1:GET:/contacts/2': fixtureContact, 'v1:PATCH:/contacts/2/edit': patchOk });
+    await expectDenied(dispatchTool('update_contact', c, args, new WriteGuard(ENV)), 'SCOPE_VIOLATION');
+    assert.equal(writes(c).length, 0, 'forbidden field must not be sent in a provider PATCH');
+  }
+});
+
+test('F3: allowed fixture label update remains possible while forbidden fields are rejected', async () => {
+  const c = client({ 'v1:GET:/contacts/2': fixtureContact, 'v1:PATCH:/contacts/2/edit': patchOk });
+  await dispatchTool('update_contact', c, { id: 2, firstName: 'Test', lastName: 'Fixture' }, new WriteGuard(ENV));
+  const sent = writes(c);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].body, { firstName: 'Test', lastName: 'Fixture' });
+});
+
 // ------------------------------------------------------- F2: tag normalisation
 
 const OBJECT_FORM = [{ tag: 'PROD-CUSTOMER-TAG' }];
@@ -203,6 +228,6 @@ test('F2: the guard decides on exactly the tag set the payload builder sends', a
   );
 
   const [created] = writes(c);
-  assert.deepEqual(created.body.tags, normalizeTagList([{ tag: TAG }, ' TEST-ZARI-209-WELCOME ']));
-  assert.deepEqual(created.body.tags, [TAG], 'duplicates and object form are normalised away');
-});
+  assert.deepEqual(created.body.tags, normalizeTagList([{ tag: TAG }, ' TEST-ZA
+
+... [121 characters truncated]
