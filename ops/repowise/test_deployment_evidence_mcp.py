@@ -257,6 +257,21 @@ class DeploymentPublisherTests(unittest.TestCase):
 
         asyncio.run(probe())
 
+    def test_http_port_fail_closed_and_staging_override(self):
+        token = self.root / "port-only-test-token"
+        token.write_text("x" * 64)
+        token.chmod(0o600)
+        common = {"DEPLOY_EVIDENCE_TOKEN_FILE": str(token),
+                  "DEPLOY_EVIDENCE_HTTP_HOST": "127.0.0.1"}
+        for invalid in ("abc", "80", "65536", "-1"):
+            with patch.dict("os.environ", {**common, "DEPLOY_EVIDENCE_HTTP_PORT": invalid}):
+                with self.assertRaisesRegex(RuntimeError, "http_port_invalid"):
+                    pub.serve_http()
+        with patch.dict("os.environ", {**common, "DEPLOY_EVIDENCE_HTTP_PORT": "7342"}):
+            with patch("uvicorn.run") as mocked:
+                pub.serve_http()
+                self.assertEqual(mocked.call_args.kwargs["port"], 7342)
+
     def test_http_token_required_and_no_public_bind(self):
         token = self.root / "token"
         token.write_text("z" * 64)
