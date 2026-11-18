@@ -22,10 +22,14 @@ RELEASE_REF = "ci-approved"
 ROOT = Path("/var/lib/paperclip-gitops")
 STATE = ROOT / "zar-i-szlif.json"
 LOCK = ROOT / "zar-i-szlif.lock"
-NATIVE_GATE = Path("/usr/local/libexec/paperclip_native_release_gate.py")
+NATIVE_GATE = Path(os.environ.get("PRODUCT_NATIVE_GATE", "/usr/local/libexec/multica_native_release_gate.py"))
 PUBLIC_RELEASE = "https://panel.zariszlif.pl/__release.json"
 PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 SHA = re.compile(r"^[a-f0-9]{40}$")
+# Coolify builds routinely exceed the old 4 min window (2026-11-06 incident).
+# Keep this below the systemd TimeoutStartSec.
+READBACK_ATTEMPTS = 90
+READBACK_INTERVAL = 10
 
 
 # Exact exception for the already-merged RepoWise knowledge migration (#164).
@@ -101,6 +105,15 @@ def commit(sha):
     return obj
 
 
+def issue_ref_from_text(text):
+    """Return exactly one distinct Multica issue ref, or fail closed on ambiguity."""
+    refs = re.findall(r"\b([A-Z][A-Z0-9]*-[0-9]{1,7})\b", str(text or ""))
+    unique = sorted(set(refs))
+    if len(unique) > 1:
+        raise Denied("ambiguous_issue_ref")
+    return unique[0] if unique else None
+
+
 def provenance(merge_sha):
     """Exactly one merged main PR with this exact recorded merge commit."""
     candidates = github_api("/repos/" + REPO + "/commits/" + merge_sha + "/pulls")
@@ -118,28 +131,51 @@ def provenance(merge_sha):
     head = (pr.get("head") or {}).get("sha")
     if not isinstance(number, int) or number < 1 or not isinstance(head, str) or not SHA.fullmatch(head):
         raise Denied("invalid_pr_identity")
-    return number, head
+    text = str(pr.get("title") or "")
+    issue_ref = issue_ref_from_text(text)
+    return number, head, issue_ref
+
+
+def local_ci_attestation(sha):
+    """Root-owned exact-SHA local CI attestation (self-hosted/local build path)."""
+    path = Path("/var/lib/paperclip-gitops/local-ci") / (sha + ".json")
+    try:
+        info = path.stat()
+        if not (info.st_mode & 0o100000) or info.st_uid != 0 or (info.st_mode & 0o022):
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        return None
+    if data.get("sha") != sha or data.get("exit_code") != 0:
+        return None
+    command = data.get("command")
+    if not isinstance(command, str) or "validate:code" not in command:
+        return None
+    return data
 
 
 def checks(sha):
-    obj = github_api("/repos/" + REPO + "/commits/" + sha + "/check-runs")
-    checks = (obj or {}).get("check_runs")
-    total = (obj or {}).get("total_count")
-    if not isinstance(checks, list) or not isinstance(total, int) or total != len(checks) or total > 100:
-        raise Denied("checks_incomplete")
-    matches = [x for x in checks if x.get("name") == "validate-product"]
-    if len(matches) != 1 or matches[0].get("status") != "completed" or matches[0].get("conclusion") != "success":
-        raise Denied("product_ci_not_green")
-    if any(x.get("status") != "completed" or x.get("conclusion") not in ("success", "skipped", "neutral") for x in checks):
-        raise Denied("nonpassing_checks")
+    """Never execute an unreviewed source tree as root.
+
+    The trusted CI attester must have already verified the exact immutable
+    GitHub source SHA using an isolated non-root build. A missing or invalid
+    root-owned receipt is a hard denial, not a request to run npm as root.
+    """
+    if local_ci_attestation(sha) is None:
+        raise Denied("trusted_local_ci_attestation_missing")
 
 
-def native_approval(pr, head_sha, merge_sha):
+def native_approval(pr, head_sha, merge_sha, issue_ref=None):
     if not NATIVE_GATE.is_file():
         raise Denied("native_gate_not_installed")
-    r = run([sys.executable, str(NATIVE_GATE),
-             "--repo", REPO, "--pr", str(pr),
-             "--head-sha", head_sha, "--merge-sha", merge_sha], timeout=35, allow_fail=True)
+    argv = [sys.executable, str(NATIVE_GATE),
+            "--repo", REPO, "--pr", str(pr),
+            "--head-sha", head_sha, "--merge-sha", merge_sha]
+    if issue_ref:
+        argv.extend(["--issue-ref", issue_ref])
+    r = run(argv, timeout=35, allow_fail=True)
     if r.returncode != 0:
         raise Denied("native_approval_unverified")
 
@@ -192,16 +228,21 @@ def candidate_history(release_sha, main_sha):
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
-        pr, head = provenance(current)
+        pr, head, issue_ref = provenance(current)
+        # Runtime source MUST receive an independent native exact-head review
+        # before any CI admission, attestations or code execution.
+        docs_only = len(parents) == 1 and non_runtime_files_only(pr, current, node)
+        if not docs_only:
+            if issue_ref is None:
+                raise Denied("missing_issue_ref")
+            native_approval(pr, head, current, issue_ref)
+        # Read-only: a pre-existing root-owned receipt must match both SHAs.
+        # Never run GitHub-supplied source through root-owned npm here.
         checks(head)
         checks(current)
-        # Docs-only squash PRs are NOT releases and do not require a Paperclip
-        # runtime work product. Everything else, including runtime squashes,
-        # still requires the original independent native approval gate.
-        if len(parents) == 1 and non_runtime_files_only(pr, current, node):
+        if docs_only:
             current = first
             continue
-        native_approval(pr, head, current)
         pending.append({"pr": pr, "head": head, "merge": current})
         current = first
     raise Denied("too_many_unreleased_merges")
@@ -237,6 +278,25 @@ def save(data):
     os.replace(tmp, STATE)
 
 
+def read_state():
+    try:
+        data = json.loads(STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def wait_for_live(target):
+    for _ in range(READBACK_ATTEMPTS):
+        try:
+            if live_release() == target:
+                return True
+        except Denied:
+            pass
+        time.sleep(READBACK_INTERVAL)
+    return False
+
+
 def require_verified_local_image_delivery():
     """Never advance ci-approved before real runner/registry/deploy E2E."""
     ready = Path("/var/lib/paperclip-gitops/zis-image-promotion-ready.json")
@@ -259,9 +319,28 @@ def process(plan=False):
     current = ref("main")
     release = ref(RELEASE_REF)
     live = live_release()
+
+    # Resume a deployment this controller already started but could not observe
+    # inside the old timeout. Never force-rewind ci-approved; only keep waiting
+    # for the exact SHA that is already the release ref.
+    pending = read_state()
+    if (live != release and current == release
+            and pending.get("status") == "readback_failed_rollback_required"
+            and pending.get("pending_sha") == release):
+        if wait_for_live(release):
+            save({"last_deployed_sha": release,
+                  "previous_sha": pending.get("previous_sha"),
+                  "release_prs": pending.get("release_prs", []),
+                  "status": "healthy"})
+            return {"result": "deployed_after_retry", "sha": release,
+                    "prior": pending.get("previous_sha"), "healthy": True}
+        raise Denied("deployment_readback_failed_rollback_required")
+
     if live != release:
         raise Denied("production_not_at_current_release_ref")
     if current == release:
+        if pending.get("status") not in (None, "healthy"):
+            save({"last_deployed_sha": release, "status": "healthy"})
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
@@ -281,15 +360,10 @@ def process(plan=False):
     # Coolify already autodeploys only from ci-approved. Await exact artifact,
     # but never force-rewind a Git ref on failure; preserve evidence for safe
     # image rollback through Coolify's managed rollback facility.
-    for _ in range(24):
-        try:
-            if live_release() == current:
-                save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
-                return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
-        except Denied:
-            pass
-        time.sleep(10)
-    save({"pending_sha":current,"previous_sha":release,"status":"readback_failed_rollback_required"})
+    if wait_for_live(current):
+        save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
+        return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
+    save({"pending_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"readback_failed_rollback_required"})
     raise Denied("deployment_readback_failed_rollback_required")
 
 
