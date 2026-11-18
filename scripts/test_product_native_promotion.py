@@ -167,13 +167,28 @@ class ProductPromotionTests(unittest.TestCase):
         from types import SimpleNamespace
         self.assertEqual(str(p.NATIVE_GATE), "/usr/local/libexec/multica_native_release_gate.py")
         with patch.object(p.Path, "is_file", return_value=True), \
+             patch.object(p, "github_api", return_value={"number":12,"title":"ZARI-228: reviewed source"}), \
              patch.object(p, "run", return_value=SimpleNamespace(returncode=0)) as execute:
             p.native_approval(12, SOURCE, NEW)
         argv = execute.call_args.args[0]
         self.assertEqual(argv, [p.sys.executable,
                                "/usr/local/libexec/multica_native_release_gate.py",
                                "--repo", p.REPO, "--pr", "12",
-                               "--head-sha", SOURCE, "--merge-sha", NEW])
+                               "--head-sha", SOURCE, "--merge-sha", NEW,
+                               "--issue-ref", "ZARI-228"])
+
+    def test_issue_ref_is_exact_and_ambiguous_title_fails_closed(self):
+        for doc in ({"number":12, "title":"runtime fix"},
+                    {"number":12, "title":"ZARI-228 & ZARI-241"},
+                    {"number":13, "title":"ZARI-228"},
+                    {"number":True,"title":"ZARI-228"},
+                    {"number":12,"title":None}):
+            with self.subTest(doc=doc), \
+                 patch.object(p.Path, "is_file", return_value=True), \
+                 patch.object(p, "github_api", return_value=doc), \
+                 patch.object(p, "run", side_effect=AssertionError("must not execute")):
+                with self.assertRaises(p.Denied):
+                    p.native_approval(12, SOURCE, NEW)
 
     def test_missing_native_gate_fails_closed(self):
         with patch.object(p,"NATIVE_GATE",p.Path("/__missing_multica_gate__/none.py")):
