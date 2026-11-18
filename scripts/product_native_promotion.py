@@ -431,12 +431,28 @@ def premerge_head_checks(head_sha, merge_node):
     return {"billing_blocked": False, "rootless_premerge": True}
 
 
+def issue_ref_from_pr(pr):
+    """Bind native approval to the exact Multica issue identified by the merged PR."""
+    doc = github_api("/repos/" + REPO + "/pulls/" + str(pr))
+    if not isinstance(doc, dict) or type(doc.get("number")) is not int or doc["number"] != pr:
+        raise Denied("pr_identity_unverified")
+    title = doc.get("title")
+    if not isinstance(title, str):
+        raise Denied("missing_issue_ref")
+    refs = set(re.findall(r"\\b([A-Z][A-Z0-9]*-[0-9]{1,7})\\b", title))
+    if len(refs) != 1:
+        raise Denied("missing_or_ambiguous_issue_ref")
+    return refs.pop()
+
+
 def native_approval(pr, head_sha, merge_sha):
     if not NATIVE_GATE.is_file():
         raise Denied("native_gate_not_installed")
+    issue_ref = issue_ref_from_pr(pr)
     r = run([sys.executable, str(NATIVE_GATE),
              "--repo", REPO, "--pr", str(pr),
-             "--head-sha", head_sha, "--merge-sha", merge_sha], timeout=35, allow_fail=True)
+             "--head-sha", head_sha, "--merge-sha", merge_sha,
+             "--issue-ref", issue_ref], timeout=35, allow_fail=True)
     if r.returncode != 0:
         raise Denied("native_approval_unverified")
 
