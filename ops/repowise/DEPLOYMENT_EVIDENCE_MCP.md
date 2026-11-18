@@ -54,6 +54,8 @@ arguments alone.
 DEPLOY_EVIDENCE_ALLOWED_REPO=product python ops/repowise/deployment_evidence_mcp.py
 ```
 
+The MCP SDK stdio client must explicitly pass `DEPLOY_EVIDENCE_ALLOWED_REPO` in `StdioServerParameters.env`; relying on ordinary parent-process environment inheritance does **not** propagate that nonstandard variable. This is covered by a real stdio initialize/tools/readback/scope test.
+
 The runnable host prototype is at
 `/opt/repowise-knowledge/deployment_evidence_mcp.py`.
 A controlled operator test on 2026-11-18 submitted Product source
