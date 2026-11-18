@@ -162,8 +162,21 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaises(p.Denied):
                     p.checks(SOURCE)
 
+    def test_native_gate_is_multica_and_sha_bound(self):
+        """Never regress release authority to legacy Paperclip during controller updates."""
+        from types import SimpleNamespace
+        self.assertEqual(str(p.NATIVE_GATE), "/usr/local/libexec/multica_native_release_gate.py")
+        with patch.object(p.Path, "is_file", return_value=True), \
+             patch.object(p, "run", return_value=SimpleNamespace(returncode=0)) as execute:
+            p.native_approval(12, SOURCE, NEW)
+        argv = execute.call_args.args[0]
+        self.assertEqual(argv, [p.sys.executable,
+                               "/usr/local/libexec/multica_native_release_gate.py",
+                               "--repo", p.REPO, "--pr", "12",
+                               "--head-sha", SOURCE, "--merge-sha", NEW])
+
     def test_missing_native_gate_fails_closed(self):
-        with patch.object(p,"NATIVE_GATE",p.Path("/__missing_paperclip_gate__/none.py")):
+        with patch.object(p,"NATIVE_GATE",p.Path("/__missing_multica_gate__/none.py")):
             with self.assertRaisesRegex(p.Denied,"native_gate_not_installed"):
                 p.native_approval(12,SOURCE,NEW)
 
