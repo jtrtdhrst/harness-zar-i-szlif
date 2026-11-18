@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Product release admission: native Paperclip approval -> exact SHA -> Coolify.
+"""Product release admission: native Multica approval -> exact SHA -> Coolify.
 
 Uses only the existing Coolify GitHub App installation. No PAT, no new app,
 no branch force push. The existing GitHub Actions production promotion must
@@ -34,7 +34,7 @@ ROOT = Path("/var/lib/paperclip-gitops")
 STATE = ROOT / "zar-i-szlif.json"
 LOCK = ROOT / "zar-i-szlif.lock"
 LOCAL_CI_DIR = ROOT / "local-ci"
-NATIVE_GATE = Path("/usr/local/libexec/paperclip_native_release_gate.py")
+NATIVE_GATE = Path("/usr/local/libexec/multica_native_release_gate.py")
 PUBLIC_RELEASE = "https://panel.zariszlif.pl/__release.json"
 PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 SHA = re.compile(r"^[a-f0-9]{40}$")
@@ -492,7 +492,7 @@ def candidate_history(release_sha, main_sha):
         pr, head = provenance(current)
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
-        # Docs-only squash PRs are NOT releases and do not require a Paperclip
+        # Docs-only squash PRs are NOT releases and do not require a Multica
         # runtime work product. Everything else, including runtime squashes,
         # still requires the original independent native approval gate.
         if len(parents) == 1 and non_runtime_files_only(pr, current, node):
