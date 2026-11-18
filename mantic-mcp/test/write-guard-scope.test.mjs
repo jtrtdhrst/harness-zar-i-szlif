@@ -228,6 +228,6 @@ test('F2: the guard decides on exactly the tag set the payload builder sends', a
   );
 
   const [created] = writes(c);
-  assert.deepEqual(created.body.tags, normalizeTagList([{ tag: TAG }, ' TEST-ZA
-
-... [121 characters truncated]
+  assert.deepEqual(created.body.tags, normalizeTagList([{ tag: TAG }, ' TEST-ZARI-209-WELCOME ']));
+  assert.deepEqual(created.body.tags, [TAG], 'duplicates and object form are normalised away');
+});
