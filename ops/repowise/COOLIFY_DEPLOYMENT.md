@@ -118,3 +118,14 @@ Coolify staging attempt used the portable Compose and created NO runtime;
 new staging build/test/startup at port 7342 and digest/rollback remain pending
 independent approval. The owner of the *file* must not be confused with the
 operator who administratively manages the protected path.
+
+## Verified Git-backed staging and auto-deploy trigger — 2026-11-18
+
+The following updates supersede the earlier *pending staging* paragraphs above. They are scoped to the staging resource, **not** the public product or any on-HOLD MCP lane.
+
+- GitHub PR #143, exact reviewed head `70680ed51ddc881d39451361b67593c8da788bbe`, merged to `main` as `60ba36da0639e9b4f41d9b3b9b82dd034ff57c00`. Release Lanes Policy CI succeeded.
+- Coolify staging application `gl8bvfjtw2af8hkox4mguzzr`, deployment `srunxs6dorobgnwabtqkwq2n`, source `60ba36da0639e9b4f41d9b3b9b82dd034ff57c00`, status `finished`; resulting image digest `sha256:c86cee0d5fd4c5f478887b13152a27753d402e6fd5f1d8702b6432104a311191`, container health `healthy`, running UID:GID `999:999` on loopback `127.0.0.1:7342`.
+- Staging MCP negative tests: absent/bad bearer => HTTP 401; valid bearer => `initialize`, `tools/list` and read-only `get_deployment_observation` PASS. Existing production writer on 7339 is left running independently.
+- Coolify staging setting is now `is_auto_deploy_enabled=true` with `watch_paths=ops/repowise/**`; a path matcher probe accepts `ops/repowise/Dockerfile.publisher` and rejects `plasmic-mcp/services/plasmic-mcp/server.ts`. This enables the GitHub App push trigger only for staging, not global release authorization.
+- **Still required:** real GitHub push webhook -> new Coolify deployment ID -> exact new main SHA -> running digest and authenticated smoke. The documentation commit that adds this section is an intentional watched-path E2E canary; do not declare this gate PASS before a subsequent webhook-triggered deploy is observed (`is_webhook=true` and `is_api=false`).
+- **Out of scope:** auto-promoting held services, reissuing expired production grants, or moving the Multica writer endpoint without an independent QA and rollback proof.
