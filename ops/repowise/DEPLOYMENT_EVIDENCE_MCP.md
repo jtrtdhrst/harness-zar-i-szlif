@@ -100,9 +100,44 @@ The reader uses `sqlite3` `mode=ro` / `query_only=ON` and returns the
 store's actual `observed_at_unix`, without triggering RepoWise's schema
 creation or backfills.
 
-13 focused tests include a racing lock holder, missing and symlink lock,
+14 focused tests include a racing lock holder, missing and symlink lock,
 internal product-to-harness symlink, real MCP stdio, immutable record repeat,
 and non-mutating reads.
+
+
+### Full authenticated HTTP MCP fixture E2E — 18 November
+
+An isolated `--network none` Docker fixture, with a disposable Git
+repository and **non-secret test-only bearer**, successfully executed
+the real protocol:
+
+`initialize → tools/list → publish_deployment_observation →
+get_deployment_observation → cross-repo denial`.
+
+Both missing and incorrect bearers returned **401**; correct bearer
+published a `SOURCE_ONLY_NOT_LIVE_VERIFIED` observation and retrieved
+the exact source SHA. No production data was mounted, and the test
+container and fixture were removed. The same flow is now repeated as
+`test_real_http_mcp_tool_call_with_disposable_auth` in the automated
+14-case regression suite.
+
+Separately, the operator replayed the existing Product observation on
+the **real RepoWise volume** through a disposable container with
+source mounted read-only, the episodes sidecar separately writable,
+the live root-owned sync lock mounted read-only and the fixed Git
+safe.directory. It reported `created=false`, and the production
+reader still retrieved the original episode. A separate disposable
+Harness run while the host held that same sync lock exited nonzero
+with `sync_in_progress`, before writing anything.
+
+**GitHub source-transfer correction:** a previous remote tool truncated
+both files at about 10 KiB. The files were subsequently reassembled
+in bounded chunks and exact-comparison read back from GitHub at their
+complete lengths (publisher 11,025 bytes, test suite 14,372 bytes
+*as measured at the transfer*); the later code and tests match
+the verified source snapshot. No claim is made that older green CI
+on truncated files validated this implementation. Use the latest
+exact-HEAD run instead.
 
 ## Before binding to Multica agents / production
 
