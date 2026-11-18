@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Regression tests for RepoWise deployment evidence MCP; no production writes."""
+import asyncio
 import json
+import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -91,6 +94,39 @@ class DeploymentPublisherTests(unittest.TestCase):
         with patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "harness"}):
             self.assertEqual(pub.get_deployment_observation("harness", "0" * 16)["error"],
                              "indexed_repo_unavailable")
+
+    def test_real_mcp_stdio_transport_is_scoped(self):
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        async def probe():
+            env = dict(os.environ)
+            env["DEPLOY_EVIDENCE_ROOT"] = str(self.root)
+            env["DEPLOY_EVIDENCE_ALLOWED_REPO"] = "product"
+            params = StdioServerParameters(
+                command=sys.executable, args=[str(Path(pub.__file__).resolve())], env=env
+            )
+            async with stdio_client(params) as (reader, writer):
+                async with ClientSession(reader, writer) as session:
+                    await session.initialize()
+                    catalog = await session.list_tools()
+                    self.assertIn(
+                        "publish_deployment_observation", [t.name for t in catalog.tools]
+                    )
+                    ret = await session.call_tool(
+                        "get_deployment_observation",
+                        {"repo": "product", "episode_id": "0" * 16},
+                    )
+                    result = json.loads("".join(getattr(c, "text", "") for c in ret.content))
+                    self.assertFalse(result["found"])
+                    ret = await session.call_tool(
+                        "get_deployment_observation",
+                        {"repo": "harness", "episode_id": "0" * 16},
+                    )
+                    result = json.loads("".join(getattr(c, "text", "") for c in ret.content))
+                    self.assertEqual(result["error"], "repo_out_of_scope")
+
+        asyncio.run(probe())
 
     def test_http_token_required_and_no_public_bind(self):
         token = self.root / "token"
