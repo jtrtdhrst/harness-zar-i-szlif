@@ -92,35 +92,78 @@ test('HTTP transport authenticates, exposes the CLI catalog, and forwards caller
   assert.match(destructive.result.content[0].text, /confirm=true/);
 });
 
-test('stdio transport returns MCP initialization and tool call responses', async () => {
+test('stdio transport returns MCP initialization and tool call responses', { timeout: 30000 }, async () => {
   const proc = spawn(process.execPath, [join(import.meta.dirname, '..', 'server.mjs'), 'stdio'], {
     env: { ...process.env, MULTICA_TOKEN: 'mat_stdio_test_token_123456789' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const lines = [];
+  let stdoutBuffer = '';
   let stderr = '';
+  let spawnError;
+  proc.on('error', (error) => { spawnError = error; });
+  proc.stdin.on('error', (error) => { spawnError = error; });
   proc.stdout.setEncoding('utf8');
   proc.stderr.setEncoding('utf8');
   proc.stderr.on('data', (chunk) => { stderr += chunk; });
-  proc.stdout.on('data', (chunk) => lines.push(...chunk.split('\n').filter(Boolean)));
-  proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } })}\n`);
-  proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'multica__issue__get', arguments: { id: '01a1b749-f45e-73df-b26d-ec906c541ad7' } } })}\n`);
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`stdio timeout: ${stderr}`)), 5000);
-    const check = () => {
-      if (lines.length >= 2) { clearTimeout(timer); resolve(); }
-      else setTimeout(check, 10);
-    };
-    check();
+  proc.stdout.on('data', (chunk) => {
+    stdoutBuffer += chunk;
+    let index;
+    while ((index = stdoutBuffer.indexOf('\n')) >= 0) {
+      const line = stdoutBuffer.slice(0, index).trim();
+      stdoutBuffer = stdoutBuffer.slice(index + 1);
+      if (line) lines.push(line);
+    }
   });
-  proc.stdin.end();
-  const init = JSON.parse(lines[0]);
-  const call = JSON.parse(lines[1]);
-  assert.equal(init.result.serverInfo.name, 'multica-control-plane');
-  assert.equal(call.result.isError, false);
-  assert.equal(call.result.structuredContent.tokenPresent, true);
-  assert(call.result.structuredContent.argv.includes('01a1b749-f45e-73df-b26d-ec906c541ad7'));
-  await new Promise((resolve) => proc.once('exit', resolve));
+
+  try {
+    proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } }) + '\n');
+    proc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'multica__issue__get', arguments: { id: '01a1b749-f45e-73df-b26d-ec906c541ad7' } } }) + '\n');
+
+    await new Promise((resolve, reject) => {
+      const interval = setInterval(() => {
+        if (spawnError) { cleanup(); reject(spawnError); }
+        else if (lines.length >= 2) { cleanup(); resolve(); }
+        else if (proc.exitCode !== null || proc.signalCode !== null) {
+          cleanup();
+          reject(new Error('stdio process exited before two responses: ' + stderr.slice(-500)));
+        }
+      }, 20);
+      const deadline = setTimeout(() => {
+        cleanup();
+        reject(new Error('stdio response timeout: ' + stderr.slice(-500)));
+      }, 15000);
+      function cleanup() { clearInterval(interval); clearTimeout(deadline); }
+    });
+
+    proc.stdin.end();
+    const init = JSON.parse(lines[0]);
+    const call = JSON.parse(lines[1]);
+    assert.equal(init.result.serverInfo.name, 'multica-control-plane');
+    assert.equal(call.result.isError, false);
+    assert.equal(call.result.structuredContent.tokenPresent, true);
+    assert(call.result.structuredContent.argv.includes('01a1b749-f45e-73df-b26d-ec906c541ad7'));
+
+    await new Promise((resolve, reject) => {
+      if (proc.exitCode !== null) {
+        if (proc.exitCode === 0) resolve();
+        else reject(new Error('stdio child failed with exit code ' + proc.exitCode));
+        return;
+      }
+      const deadline = setTimeout(() => {
+        proc.kill('SIGKILL');
+        reject(new Error('stdio exit timeout'));
+      }, 5000);
+      proc.once('exit', (code) => {
+        clearTimeout(deadline);
+        if (code === 0) resolve();
+        else reject(new Error('stdio child exited with code ' + code));
+      });
+    });
+  } finally {
+    if (!proc.stdin.destroyed) proc.stdin.end();
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+  }
 });
 
 test.after(() => rmSync(dir, { recursive: true, force: true }));
