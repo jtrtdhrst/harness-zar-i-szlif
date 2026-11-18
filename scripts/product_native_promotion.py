@@ -365,7 +365,7 @@ def local_ci_attestation(sha):
         raise Denied("local_ci_attestation_unreadable")
     if data.get("sha") != sha:
         raise Denied("local_ci_attestation_sha_mismatch")
-    if data.get("exit_code") != 0:
+    if type(data.get("exit_code")) is not int or data["exit_code"] != 0:
         raise Denied("local_ci_attestation_not_green")
     if data.get("runner") != TRUSTED_ATTESTATION_RUNNER:
         raise Denied("local_ci_attestation_runner_untrusted")
@@ -566,7 +566,9 @@ def require_verified_local_image_delivery():
                 "registry": "127.0.0.1:5000",
                 "coolify_image_app_uuid": "cs847jiwtuq5rlm8ntjeohgf",
                 "runner": "zis-local-build"}
-    if not isinstance(data, dict) or any(data.get(k) != v for k, v in expected.items()):
+    if (not isinstance(data, dict)
+            or any(type(data.get(k)) is not type(v) or data[k] != v
+                   for k, v in expected.items())):
         raise Denied("local_image_delivery_unverified")
 
 

@@ -251,6 +251,31 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaisesRegex(p.Denied, reason):
                     p.local_ci_attestation(SOURCE)
 
+    def test_local_ci_attestation_rejects_boolean_or_float_zero(self):
+        for invalid in (False, 0.0, "0", None):
+            with self.subTest(value=repr(invalid)), self.trusted_tree() as directory:
+                self.write_attestation(directory, self.attestation(exit_code=invalid))
+                with self.assertRaisesRegex(p.Denied, "local_ci_attestation_not_green"):
+                    p.local_ci_attestation(SOURCE)
+
+    def test_local_image_receipt_rejects_json_bool_numeric_coercion(self):
+        valid = {"schema_version": 1, "verified": True,
+                 "registry": "127.0.0.1:5000",
+                 "coolify_image_app_uuid": "cs847jiwtuq5rlm8ntjeohgf",
+                 "runner": "zis-local-build"}
+        with patch.object(p, "Path") as mock_path:
+            mock_path.return_value.is_file.return_value = True
+            mock_path.return_value.read_text.return_value = json.dumps(valid)
+            self.assertIsNone(p.require_verified_local_image_delivery())
+            for key, value in (("schema_version", True),
+                               ("schema_version", 1.0),
+                               ("verified", 1),
+                               ("verified", "true")):
+                with self.subTest(key=key, value=value):
+                    mock_path.return_value.read_text.return_value = json.dumps({**valid, key: value})
+                    with self.assertRaisesRegex(p.Denied, "local_image_delivery_unverified"):
+                        p.require_verified_local_image_delivery()
+
     def test_local_ci_attestation_missing_and_unreadable_deny(self):
         with self.trusted_tree() as directory:
             with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
