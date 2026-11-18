@@ -439,7 +439,7 @@ def issue_ref_from_pr(pr):
     title = doc.get("title")
     if not isinstance(title, str):
         raise Denied("missing_issue_ref")
-    refs = set(re.findall(r"\\b([A-Z][A-Z0-9]*-[0-9]{1,7})\\b", title))
+    refs = set(re.findall(r"\b([A-Z][A-Z0-9]*-[0-9]{1,7})\b", title))
     if len(refs) != 1:
         raise Denied("missing_or_ambiguous_issue_ref")
     return refs.pop()
