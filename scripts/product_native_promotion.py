@@ -391,11 +391,18 @@ def premerge_rootless_attestation(sha, tree):
         "final_image": True, "positive_provenance": True,
         "negative_versionless": True,
     }
-    if (not isinstance(data, dict) or data.get("schema_version") != 2
+    if (not isinstance(data, dict)
+            or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 2
             or data.get("sha") != sha or data.get("tree") != tree
             or data.get("runner") != "zis-rootless-exact-tree"
             or data.get("source") != "root-verified-systemd-e2e"
-            or data.get("exit_code") != 0 or data.get("stages") != expected_stages
+            or type(data.get("exit_code")) is not int
+            or data["exit_code"] != 0
+            or not isinstance(data.get("stages"), dict)
+            or set(data["stages"]) != set(expected_stages)
+            or any(type(data["stages"][key]) is not bool
+                   or data["stages"][key] is not True for key in expected_stages)
             or not isinstance(data.get("verified_at"), str)
             or not data["verified_at"]):
         raise Denied("premerge_attestation_invalid")

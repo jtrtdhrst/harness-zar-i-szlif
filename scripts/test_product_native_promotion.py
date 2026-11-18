@@ -138,9 +138,16 @@ class ProductPromotionTests(unittest.TestCase):
             path=directory/("premerge-"+SOURCE+".json")
             path.write_text(json.dumps(data));os.chmod(path,0o600)
             self.assertEqual(p.premerge_rootless_attestation(SOURCE,tree),data)
-            for key,value in [("sha",NEW),("tree",NEW),("exit_code",1),
-                              ("source","agent-reported"),("schema_version",1),
-                              ("stages",{"exact_tree":True})]:
+            for key,value in [("sha",NEW),("tree",NEW),
+                              ("exit_code",1),("exit_code",False),
+                              ("exit_code",0.0),("source","agent-reported"),
+                              ("schema_version",1),("schema_version",2.0),
+                              ("schema_version",True),
+                              ("stages",{"exact_tree":True}),
+                              ("stages",{**data["stages"],"exact_tree":1}),
+                              ("stages",{**data["stages"],"exact_tree":1.0}),
+                              ("stages",{**data["stages"],"network_none_validation":False}),
+                              ("stages",{**data["stages"],"final_image":"true"})]:
                 with self.subTest(key=key):
                     path.write_text(json.dumps({**data,key:value}))
                     with self.assertRaisesRegex(p.Denied,"premerge_attestation_invalid"):
