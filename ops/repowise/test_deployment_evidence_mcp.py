@@ -99,8 +99,15 @@ class DeploymentPublisherTests(unittest.TestCase):
         throwaway = "HTTP_E2E_FAKE_TOKEN_NO_SECRET_20261118_abcdefghijklmnopqrstuvwxyz"
         token_file.write_text(throwaway)
         token_file.chmod(0o600)
+        # The 7339 default may already be occupied by the production writer
+        # when this test runs with host networking. Use an unoccupied loopback
+        # port for the disposable test process, not the live service port.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
         env = dict(os.environ)
         env.update({
+            "DEPLOY_EVIDENCE_HTTP_PORT": str(port),
             "DEPLOY_EVIDENCE_ROOT": str(self.root),
             "DEPLOY_EVIDENCE_ALLOWED_REPO": "harness",
             "DEPLOY_EVIDENCE_SYNC_LOCK": str(self.lock_path),
@@ -110,14 +117,14 @@ class DeploymentPublisherTests(unittest.TestCase):
             [sys.executable, str(Path(pub.__file__).resolve()), "--http"],
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        url = "http://127.0.0.1:7339/mcp"
+        url = f"http://127.0.0.1:{port}/mcp"
         try:
             started = False
             for _ in range(40):
                 if server.poll() is not None:
                     self.fail("HTTP MCP exited before startup")
                 with socket.socket() as sock:
-                    if sock.connect_ex(("127.0.0.1", 7339)) == 0:
+                    if sock.connect_ex(("127.0.0.1", port)) == 0:
                         started = True
                         break
                 time.sleep(0.1)
