@@ -1,5 +1,0 @@
-name: paperclip
-description: Production project for Paperclip platform and owned dependencies
-environment: production
-service: paperclip
-data: [paperclip-db, paperclip-home]

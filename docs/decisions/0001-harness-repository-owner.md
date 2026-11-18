@@ -17,4 +17,4 @@ Each service has independent release evidence; a changed Harness source SHA alon
 ## Evidence and scope
 - Harness root `README.md` at SHA `fe2839d7`.
 - `docs/knowledge/CROSS-REPO-BOUNDARY.md`.
-- Scope: `integrations/`, `ops/`, `paperclip-mcp/`, `coolify-mcp/`, `opik-mcp/`.
+- Scope: `integrations/`, `ops/`, `coolify-mcp/`, `opik-mcp/`. The former root `paperclip-mcp/` path was removed in the repository cleanup; this ADR preserves its historical context.
