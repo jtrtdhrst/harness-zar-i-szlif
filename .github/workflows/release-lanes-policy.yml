@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   validate-release-lanes:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
