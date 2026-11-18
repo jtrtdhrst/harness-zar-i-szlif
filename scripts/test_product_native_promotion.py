@@ -162,8 +162,44 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaises(p.Denied):
                     p.checks(SOURCE)
 
+    def test_tracked_systemd_unit_is_multica_scoped(self):
+        """A future systemd reinstall must not resurrect legacy Paperclip approval."""
+        unit = p.Path(__file__).resolve().parents[1] / "ops/systemd/product-native-promotion.service"
+        text = unit.read_text(encoding="utf-8")
+        self.assertIn("ConditionPathExists=/usr/local/libexec/multica_native_release_gate.py", text)
+        self.assertIn("Environment=PRODUCT_NATIVE_GATE=/usr/local/libexec/multica_native_release_gate.py", text)
+        self.assertNotIn("paperclip_native_release_gate.py", text)
+
+    def test_native_gate_is_multica_and_sha_bound(self):
+        """Never regress release authority to legacy Paperclip during controller updates."""
+        from types import SimpleNamespace
+        self.assertEqual(str(p.NATIVE_GATE), "/usr/local/libexec/multica_native_release_gate.py")
+        with patch.object(p.Path, "is_file", return_value=True), \
+             patch.object(p, "github_api", return_value={"number":12,"title":"ZARI-228: reviewed source"}), \
+             patch.object(p, "run", return_value=SimpleNamespace(returncode=0)) as execute:
+            p.native_approval(12, SOURCE, NEW)
+        argv = execute.call_args.args[0]
+        self.assertEqual(argv, [p.sys.executable,
+                               "/usr/local/libexec/multica_native_release_gate.py",
+                               "--repo", p.REPO, "--pr", "12",
+                               "--head-sha", SOURCE, "--merge-sha", NEW,
+                               "--issue-ref", "ZARI-228"])
+
+    def test_issue_ref_is_exact_and_ambiguous_title_fails_closed(self):
+        for doc in ({"number":12, "title":"runtime fix"},
+                    {"number":12, "title":"ZARI-228 & ZARI-241"},
+                    {"number":13, "title":"ZARI-228"},
+                    {"number":True,"title":"ZARI-228"},
+                    {"number":12,"title":None}):
+            with self.subTest(doc=doc), \
+                 patch.object(p.Path, "is_file", return_value=True), \
+                 patch.object(p, "github_api", return_value=doc), \
+                 patch.object(p, "run", side_effect=AssertionError("must not execute")):
+                with self.assertRaises(p.Denied):
+                    p.native_approval(12, SOURCE, NEW)
+
     def test_missing_native_gate_fails_closed(self):
-        with patch.object(p,"NATIVE_GATE",p.Path("/__missing_paperclip_gate__/none.py")):
+        with patch.object(p,"NATIVE_GATE",p.Path("/__missing_multica_gate__/none.py")):
             with self.assertRaisesRegex(p.Denied,"native_gate_not_installed"):
                 p.native_approval(12,SOURCE,NEW)
 
