@@ -235,6 +235,28 @@ def serve_http() -> None:
         header = request.headers.get("authorization", "")
         supplied = header[7:] if header.startswith("Bearer ") else ""
         if not supplied or not hmac.compare_digest(supplied, secret):
-            return Response(sta
+            return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+        return await call_next(request)
 
-... [1025 characters truncated]
+    app.add_middleware(BaseHTTPMiddleware, dispatch=require_bearer)
+    host = os.environ.get("DEPLOY_EVIDENCE_HTTP_HOST", "127.0.0.1")
+    if host not in ("127.0.0.1", "::1"):
+        raise RuntimeError("http_host_not_loopback")
+    uvicorn.run(app, host=host, port=7339, log_level="warning")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--http", action="store_true")
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--repo", default="product")
+    parser.add_argument("--sha", default="")
+    parser.add_argument("--issue", default="ZARI-240")
+    parser.add_argument("--deployment", default="observed-release")
+    args = parser.parse_args()
+    if args.http:
+        serve_http()
+    elif args.check:
+        print(json.dumps(report(args.repo, args.sha, args.issue, args.deployment), sort_keys=True))
+    else:
+        mcp.run(transport="stdio")
