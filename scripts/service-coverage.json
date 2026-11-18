@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "entries": {
+    "_archive": {
+      "mode": "manual_only",
+      "reason": "Archived sources are retained for reference and are not built or released."
+    },
     ".github": {
       "mode": "manual_only",
       "reason": "Workflow definitions are validated by the workflow that invokes this checker."
@@ -10,10 +14,6 @@
       "workflows": [
         ".github/workflows/release-lanes-policy.yml"
       ]
-    },
-    "_archive": {
-      "mode": "manual_only",
-      "reason": "Archived sources are retained for reference and are not built or released."
     },
     "cloudflare-ingress": {
       "mode": "manual_only",
@@ -44,6 +44,10 @@
     "emailens-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
+    },
+    "hindsight-mcp": {
+      "mode": "manual_only",
+      "reason": "Git-owned Hindsight role-scoped gateway build; release requires 14-bank auth negative tests, preserved core/volumes and manual Coolify promotion."
     },
     "integrations": {
       "mode": "manual_only",
@@ -110,6 +114,10 @@
     "playwright-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
+    },
+    "repowise-mcp": {
+      "mode": "manual_only",
+      "reason": "Git-owned RepoWise MCP build; release is gated by exact-SHA review, isolated index and manual Coolify promotion."
     },
     "scripts": {
       "mode": "workflow",
