@@ -7,7 +7,7 @@ name: repowise-deployment-publisher-coolify-staging
 services:
   publisher:
     build:
-      context: .
+      context: ./ops/repowise
       dockerfile: Dockerfile.publisher
     image: "repowise-deployment-publisher:coolify-staging"
     restart: unless-stopped
