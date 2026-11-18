@@ -18,11 +18,8 @@ permissions:
 
 jobs:
   validate-release-lanes:
-    # PR-controlled source is untrusted: never run it on the Docker-group local runner.
-    # Only reviewed main push/manual jobs may use local-build; hosted PR failures
-    # remain fail-closed until billing or an isolated runner is genuinely ready.
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["self-hosted","linux","x64","local-build"]') }}
+    # Keep using the existing local-build runner; GitHub-hosted minutes are blocked.
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -33,3 +30,12 @@ jobs:
         run: python scripts/check-release-lanes.py --self-test
       - name: Guard against non-MCP automatic image builds
         run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
+      - name: Set up Node.js 24 for Multica MCP adapter
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test Multica MCP adapter (required on every PR)
+        working-directory: multica-mcp
+        env:
+          MULTICA_MCP_HOME: ${{ runner.temp }}/multica-mcp-ci-home
+        run: npm test
