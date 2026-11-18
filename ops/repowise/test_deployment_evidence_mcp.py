@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for RepoWise deployment evidence MCP; no production writes."""
 import asyncio
+import fcntl
 import json
 import os
 import sys
@@ -33,7 +34,12 @@ class DeploymentPublisherTests(unittest.TestCase):
         self.old_root = pub.ROOT
         pub.ROOT = self.root
         self.addCleanup(setattr, pub, "ROOT", self.old_root)
-        self.scope = patch.dict("os.environ", {"DEPLOY_EVIDENCE_ALLOWED_REPO": "product"})
+        self.lock_path = self.root / "repowise-sync.lock"
+        self.lock_path.touch()
+        self.scope = patch.dict("os.environ", {
+            "DEPLOY_EVIDENCE_ALLOWED_REPO": "product",
+            "DEPLOY_EVIDENCE_SYNC_LOCK": str(self.lock_path),
+        })
         self.scope.start()
         self.addCleanup(self.scope.stop)
 
@@ -88,6 +94,42 @@ class DeploymentPublisherTests(unittest.TestCase):
         self.assertFalse(pub.default_store_path(self.repo).exists())
         self.assertFalse(pub.get_deployment_observation("product", "0" * 16)["found"])
         self.assertFalse(pub.default_store_path(self.repo).exists())
+
+    def test_sync_lock_refuses_race_without_touching_store(self):
+        with self.lock_path.open("rb") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch.object(pub, "_live_product", return_value=(self.sha, 200)):
+                result = self.submit()
+            self.assertEqual(result["error"], "sync_in_progress")
+            self.assertFalse(pub.default_store_path(self.repo).exists())
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_SYNC_LOCK": str(self.root / "nonexistent")}):
+            with patch.object(pub, "_live_product", return_value=(self.sha, 200)):
+                result = self.submit()
+            self.assertEqual(result["error"], "sync_lock_unavailable")
+            self.assertFalse(pub.default_store_path(self.repo).exists())
+
+    def test_sync_lock_symlink_fails_closed(self):
+        link = self.root / "link.lock"
+        link.symlink_to(self.lock_path)
+        with patch.dict("os.environ", {"DEPLOY_EVIDENCE_SYNC_LOCK": str(link)}):
+            with patch.object(pub, "_live_product", return_value=(self.sha, 200)):
+                result = self.submit()
+            self.assertEqual(result["error"], "sync_lock_unavailable")
+            self.assertFalse(pub.default_store_path(self.repo).exists())
+
+    def test_deny_internal_product_to_harness_symlink(self):
+        harness = self.root / "harness"
+        self.repo.rename(harness)
+        self.repo.symlink_to(harness, target_is_directory=True)
+        self.assertEqual(self.submit()["error"], "indexed_repo_unavailable")
+
+    def test_readback_includes_native_observed_timestamp(self):
+        with patch.object(pub, "_live_product", return_value=(self.sha, 200)):
+            created = self.submit()
+        got = pub.get_deployment_observation("product", created["episode_id"])
+        self.assertTrue(got["found"])
+        self.assertIsInstance(got["observed_at_unix"], float)
+        self.assertGreater(got["observed_at_unix"], 0)
 
     def test_deny_symlink_escape(self):
         (self.root / "harness").symlink_to(self.root.parent, target_is_directory=True)
@@ -159,5 +201,6 @@ class DeploymentPublisherTests(unittest.TestCase):
         self.assertEqual(data["independent_authenticated_positive_qa"], "NOT_RUN")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+if __name__ == "
+
+... [42 characters truncated]
