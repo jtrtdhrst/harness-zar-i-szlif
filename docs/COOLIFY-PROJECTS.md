@@ -1,7 +1,6 @@
 # Coolify project / service / volume map
 
-Source of truth for the Git layout. Every active service has its own root
-folder; every project's runtime data must be attached to a resource in that
+Source of truth for the Git layout. Service code is grouped by project; every project's runtime data must be attached to a resource in that
 same project.
 
 ## Rules
@@ -13,7 +12,7 @@ same project.
    volume.
 3. `volumes/` in each folder contains only `.gitkeep` and documentation. Runtime
    data, dumps, model files, browser profiles and credentials are never committed.
-4. Each folder must be buildable from its own directory; no build may use the
+4. Each source folder must be buildable from its own directory; no build may use the
    repository root as context.
 5. `comfyui-mcp/` is the temporary combined ComfyUI build folder; the target
    split is `comfy/` (engine) and `comfy-mcp/` (MCP). Do not add a second
@@ -25,15 +24,13 @@ same project.
 |---|---|---|---|
 | `mautic` | `mautic` (+ `mantic-mcp`) | `*_mautic-prod-db`, `-config`, `-logs`, `-media*` | `mautic/` |
 | `supabase` | `supabase` | `*_supabase-staging-db-data`, storage, deno cache, SQL seed volumes | `supabase/` |
-| `paperclip` | `paperclip` | `*_paperclip-db`, `*_paperclip-home` | `paperclip/` |
+| `paperclip` | `paperclip` | `*_paperclip-db`, `*_paperclip-home` | `kod-aplikacji/paperclip/` |
 | `Plasmic` | `plasmic` | `*_plasmic-pgdata` | `plasmic/` |
-| `qdrant` | `qdrant` | `*_qdrant-storage` | `qdrant/` |
 | `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `comfyui-mcp/` (until split) |
 | `opik` | `opik` | `*_opik-staging-clickhouse-*`, `-mysql`, `-minio-data`, `-redis-data`, `-zookeeper` | `opik/` (planned) |
 | `opik-mcp` | `opik-mcp` | stateless (talks to `opik`) | `opik-mcp/` (planned) |
-| `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | `paperclip-mcp/` |
+| `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | `kod-mcp/paperclip-mcp/` |
 | `plasmic-mcp` | `plasmic-mcp` | `plasmic_mcp_state` | `plasmic-mcp/` |
-| `qdrant-mcp` | `qdrant-mcp` | stateless (talks to `qdrant`) | `qdrant-mcp/` |
 | `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `supabase-mcp/` |
 | `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `comfy-mcp/` |
 | `coolify-mcp` | `coolify-mcp` | `*_coolify-mcp-oauth` state volume | `coolify-mcp/` (planned) |
@@ -55,11 +52,10 @@ same project.
 | `emailens-mcp` | `docker build -t local/emailens-mcp:0.10.0 emailens-mcp` | `emailens-mcp/Dockerfile` |
 | `playwright-mcp` | `docker build -t local/playwright-mcp:0.0.83 playwright-mcp` | `playwright-mcp/Dockerfile` |
 | `mantic-mcp` | `docker build -f mantic-mcp/Dockerfile.http mantic-mcp` | `Dockerfile.http` |
-| `paperclip-mcp` | `docker build -t local/paperclip-mcp paperclip-mcp` | `Dockerfile` |
+| `kod-mcp/paperclip-mcp` | `docker build -t local/paperclip-mcp kod-mcp/paperclip-mcp` | `Dockerfile` |
 | `plasmic` | `docker compose -f plasmic/docker-compose.yml build` | `studio.Dockerfile`, `platform/wab/Dockerfile` |
 | `plasmic-mcp` | `docker build -t local/plasmic-mcp plasmic-mcp` | `Dockerfile` |
 | `comfyui-mcp` | `docker build -f comfyui-mcp/Dockerfile.comfyui comfyui-mcp` / `-f Dockerfile` | engine / MCP |
-| `qdrant-mcp` | `docker build -t local/qdrant-mcp qdrant-mcp` | `Dockerfile` |
 | `supabase-mcp` | `docker build -t local/supabase-mcp supabase-mcp` | `Dockerfile` |
 | `ubuntu-mcp` | `docker build -t local/ubuntu-mcp ubuntu-mcp` | `Dockerfile` |
 | `multica-mcp` | `docker build -t local/multica-mcp-control-plane:0.2.0 multica-mcp` | `multica-mcp/Dockerfile` |
@@ -73,6 +69,8 @@ These are tracked as migration work, not silently ignored:
   `comfyui-mcp/` folder remains only as historical build source.
 - `mcp-bridges` is split into `emailens-mcp`, `mantic-mcp` (in `mautic`) and
   `ubuntu-mcp`; old app containers removed.
-- platform folders (`mautic`, `supabase`, `paperclip`, `qdrant`, `opik`,
+- platform folders (`mautic`, `supabase`, `paperclip`, `opik`,
   `comfy`) are metadata/build-contract folders; their upstream images/source
   remain external.
+
+Repository-only removal of the `qdrant/` and `qdrant-mcp/` source directories does not delete any deployed Qdrant services, collections or persistent Docker volumes. Any retirement of live resources requires separate inventory and migration.

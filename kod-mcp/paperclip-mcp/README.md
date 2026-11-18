@@ -54,7 +54,7 @@ would otherwise shadow it).
 
 ## Current Coolify production (2026-11-02)
 
-The **actual running Paperclip MCP** is a Coolify **service** (`gevr1m6rdj4t4fbhcjvqv8gg`), with sub-application `yvtwulblrzpmuvi72xd9sey3`, internal port 3101 and existing `/paperclip` persistent volume. Its source belongs in this repository's **`paperclip-mcp/`** folder; do not put gateway source into the product's `zar-i-szlif` repository or modify Paperclip Core.
+The **actual running Paperclip MCP** is a Coolify **service** (`gevr1m6rdj4t4fbhcjvqv8gg`), with sub-application `yvtwulblrzpmuvi72xd9sey3`, internal port 3101 and existing `/paperclip` persistent volume. Its source belongs in this repository's **`kod-mcp/paperclip-mcp/`** folder; do not put gateway source into the product's `zar-i-szlif` repository or modify Paperclip Core.
 
 The current production image is `paperclip-mcp:chatgpt-image-final-20261102` (digest `sha256:b5c9a29df706ac7cd5fde3cfe9ee68c9dc6dd793b57008e5593bc6cbf2d60762`). Previous working image tag for rollback: `fs9rik9axzl1ubbimekvqs03:eadd6814c29c23cd139958fa3705e197fc60b6c6`. Coolify uses local image `pull_policy: never`: **GitHub main changes do not auto-build or redeploy this service**. Any production release requires an explicit image build, named image switch through Coolify and post-deploy digest/MCP readback. Preserve OAuth and other data volumes. A future trusted GHCR publish/Git-based build could close this reproducibility gap, but do not invent it or move to another service.
 

@@ -51,11 +51,11 @@
     },
     "kod-aplikacji": {
       "mode": "manual_only",
-      "reason": "Coolify project inventory metadata only; product source belongs in zar-i-szlif."
+      "reason": "Coolify app project metadata and nested Paperclip platform inventory; no automatic image promotion."
     },
     "kod-mcp": {
       "mode": "manual_only",
-      "reason": "Coolify project inventory metadata only; not deployable source."
+      "reason": "Nested legacy Paperclip MCP gateway source; manual review and explicit image promotion only. No automatic CI build."
     },
     "mantic-mcp": {
       "mode": "manual_only",
@@ -107,14 +107,6 @@
         ".github/workflows/release-lanes-policy.yml"
       ]
     },
-    "paperclip": {
-      "mode": "manual_only",
-      "reason": "Paperclip Core is upstream/overlay managed and has no repository service CI/release workflow."
-    },
-    "paperclip-mcp": {
-      "mode": "manual_only",
-      "reason": "Legacy Paperclip MCP is outside the Multica development pipeline. No automatic CI image build or production promotion; changes require separate explicit manual review."
-    },
     "plasmic": {
       "mode": "manual_only",
       "reason": "Multi-container WAB; reviewed component digests and dependency-aware rollback required."
@@ -124,14 +116,6 @@
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
     "playwright-mcp": {
-      "mode": "manual_only",
-      "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
-    },
-    "qdrant": {
-      "mode": "manual_only",
-      "reason": "Upstream database service; not built from this repository."
-    },
-    "qdrant-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
