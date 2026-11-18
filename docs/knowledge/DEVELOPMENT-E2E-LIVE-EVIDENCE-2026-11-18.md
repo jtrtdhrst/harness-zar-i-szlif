@@ -30,6 +30,34 @@ distinct sources of truth. See `docs/decisions/0002-agent-knowledge-provenance.m
 | Native Hermes task isolation | **NO-GO / ZARI-213** | Linux Landlock **synthetic** negative tests passed, but actual Hermes agent tool-use failed at the shared `.recovery.lock` install path. Project checkout allowlist and cross-task filesystem enforcement are not proven live. Do not silently enable cross-project unrestricted runs or mark this as E2E PASS. |
 | New Harness release + rollback | **NOT_RUN, HOLD maintained** | Exact candidate SHA → independent CTO review → trusted CI → COO authorization → Coolify UUID+immutable digest → authenticated positive/negative service probes → actual rollback acceptance remains unproven as a **new** end-to-end release. A green repository check or healthy unrelated product cannot close this gate. |
 
+## Isolated build preflight — 11:16 UTC, read-only
+
+Both runner principals were checked with `runuser -u <user> -- docker info`:
+`actions-zis` exit 1; `actions-zis-product` exit 1. Neither could
+contact the host's root-owned Docker socket. Neither should be blindly added
+to the `docker` group.
+
+A rootless replacement is **not yet available**:
+- `dockerd-rootless.sh`, `rootlesskit`, `newuidmap`, and `newgidmap`
+  exist; `slirp4netns` and `fuse-overlayfs` were not found.
+- Product user has `/etc/subuid` and `/etc/subgid` ranges; Harness user
+  has no declared subordinate-ID ranges.
+- `kernel.unprivileged_userns_clone=1` and cgroup v2 are present, but
+  `kernel.apparmor_restrict_unprivileged_userns=1`.
+- `unshare -U true` for Product returned 0, whereas `unshare -Ur true`
+  failed writing `/proc/self/uid_map` with `EPERM`. Kernel audit explicitly
+  denied `capable sys_admin` in the `unprivileged_userns` profile.
+  An unprivileged user namespace **creation** is therefore not the same as
+  a working rootless-Docker mapping.
+
+**Decision / NO-GO:** Do not switch off AppArmor globally, widen access to
+`/var/run/docker.sock`, or declare rootless build E2E PASS. Any replacement
+builder needs a narrowly reviewed AppArmor profile plus correct per-runner
+subordinate IDs, packaging, an isolated daemon/socket, clean disposable workspace,
+restricted secrets/egress and both positive build and negative host-access tests.
+Run this in a separate scoped release lane, not as a quick global sysctl
+change on production. These are requirements, **not installed changes**.
+
 ## Operational repair and rollback: Harness runner HOME
 
 **Reproduce without changing state:** inspect `systemctl show <runner.service> -p User -p Environment`,
