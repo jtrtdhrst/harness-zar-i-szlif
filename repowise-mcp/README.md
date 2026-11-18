@@ -9,8 +9,10 @@ The live Coolify service `lecwi3emh9hjxir7gphmalie` runs RepoWise **0.60.1** and
 - Preserve existing workspace/index volume and Codex-state volume only after a consistent backup and single-writer cutover. Do not mount the current writable index into a concurrently running candidate.
 - In staging, provide an independent index volume and check `repowise --version`, MCP handshake, tools/list, authenticated access, unauthorized 401, and exact indexed HEAD.
 
-## Source extension
-This Dockerfile is the owned build/packaging entry point. To edit RepoWise's **upstream implementation**, use an explicitly version-pinned upstream patch or vendored source and a reviewed build test; do not imply that altering this Dockerfile edits Python tools from the installed wheel. RepoWise code upstream: https://github.com/repowise-dev/repowise (the version here matches the live runtime).
+## Edit the actual MCP Python implementation
+The pinned RepoWise 0.60.1 wheel is installed first. The Docker build then copies **only reviewed existing .py modules** from `overrides/<path-under-repowise-package>` into its installed package. The script rejects missing targets, non-Python files, and symlinks. For example, to customize the MCP HTTP router, commit the complete reviewed replacement at `overrides/server/routers/mcp.py` (based on the exact installed 0.60.1 source). For CLI integration code, the package path is `overrides/cli/commands/mcp_cmd.py`. Always compare the original vendor file/diff and run integration tests; an override changes upstream code and must not weaken auth.
+
+This provides source-level edits from the Harness repo **without silently upgrading upstream RepoWise**. Hindsight's repo-owned MCP source is the gateway Caddyfile, not the memory engine. The original upstream repositories are maintained separately.
 
 ## Release gate
 Feature branch → independent exact-SHA review → CI and isolated Docker smoke → authorized Coolify update → running image digest/endpoint readback and rollback. An enabled MCP assignment is not evidence the agent can execute it.
