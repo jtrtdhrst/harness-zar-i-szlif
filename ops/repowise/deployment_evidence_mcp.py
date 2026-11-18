@@ -155,15 +155,60 @@ def get_deployment_observation(repo: str, episode_id: str) -> dict:
         return {"found": False, "error": str(exc)}
 
 
+def serve_http() -> None:
+    """Authenticated private HTTP transport for operator-controlled instances.
+
+    Never expose this without a server-side fixed repo scope and a protected
+    token file. No OAuth/DCR auto-registration or unauthenticated API route.
+    """
+    import hmac
+    import stat
+    from starlette.responses import Response
+    from starlette.middleware.base import BaseHTTPMiddleware
+    import uvicorn
+
+    if os.environ.get("DEPLOY_EVIDENCE_ALLOWED_REPO") not in REPOS:
+        raise RuntimeError("server_repo_scope_missing")
+    name = os.environ.get("DEPLOY_EVIDENCE_TOKEN_FILE", "")
+    if not name:
+        raise RuntimeError("token_file_required")
+    secret_file = Path(name)
+    st = secret_file.lstat()
+    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
+        raise RuntimeError("token_file_permissions_invalid")
+    secret = secret_file.read_text(encoding="utf-8").strip()
+    if len(secret) < 40:
+        raise RuntimeError("token_too_short")
+    app = mcp.streamable_http_app()
+
+    async def require_bearer(request, call_next):
+        if request.url.path != "/mcp":
+            return Response(status_code=404)
+        header = request.headers.get("authorization", "")
+        supplied = header[7:] if header.startswith("Bearer ") else ""
+        if not supplied or not hmac.compare_digest(supplied, secret):
+            return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+        return await call_next(request)
+
+    app.add_middleware(BaseHTTPMiddleware, dispatch=require_bearer)
+    host = os.environ.get("DEPLOY_EVIDENCE_HTTP_HOST", "127.0.0.1")
+    if host not in ("127.0.0.1", "::1"):
+        raise RuntimeError("http_host_not_loopback")
+    uvicorn.run(app, host=host, port=7339, log_level="warning")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--http", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--repo", default="product")
     parser.add_argument("--sha", default="")
     parser.add_argument("--issue", default="ZARI-240")
     parser.add_argument("--deployment", default="observed-release")
     args = parser.parse_args()
-    if args.check:
+    if args.http:
+        serve_http()
+    elif args.check:
         print(json.dumps(report(args.repo, args.sha, args.issue, args.deployment), sort_keys=True))
     else:
         mcp.run(transport="stdio")
