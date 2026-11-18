@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN groupadd --gid 999 app && useradd --uid 999 --gid 999 --create-home --no-log-init app
 WORKDIR /opt
-COPY --chown=999:999 deployment_evidence_mcp.py /opt/publisher.py
+COPY --chown=999:999 deployment_evidence_mcp.py /opt/deployment_evidence_mcp.py
 COPY --chown=999:999 test_deployment_evidence_mcp.py /opt/test_deployment_evidence_mcp.py
 
 # True protocol integration tests run INSIDE the image build on scratch repos.
@@ -23,4 +23,4 @@ USER 999:999
 EXPOSE 7339
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
  CMD python -c 'import socket; s=socket.create_connection(("127.0.0.1", int(__import__("os").environ.get("DEPLOY_EVIDENCE_HTTP_PORT", "7339"))), timeout=2); s.close()'
-ENTRYPOINT ["python", "/opt/publisher.py", "--http"]
+ENTRYPOINT ["python", "/opt/deployment_evidence_mcp.py", "--http"]
