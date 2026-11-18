@@ -4,6 +4,9 @@ ENV PYTHONUNBUFFERED=1 DO_NOT_TRACK=1 REPOWISE_TELEMETRY_DISABLED=1
 RUN apt-get update && apt-get install -y --no-install-recommends git libgomp1 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --no-cache-dir "repowise==${REPOWISE_VERSION}"
+COPY apply_overrides.py /tmp/repowise-custom/apply_overrides.py
+COPY overrides/ /tmp/repowise-custom/overrides/
+RUN python /tmp/repowise-custom/apply_overrides.py
 RUN groupadd -r repowise && useradd -r -g repowise -m -d /home/repowise -s /usr/sbin/nologin repowise \
     && mkdir -p /workspace /home/repowise/codex-state && chown -R repowise:repowise /workspace /home/repowise
 USER repowise
