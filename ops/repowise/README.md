@@ -21,9 +21,33 @@ freshness check below use the SHA fetched from GitHub instead.
 | `ops/systemd/repowise-freshness-check.{service,timer}` | `/etc/systemd/system/` |
 
 The host's existing `repowise-generate.service` executes `refill-all.sh`.
+Install `ops/systemd/repowise-generate.service.d/fast-freshness.conf` into
+`/etc/systemd/system/repowise-generate.service.d/fast-freshness.conf`.
+This serializes model writes against staged GitHub index promotion.
 If modifying host scripts, update these canonical sources as well; redeploy
 matching host files and keep a rollback copy before restarting any unit.
 
+## Automatic freshness (2026-11-18)
+
+GitHub App polling is used here rather than a public webhook.
+The two private protected `main` branches are checked every 2 minutes
+by `repowise-github-sync.timer`. Staged index promotion still requires
+GitHub SHA verification, replica consistency, and an MCP smoke test.
+
+`repowise-freshness-check.timer` runs every 3 minutes and flags
+a last GitHub fetch older than 600 seconds or an out-of-sync checkout.
+The existing `repowise-generate.timer` runs every 30 minutes;
+its script now handles both unwritten and stale model pages and refreshes
+the semantic vectors only after actual writes.
+
+Repowise onboarding pages can remain marked `stale` after regeneration.
+To avoid repeated, unnecessary model charges, pages updated after their
+repo's indexed revision are not regenerated again for that same index.
+A later GitHub commit causes them to be eligible again.
+
+These intervals describe detection cadence, not a fixed E2E SLA.
+RepoWise describes committed code; Multica/Coolify own evidence for
+runtime deployment and agent execution.
 ## Why the gate accepts `not_applicable`
 
 `repowise_sync_gate.py` accepts `index_scope.upgrade.status` of `complete` or
@@ -69,6 +93,6 @@ docker exec repowise-mcp-lecwi3emh9hjxir7gphmalie sh -lc 'cd /workspace && repow
 ```
 
 `repowise-freshness-check` fails when `github-main.json` is missing or older
-than 30 minutes, or when either live checkout differs from the fetched SHA.
+than 10 minutes, or when either live checkout differs from the fetched SHA.
 When the sync lock is held, its `ExecCondition` in `[Service]` skips the
 check rather than reporting stale or misleading evidence.
