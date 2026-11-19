@@ -14,7 +14,7 @@ from pathlib import Path
 from harness_release_admission import Denied, read_trusted_bytes
 
 ROOT_STATE = Path("/var/lib/harness-image-delivery/delivery/delivery.json")
-DIGEST = re.compile(r"sha256:[0-9a-f]{64}\\Z")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 TAG = re.compile(r":([0-9a-f]{12,40})\Z")
