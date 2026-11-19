@@ -41,7 +41,7 @@ type Call = { method: string; path: string; body?: Record<string, unknown> };
 
 const ANCHOR = { iid: "elem-card-1", uuid: "uuid-card-1" };
 
-function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean } = {}) {
+function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean; corruptCreateAfterApply?: "body" | "anchor" | "id"; failReplyAfterApply?: boolean; corruptReplyAfterApply?: boolean } = {}) {
   const actor: "session" | "team" = opts.actor ?? "team";
   const state = {
     revision: 7,
@@ -52,6 +52,9 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
     threads: [] as StoredThread[],
     calls: [] as Call[],
     failPostAfterApply: !!opts.failPostAfterApply,
+    corruptCreateAfterApply: opts.corruptCreateAfterApply,
+    failReplyAfterApply: !!opts.failReplyAfterApply,
+    corruptReplyAfterApply: !!opts.corruptReplyAfterApply,
     fetches: 0,
   };
   const newThread = (
@@ -132,6 +135,9 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
           [{ id: body.commentId, body: body.body, createdById: actor === "session" ? "user-1" : null }],
         );
         state.threads.push(created);
+        if (state.corruptCreateAfterApply === "body") created.comments[0]!.body = "unexpected body";
+        if (state.corruptCreateAfterApply === "anchor") created.location.subject.uuid = "unexpected-uuid";
+        if (state.corruptCreateAfterApply === "id") created.comments[0]!.id = "unexpected-id";
         if (state.failPostAfterApply) throw new Error("socket hang up");
         return json(200, {});
       }
@@ -150,6 +156,8 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
           createdById: actor === "session" ? "user-1" : null,
           createdAt: "2026-11-19T11:00:00Z",
         });
+        if (state.corruptReplyAfterApply) thread.comments.at(-1)!.body = "unexpected reply";
+        if (state.failReplyAfterApply) throw new Error("socket hang up on reply");
         return json(200, {});
       }
       if (method === "PUT") {
@@ -188,7 +196,7 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
   return { client, state, posts, puts, fetchImpl };
 }
 
-async function tools(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean } = {}) {
+async function tools(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean; corruptCreateAfterApply?: "body" | "anchor" | "id"; failReplyAfterApply?: boolean; corruptReplyAfterApply?: boolean } = {}) {
   const f = fixture(opts);
   const stateDir = await mkdtemp(join(tmpdir(), "zari-261-comments-"));
   const defs = plasmicCommentTools({
@@ -340,6 +348,16 @@ test("create fails closed when the native element anchor is missing or mismatche
   );
   assert.equal(posts().length, 0, "no write may be attempted without a verified anchor");
   assert.equal(state.threads.length, 0);
+
+  delete state.map[ANCHOR.iid]!.uuid;
+  await assert.rejects(
+    byName("plasmic_create_comment_thread").handler({
+      projectId: "project-1", elementIid: ANCHOR.iid, elementUuid: ANCHOR.uuid,
+      body: "brak UUID nie jest dowodem tożsamości", dryRun: false,
+    }),
+    /ELEMENT_ANCHOR_UNVERIFIED/,
+  );
+  assert.equal(posts().length, 0);
 });
 
 test("create recovers an ambiguous network failure by reading it back, never double-posting", async () => {
@@ -354,6 +372,41 @@ test("create recovers an ambiguous network failure by reading it back, never dou
   assert.equal(result.deduped, true);
   assert.equal(result.verified, true);
   assert.equal(posts().length, 1);
+});
+
+test("ambiguous create never falsely verifies wrong ID, body or anchor", async () => {
+  for (const corruptCreateAfterApply of ["body", "anchor", "id"] as const) {
+    const { byName, posts } = await tools({ failPostAfterApply: true, corruptCreateAfterApply });
+    await assert.rejects(
+      byName("plasmic_create_comment_thread").handler({
+        projectId: "project-1", elementIid: ANCHOR.iid, elementUuid: ANCHOR.uuid,
+        body: "expected created comment", dryRun: false,
+      }),
+      /COMMENT_WRITE_UNVERIFIED/,
+    );
+    assert.equal(posts().length, 1, "must not re-POST after an ambiguous failure");
+  }
+});
+
+test("ambiguous reply never falsely verifies a different body", async () => {
+  const { byName, state, posts } = await tools({
+    failReplyAfterApply: true, corruptReplyAfterApply: true,
+  });
+  const threadId = stableCommentUuid("existing-thread", "thread");
+  state.threads.push({
+    id: threadId, branchId: null, resolved: false,
+    location: { subject: ANCHOR, variants: [] },
+    comments: [{ id: stableCommentUuid("existing-comment", "comment"), body: "initial",
+      commentThreadId: threadId, createdById: "user-1", createdAt: "2026-11-19T10:00:00Z" }],
+    createdById: "user-1", createdAt: "2026-11-19T10:00:00Z", commentThreadHistories: [],
+  });
+  await assert.rejects(
+    byName("plasmic_reply_comment_thread").handler({
+      projectId: "project-1", threadId, body: "expected reply", dryRun: false,
+    }),
+    /COMMENT_WRITE_UNVERIFIED/,
+  );
+  assert.equal(posts().length, 1, "ambiguous reply must not be blindly retried");
 });
 
 test("reply lands on the exact thread, is read back, and refuses a resolved thread by default", async () => {
@@ -687,6 +740,11 @@ test("status filter and attachment metadata work on the list surface", async () 
   const resolvedOnly = (await byName("plasmic_list_comments").handler({ projectId: "project-1", status: "resolved" })) as Record<string, any>;
   assert.equal(resolvedOnly.threadCount, 1);
   assert.equal(resolvedOnly.threads[0].threadId, "thread-done-1");
+  const elementResolved = (await byName("plasmic_get_element_comments").handler({
+    projectId: "project-1", elementIid: ANCHOR.iid, status: "resolved",
+  })) as Record<string, any>;
+  assert.equal(elementResolved.threadCount, 1, "element filter must exclude open threads");
+  assert.equal(elementResolved.threads[0].threadId, "thread-done-1");
 
   const all = (await byName("plasmic_list_comments").handler({ projectId: "project-1", status: "all" })) as Record<string, any>;
   assert.equal(all.threadCount, 2);
