@@ -15,7 +15,7 @@ import stat
 from pathlib import Path
 from typing import Callable
 
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientSession, ClientTimeout, ClientPayloadError, ClientConnectionError, web
 
 UPSTREAM = "https://chatgpt.com/backend-api/codex"
 ROLES = frozenset(("ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
@@ -212,9 +212,22 @@ async def responses(request: web.Request):
                         "Content-Type": "text/event-stream", "Cache-Control": "no-store",
                         "X-Accel-Buffering": "no"})
                     await output.prepare(request)
-                    async for chunk in upstream.content.iter_chunked(16384):
-                        await output.write(chunk)
-                    await output.write_eof()
+                    try:
+                        async for chunk in upstream.content.iter_chunked(16384):
+                            await output.write(chunk)
+                        await output.write_eof()
+                    except (ClientPayloadError, ClientConnectionError,
+                            asyncio.TimeoutError, OSError):
+                        # HTTP headers were already sent; cannot relabel a 200
+                        # as 502. Send an explicit terminal SSE failure instead
+                        # of a traceback, truncated silent success or false DONE.
+                        try:
+                            await output.write(
+                                b'event: error\\ndata: {"error":{"code":"upstream_stream_interrupted"}}\\n\\n')
+                            await output.write_eof()
+                        except (ConnectionResetError, OSError):
+                            # Client disconnected; never log or relay OAuth details.
+                            pass
                     return output
         except (asyncio.TimeoutError, OSError):
             return error(502, "upstream_transport_failure")
