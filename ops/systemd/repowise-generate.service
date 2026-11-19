@@ -1,0 +1,9 @@
+[Unit]
+Description=Write unwritten RepoWise concept pages with the configured model
+After=repowise-github-sync.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/lock/repowise-generate.lock /opt/repowise-knowledge/refill-all.sh
+TimeoutStartSec=5400
+Nice=10
