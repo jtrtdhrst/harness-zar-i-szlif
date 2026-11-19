@@ -20,6 +20,12 @@ const EXPECTED_TOOLS = [
   "plasmic_list_projects",
   "plasmic_list_comments",
   "plasmic_get_element_comments",
+  // ZARI-261: anchored comment write surface (create/reply/edit-own/resolve).
+  "plasmic_get_comment_thread",
+  "plasmic_create_comment_thread",
+  "plasmic_reply_comment_thread",
+  "plasmic_edit_own_comment",
+  "plasmic_resolve_comment_thread",
   "plasmic_list_branches",
   "plasmic_create_branch",
   "plasmic_preview_merge",
@@ -69,6 +75,7 @@ const READ_ONLY_TOOLS = [
   "plasmic_list_projects",
   "plasmic_list_comments",
   "plasmic_get_element_comments",
+  "plasmic_get_comment_thread",
   "plasmic_list_branches",
   "plasmic_preview_merge",
   "plasmic_get_project",
@@ -93,6 +100,10 @@ const READ_ONLY_TOOLS = [
 
 /** Narzędzia zapisujące — platforma musi je widzieć jako zmiany. */
 const WRITE_TOOLS = [
+  "plasmic_create_comment_thread",
+  "plasmic_reply_comment_thread",
+  "plasmic_edit_own_comment",
+  "plasmic_resolve_comment_thread",
   "plasmic_create_branch",
   "plasmic_create_page",
   "plasmic_create_component",
@@ -213,7 +224,7 @@ async function withServer<T>(
 }
 
 describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
-  it("tools/list zwraca dokładnie 42 narzędzia zgodnych z kontraktem", async () => {
+  it("tools/list zwraca dokładnie 47 narzędzi zgodnych z kontraktem", async () => {
     const tools = await withServer(async (client) => {
       const res = await client.request("tools/list", {});
       assert.ok(res.result, `tools/list nie powiodło się: ${JSON.stringify(res.error)}`);
@@ -297,5 +308,43 @@ describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
       "plasmic_create_branch must advertise its locked retry/dedup contract");
     assert.equal(byName.get("plasmic_create_page")?.idempotentHint, true);
     assert.equal(byName.get("plasmic_insert")?.idempotentHint, true);
+    // ZARI-261: comment writes are retry-safe, non-destructive (never a delete),
+    // and the read-only thread fetch is classified as a read.
+    for (const name of ["plasmic_create_comment_thread", "plasmic_reply_comment_thread",
+      "plasmic_edit_own_comment", "plasmic_resolve_comment_thread"]) {
+      assert.equal(byName.get(name)?.idempotentHint, true, `${name} must be retry-safe`);
+      assert.equal(byName.get(name)?.destructiveHint, false, `${name} must not be destructive`);
+    }
+    assert.equal(byName.get("plasmic_get_comment_thread")?.readOnlyHint, true);
+  });
+
+  it("ZARI-261: the comment write tools publish full input schemas over MCP", async () => {
+    const tools = await withServer(async (client) => {
+      const res = await client.request("tools/list", {});
+      assert.ok(res.result, `tools/list nie powiodło się: ${JSON.stringify(res.error)}`);
+      return res.result.tools ?? [];
+    });
+    const create = tools.find((t) => t.name === "plasmic_create_comment_thread") as
+      | { inputSchema?: { properties?: Record<string, unknown>; required?: string[] } }
+      | undefined;
+    assert.ok(create?.inputSchema, "create tool must expose an inputSchema");
+    const props = Object.keys(create.inputSchema.properties ?? {});
+    for (const field of ["projectId", "elementIid", "elementUuid", "body", "branchId",
+      "variants", "idempotencyKey", "dryRun"]) {
+      assert.ok(props.includes(field), `missing ${field} in plasmic_create_comment_thread schema`);
+    }
+    assert.deepEqual(
+      [...(create.inputSchema.required ?? [])].sort(),
+      ["body", "elementIid", "elementUuid", "projectId"],
+    );
+
+    // A missing required argument is rejected by the schema before any WAB call.
+    const response = await withServer(client => client.request("tools/call", {
+      name: "plasmic_create_comment_thread",
+      arguments: { projectId: "project-1", elementIid: "iid", elementUuid: "uuid" },
+    }));
+    assert.equal(response.result?.isError, true);
+    const text = (response.result?.content ?? []).map((c: { text?: string }) => c.text ?? "").join(" ");
+    assert.match(text, /body|required|invalid/i);
   });
 });

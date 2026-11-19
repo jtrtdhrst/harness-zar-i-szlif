@@ -523,7 +523,8 @@ test("live stdio server exposes the data-query tools and reports UNVERIFIED with
     ]) {
       assert.ok(names.includes(name), `missing ${name}`);
     }
-    assert.equal(names.length, 42); // ZARI-260: five Data Token actions added to ZARI-229 catalog
+    // ZARI-261 anchored comments and ZARI-260 Data Tokens: total 47 tools.
+    assert.equal(names.length, 47);
     const caps = await rpc("tools/call", { name: "plasmic_get_capabilities", arguments: {} }) as {
       result?: { isError?: boolean; content?: Array<{ text?: string }> };
     };
