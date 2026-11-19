@@ -1,0 +1,32 @@
+# ZARI-213: Role-scoped Codex broker — preproduction candidate
+
+This directory implements a deliberately constrained OAuth-aware model transport bridge for Hermes v0.22.5. It is not a completed credential isolation deployment; ZARI-213 and ZARI-240 remain BLOCKED.
+
+## Verified original defect
+
+The native CHO run 01a1f40a-ca05-71a1-bea5-86ceeda8fe9b confirmed that own-profile opens were allowed, foreign CTO profile and shared Git mirror opens were denied, **but global Hermes auth.json and .env could still be opened by the agent**. No secret bytes were read. Hermes OAuth credential_pool uses shared rotating refresh-token chains; copying this account into 14 independent profile files is unsafe.
+
+## Candidate mechanism
+
+The broker runs outside the task sandbox, resolves Codex OAuth from the trusted global store using Hermes's native refresh logic, and forwards only the pinned Responses endpoint. Only a known role's private bearer can call /p/<role>/v1/responses. Wrong/missing role token is denied; requested model is allowlisted; store=false and stream=true are enforced; max body is 1 MiB. The broker drops client authorization/headers, pins https://chatgpt.com/backend-api/codex/responses, prohibits redirects, and sanitizes upstream errors. Listener is loopback 127.0.0.1 only. No secret is committed to Git.
+
+## Tests on 2026-11-19 (operator-observed)
+
+- 11/11 unit cases PASS in local Python and on VPS in the actual Hermes virtual environment. Negative checks cover foreign/missing bearer, unsupported route/model/protocol, symlink/private-file mode, no upstream call on denied request, no client header forwarding, no secrets in error.
+- Disposable VPS broker staging: anonymous -> HTTP 401, COO bearer on CHO route -> 401, CHO bearer on CHO route -> 200. No persistent service/profile change.
+- Direct real GPT-6 Luna request via disposable broker returned HTTP 200, valid completed SSE, output OK, about 3.1 seconds. This is proof of the broker data-plane, not full agent runtime.
+- Disposable Hermes gateway-backed one-shot -z exited 2 with an unknown execution outcome; it never reached the broker's Responses route. An additional diagnostic was blocked by execution safeguards. **Normal native Multica/Hermes client -> broker E2E is not yet verified.**
+
+## Mandatory gates before role migration or release
+
+1. Independent exact-source SHA review and regression tests; fix any review failures.
+2. Native two-role agent test for positive own broker calls and negative cross-role calls; no secret bytes exposed. Do not rely only on URL role labels for authorization.
+3. Prove a direct (not nested gateway agent) Hermes Responses runtime call via custom provider, without global auth.json or .env access. Preserve tool behavior and avoid double agent execution.
+4. Add bounded concurrency, rate limits, role budget accounting and robust streaming/error handling before enabling long-lived production service.
+5. Use a restricted service identity and role key path, no public listener. Capture source/blob/digest, CI, release owner, live positive and negative canaries and rollback.
+6. Remove Landlock global auth.json/.env grants only after approved model-broker replacement successfully handles every migrated role; fail closed, do not copy shared refresh tokens to individual profiles.
+7. Native ZARI-213 and full ZARI-240 Done gates remain enforced. A partial RepoWise deployment observation alone never constitutes a successful full release.
+
+## Rollback
+
+This source-only PR leaves the Multica daemon, Hermes role profiles, global OAuth store, and RepoWise unchanged. Roll back by reverting the candidate PR. No new systemd service has been installed or activated.
