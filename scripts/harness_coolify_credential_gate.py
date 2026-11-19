@@ -5,6 +5,7 @@ No token value is ever printed, stored in argv/logs or sent anywhere except
 a GET to the configured loopback Coolify API. No provider writes or deployment.
 """
 import argparse
+import ast
 import hmac
 import json
 import os
@@ -59,9 +60,26 @@ def get_status(token, uuid):
   except (OSError, TimeoutError): raise Denied("coolify_unreachable") from None
 
 def source_flags(src, candidate):
-  try: text = src.read_text(encoding="utf8")
-  except OSError: raise Denied("controller_missing") from None
-  return {"legacy_ref": str(OLD) in text, "dedicated_ref": str(candidate) in text}
+  try:
+    tree = ast.parse(src.read_text(encoding="utf8"))
+  except (OSError, SyntaxError):
+    raise Denied("controller_source_invalid") from None
+  assignments = [node.value for node in tree.body
+                 if isinstance(node, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == "COOLIFY_TOKEN"
+                         for t in node.targets)]
+  values = []
+  for value in assignments:
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+        and value.func.id == "Path" and len(value.args) == 1
+        and isinstance(value.args[0], ast.Constant)
+        and isinstance(value.args[0].value, str)):
+      values.append(value.args[0].value)
+    else:
+      values.append(None)
+  return {"legacy_ref": str(OLD) in values,
+          "dedicated_ref": len(values) == 1 and values[0] == str(candidate)}
+
 
 def decide(phase, refs, legacy_status, candidate_status, collision, same_image):
   reasons = []
