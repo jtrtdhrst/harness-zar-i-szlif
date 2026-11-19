@@ -1,8 +1,8 @@
 diff --git a/server/internal/daemon/daemon.go b/server/internal/daemon/daemon.go
-index 9ed1d38..6c19437 100644
+index 9ed1d38..e8b3f97 100644
 --- a/server/internal/daemon/daemon.go
 +++ b/server/internal/daemon/daemon.go
-@@ -3533,13 +3533,66 @@ func (d *Daemon) registerTaskRepos(workspaceID, taskID string, repos []RepoData)
+@@ -3533,13 +3533,71 @@ func (d *Daemon) registerTaskRepos(workspaceID, taskID string, repos []RepoData)
  	}
  }
  
@@ -11,18 +11,25 @@ index 9ed1d38..6c19437 100644
 -func taskRepoURLs(repos []RepoData) []string {
 -	urls := make([]string, 0, len(repos))
 -	for _, repo := range repos {
+-		if url := strings.TrimSpace(repo.URL); url != "" {
+-			urls = append(urls, url)
 +// scopedRepoClaimKey distinguishes remote repository identity from exact local
 +// paths. An unrecognized URL/relative path is never an authorization key.
 +func scopedRepoClaimKey(rawURL string) string {
-+	url := strings.TrimSpace(rawURL)
-+	if url == "" {
++	trimmed := strings.TrimSpace(rawURL)
++	if trimmed == "" {
 +		return ""
 +	}
-+	if identity := repoIdentity(url); identity != "" {
++	if identity := repoIdentity(trimmed); identity != "" {
 +		return "repo:" + identity
 +	}
-+	if filepath.IsAbs(url) && filepath.Clean(url) == url {
-+		return "local:" + url
++	// Local paths are byte-exact grants; never normalize whitespace into
++	// permission to access a different on-disk path.
++	if rawURL != trimmed {
++		return ""
++	}
++	if filepath.IsAbs(rawURL) && filepath.Clean(rawURL) == rawURL {
++		return "local:" + rawURL
 +	}
 +	return ""
 +}
@@ -35,11 +42,10 @@ index 9ed1d38..6c19437 100644
 +func taskRepoURLs(task Task) []string {
 +	claimed := make(map[string]string, len(task.Repos))
 +	for _, repo := range task.Repos {
- 		if url := strings.TrimSpace(repo.URL); url != "" {
--			urls = append(urls, url)
-+			if key := scopedRepoClaimKey(url); key != "" {
-+				claimed[key] = url
-+			}
++		if key := scopedRepoClaimKey(repo.URL); key != "" {
++			// Safe to trim remote origins; local paths with surrounding
++			// whitespace were rejected by scopedRepoClaimKey.
++			claimed[key] = strings.TrimSpace(repo.URL)
 +		}
 +	}
 +	if task.ProjectID == "" {
@@ -75,7 +81,7 @@ index 9ed1d38..6c19437 100644
  		}
  	}
  	return urls
-@@ -9373,7 +9426,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+@@ -9373,7 +9431,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
  		AgentID:     task.AgentID,
  		AgentName:   task.Agent.Name,
  		WorkDir:     env.WorkDir,
@@ -85,26 +91,29 @@ index 9ed1d38..6c19437 100644
  	defer d.clearActiveRepoCheckoutTask(agentToken)
  	defer d.environments.trackTask(env.RootDir, localenv.Task{
 diff --git a/server/internal/daemon/health.go b/server/internal/daemon/health.go
-index b687af4..05497c8 100644
+index b687af4..8ff8edf 100644
 --- a/server/internal/daemon/health.go
 +++ b/server/internal/daemon/health.go
-@@ -153,12 +153,16 @@ func (d *Daemon) registerActiveRepoCheckoutTask(token string, task activeRepoChe
+@@ -153,12 +153,19 @@ func (d *Daemon) registerActiveRepoCheckoutTask(token string, task activeRepoChe
  // workspace-wide cache union (which may include another project's sources).
  // Compare repository identities to preserve supported scp/https aliases.
  func taskRepoCheckoutAllowed(task activeRepoCheckoutTask, requested string) bool {
 -	identity := repoIdentity(strings.TrimSpace(requested))
 -	if identity == "" {
-+	requested = strings.TrimSpace(requested)
-+	if requested == "" {
++	trimmed := strings.TrimSpace(requested)
++	if trimmed == "" {
  		return false
  	}
-+	identity := repoIdentity(requested)
++	identity := repoIdentity(trimmed)
  	for _, allowed := range task.RepoURLs {
 -		if repoIdentity(strings.TrimSpace(allowed)) == identity {
-+		allowed = strings.TrimSpace(allowed)
-+		// Preserve explicit local-repository support: repoIdentity intentionally
-+		// returns empty for local paths, so only exact matches are admitted.
-+		if allowed == requested || (identity != "" && identity == repoIdentity(allowed)) {
++		// Remote URL identity supports scp/HTTPS aliases and surrounding
++		// whitespace, but local filesystem paths MUST match byte-for-byte.
++		if identity != "" && identity == repoIdentity(strings.TrimSpace(allowed)) {
++			return true
++		}
++		if identity == "" && requested == allowed &&
++			filepath.IsAbs(requested) && filepath.Clean(requested) == requested {
  			return true
  		}
  	}
@@ -129,7 +138,7 @@ index 15c1a40..bc4d6de 100644
  	return d
  }
 diff --git a/server/internal/daemon/zari213_repo_scope_test.go b/server/internal/daemon/zari213_repo_scope_test.go
-index 8b8b0f4..c69dda2 100644
+index 8b8b0f4..00f34ff 100644
 --- a/server/internal/daemon/zari213_repo_scope_test.go
 +++ b/server/internal/daemon/zari213_repo_scope_test.go
 @@ -1,6 +1,7 @@
@@ -140,7 +149,7 @@ index 8b8b0f4..c69dda2 100644
  	"fmt"
  	"log/slog"
  	"net/http"
-@@ -53,3 +54,65 @@ func TestZARI213CheckoutRejectsOtherProjectBeforeCacheAccess(t *testing.T) {
+@@ -53,3 +54,74 @@ func TestZARI213CheckoutRejectsOtherProjectBeforeCacheAccess(t *testing.T) {
  		t.Fatalf("response=%d body=%q want project scope 403", response.Code, response.Body.String())
  	}
  }
@@ -178,6 +187,15 @@ index 8b8b0f4..c69dda2 100644
 +		{"unclean-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/../harness"}}, ProjectResources: []ProjectResourceData{
 +			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/../harness"}`)},
 +		}}, nil},
++		{"local-resource-leading-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":" /srv/repos/harness"}`)},
++		}}, nil},
++		{"local-resource-trailing-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness "}`)},
++		}}, nil},
++		{"local-task-trailing-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness "}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, nil},
 +		{"workspace-without-project", Task{Repos: repos}, []string{product, harness}},
 +	} {
 +		t.Run(tc.name, func(t *testing.T) {
@@ -200,7 +218,7 @@ index 8b8b0f4..c69dda2 100644
 +	if !taskRepoCheckoutAllowed(task, "/srv/repos/harness") {
 +		t.Fatal("exact local checkout denied")
 +	}
-+	for _, bad := range []string{"/srv/repos/other", "/srv/repos/harness-copy", "/srv/repos/harness/../other", "repos/harness"} {
++	for _, bad := range []string{"/srv/repos/other", "/srv/repos/harness-copy", "/srv/repos/harness/../other", "repos/harness", " /srv/repos/harness", "/srv/repos/harness "} {
 +		if taskRepoCheckoutAllowed(task, bad) {
 +			t.Fatalf("unexpected local path permission: %q", bad)
 +		}
