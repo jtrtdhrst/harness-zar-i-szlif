@@ -1,0 +1,10 @@
+# ZARI-213 — upstream Multica task/project checkout ACL
+
+- Applies to local Multica security-fix source **`1d2fcff`** at `/opt/experiments/multica-zari213-exact`, not the older unpatched `b1ea927` checkout.
+- Patch: `zari213-project-claim-repo-checkout.patch`; apply from the source repository root with `git apply --check <patch>` then `git apply <patch>`. It modifies only four files under `server/internal/daemon/`.
+- Threat: when a project's `github_repo` resources are empty, the Multica server intentionally supplies workspace repositories as fallback context, but this fallback must **not** authorize cross-project `repo checkout` in the daemon.
+- Fix: the active task's authenticated `RepoURLs` scope intersects the claimed repository list with its explicit `ProjectResources` `github_repo` entries when `ProjectID` is present. An absent/malformed manifest fails closed. Unprojected tasks preserve workspace repository semantics. Previously supported scp/HTTPS aliases remain; exact local-path grants remain supported.
+- Tests: `go test ./internal/daemon -run 'TestZARI213|TestRepoCheckout' -count=1` (PASS on VPS with Go 1.26.9, 2026-11-19). The source checkout's prior tests needed two fixture `RepoURLs` additions; these fixture corrections are included. `git diff --check` PASS.
+- Built candidate on VPS: `/tmp/zari213-exact-claim-acl-20261119`, SHA256 `ca4eecea6217c3fdb9ae9c47c8af180c27248d20aeb34252b32edd9ade1d2920`; NOT a provenance substitute for live deployment.
+- Scope: only checkout admission. It does not address shared Codex OAuth, the broker's native-provider migration, or task session isolation. Do not interpret unit tests as production agent E2E. Rollback via the pinned prior daemon binary after a controlled restart if the post-release canaries fail.
+- Required live validation: same-project positive checkout and cross-project negative checkout with actual task-scoped native CLI credentials; exact binary digest and separate CTO review; no secret values printed; no creation of unrelated project worktrees during negative denial.
