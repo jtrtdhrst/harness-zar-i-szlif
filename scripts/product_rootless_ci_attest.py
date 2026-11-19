@@ -200,7 +200,7 @@ echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
     env = ["HOME=/var/lib/zis-ci-guest",
            "DOCKER_HOST=unix:///run/zis-ci-guest/docker.sock",
            "PYTHONDONTWRITEBYTECODE=1"]
-    argv = ["runuser", "-u", GUEST, "--", "env", *env, "/bin/sh", "-c", shell]
+    argv = ["/usr/sbin/runuser", "-u", GUEST, "--", "env", *env, "/bin/sh", "-c", shell]
     with open(log, "wb") as output:
         try:
             p = subprocess.run(argv, cwd=source, stdout=output, stderr=subprocess.STDOUT,
