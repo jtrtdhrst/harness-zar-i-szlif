@@ -13,6 +13,13 @@ def guard():
     marker = 'docker inspect "$coolify_publisher" | python3 -c ' + "'\n"
     return script.split(marker, 1)[1].split("\n' || fail", 1)[0]
 
+def discover(payloads):
+    script = SOURCE.read_text(encoding="utf-8")
+    marker = 'COOLIFY_PUBLISHER=$(python3 -c ' + "'\n"
+    discovery = script.split(marker, 1)[1].split("\n' <<< \"$ALL_RUNNING_INSPECT\")", 1)[0]
+    return subprocess.run([sys.executable, "-c", discovery],
+                          input=json.dumps(payloads), text=True, capture_output=True)
+
 def fixture():
     def mount(dest, source, rw):
         return {"Destination": dest, "Source": source, "RW": rw}
@@ -70,6 +77,47 @@ class CoolifyPublisherSyncContractTests(unittest.TestCase):
         payload = fixture()
         payload["Mounts"].append({"Source": "/tmp", "Destination": "/extra", "RW": True})
         self.assertIn("publisher_unexpected_mount_count", check(payload).stderr)
+
+    def test_discovery_expected_identity(self):
+        payload = fixture()
+        payload["Name"] = "/publisher-gl8bvfjtw2af8hkox4mguzzr-20261118"
+        result = discover([payload])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("publisher-gl8bvfjtw2af8hkox4mguzzr-20261118", result.stdout)
+
+    def test_discovery_changed_resource_label_still_selects_candidate(self):
+        payload = fixture()
+        payload["Name"] = "/publisher-gl8bvfjtw2af8hkox4mguzzr-20261118"
+        payload["Config"]["Labels"]["coolify.resourceName"] = "renamed-resource"
+        result = discover([payload])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("publisher-gl8bvfjtw2af8hkox4mguzzr", result.stdout)
+        self.assertIn("publisher_identity_changed", check(payload).stderr)
+
+    def test_discovery_changed_all_labels_but_product_mount_remains_visible(self):
+        payload = fixture()
+        payload["Name"] = "/publisher-gl8bvfjtw2af8hkox4mguzzr-20261118"
+        payload["Config"]["Labels"] = {}
+        result = discover([payload])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("publisher-gl8bvfjtw2af8hkox4mguzzr", result.stdout)
+        self.assertIn("publisher_identity_changed", check(payload).stderr)
+
+    def test_discovery_no_publisher_fails_closed(self):
+        self.assertNotEqual(discover([{"Name":"/unrelated","Mounts":[],"Config":{"Labels":{}}}]).returncode, 0)
+
+    def test_discovery_two_candidates_fails_closed(self):
+        payload = fixture()
+        payload["Name"] = "/publisher-a"
+        another = fixture()
+        another["Name"] = "/publisher-b"
+        self.assertIn("publisher_discovery_expected_exactly_one_got_2", discover([payload, another]).stderr)
+
+    def test_source_detects_docker_list_and_inspect_failures(self):
+        s = SOURCE.read_text(encoding="utf-8")
+        self.assertIn('RUNNING_IDS=$(docker ps --quiet) || fail "coolify-docker-list-failed"', s)
+        self.assertIn('ALL_RUNNING_INSPECT=$(docker inspect $RUNNING_IDS) || fail "coolify-docker-inspect-failed"', s)
+        self.assertIn('|| fail "coolify-publisher-discovery-failed"', s)
 
     def test_order_precedes_swap_and_rollback(self):
         s = SOURCE.read_text(encoding="utf-8")
