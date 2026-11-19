@@ -9,7 +9,8 @@ permissions:
   contents: read
 jobs:
   pure-python-tests:
-    runs-on: ubuntu-latest
+    # Existing local-build runner; hosted Actions minutes are disabled for this repository.
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
