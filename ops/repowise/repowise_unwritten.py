@@ -5,6 +5,7 @@ Without --pending, preserve legacy unwritten-only behavior.
 Populated deterministic onboarding pages are not model stubs.
 """
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 import sys
 from pathlib import Path
@@ -30,6 +31,54 @@ WHERE page_type IN {MODEL_TYPES}
   AND {UNWRITTEN}
 ORDER BY id
 """
+
+def _is_production_code(path):
+    """Prefer RepoWise's own classification, with a local-test fallback."""
+    try:
+        from repowise.core.support_paths import file_population, is_support_path
+        from repowise.core.test_paths import is_test_related_path
+        return (file_population(path, is_test=is_test_related_path(path))
+                == "production" and not is_support_path(path))
+    except ImportError:
+        from pathlib import PurePosixPath
+        parts = PurePosixPath(path).parts
+        suffix = PurePosixPath(path).suffix.lower()
+        excluded = {"tests", "test", "__tests__", "docs", "examples",
+                    "fixtures", "node_modules", "build", "dist"}
+        return (not any(part.lower() in excluded for part in parts)
+                and suffix in {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs",
+                               ".cjs", ".go", ".rs", ".java", ".php",
+                               ".sh", ".sql", ".css", ".rb", ".vue", ".svelte"}
+                and not any(tag in PurePosixPath(path).name.lower()
+                            for tag in (".test.", ".spec.", "_test.")))
+
+
+def _code_changed_after_page(db_path, updated_time):
+    """Compare committed source trees, not the indexing clock.
+
+    A later docs-only commit must not perpetually regenerate a deterministic
+    git-history page. Diff the first-parent tree at its last generation time
+    against HEAD, so old feature commits merged later are still detected.
+    """
+    root = Path(db_path).resolve().parent.parent
+    if not (root / ".git").exists():
+        # Legacy isolated wiki.db fixtures have no Git checkout.
+        return True
+
+    prefix = ["git", "-c", f"safe.directory={root}", "-C", str(root)]
+    def git(*args):
+        result = subprocess.run([*prefix, *args], capture_output=True, text=True,
+                                check=False, timeout=45)
+        if result.returncode:
+            raise RuntimeError("RepoWise source freshness git read failed")
+        return result.stdout.strip()
+
+    before = updated_time.astimezone(timezone.utc).isoformat()
+    base = git("rev-list", "-1", "--first-parent", f"--before={before}", "HEAD")
+    paths = (git("diff", "--name-only", base, "HEAD") if base
+             else git("ls-tree", "-r", "--name-only", "HEAD"))
+    return any(_is_production_code(path) for path in paths.splitlines() if path)
+
 
 def pending_pages(db_path, include_stale=False, indexed_at=None):
     with sqlite3.connect(str(db_path)) as connection:
@@ -69,7 +118,8 @@ def pending_pages(db_path, include_stale=False, indexed_at=None):
                     updated_time = datetime.fromisoformat(updated_at)
                     if updated_time.tzinfo is None:
                         updated_time = updated_time.replace(tzinfo=timezone.utc)
-                    if updated_time < indexed_time:
+                    if (updated_time < indexed_time and
+                            _code_changed_after_page(db_path, updated_time)):
                         pending.append(deterministic_id)
         return sorted(set(pending))
 
