@@ -181,7 +181,13 @@ def prepare_source(sha: str, expected_tree: str, tgz: bytes, uid: int) -> Path:
 def guest_ci(source: Path, sha: str) -> str:
     LOG_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     LOG_ROOT.chmod(0o700)
-    log = LOG_ROOT / (sha + ".log")
+    log_dir = LOG_ROOT / require_sha(sha)
+    log_dir.mkdir(mode=0o700, exist_ok=True)
+    log_dir.chmod(0o700)
+    if log_dir.stat().st_uid != 0 or LOG_ROOT.stat().st_uid != 0:
+        raise Refused("log_directory_owner_untrusted")
+    fd, log_name = tempfile.mkstemp(prefix="attempt-", suffix=".pending", dir=log_dir)
+    log = Path(log_name)
     shell = r'''
 set -eu
 test "$(git -c safe.directory="$(pwd)" cat-file -t EXPECTED_TREE)" = tree
@@ -212,17 +218,36 @@ echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
            "DOCKER_HOST=unix:///run/zis-ci-guest/docker.sock",
            "PYTHONDONTWRITEBYTECODE=1"]
     argv = ["/usr/sbin/runuser", "-u", GUEST, "--", "env", *env, "/bin/sh", "-c", shell]
-    with open(log, "wb") as output:
+    passed = False
+    try:
+        with os.fdopen(fd, "wb") as output:
+            try:
+                p = subprocess.run(argv, cwd=source, stdout=output, stderr=subprocess.STDOUT,
+                                   timeout=1800, env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"})
+            except subprocess.TimeoutExpired as exc:
+                raise Refused("rootless_ci_timeout") from exc
+            output.flush()
+            os.fsync(output.fileno())
+        if p.returncode:
+            raise Refused("rootless_ci_failed")
+        digest = hashlib.sha256(log.read_bytes()).hexdigest()
+        if "ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS" not in log.read_text(errors="replace"):
+            raise Refused("ci_milestone_unobserved")
+        immutable = log_dir / (digest + ".log")
         try:
-            p = subprocess.run(argv, cwd=source, stdout=output, stderr=subprocess.STDOUT,
-                               timeout=1800, env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent"})
-        except subprocess.TimeoutExpired as exc:
-            raise Refused("rootless_ci_timeout") from exc
-    if p.returncode:
-        raise Refused("rootless_ci_failed")
-    if "ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS" not in log.read_text(errors="replace"):
-        raise Refused("ci_milestone_unobserved")
-    return hashlib.sha256(log.read_bytes()).hexdigest()
+            os.link(log, immutable)  # create-only: no overwrite of referenced evidence
+        except FileExistsError:
+            if immutable.stat().st_uid != 0 or hashlib.sha256(immutable.read_bytes()).hexdigest() != digest:
+                raise Refused("existing_log_digest_mismatch")
+        os.chmod(immutable, 0o400)
+        passed = True
+        return digest, immutable
+    finally:
+        if passed:
+            log.unlink(missing_ok=True)
+        elif log.exists():
+            # Preserve failed attempt but never let it impersonate signed evidence.
+            log.rename(log.with_suffix(".failed"))
 
 def receipt_key() -> bytes:
     KEY.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -240,21 +265,68 @@ def receipt_key() -> bytes:
         raise Refused("attestation_key_invalid")
     return key
 
+def _write_once(name: Path, data: bytes) -> None:
+    """Do not mutate signed evidence, even during retry or crash recovery."""
+    with tempfile.NamedTemporaryFile(mode="wb", prefix="receipt-", suffix=".pending",
+                                     dir=name.parent, delete=False) as out:
+        temporary = Path(out.name)
+        out.write(data)
+        out.flush()
+        os.fsync(out.fileno())
+    try:
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, name)  # O_EXCL equivalent; no replacement ever
+        except FileExistsError as exc:
+            raise Refused("attestation_already_exists") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def verified_existing(sha: str, expected_tree: str, key: bytes) -> dict | None:
+    """Read-only reuse of complete trusted signed evidence; corrupt = refusal."""
+    receipt = RECEIPTS / (require_sha(sha) + ".json")
+    if not receipt.exists():
+        return None
+    try:
+        info = os.stat(receipt, follow_symlinks=False)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or info.st_size > 4096):
+            raise Refused("existing_attestation_untrusted")
+        record = json.loads(receipt.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise Refused("existing_attestation_unreadable") from exc
+    if (not verify(record, key) or record.get("sha") != sha
+            or record.get("tree") != expected_tree or record.get("exit_code") != 0
+            or record.get("runner") != "zis-ci-guest-rootless"):
+        raise Refused("existing_attestation_integrity_failed")
+    candidate = record.get("log_path")
+    digest = record.get("log_sha256")
+    if (not isinstance(candidate, str) or not isinstance(digest, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", digest)):
+        raise Refused("existing_attestation_log_missing")
+    safe = LOG_ROOT / sha / (digest + ".log")
+    if candidate != str(safe):
+        raise Refused("existing_attestation_log_path_untrusted")
+    try:
+        meta = os.stat(safe, follow_symlinks=False)
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or meta.st_nlink != 1
+                or stat.S_IMODE(meta.st_mode) != 0o400):
+            raise Refused("existing_attestation_log_untrusted")
+        log_digest = hashlib.sha256(safe.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise Refused("existing_attestation_log_unreadable") from exc
+    if log_digest != digest:
+        raise Refused("existing_attestation_log_tampered")
+    return record
+
+
 def store_receipt(payload: dict, key: bytes) -> Path:
     RECEIPTS.mkdir(mode=0o700, parents=True, exist_ok=True)
     name = RECEIPTS / (payload["sha"] + ".json")
     record = dict(payload, signature=sign(payload, key))
-    tmp = name.with_suffix(".new")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as out:
-            out.write(canonical(record) + b"\n")
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(tmp, name)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    _write_once(name, canonical(record) + b"\n")
     return name
 
 def store_premerge_receipt(payload: dict) -> Path:
@@ -277,17 +349,7 @@ def store_premerge_receipt(payload: dict) -> Path:
             "negative_versionless": True,
         },
     }
-    tmp = name.with_suffix(".new")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as out:
-            out.write(canonical(record) + b"\n")
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(tmp, name)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    _write_once(name, canonical(record) + b"\n")
     return name
 
 def main() -> int:
@@ -308,16 +370,28 @@ def main() -> int:
         except BlockingIOError as exc:
             raise Refused("rootless_ci_already_running") from exc
         tree, tar = github_snapshot(sha)
-        source = prepare_source(sha, tree, tar, uid)
-        log_sha = guest_ci(source, sha)
-        payload = {"schema_version": 2, "sha": sha, "tree": tree,
-                   "runner": "zis-ci-guest-rootless", "runner_uid": uid,
-                   "command": "docker build && npm run validate:code (network none) && docker build",
-                   "exit_code": 0, "log_sha256": log_sha,
-                   "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        path = store_receipt(payload, receipt_key())
-        premerge = store_premerge_receipt(payload)
-    print(json.dumps({"result": "attested", "sha": sha, "tree": tree,
+        key = receipt_key()
+        prior = verified_existing(sha, tree, key)
+        path = RECEIPTS / (sha + ".json")
+        premerge = RECEIPTS / ("premerge-" + sha + ".json")
+        if prior:
+            if not premerge.is_file():
+                raise Refused("signed_evidence_partial_premerge_missing")
+            result = "already_attested"
+        else:
+            if premerge.exists():
+                raise Refused("orphan_premerge_attestation_untrusted")
+            source = prepare_source(sha, tree, tar, uid)
+            log_sha, log_path = guest_ci(source, sha)
+            payload = {"schema_version": 2, "sha": sha, "tree": tree,
+                       "runner": "zis-ci-guest-rootless", "runner_uid": uid,
+                       "command": "docker build && npm run validate:code (network none) && docker build",
+                       "exit_code": 0, "log_sha256": log_sha, "log_path": str(log_path),
+                       "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            path = store_receipt(payload, key)
+            premerge = store_premerge_receipt(payload)
+            result = "attested"
+    print(json.dumps({"result": result, "sha": sha, "tree": tree,
                       "runner_uid": uid, "receipt": str(path),
                       "premerge_receipt": str(premerge)}, sort_keys=True))
     return 0
