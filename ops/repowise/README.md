@@ -72,3 +72,33 @@ docker exec repowise-mcp-lecwi3emh9hjxir7gphmalie sh -lc 'cd /workspace && repow
 than 30 minutes, or when either live checkout differs from the fetched SHA.
 When the sync lock is held, its `ExecCondition` in `[Service]` skips the
 check rather than reporting stale or misleading evidence.
+
+## Confirmed Coolify publisher incident and source drift (2026-11-19)
+
+- At 11:56:12 UTC the host's patched synchronizer included the Coolify
+  publisher in the atomic stop/promote/rollback/restart transaction. At
+  11:58:12 UTC it logged SYNC_SUCCESS for Harness SHA
+  ec818fd755d146dfd0886e2a0fb07f8e1167461f and Product SHA
+  4feef6903dc21be5da0433a77b10549bf0009661. Freshness check passed
+  afterward. This dated runtime observation is not an ongoing guarantee.
+- GitHub main's canonical repowise_github_sync.sh lacked the Coolify stanza
+  despite the installed host script containing it. A normal redeployment
+  could silently revert the fix. Keep host and canonical scripts identical.
+- SECURITY GAP still present at audit: the running Coolify publisher mounts
+  /workspace/product, the sync lock, and token file with RW=true even
+  though tracked compose.publisher.coolify.yaml declares them read-only.
+  Effective UID 999 can write to /workspace/product. This PR adds fail-closed
+  source-side validation of exact Coolify identity and mount permissions:
+  only /workspace/product/.repowise/episodes is allowed RW.
+- DO NOT install the hardened sync script on the host until Coolify is
+  redeployed/reconciled and Docker inspect shows the three read-only mounts
+  and only episodes writable. Obtain independent exact-SHA review first.
+- Controlled rollout: reconcile Coolify volumes, verify effective UID and
+  mount flags, back up host script, install approved canonical version,
+  run bash -n + unit tests, run one locked sync, inspect the
+  SYNC_COOLIFY_PUBLISHER_INCLUDED / SYNC_SUCCESS / freshness-check markers
+  and verify RepoWise MCP at the exact GitHub SHA. Roll back on failure.
+- A chat observation or Multica issue comment is NOT automatically written
+  into RepoWise. Technical lessons must be recorded in reviewed GitHub docs
+  and ingested by GitHub sync; supported deployment episodes require a
+  separate authorized writer and explicit readback.
