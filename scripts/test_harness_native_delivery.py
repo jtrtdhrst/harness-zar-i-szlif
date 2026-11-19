@@ -400,7 +400,7 @@ class TransportTests(unittest.TestCase):
             transport = transport_for(host)
             transport.deploy("mantic-mcp", UUID, "service", DIGEST)
             host.images["local/mantic-mcp:old"] = DIGEST
-            with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \\
+            with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
                  patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
                 with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
                     transport.rollback("mantic-mcp", UUID)
