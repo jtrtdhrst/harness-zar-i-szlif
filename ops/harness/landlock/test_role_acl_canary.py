@@ -64,6 +64,7 @@ def main() -> None:
     if not (work / ".git").exists() and not work.is_dir():
         raise SystemExit("FAIL: task workdir missing")
 
+    os.environ["MULTICA_AGENT_NAME"] = args.own_role.replace("-", " ").upper()
     os.environ["MULTICA_AGENT_ID"] = args.agent_id
     os.environ["HERMES_HOME"] = str(home)
     os.environ["TMPDIR"] = str(work)
