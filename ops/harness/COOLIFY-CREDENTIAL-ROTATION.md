@@ -44,3 +44,16 @@ Staged i revoked wymagają każdej pary --target controller=serviceUUID dla harn
 ## Zweryfikowany E2E WAB — niezależny od release
 
 Komentarze Plasmic MCP mają potwierdzony prawdziwy round trip w projekcie testowym mcp-e2e-test2. W jednorazowym izolowanym kontenerze z obrazu z merge a14e811bf6174d8053988fd3a6be9915c23799e2 wykonano na TEST projekcie: odmowę błędnego anchor UUID, create, duplicate idempotency, reply, edit-own, readback, resolve+history, final readback (8/8 PASS). Wątek testowy został pozostawiony zamknięty. To NIE jest deployment serwisu MCP z Coolify: aktywna produkcja wciąż wskazywała starszy image sha256:bd1b33731dfe3342166359e5df46d459eb2dde68b73525a28ada63f6c19d291b. Nie obchodź release HOLD.
+
+## Harness Engineer read-only Coolify MCP socket-broker integrity gate (2026-11-19)
+
+Before an operator changes the MCP wrapper/package or declares agent-level access ready, run:
+
+```bash
+python3 scripts/harness_coolify_readonly_mcp_layout.py
+python3 -m unittest scripts/test_harness_coolify_readonly_mcp_layout.py
+```
+
+The preflight enforces the pinned `@masonator/coolify-mcp` module entry SHA256, root-owned package and wrapper, systemd `LoadCredential` (never inline token), `NoNewPrivileges`, `ProtectSystem`, dedicated 0600 Unix socket, and the `COOLIFY_MCP_REQUIRE_HUMAN=on` guard. It fails closed on drift without reading token values or modifying provider resources. The approved transport is the root-owned systemd/socat broker; the Hermes task accesses the agent-scoped Unix socket, **not** the package under `/opt` directly (its task sandbox denies that path).
+
+Live proof on Ubuntu (2026-11-19): read-only preflight `PASS`, `get_version` Coolify 4.4.6, `list_services` 25 services, and native Multica ZARI-262 tool calls independently reviewed before that issue was closed. This is a read-only MCP admission result only; it does not clear the broader release HOLD, authorize a Coolify deploy, or replace immutable image provenance and authenticated production E2E. Do not create another release controller or recurring job for this preflight.
