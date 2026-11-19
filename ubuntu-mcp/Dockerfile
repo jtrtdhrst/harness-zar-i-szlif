@@ -1,4 +1,8 @@
 FROM node:24.20.0-trixie-slim
+# mcp-ssh-manager ssh_key_manage shells out to ssh-keyscan; without it the
+# tool throws ENOENT and kills the stdio child. openssh-client provides it.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends openssh-client \
+ && rm -rf /var/lib/apt/lists/*
 RUN npm install --no-audit --no-fund --prefix /opt mcp-ssh-manager@3.8.6 \
  && node -e "const v=require('/opt/node_modules/mcp-ssh-manager/package.json').version; if(v!=='3.8.6'){console.error('version mismatch '+v);process.exit(1)}; console.log('mcp-ssh-manager '+v)" \
  && rm -rf /root/.npm

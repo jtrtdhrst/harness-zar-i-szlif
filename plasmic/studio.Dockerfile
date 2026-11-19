@@ -57,8 +57,10 @@ RUN cp /platform/loader-html-hydrate/build/* /platform/wab/public/static/js/
 
 # PUBLIC_URL/STATIC_URL control the absolute asset origin baked into index.html.
 ARG PUBLIC_URL=https://plasmic.kompaszbiorek.pl
+ARG REACT_APP_DEFAULT_HOST_URL=https://plasmic.kompaszbiorek.pl/static/host.html
 ENV PUBLIC_URL=$PUBLIC_URL \
     STATIC_URL=$PUBLIC_URL \
+    REACT_APP_DEFAULT_HOST_URL=$REACT_APP_DEFAULT_HOST_URL \
     NODE_ENV=production \
     NODE_OPTIONS=--max-old-space-size=4096
 # Telemetry keys are REQUIRED_VAR/OPTIONAL_VAR at build time but have no

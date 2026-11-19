@@ -54,6 +54,14 @@ export interface PlasmicComment {
   createdById?: string;
   deletedAt?: string | null;
 }
+/** Resolve/reopen audit rows (WAB `comment_thread_history`), newest semantics kept server-side. */
+export interface PlasmicCommentThreadHistory {
+  id: string;
+  resolved: boolean;
+  commentThreadId?: string;
+  createdAt?: string;
+  createdById?: string;
+}
 export interface PlasmicCommentThread {
   id: string;
   location: { subject: PlasmicModelAddr; variants: PlasmicModelAddr[] };
@@ -62,6 +70,14 @@ export interface PlasmicCommentThread {
   createdAt?: string;
   updatedAt?: string;
   createdById?: string;
+  commentThreadHistories?: PlasmicCommentThreadHistory[];
+}
+
+/** Authenticated human user behind the current session (never carries email to tools). */
+export interface PlasmicSelfUser {
+  id: string;
+  firstName?: string;
+  lastName?: string;
 }
 export interface PlasmicCommentResponse {
   threads: PlasmicCommentThread[];
@@ -79,6 +95,20 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+/**
+ * WAB accepts client-generated comment/thread/history IDs only in these forms
+ * (routes/comments.ts -> DbMgr isUuidV4 || isShortUuidV4). We generate UUIDv4
+ * and accept Studio's short UUIDs on read-back paths; WAB stays authoritative.
+ */
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHORT_UUID_RE = /^[0-9A-Za-z]{22}$/;
+export function isCommentEntityId(value: unknown): boolean {
+  return typeof value === "string" && (UUID_V4_RE.test(value) || SHORT_UUID_RE.test(value));
+}
+
+/** Studio comment bodies are markdown; keep a bounded, explicit ceiling. */
+export const MAX_COMMENT_BODY = 20_000;
+
 // Heurystyka typów bundle (Plasmic map: iid -> {__type, ...}).
 // Dokładne markery weryfikuje test integracyjny na żywym WAB.
 function entryType(raw: Record<string, unknown>): string {
@@ -92,7 +122,21 @@ function entryName(raw: Record<string, unknown>, iid: string): string {
 // Hash schematu modelu WAB (src/wab/shared/model/classes-metas.ts).
 // Weryfikowany w ensureSchemaIsUpToDate przy każdym save; przy upgrade
 // Plasmic odczytaj ponownie: node -r esbuild-register gen-hash.ts w kontenerze wab.
-const MODEL_SCHEMA_HASH = Number(process.env.PLASMIC_MODEL_SCHEMA_HASH ?? 639587200);
+// Pinned to the live WAB e2e0b744 model schema (2026-11-18).
+// The deployed Coolify service explicitly sets PLASMIC_MODEL_SCHEMA_HASH.
+// A WAB upgrade must re-derive this from WAB classes-metas.ts and test real writes.
+export function resolveModelSchemaHash(raw: string | undefined): number {
+  if (raw === undefined) return -706852506;
+  if (!/^-?\d+$/.test(raw.trim())) {
+    throw new Error("INVALID_PLASMIC_MODEL_SCHEMA_HASH: expected an integer");
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error("INVALID_PLASMIC_MODEL_SCHEMA_HASH: outside safe integer range");
+  }
+  return value;
+}
+const MODEL_SCHEMA_HASH = resolveModelSchemaHash(process.env.PLASMIC_MODEL_SCHEMA_HASH);
 
 export class PlasmicClient {
   private base: string;
@@ -218,8 +262,11 @@ export class PlasmicClient {
    * WAB independently requires commenter-level access to that branch.
    */
   async getComments(projectId: string, branchId?: string): Promise<PlasmicCommentResponse> {
-    if (!projectId.trim() || projectId !== projectId.trim() ||
-        (branchId !== undefined && (!branchId.trim() || branchId !== branchId.trim()))) {
+    // "@" is WAB's project/branch separator (parseProjectBranchId); allowing it
+    // inside either half would silently retarget the read at another scope.
+    if (!projectId.trim() || projectId !== projectId.trim() || projectId.includes("@") ||
+        (branchId !== undefined &&
+          (!branchId.trim() || branchId !== branchId.trim() || branchId.includes("@")))) {
       throw new Error("INVALID_COMMENT_PROJECT_BRANCH");
     }
     await this.ensureAuth();
@@ -244,6 +291,167 @@ export class PlasmicClient {
       throw new Error("COMMENTS_RESPONSE_INVALID: unexpected WAB comments schema");
     }
     return result;
+  }
+
+  /**
+   * Structured WAB comment writes (verified against upstream pinned SHA
+   * 85b861115687fde8e7970a9f270660aecb62b38e, routes/comments.ts):
+   *   POST   /api/v1/comments/:projectBranchId                     (root thread)
+   *   POST   /api/v1/comments/:projectBranchId/thread/:threadId    (reply)
+   *   PUT    /api/v1/comments/:projectBranchId/comment/:commentId  (edit body)
+   *   PUT    /api/v1/comments/:projectBranchId/thread/:threadId    (resolve/reopen)
+   * Comment and thread IDs are CLIENT-generated UUIDs in WAB, so a retry with
+   * the same IDs is observable as a duplicate rather than an invisible double.
+   */
+  get hasUserSession(): boolean {
+    return !!(this.opts.email && this.opts.password);
+  }
+
+  /** Current authenticated human identity, or null (team token / anonymous). WAB: GET /api/v1/auth/self. */
+  async getSelfUser(): Promise<PlasmicSelfUser | null> {
+    if (!this.hasUserSession) return null;
+    try {
+      const res = await this.req<{ user?: { id?: string; firstName?: string; lastName?: string } }>(
+        "/api/v1/auth/self",
+      );
+      const id = res?.user?.id;
+      if (typeof id !== "string" || !id) return null;
+      return { id, firstName: res.user?.firstName, lastName: res.user?.lastName };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      // 401/403 means "no user actor" (team-token mode), not a transient error.
+      if (/^Plasmic (401|403) /.test(message)) return null;
+      throw e;
+    }
+  }
+
+  private commentScope(projectId: string, branchId?: string): string {
+    const invalid = (value: string | undefined) =>
+      value !== undefined && (!value.trim() || value !== value.trim() || value.includes("@"));
+    if (invalid(projectId) || invalid(branchId)) {
+      throw new Error("INVALID_COMMENT_PROJECT_BRANCH");
+    }
+    return branchId ? `${projectId}@${branchId}` : projectId;
+  }
+
+  private assertCommentEntityId(value: string, field: string): void {
+    if (!isCommentEntityId(value)) {
+      throw new Error(`INVALID_COMMENT_${field}: expected a UUIDv4 (or WAB short UUID)`);
+    }
+  }
+
+  private commentBody(body: string): string {
+    if (typeof body !== "string" || !body.trim()) {
+      throw new Error("INVALID_COMMENT_BODY: body must be non-empty");
+    }
+    if (body.length > MAX_COMMENT_BODY) {
+      throw new Error(`COMMENT_BODY_TOO_LONG: ${body.length} > ${MAX_COMMENT_BODY}`);
+    }
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000]/.test(body)) {
+      throw new Error("INVALID_COMMENT_BODY: NUL is not allowed");
+    }
+    return body;
+  }
+
+  private commentLocation(location: {
+    subject: { iid: string; uuid: string };
+    variants?: Array<{ iid: string; uuid: string }>;
+  }) {
+    const addr = (value: { iid?: string; uuid?: string } | undefined, label: string) => {
+      const iid = value?.iid;
+      const uuid = value?.uuid;
+      if (typeof iid !== "string" || !iid.trim() || typeof uuid !== "string" || !uuid.trim()) {
+        throw new Error(`INVALID_COMMENT_ANCHOR: ${label} needs non-empty iid and uuid`);
+      }
+      return { iid, uuid };
+    };
+    const variants = location.variants ?? [];
+    if (!Array.isArray(variants)) throw new Error("INVALID_COMMENT_ANCHOR: variants must be an array");
+    return {
+      subject: addr(location.subject, "subject"),
+      variants: variants.map((v, i) => addr(v, `variants[${i}]`)),
+    };
+  }
+
+  /** WAB: POST /api/v1/comments/:projectBranchId — create the root comment of a new anchored thread. */
+  async createCommentThread(
+    projectId: string,
+    branchId: string | undefined,
+    data: {
+      commentThreadId: string;
+      commentId: string;
+      body: string;
+      location: { subject: { iid: string; uuid: string }; variants?: Array<{ iid: string; uuid: string }> };
+    },
+  ): Promise<void> {
+    this.assertCommentEntityId(data.commentThreadId, "THREAD_ID");
+    this.assertCommentEntityId(data.commentId, "COMMENT_ID");
+    const body = this.commentBody(data.body);
+    const location = this.commentLocation(data.location);
+    const scope = this.commentScope(projectId, branchId);
+    await this.ensureAuth();
+    await this.req(`/api/v1/comments/${encodeURIComponent(scope)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        commentThreadId: data.commentThreadId,
+        commentId: data.commentId,
+        body,
+        location,
+      }),
+    });
+  }
+
+  /** WAB: POST /api/v1/comments/:projectBranchId/thread/:threadId — append a reply. */
+  async replyToCommentThread(
+    projectId: string,
+    branchId: string | undefined,
+    threadId: string,
+    data: { commentId: string; body: string },
+  ): Promise<void> {
+    this.assertCommentEntityId(threadId, "THREAD_ID");
+    this.assertCommentEntityId(data.commentId, "COMMENT_ID");
+    const body = this.commentBody(data.body);
+    const scope = this.commentScope(projectId, branchId);
+    await this.ensureAuth();
+    await this.req(
+      `/api/v1/comments/${encodeURIComponent(scope)}/thread/${encodeURIComponent(threadId)}`,
+      { method: "POST", body: JSON.stringify({ id: data.commentId, body }) },
+    );
+  }
+
+  /** WAB: PUT /api/v1/comments/:projectBranchId/comment/:commentId — WAB itself requires author == actor. */
+  async editCommentBody(
+    projectId: string,
+    branchId: string | undefined,
+    commentId: string,
+    body: string,
+  ): Promise<void> {
+    this.assertCommentEntityId(commentId, "COMMENT_ID");
+    const next = this.commentBody(body);
+    const scope = this.commentScope(projectId, branchId);
+    await this.ensureAuth();
+    await this.req(
+      `/api/v1/comments/${encodeURIComponent(scope)}/comment/${encodeURIComponent(commentId)}`,
+      { method: "PUT", body: JSON.stringify({ body: next }) },
+    );
+  }
+
+  /** WAB: PUT /api/v1/comments/:projectBranchId/thread/:threadId — resolve or reopen. */
+  async setCommentThreadResolved(
+    projectId: string,
+    branchId: string | undefined,
+    threadId: string,
+    data: { historyId: string; resolved: boolean },
+  ): Promise<void> {
+    this.assertCommentEntityId(threadId, "THREAD_ID");
+    this.assertCommentEntityId(data.historyId, "HISTORY_ID");
+    const scope = this.commentScope(projectId, branchId);
+    await this.ensureAuth();
+    await this.req(
+      `/api/v1/comments/${encodeURIComponent(scope)}/thread/${encodeURIComponent(threadId)}`,
+      { method: "PUT", body: JSON.stringify({ id: data.historyId, resolved: data.resolved }) },
+    );
   }
 
   /** Studio WAB REST: GET /api/v1/projects/:projectId/branches. */

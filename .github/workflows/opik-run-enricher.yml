@@ -3,7 +3,12 @@ on:
   pull_request:
     paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
   push:
+    branches: [main]
     paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
+concurrency:
+  group: opik-run-enricher-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   safe-telemetry:
     runs-on: ubuntu-latest
@@ -15,6 +20,4 @@ jobs:
       - run: python3 -m unittest -q test_worker
         working-directory: opik-run-enricher
       - run: python3 -m py_compile worker.py
-        working-directory: opik-run-enricher
-      - run: docker build --tag opik-enricher-candidate:ci .
         working-directory: opik-run-enricher

@@ -7,6 +7,7 @@
     "./sync": "./sync.ts",
     "./audit": "./audit.ts",
     "./locks": "./locks.ts",
-    "./idempotency": "./idempotency.ts"
+    "./idempotency": "./idempotency.ts",
+    "./state": "./state.ts"
   }
 }

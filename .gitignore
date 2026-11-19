@@ -1,1 +1,10 @@
 /.build/
+
+# Python caches are generated under scripts/, ops/ and test trees.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/

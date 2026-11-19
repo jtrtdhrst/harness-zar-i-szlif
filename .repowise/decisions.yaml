@@ -1,0 +1,34 @@
+# Accepted architectural decisions for this repository.
+#
+# Generated and rewritten by repowise; edits survive, comments do not.
+# Commit this file: it is the source of truth, and the index is a copy.
+# Candidates and evidence stay out of it on purpose.
+version: 1
+decisions:
+- id: 96477b18fd9d213eda7d499428e50d9a
+  title: Archived Paperclip Wiki is historical evidence only
+  decision: Do not treat Paperclip Wiki role instructions or dated release claims as active Multica policies.
+    Verify current code, source SHA and runtime, and mark code-inferred relationships uncertain until
+    validated.
+  reason: Source evidence and user-directed split verified. Agent-signed; not represented as a human signature.
+  scope:
+  - docs/knowledge/CROSS-REPO-BOUNDARY.md
+  currency: active
+  source: agent
+  accepted_at: '2026-11-09T16:39:28.568264'
+  accepted_by: repowise_migration
+  evidence:
+  - 1964a9dcf5082e989f52832d1d61c0f237bcad46
+- id: ccaa7a4aa301d99c59df8750fe493229
+  title: Harness owns standalone MCP services and agent infrastructure
+  decision: Harness owns Hermes, Multica integration, generic MCPs and their deployment controllers. Product-specific
+    MCP remains with Product.
+  reason: Source evidence and user-directed split verified. Agent-signed; not represented as a human signature.
+  scope:
+  - README.md
+  currency: active
+  source: agent
+  accepted_at: '2026-11-09T16:39:24.978876'
+  accepted_by: repowise_migration
+  evidence:
+  - 1964a9dcf5082e989f52832d1d61c0f237bcad46

@@ -1,13 +1,14 @@
 [Unit]
-Description=Paperclip native-reviewed product source -> Coolify release
+Description=Multica native-reviewed product source -> Coolify release
 Documentation=https://github.com/miloszspyrka-code/harness-zar-i-szlif
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service
 ConditionPathExists=/usr/local/libexec/product_native_promotion.py
-ConditionPathExists=/usr/local/libexec/paperclip_native_release_gate.py
+ConditionPathExists=/usr/local/libexec/multica_native_release_gate.py
 
 [Service]
+Environment=PRODUCT_NATIVE_GATE=/usr/local/libexec/multica_native_release_gate.py
 Type=oneshot
 User=root
 Group=root
@@ -18,5 +19,5 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/paperclip-gitops
-TimeoutStartSec=420
+TimeoutStartSec=1200
 UMask=0077

@@ -8,9 +8,9 @@ Approved **source commit and immutable image digest** (or Cloudflare version ID)
 
 ### Working product lane: preserve
 
-`zar-i-szlif/main` → Product CI `validate-product` (validation only, never promotes) → independent native Paperclip review of the merged PR → Ubuntu `product-native-promotion` controller → forward-only exact-SHA `ci-approved` → Coolify → `https://panel.zariszlif.pl/__release.json` readback matching the exact SHA.
+`zar-i-szlif/main` → Product CI `validate-product` → fast-forward-only `ci-approved` → Coolify webhook → `https://panel.zariszlif.pl/__release.json` readback matching the exact SHA.
 
-Real evidence from 2026-11-04: GitHub `main=ci-approved` and finished Coolify deployment = `7322f946a5a395db29fa95d14da1ea9037e30d7c`, production release readback same SHA, `/healthz` HTTP 200. Preserve `main` as *integration* branch and `ci-approved` as *release* branch for this service only. Do not directly deploy feature branches. Product PR #156 removed the old `promote-release`/`verify-production` jobs; **GitHub Actions no longer advances `ci-approved`** and that job must not be restored. The only authorized writer is the versioned Ubuntu controller (`scripts/product_native_promotion.py`), which verifies every merged main PR, the native Paperclip decision and exact CI before a non-force ref update, then waits up to 15 minutes for the exact public SHA readback and resumes an in-flight deployment after a timeout instead of rewinding `ci-approved`.
+Real evidence from 2026-11-04: GitHub `main=ci-approved` and finished Coolify deployment = `7322f946a5a395db29fa95d14da1ea9037e30d7c`, production release readback same SHA, `/healthz` HTTP 200. Preserve `main` as *integration* branch and `ci-approved` as *release* branch for this service only. Do not directly deploy feature branches. The workflow's `promote-release` uses `needs: validate-product` and `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`; it pushes only fast-forward (no force).
 
 ### Manual pinned-image release lane for unverified Coolify services
 
@@ -60,3 +60,22 @@ Keep all three existing Workers, secrets, production profiles and agent model al
 ## Inventory freshness and concurrent releases
 
 Snapshot 2026-11-04T17:02:30Z: **5 Coolify applications + 26 services = 31 distinct UUIDs**, plus 3 existing Cloudflare Workers. The extra Hermes Git release candidate was created at 16:49:56Z, after the previous 30-resource snapshot, and is represented explicitly. Another concurrent production change replaced the old upstream-only Paperclip Core runtime with a locally built overlay from PR #43; both source layers and runtime image ID are recorded separately. Fresh readback is required at merge time because other teams may create or redeploy services in parallel. A policy CI pass alone does not freeze live inventory or make a runtime release safe.
+
+## Product promotion: local-CI attestation trust boundary
+
+When GitHub-hosted Actions cannot start a job for an account billing block, the product promotion controller (`scripts/product_native_promotion.py`) refuses to treat that as a pass. It admits the release only with the root-owned local-CI attestation of the reviewed head, and only while that head's git tree equals the merged commit's tree.
+
+That attestation is **release authority**, so its provenance is part of the gate, not an assumption:
+
+- **Trust boundary**: the single writer is `product-local-ci-attest.service` (`User=root`) writing into `/var/lib/paperclip-gitops`, which is `root:root 0700`. No non-root principal can create, replace or edit a file in that tree.
+- **What the consumer proves** before parsing any JSON: the directory is root-owned and not group/other-writable; the entry is opened with `O_NOFOLLOW` (a symlink is never followed) and must be a regular file; it must be owned `root:root`, single-link, not group/other-writable, and at most 8192 bytes. A FIFO cannot block the timer (`O_NONBLOCK`) and is rejected by the regular-file test.
+- **TOCTOU**: ownership, mode, link count and size are read from the same descriptor that is then read for content (`fstat` + `read` on one fd), so replacing the path between check and read cannot substitute content.
+- **What it still cannot prove**: atomic creation by the writer. The consumer reads one inode snapshot, so a concurrent replace yields either the old or the new file, never a mixture; the writer is expected to publish via temp file + `os.replace`, and a non-atomic write can only shorten the window, not forge a pass.
+- **Required checks a privileged operator confirms** (agents cannot: the tree is root-only):
+
+```bash
+stat -c '%n %U:%G %a %h %F' /var/lib/paperclip-gitops/local-ci/*.json | head
+stat -c '%n %U:%G %a %F' /var/lib/paperclip-gitops/local-ci /var/lib/paperclip-gitops
+```
+
+If any attestation is not `root root`, is group/other-writable, is not a regular single-link file, or the directory is writable by group/other, the controller denies with a named reason (`local_ci_attestation_owner_untrusted`, `local_ci_attestation_mode_untrusted`, `local_ci_attestation_link_untrusted`, `local_ci_attestation_dir_untrusted`, ...). The fix belongs to the root attester (chown/chmod + atomic publish), not to the consumer, and must not be worked around by relaxing the gate.

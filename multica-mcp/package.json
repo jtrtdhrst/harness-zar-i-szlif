@@ -1,0 +1,14 @@
+{
+  "name": "multica-mcp-control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs http",
+    "stdio": "node server.mjs stdio",
+    "test": "node --test",
+    "catalog": "node scripts/export-catalog.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

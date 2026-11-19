@@ -3,6 +3,7 @@
 // Chrome/CDP nie jest używane: WAB REST w zupełności wystarcza.
 import { PlasmicClient } from "@design-stack/plasmic-client";
 import { serve } from "@design-stack/mcp-server";
+import { probeStateDir } from "@design-stack/contracts/state";
 import { plasmicTools, type PlasmicCtx } from "./tools.ts";
 
 const env = (k: string, d?: string) => process.env[k] ?? d;
@@ -32,7 +33,21 @@ const ctx: PlasmicCtx = {
     `${env("PLASMIC_STATE_DIR", "./var/plasmic-mcp")}/audit.jsonl`,
   agent: env("PAPERCLIP_AGENT_ID"),
   run: env("PAPERCLIP_RUN_ID"),
+  // Read-only capability probes (data-query support, build/version) use this
+  // public base URL and never send a token or session cookie to it.
+  wabBaseUrl: PLASMIC_BASE_URL,
 };
+
+// /state jest wolumenem montowanym do obrazu działającego jako uid 10001.
+// Wolumen utworzony wcześniej przez obraz root-owned daje EACCES przy pierwszym
+// zapisie znacznika "seen". Nie blokujemy startu (narzędzia read-only nadal
+// działają), ale nazywamy problem od razu w logu i w /ready.
+{
+  const probe = await probeStateDir(ctx.stateDir);
+  if (!probe.ok) {
+    console.error(`[plasmic] STATE_DIR not writable: ${probe.detail}`);
+  }
+}
 
 const httpPort = env("MCP_HTTP_PORT") ? Number(env("MCP_HTTP_PORT")) : undefined;
 const authTokens: string[] = [
@@ -63,5 +78,7 @@ await serve({
         return { ok: false, detail: String(e).slice(0, 150) };
       }
     },
+    // Zapis znacznika "seen"/audytu/locków wymaga zapisywalnego /state.
+    stateDir: () => probeStateDir(ctx.stateDir),
   },
 });

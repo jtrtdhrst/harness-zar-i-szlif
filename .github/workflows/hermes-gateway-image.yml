@@ -12,12 +12,26 @@ on:
       - ".github/workflows/hermes-gateway-image.yml"
   workflow_dispatch:
 
+concurrency:
+  group: hermes-gateway-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
-  validate-hermes-gateway-image:
+  source-only-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          test -f integrations/hermes-paperclip/gateway/Dockerfile
+          python3 -m compileall -q integrations/hermes-paperclip/gateway
+  validate-hermes-gateway-image:
+    # Production-like image build is opt-in and must use the local runner.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

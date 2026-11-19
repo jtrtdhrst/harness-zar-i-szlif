@@ -1,0 +1,5 @@
+name: multica
+description: Multica v0.8.1 frontend, backend, PostgreSQL pgvector and Mailpit in one Coolify service
+environment: production
+service: multica-stack
+data: [backend-uploads, pgdata]
