@@ -192,6 +192,108 @@ def restrict(task, tmpdir):
                 continue
             if lease.stat().st_uid != os.getuid() or marker.stat().st_uid != os.getuid():
                 continue
-            candidates.append((marker.stat().st_mtime
+            candidates.append((marker.stat().st_mtime_ns, lease))
+        candidates.sort(key=lambda entry: entry[0], reverse=True)
+        if not candidates:
+            raise ValueError("Hermes managed lease environment unavailable")
+        if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+            raise ValueError("Hermes active lease environment ambiguous")
+        grant(ruleset, candidates[0][1], WRITE)
+        for path in ("/dev/null", "/dev/zero", "/dev/urandom", "/dev/random", "/dev/tty"):
+            grant(ruleset, path, READ_FILE | WRITE_FILE)
+        # The daemon constructs a resumable Hermes session home for THIS
+        # agent, outside the checkout tree. Admit exactly that session root,
+        # never global .multica, other agents or another conversation.
+        session_home_raw = os.environ.get("HERMES_HOME", "")
+        agent_id = os.environ.get("MULTICA_AGENT_ID", "")
+        if session_home_raw and UUID.fullmatch(agent_id or ""):
+            session_home = Path(session_home_raw).resolve(strict=True)
+            sessions = Path("/srv/multica-zar/.multica/profiles/zar-prod/hermes-sessions")
+            if not session_home.is_relative_to(task):
+                relative = session_home.relative_to(sessions / agent_id)
+                if len(relative.parts) != 2 or not all(UID_NAME.fullmatch(x) or UUID.fullmatch(x) for x in relative.parts):
+                    raise ValueError("Hermes session home is not a scoped agent session")
+                grant(ruleset, session_home, WRITE)
+        grant(ruleset, task, WRITE)
+        if not tmpdir.is_relative_to(task):
+            grant(ruleset, tmpdir, WRITE)
+        if LIBC.prctl(38, 1, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "no_new_privs failed")
+        checked_syscall(446, ruleset, 0)
+    finally:
+        os.close(ruleset)
 
-... [5338 characters truncated]
+def localize_sqlite_locks(task):
+    """Do not let Hermes SQLite lockfiles follow shared-profile symlinks.
+
+    Multica's current overlay excludes state.db and state.db-* from mirroring,
+    but inadvertently mirrors state.db.*. Remove only the two proven lock
+    symlinks within the current authenticated task's conversation home.
+    Never write the shared profile, never follow an unexpected symlink.
+    """
+    raw = os.environ.get("HERMES_HOME", "")
+    if not raw:
+        return
+    home = Path(raw).resolve(strict=True)
+    if home.is_relative_to(task):
+        return
+    base = Path("/srv/multica-zar/.multica/profiles/zar-prod/hermes-sessions")
+    rel = home.relative_to(base)
+    agent = os.environ.get("MULTICA_AGENT_ID", "")
+    if (len(rel.parts) != 3 or not UUID.fullmatch(agent)
+            or rel.parts[0] != agent or not UID_NAME.fullmatch(rel.parts[1])
+            or not UUID.fullmatch(rel.parts[2])
+            or home.is_symlink() or home.stat().st_uid != os.getuid()):
+        raise ValueError("unverified Hermes conversation home for lock localization")
+    profile = rel.parts[1]
+    shared = Path("/srv/multica-zar/.hermes/profiles") / profile
+    for filename in ("state.db.quarantine.lock", "state.db.fts_rebuild.lock"):
+        lock = home / filename
+        if not lock.is_symlink():
+            continue
+        target = Path(os.readlink(lock))
+        if target != shared / filename:
+            raise ValueError("unexpected external Hermes SQLite lock symlink")
+        lock.unlink()  # unlink task-owned symlink, NEVER its shared target
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+        fd = os.open(str(lock), flags, 0o600)
+        os.close(fd)
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv:
+        raise ValueError("missing Hermes command")
+    # Discovery/version probe is trusted daemon-owned work without a task cwd.
+    # Never permit an ACP process outside an authenticated task scope.
+    if argv in (["--version"], ["-V"], ["version"]):
+        os.execv(TARGET, [TARGET, *argv])
+    # This daemon-owned cleanup runs BEFORE a task's ACP subprocess is
+    # launched; it is not an agent tool call. An agent already inside Landlock
+    # cannot escape its restrictions by executing this trusted command.
+    # Strictly allow only the fixed gateway-stop argv that Multica generates.
+    is_gateway_stop = (os.environ.get("HERMES_DISABLE_LAZY_INSTALLS") == "1" and
+                       argv in (["--profile", "default", "gateway", "stop", "--yes"],
+                                ["--profile", "default", "gateway", "stop"]))
+    if is_gateway_stop:
+        for key in ("MULTICA_TASK_ID", "MULTICA_TOKEN", "MULTICA_AGENT_ID",
+                    "MULTICA_WORKSPACE_ID", "MULTICA_TASK_CONFIG_ROOT",
+                    "MULTICA_TASK_WORKSPACES_ROOT", "MULTICA_LANDLOCK_REQUIRED"):
+            os.environ.pop(key, None)
+        os.execv(TARGET, [TARGET, *argv])
+    task, tmpdir = task_scope()
+    localize_sqlite_locks(task)
+    # Never direct ephemeral Python/runtime cache into a shared home.
+    cache = tmpdir / "hermes-cache"
+    cache.mkdir(mode=0o700, exist_ok=True)
+    os.environ["PYTHONPYCACHEPREFIX"] = str(cache / "pycache")
+    os.environ["XDG_CACHE_HOME"] = str(cache)
+    restrict(task, tmpdir)
+    os.execv(TARGET, [TARGET, *argv])
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"multica task Landlock deny: {type(exc).__name__}: {exc}", file=sys.stderr)
+        sys.exit(126)
