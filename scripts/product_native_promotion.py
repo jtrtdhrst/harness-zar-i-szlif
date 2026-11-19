@@ -6,6 +6,10 @@ no branch force push. The existing GitHub Actions production promotion must
 be disabled before this controller is enabled. Fails closed on any ambiguity.
 """
 import argparse
+import hashlib
+import hmac
+import stat
+from datetime import datetime, timezone
 import fcntl
 import json
 import os
@@ -136,36 +140,82 @@ def provenance(merge_sha):
     return number, head, issue_ref
 
 
-def local_ci_attestation(sha):
-    """Root-owned exact-SHA local CI attestation (self-hosted/local build path)."""
-    path = Path("/var/lib/paperclip-gitops/local-ci") / (sha + ".json")
+ROOTLESS_RECEIPT_KEY = Path("/etc/paperclip-gitops/product-rootless-ci-signing.key")
+ROOTLESS_RECEIPT_DIR = Path("/var/lib/paperclip-gitops/local-ci")
+ROOTLESS_CI_COMMAND = "docker build && npm run validate:code (network none) && docker build"
+
+def _read_private_root_file(path, *, max_bytes=4096):
+    """Open once, no symlinks. Only root-owned private files in trusted dirs."""
     try:
-        info = path.stat()
-        if not (info.st_mode & 0o100000) or info.st_uid != 0 or (info.st_mode & 0o022):
+        parent = path.parent.stat()
+        if parent.st_uid != 0 or parent.st_mode & 0o022:
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > max_bytes):
+                return None
+            return os.read(fd, max_bytes + 1)
+        finally:
+            os.close(fd)
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
-        return None
-    if data.get("sha") != sha or data.get("exit_code") != 0:
-        return None
-    command = data.get("command")
-    if not isinstance(command, str) or "validate:code" not in command:
-        return None
-    return data
 
+def verify_rootless_receipt(sha, record, secret, *, now=None):
+    """Reject legacy unsigned/root-executed CI, forged/stale or wrong-SHA proofs."""
+    if not isinstance(record, dict) or not isinstance(secret, bytes) or len(secret) != 32:
+        return False
+    body = dict(record)
+    signature = body.pop("signature", None)
+    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        return False
+    if (body.get("schema_version") != 2 or body.get("sha") != sha
+            or not isinstance(sha, str) or not SHA.fullmatch(sha)
+            or not isinstance(body.get("tree"), str) or not SHA.fullmatch(body["tree"])
+            or body.get("runner") != "zis-ci-guest-rootless"
+            or body.get("runner_uid") != 991
+            or body.get("command") != ROOTLESS_CI_COMMAND
+            or body.get("exit_code") != 0
+            or not isinstance(body.get("log_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", body["log_sha256"])):
+        return False
+    try:
+        stamped = datetime.strptime(body["verified_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return False
+    current = time.time() if now is None else now
+    if stamped > current + 300 or current - stamped > 7 * 86400:
+        return False
+    expected = hmac.new(secret, json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                         ensure_ascii=True).encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+def local_ci_attestation(sha):
+    """Only a fresh, signed, exact-SHA record from the isolated rootless UID."""
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        return None
+    raw_key = _read_private_root_file(ROOTLESS_RECEIPT_KEY, max_bytes=32)
+    raw_record = _read_private_root_file(ROOTLESS_RECEIPT_DIR / (sha + ".json"), max_bytes=4096)
+    if raw_key is None or raw_record is None:
+        return None
+    try:
+        document = json.loads(raw_record)
+    except (ValueError, UnicodeDecodeError, TypeError):
+        return None
+    if not verify_rootless_receipt(sha, document, raw_key):
+        return None
+    return document
 
 def checks(sha):
-    """Never execute an unreviewed source tree as root.
-
-    The trusted CI attester must have already verified the exact immutable
-    GitHub source SHA using an isolated non-root build. A missing or invalid
-    root-owned receipt is a hard denial, not a request to run npm as root.
-    """
-    if local_ci_attestation(sha) is None:
-        raise Denied("trusted_local_ci_attestation_missing")
-
+    """Verify signed rootless receipt and its GitHub commit-tree provenance."""
+    receipt = local_ci_attestation(sha)
+    if receipt is None:
+        raise Denied("trusted_rootless_ci_attestation_missing")
+    node = commit(sha)
+    github_tree = ((node.get("commit") or {}).get("tree") or {}).get("sha")
+    if github_tree != receipt["tree"]:
+        raise Denied("trusted_rootless_ci_tree_mismatch")
 
 def native_approval(pr, head_sha, merge_sha, issue_ref=None):
     if not NATIVE_GATE.is_file():
