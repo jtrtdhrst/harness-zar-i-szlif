@@ -100,9 +100,9 @@ class AttesterSecurityTests(unittest.TestCase):
         def run(fields, listener):
             def fake_call(args, **kwargs):
                 return SimpleNamespace(stdout=(fields if args[0] == "/usr/bin/systemctl" else listener))
-            with patch.object(ci.subprocess, "run", side_effect=fake_call), \\
-                 patch.object(ci.Path, "read_text", return_value=identity), \\
-                 patch.object(ci.os, "stat", return_value=SimpleNamespace(st_uid=991)), \\
+            with patch.object(ci.subprocess, "run", side_effect=fake_call), \
+                 patch.object(ci.Path, "read_text", return_value=identity), \
+                 patch.object(ci.os, "stat", return_value=SimpleNamespace(st_uid=991)), \
                  patch.object(ci, "guest_uid", return_value=991):
                 ci.daemon_budget_preflight()
 
@@ -126,9 +126,9 @@ class AttesterSecurityTests(unittest.TestCase):
                 run(valid, listener)
         with patch.object(ci.subprocess, "run",
                  side_effect=lambda args, **kwargs: SimpleNamespace(
-                     stdout=valid if args[0] == "/usr/bin/systemctl" else socket)), \\
-             patch.object(ci.Path, "read_text", return_value="0::/foreign.service\n"), \\
-             patch.object(ci.os, "stat", return_value=SimpleNamespace(st_uid=991)), \\
+                     stdout=valid if args[0] == "/usr/bin/systemctl" else socket)), \
+             patch.object(ci.Path, "read_text", return_value="0::/foreign.service\n"), \
+             patch.object(ci.os, "stat", return_value=SimpleNamespace(st_uid=991)), \
              patch.object(ci, "guest_uid", return_value=991):
             with self.assertRaises(ci.Refused):
                 ci.daemon_budget_preflight()
