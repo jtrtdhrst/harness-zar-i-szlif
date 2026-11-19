@@ -18,7 +18,7 @@ class ProductSquashTests(unittest.TestCase):
             {"filename":".repowise/decisions.yaml","status":"added"},
             {"filename":"scripts/ci-path-coverage.mjs","status":"modified"},
             {"filename":"tests/ci-path-coverage.test.mjs","status":"modified"}]}
-        with patch.object(p,"ref",side_effect=[sha,OLD]), \
+        with patch.object(p,"ref",side_effect=[sha,OLD,sha,OLD]), \
              patch.object(p,"live_release",return_value=OLD), \
              patch.object(p,"commit",return_value=node), \
              patch.object(p,"provenance",return_value=(164,HEAD)), \
@@ -102,6 +102,88 @@ class ProductSquashTests(unittest.TestCase):
              patch.object(p, "native_approval", side_effect=AssertionError("must not be reached")):
             with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
                 p.process(plan=False)
+
+
+    def test_exact_reviewed_ci_pr183_skips_runtime_release_only_with_strong_proof(self):
+        files=[{"filename":name,"status":status}
+               for name,status in p.CI_ONLY_REVIEWED_FILES.items()]
+        node={"sha":NEW,"parents":[{"sha":OLD}],"files":files}
+        self.assertTrue(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,node))
+        with patch.object(p,"ref",side_effect=[NEW,OLD,NEW,OLD]), \
+             patch.object(p,"live_release",return_value=OLD), \
+             patch.object(p,"commit",return_value=node), \
+             patch.object(p,"provenance",return_value=(183,p.CI_ONLY_REVIEWED_HEAD)), \
+             patch.object(p,"premerge_head_checks",return_value={"rootless_premerge":True,"billing_blocked":False}), \
+             patch.object(p,"checks",return_value={"billing_blocked":False}), \
+             patch.object(p,"native_approval",side_effect=AssertionError("CI-only cannot become runtime")), \
+             patch.object(p,"github_api",side_effect=AssertionError("no GitHub ref write")):
+            result=p.process(plan=False)
+        self.assertEqual(result["result"],"no_runtime_release_required")
+        self.assertEqual(result["release_ref"],OLD)
+
+    def test_ci_only_exception_rejects_other_sha_pr_files_and_renames(self):
+        base=[{"filename":name,"status":status}
+              for name,status in p.CI_ONLY_REVIEWED_FILES.items()]
+        node={"files":base}
+        self.assertFalse(p.reviewed_ci_only_pr(184,p.CI_ONLY_REVIEWED_HEAD,node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,HEAD,node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,"387e5f9081fa9fa9da4820fae054da617c615a9a",node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,"62d879b2f2ad2cd1bec8758852b14e28848d813b",node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":base+[{"filename":"app/web/src/index.ts","status":"modified"}]}))
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":base[:-1]}))
+        altered=[dict(x) for x in base]
+        altered[0]["status"]="renamed"
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":altered}))
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":base+[base[0]]}))
+
+    def test_ci_only_exception_requires_rootless_proof_and_green_main(self):
+        node={"sha":NEW,"parents":[{"sha":OLD}],"files":[
+            {"filename":name,"status":status}
+            for name,status in p.CI_ONLY_REVIEWED_FILES.items()]}
+        for receipt,main_billed in ((False,False),(True,True)):
+            with self.subTest(rootless=receipt,main_billed=main_billed), \
+                 patch.object(p,"commit",return_value=node), \
+                 patch.object(p,"provenance",return_value=(183,p.CI_ONLY_REVIEWED_HEAD)), \
+                 patch.object(p,"premerge_head_checks",return_value={"rootless_premerge":receipt,"billing_blocked":False}), \
+                 patch.object(p,"checks",return_value={"billing_blocked":main_billed}), \
+                 patch.object(p,"native_approval",side_effect=AssertionError("must deny before runtime")):
+                with self.assertRaisesRegex(p.Denied,"ci_only_rootless_proof_or_main_ci_missing"):
+                    p.candidate_history(OLD,NEW)
+
+
+    def test_native_product_ci_never_runs_untrusted_pr_on_persistent_runner(self):
+        from pathlib import Path
+        workflow=(Path(__file__).resolve().parent.parent /
+                  ".github/workflows/native-product-release-ci.yml").read_text()
+        self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/main'",workflow)
+        self.assertIn("runs-on: [self-hosted, linux, x64, local-build]",workflow)
+        self.assertIn("test \"$(id -un)\" = actions-zis",workflow)
+        self.assertIn("! test -w /var/run/docker.sock",workflow)
+        self.assertIn("persist-credentials: false",workflow)
+        self.assertIn("test_product_squash_release.py -v",workflow)
+        self.assertNotIn("  pull_request:",workflow)
+        self.assertNotIn("  pull_request_target:",workflow)
+        self.assertNotIn("runs-on: ubuntu-latest",workflow)
+
+
+    def test_release_lanes_policy_never_executes_pr_source_on_persistent_runner(self):
+        from pathlib import Path
+        workflow=(Path(__file__).resolve().parent.parent /
+                  ".github/workflows/release-lanes-policy.yml").read_text()
+        self.assertNotIn("  pull_request:", workflow)
+        self.assertNotIn("  pull_request_target:", workflow)
+        self.assertIn("  push:\n    branches: [main]", workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("runs-on: [self-hosted, linux, x64, local-build]", workflow)
+        self.assertIn('test "$(id -un)" = actions-zis', workflow)
+        self.assertIn("! test -w /var/run/docker.sock", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("python scripts/check-release-lanes.py --self-test", workflow)
 
 if __name__=="__main__":
     unittest.main()

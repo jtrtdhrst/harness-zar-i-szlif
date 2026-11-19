@@ -18,12 +18,48 @@ def workflow_paths(path):
     return patterns
 
 
+def trusted_main_only_release_policy(path):
+    """Only the exact trusted-main release-lanes workflow may replace PR CI.
+
+    Unreviewed PR YAML must never execute on the persistent self-hosted runner.
+    This is *not* a claim of PR-head GitHub CI: independent premerge review and
+    local validation are still required before a trusted main push.
+    """
+    if path.name != "release-lanes-policy.yml":
+        return False
+    source = path.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    if "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n" not in source:
+        return False
+    if any(re.match(r"^  pull_request(?:_target)?:", l) for l in lines):
+        return False
+    # A path-filtered push could hide a newly created or unclassified root.
+    if any(re.match(r"^    paths(?:-ignore)?:", l) for l in lines):
+        return False
+    required = (
+        "  validate-release-lanes:",
+        "    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')",
+        "    runs-on: [self-hosted, linux, x64, local-build]",
+        "      - name: Trusted main-only runner admission",
+        "          test \"$GITHUB_REF\" = 'refs/heads/main'",
+        "          test \"$GITHUB_REPOSITORY\" = 'miloszspyrka-code/harness-zar-i-szlif'",
+        "          test \"$(id -un)\" = actions-zis",
+        "          ! test -w /var/run/docker.sock",
+        "          ! test -r /opt/zis-actions-runner/.credentials",
+        "          persist-credentials: false",
+        "        run: python scripts/check-release-lanes.py --self-test",
+    )
+    return all(line in lines for line in required)
+
+
 def workflow_covers_root(path, root_name):
     """A CI job must run on every relevant PR update for this root.
 
     A path-unfiltered pull_request event covers every root. If filtered, only
     pull_request.paths counts; a push path filter must not mask a PR gap.
     """
+    if trusted_main_only_release_policy(path):
+        return True
     lines = path.read_text(encoding="utf-8").splitlines()
     for index, line in enumerate(lines):
         if line != "  pull_request:":
@@ -76,7 +112,11 @@ def workflow_has_required_test_step(path, required):
         if re.match(r"^  [A-Za-z][\w-]*:\s*$", line):
             break
         job_lines.append(line)
-    if any(re.match(r"^    (?:if|continue-on-error):", line) for line in job_lines):
+    guards = [line for line in job_lines if re.match(r"^    if:", line)]
+    if any(re.match(r"^    continue-on-error:", line) for line in job_lines):
+        return False
+    if guards and (not trusted_main_only_release_policy(path)
+                   or guards != ["    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"]):
         return False
     step_marker = f"      - name: {required['name']}"
     for index, line in enumerate(job_lines):
