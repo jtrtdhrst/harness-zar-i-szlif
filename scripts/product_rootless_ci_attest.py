@@ -37,6 +37,10 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 MAX_TARBALL = 64 * 1024 * 1024
 MAX_EXPANDED = 384 * 1024 * 1024
+MAX_LOG_BYTES = 32 * 1024 * 1024
+MAX_DAEMON_MEMORY = 6 * 1024 * 1024 * 1024
+MAX_DAEMON_TASKS = 256
+MAX_DAEMON_CPU_SECONDS = 2.0
 
 class Refused(Exception):
     pass
@@ -70,14 +74,81 @@ def preflight() -> int:
     uid = guest_uid()
     if uid == 0:
         raise Refused("guest_must_be_nonroot")
-    s = DOCKER_SOCKET.stat()
+    parent = DOCKER_SOCKET.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != uid
+            or stat.S_IMODE(parent.st_mode) != 0o700):
+        raise Refused("dedicated_rootless_socket_directory_untrusted")
+    s = DOCKER_SOCKET.lstat()  # never follow a symlink to some other daemon
     if not stat.S_ISSOCK(s.st_mode) or s.st_uid != uid or stat.S_IMODE(s.st_mode) != 0o600:
         raise Refused("dedicated_rootless_socket_untrusted")
+    daemon_budget_preflight()
     return uid
 
+def daemon_budget_preflight() -> None:
+    """Require a dedicated, bounded cgroup for Docker builds; unknown = deny."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "show", "zis-ci-guest-docker.service",
+             "-p", "User", "-p", "MemoryMax", "-p", "TasksMax",
+             "-p", "CPUQuotaPerSecUSec", "-p", "ActiveState", "--no-pager"],
+            check=True, capture_output=True, text=True, timeout=6)
+        fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        memory = int(fields["MemoryMax"])
+        tasks = int(fields["TasksMax"])
+        quota = fields["CPUQuotaPerSecUSec"]
+        if not quota.endswith("s"):
+            raise ValueError("CPU quota unit")
+        cpu_seconds = float(quota[:-1])
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError, KeyError) as exc:
+        raise Refused("rootless_daemon_budget_unverified") from exc
+    if (fields.get("User") != GUEST or fields.get("ActiveState") != "active"
+            or not 0 < memory <= MAX_DAEMON_MEMORY
+            or not 0 < tasks <= MAX_DAEMON_TASKS
+            or not 0 < cpu_seconds <= MAX_DAEMON_CPU_SECONDS):
+        raise Refused("rootless_daemon_budget_untrusted")
+
+
+def private_github_token() -> str:
+    """Open trusted role-credential inode once, using openat + O_NOFOLLOW."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        directory_fd = os.open(TOKEN.parent, flags | os.O_DIRECTORY)
+    except OSError as exc:
+        raise Refused("github_token_directory_unavailable") from exc
+    try:
+        parent = os.fstat(directory_fd)
+        if (parent.st_uid != os.geteuid() or not stat.S_ISDIR(parent.st_mode)
+                or (stat.S_IMODE(parent.st_mode) & 0o022)):
+            raise Refused("github_token_directory_untrusted")
+        try:
+            key_fd = os.open(TOKEN.name, flags, dir_fd=directory_fd)
+        except OSError as exc:
+            raise Refused("github_token_file_unavailable") from exc
+        try:
+            st = os.fstat(key_fd)
+            if (st.st_uid != os.geteuid() or not stat.S_ISREG(st.st_mode)
+                    or stat.S_IMODE(st.st_mode) != 0o600
+                    or st.st_nlink != 1 or st.st_size > 8192):
+                raise Refused("github_token_file_untrusted")
+            raw = os.read(key_fd, 8193)
+            if len(raw) > 8192:
+                raise Refused("github_token_file_oversized")
+        finally:
+            os.close(key_fd)
+    finally:
+        os.close(directory_fd)
+    try:
+        data = json.loads(raw)
+    except (UnicodeError, ValueError) as exc:
+        raise Refused("github_token_file_invalid") from exc
+    token = data.get("token") if isinstance(data, dict) else None
+    if not isinstance(token, str) or not token:
+        raise Refused("github_app_installation_token_missing")
+    return token
+
+
 def github_request(path: str, *, accept: str = "application/vnd.github+json") -> bytes:
-    data = json.loads(TOKEN.read_text(encoding="utf8"))
-    token = data.get("token", "")
+    token = private_github_token()
     if not isinstance(token, str) or not token:
         raise Refused("github_app_installation_token_missing")
     req = urllib.request.Request(
@@ -217,7 +288,8 @@ echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
     env = ["HOME=/var/lib/zis-ci-guest",
            "DOCKER_HOST=unix:///run/zis-ci-guest/docker.sock",
            "PYTHONDONTWRITEBYTECODE=1"]
-    argv = ["/usr/sbin/runuser", "-u", GUEST, "--", "env", *env, "/bin/sh", "-c", shell]
+    argv = ["/usr/bin/prlimit", f"--fsize={MAX_LOG_BYTES}:{MAX_LOG_BYTES}", "--",
+            "/usr/sbin/runuser", "-u", GUEST, "--", "env", *env, "/bin/sh", "-c", shell]
     passed = False
     try:
         with os.fdopen(fd, "wb") as output:
@@ -230,8 +302,11 @@ echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
             os.fsync(output.fileno())
         if p.returncode:
             raise Refused("rootless_ci_failed")
-        digest = hashlib.sha256(log.read_bytes()).hexdigest()
-        if "ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS" not in log.read_text(errors="replace"):
+        if log.stat().st_size > MAX_LOG_BYTES:
+            raise Refused("rootless_ci_log_limit_exceeded")
+        log_bytes = log.read_bytes()  # bounded by RLIMIT_FSIZE on every child
+        digest = hashlib.sha256(log_bytes).hexdigest()
+        if b"ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS" not in log_bytes:
             raise Refused("ci_milestone_unobserved")
         immutable = log_dir / (digest + ".log")
         try:
