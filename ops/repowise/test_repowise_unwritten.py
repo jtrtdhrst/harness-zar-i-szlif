@@ -1,4 +1,6 @@
 import sqlite3
+import subprocess
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,6 +62,62 @@ class UnwrittenPagesTest(unittest.TestCase):
         with sqlite3.connect(self.db) as c:
             c.execute("UPDATE wiki_pages SET updated_at='2026-11-19 17:00:01' WHERE id=?", (FLOW,))
         self.assertNotIn(FLOW, self.pending())
+
+
+class GitBasedDeterministicFreshnessTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / ".repowise").mkdir()
+        self.db = self.root / ".repowise" / "wiki.db"
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.com"], check=True)
+        with sqlite3.connect(self.db) as c:
+            c.execute("""CREATE TABLE wiki_pages (
+                id TEXT, page_type TEXT, model_name TEXT, content TEXT,
+                freshness_status TEXT, updated_at TEXT)""")
+            c.execute("INSERT INTO wiki_pages VALUES (?,?,?,?,?,?)",
+                      (ACTIVE, "onboarding", "", "# Historical summary", "fresh",
+                       "2026-11-18 10:00:00"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def commit(self, path, timestamp):
+        full = self.root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(timestamp)
+        subprocess.run(["git", "-C", str(self.root), "add", path], check=True)
+        env = dict(os.environ, GIT_AUTHOR_DATE=timestamp, GIT_COMMITTER_DATE=timestamp)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", path],
+                       check=True, env=env)
+
+    def pending(self):
+        return pending_pages(self.db, include_stale=True,
+                             indexed_at="2026-11-19T20:00:00+00:00")
+
+    def test_new_index_without_new_code_is_not_pending(self):
+        self.commit("src/before.ts", "2026-11-17T09:00:00+00:00")
+        self.assertEqual(self.pending(), [])
+
+    def test_docs_only_commit_does_not_trigger_model_call(self):
+        self.commit("src/before.ts", "2026-11-17T09:00:00+00:00")
+        self.commit("README.md", "2026-11-19T10:00:00+00:00")
+        self.assertEqual(self.pending(), [])
+
+    def test_code_change_triggers_one_refresh(self):
+        self.commit("src/before.ts", "2026-11-17T09:00:00+00:00")
+        self.commit("src/after.ts", "2026-11-19T11:00:00+00:00")
+        self.assertEqual(self.pending(), [ACTIVE])
+        with sqlite3.connect(self.db) as c:
+            c.execute("UPDATE wiki_pages SET updated_at='2026-11-19 12:00:00' WHERE id=?", (ACTIVE,))
+        self.assertEqual(self.pending(), [])
+
+    def test_tests_only_commit_does_not_trigger_refresh(self):
+        self.commit("src/before.ts", "2026-11-17T09:00:00+00:00")
+        self.commit("tests/source.test.ts", "2026-11-19T11:00:00+00:00")
+        self.assertEqual(self.pending(), [])
 
 if __name__ == "__main__":
     unittest.main()
