@@ -80,6 +80,62 @@ class Denied(Exception):
     pass
 
 
+# These three exact historical changes altered neither tracked product runtime
+# source nor build definitions. They were accidentally pushed directly to main
+# on 2026-11-19. This one-time waiver only allows the history walker to pass
+# these exact Git commits as NO-DEPLOY metadata. No future SHA is admitted.
+# Every runtime PR still requires the original independent approval + CI gates.
+HISTORIC_METADATA_ONLY = {
+    "e6fea9b1b81d7afae9086983160723084cdc2ead": {
+        "parent": "4feef6903dc21be5da0433a77b10549bf0009661",
+        "files": (("modified", ".gitignore"),),
+    },
+    "54f3db248ff35cce3a40b5de99270d8ed283d402": {
+        "parent": "e6fea9b1b81d7afae9086983160723084cdc2ead",
+        "files": (("removed", "docs/dag-e2e-nonhost.md"),),
+    },
+    "63441d5d3056f4845d4bfcaf908429f8f09d620f": {
+        "parent": "54f3db248ff35cce3a40b5de99270d8ed283d402",
+        "files": (
+            ("removed", "mcp/.gitkeep"),
+            ("removed", "product/.gitkeep"),
+            ("removed", "www/landing/.gitkeep"),
+            ("removed", "www/mcp/.gitkeep"),
+        ),
+    },
+}
+
+
+def known_metadata_only_direct_commit(sha, node, first_parent):
+    """Allow only the three audited immutable non-runtime Git commits.
+
+    The commit SHA, parent, and complete changed-file inventory are checked.
+    This never creates a release; the caller advances only the history cursor.
+    A different direct commit or incomplete GitHub response remains denied.
+    """
+    spec = HISTORIC_METADATA_ONLY.get(sha)
+    if spec is None:
+        return False
+    if node.get("sha") != sha or first_parent != spec["parent"]:
+        raise Denied("historic_metadata_identity_mismatch")
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(spec["files"]):
+        raise Denied("historic_metadata_inventory_mismatch")
+    actual = []
+    for entry in files:
+        if (not isinstance(entry, dict)
+                or entry.get("status") not in ("modified", "removed")
+                or not isinstance(entry.get("filename"), str)
+                or entry.get("previous_filename") is not None):
+            raise Denied("historic_metadata_inventory_mismatch")
+        actual.append((entry["status"], entry["filename"]))
+    if sorted(actual) != sorted(spec["files"]):
+        raise Denied("historic_metadata_inventory_mismatch")
+    return True
+
+
+
+
 def run(argv, timeout=30, allow_fail=False):
     try:
         result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
@@ -541,6 +597,10 @@ def candidate_history(release_sha, main_sha):
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
+        # A strictly allowlisted historical metadata cleanup is not a release.
+        if len(parents) == 1 and known_metadata_only_direct_commit(current, node, first):
+            current = first
+            continue
         pr, head = provenance(current)
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
