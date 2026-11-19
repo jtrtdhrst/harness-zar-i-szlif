@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from unittest.mock import patch
 
-from harness_release_parity import ParityFailure, check
+from harness_release_parity import ParityFailure, check, check_services
 
 SOURCE = "a" * 40
 OLD = "b" * 40
@@ -62,6 +63,23 @@ class ParityTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), code)
         self.assertFalse(any(c[0] in ("curl", "docker") and
                          c[1] in ("run", "stop", "push") for c in runner.calls))
+
+    def test_secondary_service_drift_blocks_global_no_change(self):
+        runner = FakeRunner()
+        with patch("harness_release_parity._check_runtime",
+                   side_effect=[{"result": "parity_ok", "service": "plasmic-mcp"},
+                                ParityFailure("service_changes_not_deployed")]) as runtime:
+            with self.assertRaisesRegex(
+                    ParityFailure, "emailens-mcp:service_changes_not_deployed"):
+                check_services(self.repo, SOURCE,
+                               ["plasmic-mcp", "emailens-mcp"], runner=runner)
+        self.assertEqual(runtime.call_count, 2)
+        self.assertEqual(sum("ls-remote" in args for args in runner.calls), 1)
+
+    def test_no_managed_services_fails_closed(self):
+        with self.assertRaisesRegex(
+                ParityFailure, "managed_service_scope_missing_or_ambiguous"):
+            check_services(self.repo, SOURCE, [], runner=FakeRunner())
 
     def test_parity(self):
         self.assertEqual(self.call(FakeRunner())["result"], "parity_ok")
