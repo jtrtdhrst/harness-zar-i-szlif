@@ -325,6 +325,33 @@ if any(m["RW"] and pathlib.Path(m["Source"]).resolve()!=episodes for m in mounts
   CONSUMERS+=("$PUBLISHER")
   echo "SYNC_SCOPED_PUBLISHER_INCLUDED name=$PUBLISHER"
 fi
+# Coolify staging publisher also bind-mounts the Product subtree directly.
+# Discover it by stable, verified Coolify labels (not ephemeral container name).
+# Guard remains authoritative: unknown mounts still abort before any file swap.
+mapfile -t COOLIFY_PUBLISHERS < <(docker ps \
+  --filter 'label=coolify.resourceName=repowise-deployment-publisher-staging' \
+  --format '{{.Names}}' | sort)
+((${#COOLIFY_PUBLISHERS[@]} <= 1)) || fail "multiple-coolify-publisher-containers"
+for coolify_publisher in "${COOLIFY_PUBLISHERS[@]}"; do
+  docker inspect "$coolify_publisher" | python3 -c '
+import json,pathlib,sys
+cs=json.load(sys.stdin)
+if len(cs)!=1: raise SystemExit("publisher_container_count_mismatch")
+c=cs[0]; cfg=c["Config"]; host=c["HostConfig"]; labels=cfg.get("Labels") or {}
+want={"coolify.managed":"true","coolify.projectName":"repowise-knowledge",
+      "coolify.resourceName":"repowise-deployment-publisher-staging",
+      "coolify.applicationUuid":"gl8bvfjtw2af8hkox4mguzzr"}
+if any(labels.get(k)!=v for k,v in want.items()):
+    raise SystemExit("publisher_identity_changed")
+if cfg.get("User")!="999:999" or not host.get("ReadonlyRootfs") or host.get("NetworkMode")!="host":
+    raise SystemExit("publisher_isolation_changed")
+live=pathlib.Path("/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product").resolve()
+if not any(pathlib.Path(m["Source"]).resolve()==live and m["Destination"]=="/workspace/product" for m in c["Mounts"]):
+    raise SystemExit("publisher_product_mount_changed")
+' || fail "coolify-publisher-mount-or-identity-changed"
+  CONSUMERS+=("$coolify_publisher")
+  echo "SYNC_COOLIFY_PUBLISHER_INCLUDED name=$coolify_publisher"
+done
 prepare_live_sources
 check_live_worktrees
 stop_consumers
