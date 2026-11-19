@@ -118,10 +118,10 @@ def daemon_budget_preflight() -> None:
         socket = subprocess.run(["/usr/bin/ss", "-H", "-x", "-l", "-n", "-p"],
                                 check=True, capture_output=True, text=True, timeout=6)
         matching = [line for line in socket.stdout.splitlines()
-                    if re.search(r"(?<!\\S)" + re.escape(str(DOCKER_SOCKET)) + r"(?=\\s)", line)]
+                    if re.search(r"(?<!\S)" + re.escape(str(DOCKER_SOCKET)) + r"(?=\s)", line)]
         if len(matching) != 1:
             raise Refused("rootless_socket_listener_unverified")
-        owners = re.findall(r'\\("dockerd",pid=(\\d+),fd=\\d+\\)', matching[0])
+        owners = re.findall(r'\("dockerd",pid=(\d+),fd=\d+\)', matching[0])
         if len(owners) != 1:
             raise Refused("rootless_socket_daemon_unverified")
         daemon_pid = int(owners[0])
