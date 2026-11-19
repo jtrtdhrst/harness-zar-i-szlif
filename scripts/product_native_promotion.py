@@ -68,7 +68,7 @@ LEGACY_CI_ONLY_FILES = frozenset({"scripts/ci-path-coverage.mjs", "tests/ci-path
 # PR183 staging deadlock without allowing arbitrary workflow edits or future PR
 # heads to evade runtime release admission. It can never deploy an application.
 CI_ONLY_REVIEWED_PR = 183
-CI_ONLY_REVIEWED_HEAD = "387e5f9081fa9fa9da4820fae054da617c615a9a"
+CI_ONLY_REVIEWED_HEAD = "62d879b2f2ad2cd1bec8758852b14e28848d813b"
 CI_ONLY_REVIEWED_FILES = {
     ".github/workflows/product-ci.yml": "modified",
     "ops/coolify/Dockerfile.ci": "added",
