@@ -20,6 +20,7 @@ grant, the independent exact-SHA approval or the root-owned local-CI attestation
 | `scripts/harness_local_ci_attest.py` | `/usr/local/libexec/harness_local_ci_attest.py` | `0644 root:root` |
 | `scripts/harness_delivery_controller.py` | `/usr/local/libexec/harness_delivery_controller.py` | `0644 root:root` |
 | `scripts/harness_native_delivery.py` | `/usr/local/libexec/harness_native_delivery.py` | `0644 root:root` |
+| `scripts/harness_release_parity.py` | `/usr/local/libexec/harness_release_parity.py` | `0644 root:root` |
 | `scripts/harness_legacy_disabled.py` | `/usr/local/libexec/harness_image_delivery.py` (REPLACES old entrypoint) | `0755 root:root` |
 | `ops/systemd/harness-image-delivery.service` | `/etc/systemd/system/harness-image-delivery.service` | `0644 root:root` |
 | operator-written source range | `/var/lib/harness-image-delivery/source-range.env` | `0600 root:root` |
@@ -104,11 +105,11 @@ attestation bound to that exact SHA.
    Then run `install -o root -g root -m 0600 /usr/local/libexec/harness_image_delivery.py /var/lib/harness-image-delivery/backups/harness_image_delivery-<sha12>.py`
    `install -o root -g root -m 0600 /etc/systemd/system/harness-image-delivery.service /var/lib/harness-image-delivery/backups/harness-image-delivery.service-<sha12>.bak`
    `sha256sum` every file and record the digests in the issue.
-3. **Stage the four reviewed modules and permanently disable the old executable path** from the exact approved SHA (after step 2 backups):
+3. **Stage the five reviewed modules and permanently disable the old executable path** from the exact approved SHA (after step 2 backups):
    `git -C <approved checkout> show <sha>:scripts/<module> | install -o root -g root -m 0644 /dev/stdin /usr/local/libexec/<module>`
    `git -C <approved checkout> show <sha>:scripts/harness_legacy_disabled.py | install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/harness_image_delivery.py`
    Direct calls of the **old** controller must now exit 78 without Docker/Coolify, even if the old systemd unit is accidentally restored.
-4. **Verify the four staged modules plus the old-path denial shim** against the expected digests printed by
+4. **Verify the five staged modules plus the old-path denial shim** against the expected digests printed by
    preflight (step 0). Do not verify the replacement systemd unit yet: it is
    deliberately installed in step 6. Any mismatch = stop and roll back.
 5. **Install the policy and key** you authored: per-service fixed argv commands,
