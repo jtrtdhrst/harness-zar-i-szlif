@@ -27,21 +27,56 @@ KEY_ROOT = Path("/srv/multica-zar/.config/hermes")
 
 
 def role_secret(role: str, root: Path = KEY_ROOT) -> str:
-    """Read only a known role's own regular private key; reject symlink tricks."""
+    """Open root -> role -> key with pinned no-follow FDs and checked identity.
+
+    Every directory and the key must belong to the trusted service UID and be
+    private. Never stat the pathname then reopen it: path swaps must not change
+    the bytes read by an already-validated file descriptor.
+    """
     if role not in ROLES:
         raise ValueError("role_not_allowed")
-    if root.is_symlink() or not root.is_dir():
-        raise ValueError("role_key_root_unavailable")
-    directory = root / role
-    path = directory / "api-key"
-    if directory.is_symlink() or not directory.is_dir() or path.is_symlink():
-        raise ValueError("role_key_path_invalid")
-    st = path.stat()
-    if not stat.S_ISREG(st.st_mode) or (st.st_mode & 0o077):
-        raise ValueError("role_key_permissions_invalid")
-    key = path.read_text(encoding="utf-8").strip()
-    if len(key) < 40:
-        raise ValueError("role_key_too_short")
+    owner = os.geteuid()
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    key_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+    def checked_directory(fd: int, code: str) -> None:
+        metadata = os.fstat(fd)
+        if (not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != owner or (metadata.st_mode & 0o077)):
+            raise ValueError(code)
+
+    try:
+        root_fd = os.open(root, dir_flags)
+    except OSError as exc:
+        raise ValueError("role_key_root_unavailable") from exc
+    try:
+        checked_directory(root_fd, "role_key_root_untrusted")
+        try:
+            role_fd = os.open(role, dir_flags, dir_fd=root_fd)
+        except OSError as exc:
+            raise ValueError("role_key_role_directory_invalid") from exc
+        try:
+            checked_directory(role_fd, "role_key_role_directory_untrusted")
+            try:
+                key_fd = os.open("api-key", key_flags, dir_fd=role_fd)
+            except OSError as exc:
+                raise ValueError("role_key_path_invalid") from exc
+            try:
+                metadata = os.fstat(key_fd)
+                if (not stat.S_ISREG(metadata.st_mode)
+                        or metadata.st_uid != owner or (metadata.st_mode & 0o077)):
+                    raise ValueError("role_key_permissions_invalid")
+                # Read from the same already validated inode; no second path lookup.
+                with os.fdopen(key_fd, "r", encoding="utf-8", closefd=False) as handle:
+                    key = handle.read(4096).strip()
+            finally:
+                os.close(key_fd)
+        finally:
+            os.close(role_fd)
+    finally:
+        os.close(root_fd)
+    if len(key) < 40 or len(key) > 4096:
+        raise ValueError("role_key_length_invalid")
     return key
 
 
