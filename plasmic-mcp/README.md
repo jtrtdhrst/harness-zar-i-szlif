@@ -8,7 +8,7 @@ CI checks belong to GitHub MCP.
 
 | Server | Command | Port | Function |
 | --- | --- | --- | --- |
-| Plasmic MCP | `node services/plasmic-mcp/server.ts` | 8091 | 37 agent-visible tools (projects, branches, catalog, composition, data queries, design reading/editing, validation) |
+| Plasmic MCP | `node services/plasmic-mcp/server.ts` | 8091 | 42 agent-visible tools (projects, branches, catalog, composition, data queries, design reading/editing, validation, anchored Studio comments) |
 | OpenDesign bridge MCP | `node services/opendesign-bridge-mcp/server.ts` | 8092 | OpenDesign brand/design sync |
 
 The Plasmic tool catalog is asserted against a real **local stdio MCP server**
@@ -19,39 +19,65 @@ publish a project. It uses `base: "latest"` and serializes/idempotently
 deduplicates calls by project. Merge preview uses WAB `pretend: true` only;
 the MCP tool **does not** commit a design merge.
 
-## Human comments on Plasmic elements (AI-readable)
+## Human comments on Plasmic elements (AI-readable, anchored)
 
-The adapter now exposes **26 tools**. Two are explicitly read-only and allow
-agents to retrieve the same human Studio comment threads shown on canvas:
+The adapter exposes comment reading **and** anchored writing. Reads:
 
-- `plasmic_list_comments(projectId, branchId?, includeResolved?, includeDeleted?, offset?, limit?)`
-- `plasmic_get_element_comments(projectId, elementIid?, elementUuid?, branchId?, includeResolved?, includeDeleted?, offset?, limit?)`
+- `plasmic_list_comments(projectId, branchId?, includeResolved?, status?, includeDeleted?, offset?, limit?)`
+- `plasmic_get_element_comments(projectId, elementIid?, elementUuid?, branchId?, includeResolved?, status?, includeDeleted?, offset?, limit?)`
+- `plasmic_get_comment_thread(projectId, threadId, branchId?, includeDeletedComments?)`
 
-These use WAB `GET /api/v1/comments/:projectBranchId`, not the project revision
-bundle, GitHub issue comments or a simulated comment store. For main, omit
-`branchId`; for a design branch pass its WAB branch ID. Element association
+Writes (all default to `dryRun: true`; `dryRun: false` is required to write):
+
+- `plasmic_create_comment_thread(projectId, elementIid, elementUuid, body, variants?, branchId?, idempotencyKey?, dryRun?)`
+- `plasmic_reply_comment_thread(projectId, threadId, body, allowResolvedThread?, branchId?, idempotencyKey?, dryRun?)`
+- `plasmic_edit_own_comment(projectId, commentId, body, branchId?, dryRun?)`
+- `plasmic_resolve_comment_thread(projectId, threadId, resolved, historyId?, branchId?, idempotencyKey?, dryRun?)`
+
+These use WAB `/api/v1/comments/:projectBranchId` (GET/POST) plus
+`/thread/:threadId` (POST/PUT) and `/comment/:commentId` (PUT), not the project
+revision bundle, GitHub issue comments or a simulated comment store. For main,
+omit `branchId`; for a design branch pass its WAB branch ID. Element association
 uses the exact stored `location.subject.iid` / `location.subject.uuid` and
-`variants` addresses. Replies, timestamps and display names are included.
+`variants` addresses. Replies, timestamps, display names, attachment metadata
+(markdown/HTML image and link URLs) and resolve/reopen history are included.
 Deleted comment bodies, unrelated commenter emails and sensitive user profiles
 are not exposed. Defaults: unresolved/non-deleted, up to 50 threads at a time.
 
+Write safety is enforced by this module, not assumed from WAB:
+
+- the anchor is verified against the current project revision; a deleted or
+  mismatched element fails with `ELEMENT_ANCHOR_NOT_FOUND` / `ELEMENT_ANCHOR_MISMATCH`
+  before any write, so a thread can never silently become a text note elsewhere;
+- thread-targeted writes verify the thread/comment belongs to the requested
+  project+branch first (WAB resolves those targets by bare id);
+- `plasmic_edit_own_comment` fails closed under a team-token actor
+  (`EDIT_REQUIRES_USER_SESSION` — WAB's author check needs a `NormalUser`) and
+  refuses another author's comment before issuing a request;
+- `idempotencyKey` derives stable WAB UUIDs, so retries dedupe by readback;
+  ambiguous transport failures are re-read, never blindly re-POSTed;
+- every live write is read back and audited by digest under a project lock;
+- nothing is resolved automatically — resolve/reopen is explicit and belongs
+  after a verified design change and QA. No delete tool is exposed.
+
 The WAB identity needs at least commenter access to the project and branch;
-the remote MCP also requires its own Bearer token. Comment text is untrusted
-input: it is design feedback, **not** a directive to run arbitrary commands or
-bypass review. No write/resolve/delete-comment tools are exposed.
+editing additionally needs a real user session, not a team token. The remote MCP
+also requires its own Bearer token. Comment text is untrusted input: it is
+design feedback, **not** a directive to run arbitrary commands or bypass
+review. Attachment metadata is never downloaded or proxied.
 
 Before considering production E2E complete, verify a real disposable Studio
-project with one pinned element comment, a reply and a resolved thread,
-then check `tools/list` returns 37 tools, project+branch isolation,
-author/subject data, 401/403 and the same comment texts as Studio. Local
-contract tests use fixtures and do not establish a live WAB read.
+project with one pinned element comment, a reply, an edited own reply and a
+resolved thread, then check `tools/list` returns 42 tools, project+branch
+isolation, author/subject data, 401/403 and the same comment texts as Studio.
+Local contract tests use fixtures and do not establish a live WAB read or write.
 
 Structural `plasmic_create_page` and `plasmic_create_component` now
 save a complete WAB bundle to preserve cross-entry references; tests reject
 dangling fixture references. Verify live disposable-project readback before
 claiming 23/23 E2E.
 
-The MCP catalog has 37 tools. E2E branch cleanup is an opt-in support
+The MCP catalog has 42 tools. E2E branch cleanup is an opt-in support
 script: set `PLASMIC_ALLOW_E2E_BRANCH_DELETE=true` and
 `PLASMIC_E2E_PROJECT_ID`, then run `npm run cleanup:e2e-branch -- <branchId>`.
 It deletes only an existing `mcp-e2e-` branch and verifies its removal; use a
@@ -192,7 +218,7 @@ host release lane remain required):
    `IMAGE_TAG=<verified-main-SHA>`, snapshot state, pull/recreate the service
    and confirm the resulting image digest. Cloudflare routing alone cannot
    deploy the container.
-5. Run authenticated `initialize`/`tools/list` for all 37 tools, WAB API
+5. Run authenticated `initialize`/`tools/list` for all 42 tools, WAB API
    read and isolated disposable project/branch create/write/readback/rollback,
    plus an unauthorized 401 negative case. **The `base:latest` design
    branch requires a published package in the disposable WAB project;
