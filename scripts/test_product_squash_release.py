@@ -103,5 +103,54 @@ class ProductSquashTests(unittest.TestCase):
             with self.assertRaisesRegex(p.Denied, "local_ci_attestation_missing"):
                 p.process(plan=False)
 
+
+    def test_exact_reviewed_ci_pr183_skips_runtime_release_only_with_strong_proof(self):
+        files=[{"filename":name,"status":status}
+               for name,status in p.CI_ONLY_REVIEWED_FILES.items()]
+        node={"sha":NEW,"parents":[{"sha":OLD}],"files":files}
+        self.assertTrue(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,node))
+        with patch.object(p,"ref",side_effect=[NEW,OLD]), \
+             patch.object(p,"live_release",return_value=OLD), \
+             patch.object(p,"commit",return_value=node), \
+             patch.object(p,"provenance",return_value=(183,p.CI_ONLY_REVIEWED_HEAD)), \
+             patch.object(p,"premerge_head_checks",return_value={"rootless_premerge":True,"billing_blocked":False}), \
+             patch.object(p,"checks",return_value={"billing_blocked":False}), \
+             patch.object(p,"native_approval",side_effect=AssertionError("CI-only cannot become runtime")), \
+             patch.object(p,"github_api",side_effect=AssertionError("no GitHub ref write")):
+            result=p.process(plan=False)
+        self.assertEqual(result["result"],"no_runtime_release_required")
+        self.assertEqual(result["release_ref"],OLD)
+
+    def test_ci_only_exception_rejects_other_sha_pr_files_and_renames(self):
+        base=[{"filename":name,"status":status}
+              for name,status in p.CI_ONLY_REVIEWED_FILES.items()]
+        node={"files":base}
+        self.assertFalse(p.reviewed_ci_only_pr(184,p.CI_ONLY_REVIEWED_HEAD,node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,HEAD,node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":base+[{"filename":"app/web/src/index.ts","status":"modified"}]}))
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":base[:-1]}))
+        altered=[dict(x) for x in base]
+        altered[0]["status"]="renamed"
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":altered}))
+        self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
+                           {"files":base+[base[0]]}))
+
+    def test_ci_only_exception_requires_rootless_proof_and_green_main(self):
+        node={"sha":NEW,"parents":[{"sha":OLD}],"files":[
+            {"filename":name,"status":status}
+            for name,status in p.CI_ONLY_REVIEWED_FILES.items()]}
+        for receipt,main_billed in ((False,False),(True,True)):
+            with self.subTest(rootless=receipt,main_billed=main_billed), \
+                 patch.object(p,"commit",return_value=node), \
+                 patch.object(p,"provenance",return_value=(183,p.CI_ONLY_REVIEWED_HEAD)), \
+                 patch.object(p,"premerge_head_checks",return_value={"rootless_premerge":receipt,"billing_blocked":False}), \
+                 patch.object(p,"checks",return_value={"billing_blocked":main_billed}), \
+                 patch.object(p,"native_approval",side_effect=AssertionError("must deny before runtime")):
+                with self.assertRaisesRegex(p.Denied,"ci_only_rootless_proof_or_main_ci_missing"):
+                    p.candidate_history(OLD,NEW)
+
 if __name__=="__main__":
     unittest.main()
