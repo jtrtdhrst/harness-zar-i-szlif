@@ -79,6 +79,42 @@ class AttesterSecurityTests(unittest.TestCase):
                               return_value=SimpleNamespace(st_mode=S_IFSOCK | 0o600, st_uid=991)):
                 self.assertEqual(ci.preflight(), 991)
 
+    def test_signed_receipt_is_write_once_and_old_bytes_remain(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(ci, "RECEIPTS", Path(folder)):
+            key = bytes(range(32))
+            payload = {"sha": "a"*40, "tree": "b"*40, "exit_code": 0,
+                       "log_sha256": "c"*64, "log_path": "/some/nonsecret/digest.log"}
+            saved = ci.store_receipt(payload, key)
+            original = saved.read_bytes()
+            self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+            with self.assertRaisesRegex(ci.Refused, "attestation_already_exists"):
+                ci.store_receipt(dict(payload, tree="d"*40), key)
+            self.assertEqual(saved.read_bytes(), original)
+            self.assertTrue(ci.verify(json.loads(original), key))
+
+    def test_compatible_premerge_receipt_is_not_replaceable(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(ci, "RECEIPTS", Path(folder)):
+            payload = {"sha": "a"*40, "tree": "b"*40,
+                       "verified_at": "2026-11-19T15:00:00Z"}
+            saved = ci.store_premerge_receipt(payload)
+            old = saved.read_bytes()
+            with self.assertRaisesRegex(ci.Refused, "attestation_already_exists"):
+                ci.store_premerge_receipt(dict(payload, verified_at="2026-11-19T16:00:00Z"))
+            self.assertEqual(saved.read_bytes(), old)
+
+    def test_rejected_evidence_does_not_overwrite_original(self):
+        with tempfile.TemporaryDirectory() as folder:
+            old = Path(folder) / "original.log"
+            old.write_bytes(b"first-success-immutable")
+            original_hash = __import__("hashlib").sha256(old.read_bytes()).hexdigest()
+            candidate = Path(folder) / "second-attempt.failed"
+            candidate.write_bytes(b"failed-retry")
+            self.assertEqual(__import__("hashlib").sha256(old.read_bytes()).hexdigest(), original_hash)
+            self.assertNotEqual(old.read_bytes(), candidate.read_bytes())
+            with self.assertRaisesRegex(ci.Refused, "attestation_already_exists"):
+                ci._write_once(old, b"failed-retry")
+            self.assertEqual(old.read_bytes(), b"first-success-immutable")
+
     def test_plan_does_not_download_or_build(self):
         with patch.object(ci, "github_snapshot", side_effect=AssertionError("unexpected network")), \
              patch.object(ci, "guest_ci", side_effect=AssertionError("unexpected build")), \
