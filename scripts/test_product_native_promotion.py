@@ -85,7 +85,7 @@ class ProductPromotionTests(unittest.TestCase):
         with patch.object(p,"local_ci_attestation",return_value=None),\
              patch.object(p,"run",side_effect=AssertionError("ROOT CODE EXECUTION")),\
              patch.object(p,"github_api",side_effect=AssertionError("provider call")):
-            with self.assertRaisesRegex(p.Denied,"trusted_local_ci_attestation_missing"):
+            with self.assertRaisesRegex(p.Denied,"trusted_rootless_ci_attestation_missing"):
                 p.checks(SOURCE)
 
 
@@ -104,9 +104,40 @@ class ProductPromotionTests(unittest.TestCase):
             p.github_api("/repos/foreign/repo/commits/"+SOURCE)
 
     def test_root_owned_sha_bound_attestation_is_read_only(self):
-        with patch.object(p,"local_ci_attestation",return_value={"sha":SOURCE,"exit_code":0}),\
+        with patch.object(p,"local_ci_attestation",return_value={"sha":SOURCE,"tree":NEW}),\
+             patch.object(p,"commit",return_value={"commit":{"tree":{"sha":NEW}}}),\
              patch.object(p,"run",side_effect=AssertionError("source must not run")):
             self.assertIsNone(p.checks(SOURCE))
+
+    def test_github_tree_mismatch_denies_even_signed_receipt(self):
+        with patch.object(p,"local_ci_attestation",return_value={"sha":SOURCE,"tree":NEW}),\
+             patch.object(p,"commit",return_value={"commit":{"tree":{"sha":MID}}}):
+            with self.assertRaisesRegex(p.Denied,"trusted_rootless_ci_tree_mismatch"):
+                p.checks(SOURCE)
+
+    def test_signed_rootless_receipt_rejects_tamper_legacy_and_stale(self):
+        import hashlib, hmac, json
+        from datetime import datetime, timezone
+        key=bytes(range(32))
+        now=1760000000.0
+        timestamp=datetime.fromtimestamp(now,timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        evidence={"schema_version":2,"sha":SOURCE,"tree":NEW,
+                  "runner":"zis-ci-guest-rootless","runner_uid":991,
+                  "command":p.ROOTLESS_CI_COMMAND,"exit_code":0,
+                  "log_sha256":"e"*64,"verified_at":timestamp}
+        signature=hmac.new(key,json.dumps(evidence,sort_keys=True,separators=(",",":"),
+                     ensure_ascii=True).encode(),hashlib.sha256).hexdigest()
+        receipt=dict(evidence,signature=signature)
+        self.assertTrue(p.verify_rootless_receipt(SOURCE,receipt,key,now=now))
+        for field,value in (("sha",MID),("tree",MID),("runner_uid",0),
+                            ("exit_code",1),("schema_version",1),
+                            ("command","npm run validate:code")):
+            with self.subTest(field=field):
+                self.assertFalse(p.verify_rootless_receipt(SOURCE,dict(receipt,**{field:value}),key,now=now))
+        self.assertFalse(p.verify_rootless_receipt(SOURCE,receipt,key,now=now+8*86400))
+        self.assertFalse(p.verify_rootless_receipt(SOURCE,receipt,key,now=now-600))
+        self.assertFalse(p.verify_rootless_receipt(SOURCE,receipt,b"bad",now=now))
+        self.assertFalse(p.verify_rootless_receipt(SOURCE,evidence,key,now=now))
 
     def test_runtime_review_rejection_precedes_any_ci_check(self):
         with patch.object(p,"commit",return_value={"sha":NEW,"parents":[{"sha":OLD}]}),\
