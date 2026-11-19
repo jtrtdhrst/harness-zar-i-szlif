@@ -59,3 +59,7 @@ docker exec -i <new-db-container> psql -U wab -d wab < wab.sql
 `platform/` is AGPL-3.0 (`LICENSE.platform.md`); everything outside `platform/`
 is MIT (`LICENSE.md`). Running this as a public network service means offering
 the corresponding source (including local modifications) to its users.
+
+## Upgrade and rollback
+
+For the upstream `e2e0b744` transition, follow [`UPGRADE-20261115.md`](UPGRADE-20261115.md) before any live cutover. The runbook covers `ADMIN_EMAILS` JSON parsing, PostgreSQL 15 backup and migration risk, isolated canary checks, image provenance and rollback. This branch does **not** authorize or perform a production deployment.
