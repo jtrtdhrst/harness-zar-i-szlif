@@ -705,6 +705,10 @@ def process(plan=False):
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
+        # Do not report a source-only no-op against an outdated snapshot.
+        # A runtime commit may have appeared while walking first-parent history.
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
         # Main only advanced through independently verified documentation PRs.
         # No Docker build, no branch advancement and no production deployment.
         return {"result": "no_runtime_release_required", "main": current,
