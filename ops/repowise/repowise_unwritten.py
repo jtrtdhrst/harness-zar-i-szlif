@@ -18,13 +18,16 @@ UNWRITTEN = """
 PENDING = f"""
 SELECT id FROM wiki_pages
 WHERE page_type IN {MODEL_TYPES}
+  AND freshness_status != 'tombstone'
   AND ({UNWRITTEN}
        OR (freshness_status = 'stale' AND coalesce(model_name, '') != ''))
 ORDER BY id
 """
 SQL = f"""
 SELECT id FROM wiki_pages
-WHERE page_type IN {MODEL_TYPES} AND {UNWRITTEN}
+WHERE page_type IN {MODEL_TYPES}
+  AND freshness_status != 'tombstone'
+  AND {UNWRITTEN}
 ORDER BY id
 """
 
@@ -49,7 +52,26 @@ def pending_pages(db_path, include_stale=False, indexed_at=None):
                 if updated_time >= indexed_time:
                     continue
             pending.append(page_id)
-        return pending
+        # Deterministic onboarding content has no model_name and RepoWise can
+        # leave it marked "fresh" after an index-only GitHub sync. An older page
+        # must be re-rendered once for each newer indexed revision.
+        deterministic_id = 'onboarding:onboarding/active_landscape'
+        record = connection.execute(
+            'SELECT freshness_status, model_name, content, updated_at '
+            'FROM wiki_pages WHERE id=?', (deterministic_id,),
+        ).fetchone()
+        if record and record[0] != 'tombstone' and not (record[1] or '').strip():
+            if (record[2] or '').strip():
+                updated_at = record[3]
+                if not updated_at:
+                    pending.append(deterministic_id)
+                else:
+                    updated_time = datetime.fromisoformat(updated_at)
+                    if updated_time.tzinfo is None:
+                        updated_time = updated_time.replace(tzinfo=timezone.utc)
+                    if updated_time < indexed_time:
+                        pending.append(deterministic_id)
+        return sorted(set(pending))
 
 def main(argv):
     if len(argv) not in (2, 3) or argv[1] not in ('product', 'harness') or (len(argv) == 3 and argv[2] != '--pending'):

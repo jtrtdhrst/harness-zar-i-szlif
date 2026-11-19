@@ -1,10 +1,10 @@
 [Unit]
-Description=Check RepoWise freshness against GitHub main every 3 minutes
+Description=Check RepoWise freshness against GitHub main every 10 minutes
 
 [Timer]
 OnBootSec=6min
-OnUnitInactiveSec=3min
-AccuracySec=15s
+OnUnitInactiveSec=10min
+AccuracySec=30sec
 Persistent=true
 Unit=repowise-freshness-check.service
 

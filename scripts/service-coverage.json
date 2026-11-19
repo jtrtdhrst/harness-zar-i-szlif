@@ -49,14 +49,6 @@
       "mode": "manual_only",
       "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."
     },
-    "kod-aplikacji": {
-      "mode": "manual_only",
-      "reason": "Coolify project inventory metadata only; product source belongs in zar-i-szlif."
-    },
-    "kod-mcp": {
-      "mode": "manual_only",
-      "reason": "Coolify project inventory metadata only; not deployable source."
-    },
     "mantic-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
@@ -107,16 +99,6 @@
         ".github/workflows/release-lanes-policy.yml"
       ]
     },
-    "paperclip": {
-      "mode": "manual_only",
-      "reason": "Paperclip Core is upstream/overlay managed and has no repository service CI/release workflow."
-    },
-    "paperclip-mcp": {
-      "mode": "workflow",
-      "workflows": [
-        ".github/workflows/paperclip-mcp-ci.yml"
-      ]
-    },
     "plasmic": {
       "mode": "manual_only",
       "reason": "Multi-container WAB; reviewed component digests and dependency-aware rollback required."
@@ -126,14 +108,6 @@
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
     "playwright-mcp": {
-      "mode": "manual_only",
-      "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
-    },
-    "qdrant": {
-      "mode": "manual_only",
-      "reason": "Upstream database service; not built from this repository."
-    },
-    "qdrant-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
