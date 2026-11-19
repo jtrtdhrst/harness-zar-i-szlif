@@ -1,15 +1,6 @@
 name: Native Product Release Gate CI
 
 on:
-  pull_request:
-    paths:
-      - "scripts/paperclip_native_release_gate.py"
-      - "scripts/test_paperclip_native_release_gate.py"
-      - "scripts/product_native_promotion.py"
-      - "scripts/test_product_native_promotion.py"
-      - "scripts/test_product_squash_release.py"
-      - "ops/systemd/product-native-promotion.*"
-      - ".github/workflows/native-product-release-ci.yml"
   push:
     branches: [main]
     paths:
@@ -22,8 +13,8 @@ on:
       - ".github/workflows/native-product-release-ci.yml"
 
 concurrency:
-  group: native-product-release-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: native-product-release-ci-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
