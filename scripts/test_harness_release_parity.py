@@ -15,9 +15,11 @@ UUID = "a6ci2beifbinzckfnneiqnjd"
 
 class FakeRunner:
     def __init__(self, upstream=SOURCE, local=SOURCE, revision=OLD,
-                 diff=0, auth=True, ids="abc123abc123", config=None):
+                 diff=0, auth=True, ids="abc123abc123", config=None,
+                 remote_url="https://github.com/miloszspyrka-code/harness-zar-i-szlif.git"):
         self.upstream, self.local, self.revision = upstream, local, revision
         self.diff, self.auth, self.ids = diff, auth, ids
+        self.remote_url = remote_url
         self.config = config if config is not None else {
             "Image": "registry/plasmic-mcp:" + revision[:12],
             "Labels": {"coolify.serviceUuid": UUID}}
@@ -25,6 +27,8 @@ class FakeRunner:
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        if "remote" in argv and "get-url" in argv:
+            return CompletedProcess(argv, 0, self.remote_url + "\n", "")
         if "ls-remote" in argv:
             return CompletedProcess(argv, 0 if self.auth else 128,
                 self.upstream + "\trefs/heads/main\n" if self.auth else "", "")
@@ -34,7 +38,10 @@ class FakeRunner:
         if argv[:2] == ["docker", "ps"]:
             return CompletedProcess(argv, 0, self.ids + "\n", "")
         if argv[:2] == ["docker", "inspect"]:
-            return CompletedProcess(argv, 0, json.dumps(self.config), "")
+            # The adapter must never ask Docker for .Config or its Env secrets.
+            projection = (json.dumps(self.config.get("Labels")) + "\n"
+                          + json.dumps(self.config.get("Image")) + "\n")
+            return CompletedProcess(argv, 0, projection, "")
         if "diff" in argv:
             return CompletedProcess(argv, self.diff, "", "")
         raise AssertionError(argv)
@@ -86,6 +93,33 @@ class ParityTests(unittest.TestCase):
 
     def test_no_github_auth_fails_closed(self):
         self.denied(FakeRunner(auth=False), "upstream_main_unverifiable")
+
+    def test_wrong_origin_denied_before_contacting_remote(self):
+        for url in (
+            "https://github.com/other-org/harness-zar-i-szlif.git",
+            "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git.evil",
+            "https://github.com.evil/miloszspyrka-code/harness-zar-i-szlif.git",
+            "https://secret@github.com/miloszspyrka-code/harness-zar-i-szlif.git",
+            "file:///tmp/masquerading-origin",
+        ):
+            with self.subTest(url=url):
+                runner = FakeRunner(remote_url=url)
+                self.denied(runner, "source_remote_untrusted")
+                self.assertFalse(any("ls-remote" in call for call in runner.calls))
+
+    def test_runtime_inspect_never_requests_container_environment(self):
+        runner = FakeRunner(config={
+            "Labels": {"coolify.serviceUuid": UUID},
+            "Image": "registry/plasmic-mcp:" + OLD[:12],
+            "Env": ["SECRET_VALUE_SHOULD_NOT_BE_REQUESTED=123"],
+        })
+        self.assertEqual(self.call(runner)["result"], "parity_ok")
+        inspect = next(call for call in runner.calls if call[:2] == ["docker", "inspect"])
+        self.assertIn(".Config.Labels", inspect[-1])
+        self.assertIn(".Config.Image", inspect[-1])
+        self.assertNotIn("json .Config}}", inspect[-1])
+        self.assertNotIn(".Config.Env", inspect[-1])
+
 
     def test_stale_source_range(self):
         self.denied(FakeRunner(upstream=OLD), "source_range_stale")
