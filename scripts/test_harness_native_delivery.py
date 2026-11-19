@@ -753,11 +753,13 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None):
+                 source_sha=SOURCE, environ=None, parity_error=None):
         host = host or FakeHost()
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
+                patch.object(delivery, "check_release_parity",
+                             side_effect=parity_error, return_value={"result": "parity_ok"}), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "load_gate_file",
@@ -831,6 +833,16 @@ class AutoModeTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(code, 0)
         self.assertEqual(payload["result"], "no_change")
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_no_change_denies_stale_runtime(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head},
+            parity_error=delivery.ParityFailure("service_changes_not_deployed"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runtime_parity:service_changes_not_deployed", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_denies_a_held_lane_without_touching_the_host(self):
