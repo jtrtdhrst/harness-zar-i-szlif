@@ -11,6 +11,11 @@ import re
 import subprocess
 from pathlib import Path
 
+from harness_release_admission import Denied, read_trusted_bytes
+
+ROOT_STATE = Path("/var/lib/harness-image-delivery/delivery/delivery.json")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}\\Z")
+
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 TAG = re.compile(r":([0-9a-f]{12,40})\Z")
 
@@ -66,7 +71,30 @@ def check_source(repo, expected_sha, *, runner=subprocess.run):
 
     return upstream_sha
 
-def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run):
+def read_release_state(service, *, state_file=ROOT_STATE):
+    """Read only root-issued release evidence written after admitted live health.
+
+    The controller records this file only after signed local CI admission and
+    exact digest verification. Neither image labels nor mutable tags are proof.
+    """
+    try:
+        raw = read_trusted_bytes(state_file, "release_state", require_root=True)
+        state = json.loads(raw)
+    except (Denied, OSError, ValueError, TypeError):
+        raise ParityFailure("release_state_unverifiable") from None
+    if not isinstance(state, dict) or not isinstance(state.get(service), dict):
+        raise ParityFailure("release_state_service_missing")
+    record = state[service]
+    if (not isinstance(record.get("source_sha"), str)
+            or not SHA.fullmatch(record["source_sha"])
+            or not isinstance(record.get("image_digest"), str)
+            or not DIGEST.fullmatch(record["image_digest"])
+            or not isinstance(record.get("coolify_uuid"), str)):
+        raise ParityFailure("release_state_invalid")
+    return record
+
+
+def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run, state_file=ROOT_STATE):
     manifest = json.loads((Path(repo) / "ops/release-lanes.json").read_text())
     entries = manifest.get("lanes", []) + manifest.get("other_resources", [])
     matches = [entry for entry in entries
@@ -89,14 +117,16 @@ def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run):
     # Never request .Config as a whole: it includes container environment
     # secrets. Project only the two fields needed for runtime parity.
     raw = checked(["docker", "inspect", ids[0], "--format",
-                   "{{json .Config.Labels}}" + "\n" + "{{json .Config.Image}}"],
+                   "{{json .Config.Labels}}" + "\n" + "{{json .Config.Image}}"
+                   + "\n" + "{{json .Image}}"],
                   "runtime_unverifiable", runner=runner)
     try:
         lines = raw.splitlines()
-        if len(lines) != 2:
+        if len(lines) != 3:
             raise ParityFailure("runtime_metadata_invalid")
-        labels, image = (json.loads(lines[0]) or {}), json.loads(lines[1])
-        if not isinstance(labels, dict) or not isinstance(image, str):
+        labels, image, image_id = (json.loads(lines[0]) or {}), json.loads(lines[1]), json.loads(lines[2])
+        if (not isinstance(labels, dict) or not isinstance(image, str)
+                or not isinstance(image_id, str)):
             raise ParityFailure("runtime_metadata_invalid")
         config = {"Labels": labels, "Image": image}
         if labels.get("coolify.serviceUuid") != uuid:
@@ -123,17 +153,40 @@ def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run):
         raise ParityFailure("service_changes_not_deployed")
     if rc:
         raise ParityFailure("service_diff_unverifiable")
+
+    # Root-owned release state is created only after signed admission, exact
+    # digest deployment and live verification. No self-reported OCI label can
+    # establish equivalence without this independently trusted record.
+    record = read_release_state(service, state_file=state_file)
+    digest = record["image_digest"]
+    if record["coolify_uuid"] != uuid or record["source_sha"] != full_revision:
+        raise ParityFailure("release_provenance_revision_mismatch")
+    immutable_ref = f"127.0.0.1:5000/harness-{service}@{digest}"
+    if image != immutable_ref:
+        raise ParityFailure("runtime_image_reference_mutable_or_mismatched")
+    if not DIGEST.fullmatch(image_id):
+        raise ParityFailure("runtime_image_id_unverifiable")
+    raw_digests = checked(["docker", "image", "inspect", "--format",
+                           "{{json .RepoDigests}}", image_id],
+                          "runtime_digest_unverifiable", runner=runner)
+    try:
+        repo_digests = json.loads(raw_digests)
+    except (ValueError, TypeError):
+        raise ParityFailure("runtime_digest_unverifiable") from None
+    if not isinstance(repo_digests, list) or immutable_ref not in repo_digests:
+        raise ParityFailure("runtime_digest_mismatch")
     return {"result": "parity_ok", "service": service, "source_sha": expected_sha,
-            "runtime_revision": full_revision, "coolify_uuid": uuid}
+            "runtime_revision": full_revision, "runtime_digest": digest,
+            "running_image_id": image_id, "coolify_uuid": uuid}
 
 
 
-def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run):
+def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run, state_file=ROOT_STATE):
     check_source(repo, expected_sha, runner=runner)
-    return _check_runtime(repo, expected_sha, service, runner=runner)
+    return _check_runtime(repo, expected_sha, service, runner=runner, state_file=state_file)
 
 
-def check_services(repo, expected_sha, services, *, runner=subprocess.run):
+def check_services(repo, expected_sha, services, *, runner=subprocess.run, state_file=ROOT_STATE):
     """Verify one real upstream SHA and every service before global no_change."""
     if not services or len(set(services)) != len(services):
         raise ParityFailure("managed_service_scope_missing_or_ambiguous")
@@ -141,7 +194,7 @@ def check_services(repo, expected_sha, services, *, runner=subprocess.run):
     verified = []
     for service in services:
         try:
-            verified.append(_check_runtime(repo, expected_sha, service, runner=runner))
+            verified.append(_check_runtime(repo, expected_sha, service, runner=runner, state_file=state_file))
         except ParityFailure as exc:
             raise ParityFailure(f"{service}:{exc}") from exc
     return {"result": "parity_ok", "source_sha": expected_sha,
@@ -153,9 +206,11 @@ def main(argv=None):
     parser.add_argument("--repo", default="/var/lib/harness-image-delivery/checkout")
     parser.add_argument("--service", default="plasmic-mcp")
     parser.add_argument("--expected-sha", default=os.environ.get("HARNESS_SOURCE_SHA", ""))
+    parser.add_argument("--state-file", default=str(ROOT_STATE))
     args = parser.parse_args(argv)
     try:
-        print(json.dumps(check(args.repo, args.expected_sha, args.service), sort_keys=True))
+        print(json.dumps(check(args.repo, args.expected_sha, args.service,
+                               state_file=Path(args.state_file)), sort_keys=True))
         return 0
     except (ParityFailure, ValueError, OSError, TypeError) as exc:
         reason = str(exc) if isinstance(exc, ParityFailure) else "parity_input_unverifiable"
