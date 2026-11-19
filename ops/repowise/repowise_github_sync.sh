@@ -333,10 +333,13 @@ fi
 # Capture errors explicitly; a process substitution would hide docker failures.
 RUNNING_IDS=$(docker ps --quiet) || fail "coolify-docker-list-failed"
 [[ -n $RUNNING_IDS ]] || fail "coolify-no-running-containers"
-ALL_RUNNING_INSPECT=$(docker inspect $RUNNING_IDS) || fail "coolify-docker-inspect-failed"
+# Project only the identity/isolation/mount fields required for admission.
+# Never copy unrelated containers' Config.Env into the sync process.
+INSPECT_FORMAT='{"Name":{{json .Name}},"Config":{"User":{{json .Config.User}},"Labels":{"coolify.managed":{{json (index .Config.Labels "coolify.managed")}},"coolify.projectName":{{json (index .Config.Labels "coolify.projectName")}},"coolify.resourceName":{{json (index .Config.Labels "coolify.resourceName")}},"coolify.applicationUuid":{{json (index .Config.Labels "coolify.applicationUuid")}},"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}}}},"HostConfig":{"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},"NetworkMode":{{json .HostConfig.NetworkMode}}},"Mounts":[{{range $i,$m:=.Mounts}}{{if $i}},{{end}}{"Source":{{json $m.Source}},"Destination":{{json $m.Destination}},"RW":{{json $m.RW}}}{{end}}]}'
+ALL_RUNNING_INSPECT=$(docker inspect --format "$INSPECT_FORMAT" $RUNNING_IDS) || fail "coolify-docker-inspect-failed"
 COOLIFY_PUBLISHER=$(python3 -c '
 import json,pathlib,sys
-try: containers=json.load(sys.stdin)
+try: containers=[json.loads(line) for line in sys.stdin if line.strip()]
 except (ValueError,TypeError): raise SystemExit("publisher_discovery_invalid_json")
 if not isinstance(containers,list): raise SystemExit("publisher_discovery_invalid_shape")
 live=pathlib.Path("/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product").resolve()
@@ -364,9 +367,9 @@ print(matches[0])
 unset ALL_RUNNING_INSPECT
 COOLIFY_PUBLISHERS=("$COOLIFY_PUBLISHER")
 for coolify_publisher in "${COOLIFY_PUBLISHERS[@]}"; do
-  docker inspect "$coolify_publisher" | python3 -c '
+  docker inspect --format "$INSPECT_FORMAT" "$coolify_publisher" | python3 -c '
 import json,pathlib,sys
-cs=json.load(sys.stdin)
+cs=[json.loads(line) for line in sys.stdin if line.strip()]
 if len(cs)!=1: raise SystemExit("publisher_container_count_mismatch")
 c=cs[0]; cfg=c["Config"]; host=c["HostConfig"]; labels=cfg.get("Labels") or {}
 want={"coolify.managed":"true","coolify.projectName":"repowise-knowledge",
