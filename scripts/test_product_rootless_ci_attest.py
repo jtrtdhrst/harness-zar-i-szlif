@@ -67,20 +67,71 @@ class AttesterSecurityTests(unittest.TestCase):
             with self.assertRaises(ci.Refused):
                 ci.validated_members(t)
 
-    def test_socket_requires_owner_only_permissions(self):
+    def test_socket_requires_owner_only_permissions_and_no_symlinks(self):
         from types import SimpleNamespace
-        from stat import S_IFSOCK
+        from stat import S_IFDIR, S_IFSOCK, S_IFLNK
+        def fake_lstat(path, *, socket_mode):
+            if path == ci.DOCKER_SOCKET.parent:
+                return SimpleNamespace(st_mode=S_IFDIR | 0o700, st_uid=991)
+            return SimpleNamespace(st_mode=socket_mode, st_uid=991)
         with patch.object(ci.os, "geteuid", return_value=0), \
-             patch.object(ci, "guest_uid", return_value=991):
-            for mode in (0o660, 0o666, 0o640):
+             patch.object(ci, "guest_uid", return_value=991), \
+             patch.object(ci, "daemon_budget_preflight", return_value=None):
+            for mode in (S_IFSOCK | 0o660, S_IFSOCK | 0o666,
+                         S_IFSOCK | 0o640, S_IFLNK | 0o777):
                 with self.subTest(mode=mode), \
-                     patch.object(ci.DOCKER_SOCKET.__class__, "stat",
-                                  return_value=SimpleNamespace(st_mode=S_IFSOCK | mode, st_uid=991)):
+                     patch.object(ci.DOCKER_SOCKET.__class__, "lstat",
+                         autospec=True, side_effect=lambda path: fake_lstat(path, socket_mode=mode)):
                     with self.assertRaises(ci.Refused):
                         ci.preflight()
-            with patch.object(ci.DOCKER_SOCKET.__class__, "stat",
-                              return_value=SimpleNamespace(st_mode=S_IFSOCK | 0o600, st_uid=991)):
+            with patch.object(ci.DOCKER_SOCKET.__class__, "lstat",
+                 autospec=True, side_effect=lambda path: fake_lstat(path, socket_mode=S_IFSOCK | 0o600)):
                 self.assertEqual(ci.preflight(), 991)
+
+    def test_docker_daemon_must_be_running_with_cgroup_budgets(self):
+        from types import SimpleNamespace
+        valid = ("User=zis-ci-guest\\nMemoryMax=6442450944\\nTasksMax=256\\n"
+                 "CPUQuotaPerSecUSec=2s\\nActiveState=active\\n")
+        with patch.object(ci.subprocess, "run", return_value=SimpleNamespace(stdout=valid)):
+            ci.daemon_budget_preflight()
+        for changed in (valid.replace("MemoryMax=6442450944", "MemoryMax=infinity"),
+                        valid.replace("TasksMax=256", "TasksMax=infinity"),
+                        valid.replace("CPUQuotaPerSecUSec=2s", "CPUQuotaPerSecUSec=infinity"),
+                        valid.replace("ActiveState=active", "ActiveState=inactive"),
+                        valid.replace("User=zis-ci-guest", "User=root")):
+            with self.subTest(changed=changed), \
+                 patch.object(ci.subprocess, "run", return_value=SimpleNamespace(stdout=changed)):
+                with self.assertRaises(ci.Refused):
+                    ci.daemon_budget_preflight()
+
+    def test_github_token_private_fd_and_symlink_denial(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "release.json"
+            target.write_text(json.dumps({"token": "test-nonsecret-key"}))
+            target.chmod(0o600)
+            with patch.object(ci, "TOKEN", target):
+                self.assertEqual(ci.private_github_token(), "test-nonsecret-key")
+                target.chmod(0o644)
+                with self.assertRaises(ci.Refused):
+                    ci.private_github_token()
+                target.chmod(0o600)
+                alias = Path(folder) / "real.json"
+                target.rename(alias)
+                target.symlink_to(alias)
+                with self.assertRaises(ci.Refused):
+                    ci.private_github_token()
+
+    def test_subprocess_log_file_size_hard_limit(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "output.log"
+            with log.open("wb") as f:
+                result = subprocess.run(
+                    ["/usr/bin/prlimit", "--fsize=1024:1024", "--",
+                     "/usr/bin/python3", "-c", "import os;os.write(1,b'X'*4096)"],
+                    stdout=f, stderr=subprocess.DEVNULL, timeout=8)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertLessEqual(log.stat().st_size, 1024)
 
     def test_signed_receipt_is_write_once_and_old_bytes_remain(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(ci, "RECEIPTS", Path(folder)):
