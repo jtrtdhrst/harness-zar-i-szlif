@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 from role_env_projector import project, ROLE_PROVIDER, MARKER
 
 
@@ -24,6 +25,21 @@ class RoleProjectionTests(unittest.TestCase):
 
     def call(self, apply=False):
         return project(self.root, uid=self.uid, gid=self.gid, apply=apply)
+
+    def test_root_invocation_refused_without_any_mutation(self):
+        source_before = (self.root / ".env").read_bytes()
+        with mock.patch("role_env_projector.os.geteuid", return_value=0):
+            with self.assertRaisesRegex(PermissionError, "root execution refused"):
+                self.call(apply=True)
+        self.assertEqual((self.root / ".env").read_bytes(), source_before)
+        for role in ROLE_PROVIDER:
+            self.assertTrue((self.root / "profiles" / role / ".env").is_symlink())
+
+    def test_wrong_nonroot_identity_refused(self):
+        with mock.patch("role_env_projector.os.geteuid", return_value=self.uid + 1000):
+            with self.assertRaisesRegex(PermissionError, "does not own"):
+                self.call(apply=True)
+        self.assertTrue((self.root / "profiles" / "cho" / ".env").is_symlink())
 
     def test_exact_role_provider_projection(self):
         self.assertEqual(self.call()["changes_needed"], len(ROLE_PROVIDER))
