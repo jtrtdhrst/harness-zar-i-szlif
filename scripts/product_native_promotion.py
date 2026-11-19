@@ -63,6 +63,34 @@ LEGACY_KNOWLEDGE_SHA = "81c4b068b89f4c035098c6c9107f755f56919a87"
 LEGACY_KNOWLEDGE_PR = 164
 LEGACY_CI_ONLY_FILES = frozenset({"scripts/ci-path-coverage.mjs", "tests/ci-path-coverage.test.mjs"})
 
+# Three immutable, pre-existing, non-runtime direct maintenance commits on main.
+# This exception records only their specific reviewed file inventories; it is
+# NOT a general direct-push allowance or CI/native-review bypass for runtime.
+# They are skipped without advancing ci-approved or deploying anything.
+KNOWN_NONRUNTIME_MAINTENANCE = {
+    "e6fea9b1b81d7afae9086983160723084cdc2ead": frozenset({(".gitignore", "modified")}),
+    "54f3db248ff35cce3a40b5de99270d8ed283d402": frozenset({("docs/dag-e2e-nonhost.md", "removed")}),
+    "63441d5d3056f4845d4bfcaf908429f8f09d620f": frozenset({
+        ("mcp/.gitkeep", "removed"), ("product/.gitkeep", "removed"),
+        ("www/landing/.gitkeep", "removed"), ("www/mcp/.gitkeep", "removed")}),
+}
+
+
+def known_nonruntime_maintenance(sha, node):
+    expected = KNOWN_NONRUNTIME_MAINTENANCE.get(sha)
+    files = node.get("files") if isinstance(node, dict) else None
+    parents = node.get("parents") if isinstance(node, dict) else None
+    if expected is None or not isinstance(files, list) or len(files) != len(expected):
+        return False
+    if not isinstance(parents, list) or len(parents) != 1:
+        return False
+    actual = []
+    for file in files:
+        if not isinstance(file, dict) or not isinstance(file.get("filename"), str) or not isinstance(file.get("status"), str):
+            return False
+        actual.append((file["filename"], file["status"]))
+    return len(set(actual)) == len(actual) and frozenset(actual) == expected
+
 class Denied(Exception):
     pass
 
@@ -505,6 +533,12 @@ def candidate_history(release_sha, main_sha):
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
+        # Pinned housekeeping commits cannot become a release authorization:
+        # their exact file inventories are checked; every other direct commit
+        # still fails closed in provenance() below.
+        if known_nonruntime_maintenance(current, node):
+            current = first
+            continue
         pr, head = provenance(current)
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
