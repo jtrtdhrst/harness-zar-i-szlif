@@ -37,8 +37,19 @@ def checked(argv, fail_code, *, runner=subprocess.run):
 def check_source(repo, expected_sha, *, runner=subprocess.run):
     if not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha):
         raise ParityFailure("expected_sha_invalid")
-    # Remote-tracking refs may be weeks old. Query the real upstream; fail
-    # closed on missing credentials without echoing stderr or access tokens.
+    # Validate the expanded origin before trusting an upstream SHA. Never print
+    # a URL: it can contain credentials, and a lookalike host is not GitHub.
+    origin = checked(["git", "-C", str(repo), "remote", "get-url", "origin"],
+                     "source_remote_unverifiable", runner=runner)
+    trusted = (
+        r"https://github\\.com/miloszspyrka-code/harness-zar-i-szlif(?:\\.git)?",
+        r"git@github\\.com:miloszspyrka-code/harness-zar-i-szlif(?:\\.git)?",
+        r"ssh://git@github\\.com/miloszspyrka-code/harness-zar-i-szlif(?:\\.git)?",
+    )
+    if not any(re.fullmatch(pattern, origin, flags=re.IGNORECASE) for pattern in trusted):
+        raise ParityFailure("source_remote_untrusted")
+    # Remote-tracking refs may be weeks old; query the verified real origin.
+    # Fail closed on missing credentials without echoing stderr.
     head = checked(["git", "-C", str(repo), "ls-remote", "--exit-code",
                     "origin", "refs/heads/main"],
                    "upstream_main_unverifiable", runner=runner)
@@ -75,11 +86,19 @@ def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run):
                   "runtime_unverifiable", runner=runner).splitlines()
     if len(ids) != 1 or not re.fullmatch(r"[a-f0-9]{12,64}", ids[0]):
         raise ParityFailure("runtime_missing_or_ambiguous")
-    raw = checked(["docker", "inspect", ids[0], "--format", "{{json .Config}}"],
+    # Never request .Config as a whole: it includes container environment
+    # secrets. Project only the two fields needed for runtime parity.
+    raw = checked(["docker", "inspect", ids[0], "--format",
+                   "{{json .Config.Labels}}\\n{{json .Config.Image}}"],
                   "runtime_unverifiable", runner=runner)
     try:
-        config = json.loads(raw)
-        labels = config.get("Labels") or {}
+        lines = raw.splitlines()
+        if len(lines) != 2:
+            raise ParityFailure("runtime_metadata_invalid")
+        labels, image = (json.loads(lines[0]) or {}), json.loads(lines[1])
+        if not isinstance(labels, dict) or not isinstance(image, str):
+            raise ParityFailure("runtime_metadata_invalid")
+        config = {"Labels": labels, "Image": image}
         if labels.get("coolify.serviceUuid") != uuid:
             raise ParityFailure("runtime_uuid_mismatch")
         revision = labels.get("org.opencontainers.image.revision")
