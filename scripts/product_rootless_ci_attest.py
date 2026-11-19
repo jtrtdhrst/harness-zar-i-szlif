@@ -71,7 +71,7 @@ def preflight() -> int:
     if uid == 0:
         raise Refused("guest_must_be_nonroot")
     s = DOCKER_SOCKET.stat()
-    if not stat.S_ISSOCK(s.st_mode) or s.st_uid != uid or s.st_mode & 0o007:
+    if not stat.S_ISSOCK(s.st_mode) or s.st_uid != uid or stat.S_IMODE(s.st_mode) != 0o600:
         raise Refused("dedicated_rootless_socket_untrusted")
     return uid
 
