@@ -195,8 +195,19 @@ docker build --progress=plain --file ops/coolify/Dockerfile --target build --tag
 docker build --progress=plain --file ops/coolify/Dockerfile.ci --tag product-ci:validation .
 docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 --memory 5g --env npm_config_offline=true product-ci:validation sh -c 'npm run validate:code'
 docker build --progress=plain --file ops/coolify/Dockerfile --tag product-ci:verified .
+name=zis-ci-release-EXPECTED_SHORT
+negative=$(mktemp)
+trap 'docker rm -f "$name" >/dev/null 2>&1 || true; rm -f "$negative"' EXIT
+docker run -d --name "$name" --network none --cap-drop ALL --security-opt no-new-privileges -e SOURCE_COMMIT=EXPECTED_SHA product-ci:verified >/dev/null
+docker exec "$name" cat /usr/share/nginx/html/__release.json | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["commit"]=="EXPECTED_SHA" and x["source"]=="zar-i-szlif/main"'
+docker rm -f "$name" >/dev/null
+if docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges product-ci:verified >"$negative" 2>&1; then
+    echo NEGATIVE_VERSIONLESS_ALLOWED
+    exit 89
+fi
+grep -q 'release provenance unavailable' "$negative"
 echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
-'''.replace("EXPECTED_TREE", command("git", "write-tree", cwd=source))
+'''.replace("EXPECTED_TREE", command("git", "write-tree", cwd=source)).replace("EXPECTED_SHA", sha).replace("EXPECTED_SHORT", sha[:12])
     env = ["HOME=/var/lib/zis-ci-guest",
            "DOCKER_HOST=unix:///run/zis-ci-guest/docker.sock",
            "PYTHONDONTWRITEBYTECODE=1"]
@@ -246,6 +257,39 @@ def store_receipt(payload: dict, key: bytes) -> Path:
             tmp.unlink()
     return name
 
+def store_premerge_receipt(payload: dict) -> Path:
+    """Compatibility with already deployed native Product promotion controller.
+
+    The root-owned file is written only after the same successful immutable
+    source build+offline tests+positive/negative runtime canaries as the
+    signed audit receipt. This does not alter ci-approved or Coolify.
+    """
+    name = RECEIPTS / ("premerge-" + payload["sha"] + ".json")
+    record = {
+        "schema_version": 2, "sha": payload["sha"], "tree": payload["tree"],
+        "runner": "zis-rootless-exact-tree",
+        "source": "root-verified-systemd-e2e",
+        "exit_code": 0, "verified_at": payload["verified_at"],
+        "stages": {
+            "exact_tree": True, "rootless_isolation": True,
+            "full_product_build": True, "network_none_validation": True,
+            "final_image": True, "positive_provenance": True,
+            "negative_versionless": True,
+        },
+    }
+    tmp = name.with_suffix(".new")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(canonical(record) + b"\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, name)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return name
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sha", required=True)
@@ -272,8 +316,10 @@ def main() -> int:
                    "exit_code": 0, "log_sha256": log_sha,
                    "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         path = store_receipt(payload, receipt_key())
+        premerge = store_premerge_receipt(payload)
     print(json.dumps({"result": "attested", "sha": sha, "tree": tree,
-                      "runner_uid": uid, "receipt": str(path)}, sort_keys=True))
+                      "runner_uid": uid, "receipt": str(path),
+                      "premerge_receipt": str(premerge)}, sort_keys=True))
     return 0
 
 if __name__ == "__main__":
