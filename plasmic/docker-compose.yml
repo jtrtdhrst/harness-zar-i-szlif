@@ -32,7 +32,7 @@ services:
         condition: service_healthy
     environment:
       HOST: ${PLASMIC_PUBLIC_URL:?PLASMIC_PUBLIC_URL is required}
-      REACT_APP_DEFAULT_HOST_URL: https://plasmic.kompaszbiorek.pl/static/host.html
+      REACT_APP_DEFAULT_HOST_URL: https://host.plasmicdev.com/static/host.html
       NODE_ENV: production
       DISABLE_EMAIL: "1"
       GENERIC_WORKER_POOL_SIZE: "1"
@@ -74,7 +74,7 @@ services:
         condition: service_healthy
     environment:
       HOST: ${PLASMIC_PUBLIC_URL:?PLASMIC_PUBLIC_URL is required}
-      REACT_APP_DEFAULT_HOST_URL: https://plasmic.kompaszbiorek.pl/static/host.html
+      REACT_APP_DEFAULT_HOST_URL: https://host.plasmicdev.com/static/host.html
       NODE_ENV: production
       DISABLE_EMAIL: "1"
       BACKEND_PORT: "3005"
