@@ -156,17 +156,9 @@ async def trusted_role(request: web.Request, handler):
         return error(503, "role_identity_unavailable")
     if not presented or not hmac.compare_digest(presented, expected):
         return error(401, "role_not_authorized")
-    # Only actual data-plane requests consume budget; /models remains a
-    # cheap authenticated discovery endpoint.
-    if not (request.method == "POST" and request.path.endswith("/v1/responses")):
-        return await handler(request)
-    admitted, reason = await request.app["capacity"].admit(role)
-    if not admitted:
-        return error(429, reason)
-    try:
-        return await handler(request)
-    finally:
-        await request.app["capacity"].release(role)
+    # Quota is acquired after data-plane payload validation in responses(),
+    # so authenticated but invalid requests cannot starve a legitimate role.
+    return await handler(request)
 
 
 async def models(request: web.Request):
@@ -194,34 +186,41 @@ async def responses(request: web.Request):
         return error(400, "codex_requires_stream_true_store_false")
     if "input" not in document:
         return error(400, "input_required")
+    role = request.match_info["role"]
+    admitted, reason = await request.app["capacity"].admit(role)
+    if not admitted:
+        return error(429, reason)
     try:
-        base, token, official_headers = await asyncio.to_thread(request.app["credential_resolver"])
-    except Exception:
-        # No OAuth details, provider errors, account IDs or tokens leak to clients.
-        return error(503, "upstream_auth_unavailable")
-    if base != UPSTREAM:
-        return error(503, "upstream_not_pinned")
-    headers = {"Authorization": "Bearer " + token, "Accept": "text/event-stream",
-               "Content-Type": "application/json", **official_headers}
-    client: Callable = request.app["http_factory"]
-    try:
-        async with client(timeout=ClientTimeout(total=None, sock_connect=10, sock_read=180)) as session:
-            async with session.post(base + "/responses", data=body, headers=headers,
-                                    allow_redirects=False) as upstream:
-                if upstream.status != 200:
-                    # Never relay upstream error bodies: they may include auth metadata.
-                    return error(502, "upstream_http_failure")
-                output = web.StreamResponse(status=200, headers={
-                    "Content-Type": "text/event-stream", "Cache-Control": "no-store",
-                    "X-Accel-Buffering": "no"})
-                await output.prepare(request)
-                async for chunk in upstream.content.iter_chunked(16384):
-                    await output.write(chunk)
-                await output.write_eof()
-                return output
-    except (asyncio.TimeoutError, OSError):
-        return error(502, "upstream_transport_failure")
+        try:
+            base, token, official_headers = await asyncio.to_thread(request.app["credential_resolver"])
+        except Exception:
+            # No OAuth details, provider errors, account IDs or tokens leak to clients.
+            return error(503, "upstream_auth_unavailable")
+        if base != UPSTREAM:
+            return error(503, "upstream_not_pinned")
+        headers = {"Authorization": "Bearer " + token, "Accept": "text/event-stream",
+                   "Content-Type": "application/json", **official_headers}
+        client: Callable = request.app["http_factory"]
+        try:
+            async with client(timeout=ClientTimeout(total=None, sock_connect=10, sock_read=180)) as session:
+                async with session.post(base + "/responses", data=body, headers=headers,
+                                        allow_redirects=False) as upstream:
+                    if upstream.status != 200:
+                        # Never relay upstream error bodies: they may include auth metadata.
+                        return error(502, "upstream_http_failure")
+                    output = web.StreamResponse(status=200, headers={
+                        "Content-Type": "text/event-stream", "Cache-Control": "no-store",
+                        "X-Accel-Buffering": "no"})
+                    await output.prepare(request)
+                    async for chunk in upstream.content.iter_chunked(16384):
+                        await output.write(chunk)
+                    await output.write_eof()
+                    return output
+        except (asyncio.TimeoutError, OSError):
+            return error(502, "upstream_transport_failure")
 
+    finally:
+        await request.app["capacity"].release(role)
 
 def create_app(*, key_resolver=role_secret, credential_resolver=native_credential,
                http_factory=ClientSession):
