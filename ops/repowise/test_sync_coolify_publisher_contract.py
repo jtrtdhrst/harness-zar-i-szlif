@@ -10,7 +10,7 @@ PRODUCT = "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_
 
 def guard():
     script = SOURCE.read_text(encoding="utf-8")
-    marker = 'docker inspect "$coolify_publisher" | python3 -c ' + "'\n"
+    marker = 'docker inspect --format "$INSPECT_FORMAT" "$coolify_publisher" | python3 -c ' + "'\n"
     return script.split(marker, 1)[1].split("\n' || fail", 1)[0]
 
 def discover(payloads):
@@ -18,7 +18,7 @@ def discover(payloads):
     marker = 'COOLIFY_PUBLISHER=$(python3 -c ' + "'\n"
     discovery = script.split(marker, 1)[1].split("\n' <<< \"$ALL_RUNNING_INSPECT\")", 1)[0]
     return subprocess.run([sys.executable, "-c", discovery],
-                          input=json.dumps(payloads), text=True, capture_output=True)
+                          input="\n".join(json.dumps(x) for x in payloads), text=True, capture_output=True)
 
 def fixture():
     def mount(dest, source, rw):
@@ -45,7 +45,7 @@ def fixture():
 def check(payload):
     return subprocess.run(
         [sys.executable, "-c", guard()],
-        input=json.dumps([payload]), text=True, capture_output=True
+        input=json.dumps(payload), text=True, capture_output=True
     )
 
 class CoolifyPublisherSyncContractTests(unittest.TestCase):
@@ -116,8 +116,20 @@ class CoolifyPublisherSyncContractTests(unittest.TestCase):
     def test_source_detects_docker_list_and_inspect_failures(self):
         s = SOURCE.read_text(encoding="utf-8")
         self.assertIn('RUNNING_IDS=$(docker ps --quiet) || fail "coolify-docker-list-failed"', s)
-        self.assertIn('ALL_RUNNING_INSPECT=$(docker inspect $RUNNING_IDS) || fail "coolify-docker-inspect-failed"', s)
+        self.assertIn('ALL_RUNNING_INSPECT=$(docker inspect --format "$INSPECT_FORMAT" $RUNNING_IDS) || fail "coolify-docker-inspect-failed"', s)
         self.assertIn('|| fail "coolify-publisher-discovery-failed"', s)
+
+    def test_inspect_projection_never_reads_environment_values(self):
+        s = SOURCE.read_text(encoding="utf-8")
+        projection = s.split("INSPECT_FORMAT='",1)[1].split("'\nALL_RUNNING_INSPECT=",1)[0]
+        self.assertNotIn(".Config.Env", projection)
+        self.assertNotIn('"Env"', projection)
+        self.assertNotIn("{{json .Config}}", projection)
+        self.assertIn("{{json .Config.User}}", projection)
+        self.assertIn("{{json .Mounts}}", projection) if "{{json .Mounts}}" in projection else self.assertIn(".Mounts",projection)
+        self.assertIn("coolify.applicationUuid", projection)
+        self.assertIn('docker inspect --format "$INSPECT_FORMAT" "$coolify_publisher"', s)
+        self.assertIn('docker inspect --format "$INSPECT_FORMAT" $RUNNING_IDS', s)
 
     def test_order_precedes_swap_and_rollback(self):
         s = SOURCE.read_text(encoding="utf-8")
