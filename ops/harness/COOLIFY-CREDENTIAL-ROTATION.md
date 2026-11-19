@@ -39,7 +39,7 @@ Przykład baseline (nie wykonuje zmian):
 
 python3 scripts/harness_coolify_credential_gate.py --phase inspect --legacy-service-uuid a6ci2beifbinzckfnneiqnjd --expected-image-id sha256:bd1b33731dfe3342166359e5df46d459eb2dde68b73525a28ada63f6c19d291b
 
-Staged i revoked wymagają każdej pary --target controller=serviceUUID dla harness, product_image i product_mcp_host. UUID muszą pochodzić z aktualnej autorytatywnej konfiguracji platformy, nie z wymyślonego placeholdera. Endpoint GET testuje tylko odczyt i dostęp do wskazanego zasobu. Gate nie zapisuje sekretów, nie zmienia tokenów, nie wykonuje wdrożeń; wychodzi z kodem 1, jeśli warunki nie są spełnione.
+Staged i revoked wymagają każdej pary --target controller=resourceUUID oraz --deny-target controller=outOfScopeUUID dla harness, product_image i product_mcp_host. Dla Harness wybierz istniejący, ale niedozwolony serwis; dla obu kontrolerów Product wybierz istniejącą niedozwoloną aplikację. Test akceptuje tylko HTTP 403/404 dla zabronionych zasobów. Harness używa endpointu /services/{uuid}, a kontrolery Product /applications/{uuid}. UUID muszą pochodzić z aktualnej autorytatywnej konfiguracji platformy, nie z wymyślonego placeholdera. Endpoint GET testuje tylko odczyt i dostęp do wskazanego zasobu. Gate nie zapisuje sekretów, nie zmienia tokenów, nie wykonuje wdrożeń; wychodzi z kodem 1, jeśli warunki nie są spełnione.
 
 ## Zweryfikowany E2E WAB — niezależny od release
 
