@@ -115,6 +115,29 @@ def negative_cases(manifest):
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
     arg.add_argument("--self-test", action="store_true")
-  
+    options = arg.parse_args()
+    manifest = json.loads(Path("ops/release-lanes.json").read_text(encoding="utf-8"))
+    a, b, c = check(manifest)
+    print(f"PASS: {a} release lanes + {b} Coolify hold/inactive resources + {c} existing Workers (dated structural inventory)")
+    if options.self_test:
+        negative_cases(manifest)
 
-... [1639 characters truncated]
+    # Use the already-enabled release-lanes-policy workflow. The GitHub App
+    # cannot create/update a new .github/workflows file without workflows scope.
+    # These checks run in the existing workflow's --self-test invocation.
+    from check_service_coverage import check as check_service_coverage
+    from unittest import TestLoader, TextTestRunner
+    classified, targeted = check_service_coverage()
+    print(f"PASS: {classified} root folders classified, {targeted} targeted CI roots")
+    if options.self_test:
+        suite = TestLoader().discover("scripts", pattern="test_check_service_coverage.py")
+        # ZARI-240: the fail-closed release admission gate and the root-invoked
+        # local-CI attester must run in the same PR-time lane as the structural
+        # release contract, so a hold/attestation regression cannot merge.
+        for pattern in ("test_harness_release_admission.py", "test_harness_local_ci_attest.py",
+                        "test_harness_delivery_controller.py", "test_harness_native_delivery.py",
+                        "test_harness_install_preflight.py"):
+            suite.addTests(TestLoader().discover("scripts", pattern=pattern))
+        result = TextTestRunner(verbosity=2).run(suite)
+        if not result.wasSuccessful():
+            raise SystemExit(1)
