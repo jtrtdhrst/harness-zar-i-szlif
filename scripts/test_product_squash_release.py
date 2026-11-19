@@ -169,5 +169,21 @@ class ProductSquashTests(unittest.TestCase):
         self.assertNotIn("  pull_request_target:",workflow)
         self.assertNotIn("runs-on: ubuntu-latest",workflow)
 
+
+    def test_release_lanes_policy_never_executes_pr_source_on_persistent_runner(self):
+        from pathlib import Path
+        workflow=(Path(__file__).resolve().parent.parent /
+                  ".github/workflows/release-lanes-policy.yml").read_text()
+        self.assertNotIn("  pull_request:", workflow)
+        self.assertNotIn("  pull_request_target:", workflow)
+        self.assertIn("  push:\n    branches: [main]", workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("runs-on: [self-hosted, linux, x64, local-build]", workflow)
+        self.assertIn('test "$(id -un)" = actions-zis', workflow)
+        self.assertIn("! test -w /var/run/docker.sock", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("python scripts/check-release-lanes.py --self-test", workflow)
+
 if __name__=="__main__":
     unittest.main()
