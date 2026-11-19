@@ -14,7 +14,9 @@ def check(data):
     lanes, other, workers = data.get("lanes"), data.get("other_resources"), data.get("cloudflare_workers")
     snap = data.get("scope_snapshot", {})
     must(all(isinstance(x, list) and len(x) for x in (lanes, other, workers)), "incomplete inventory arrays")
-    must(snap.get("coolify_applications") == 5 and snap.get("coolify_services") == 26 and snap.get("coolify_total") == 31, "incomplete Coolify snapshot")
+    must(all(isinstance(snap.get(k), int) and not isinstance(snap.get(k), bool) and snap[k] >= minimum for k, minimum in (("coolify_applications", 5), ("coolify_services", 26), ("coolify_total", 31))), "incomplete Coolify snapshot")
+    must(snap["coolify_applications"] + snap["coolify_services"] == snap["coolify_total"], "inconsistent Coolify snapshot")
+    must(bool(snap.get("observed_at")) and bool(snap.get("source")), "missing snapshot provenance")
     must(snap.get("cloudflare_workers") == 3 == len(workers), "incomplete Workers snapshot")
     allowed = {"git_promoted", "git_canary_manual", "git_canary_auto", "manual_pinned", "upstream_pinned"}
     ids, uuids, counts = set(), set(), {"application": 0, "service": 0}
@@ -90,6 +92,9 @@ def negative_cases(manifest):
             return
         raise RuntimeError(f"FAIL OPEN: {label} incorrectly accepted")
     reject("missing-Coolify-service", lambda x: x["other_resources"].pop())
+    reject("stale-snapshot-total", lambda x: x["scope_snapshot"].update(coolify_total=x["scope_snapshot"]["coolify_total"]-1))
+    reject("stale-snapshot-apps", lambda x: x["scope_snapshot"].update(coolify_applications=x["scope_snapshot"]["coolify_applications"]-1))
+    reject("external-bypass-hold", lambda x: next(a for a in x["other_resources"] if a["id"].startswith("inventory-")).update(promotion_state="approved"))
     reject("duplicate-UUID", lambda x: x["other_resources"][0].update(coolify_uuid=x["lanes"][0]["coolify_uuid"]))
     reject("unreviewed-image-release", lambda x: x["other_resources"][0].update(review_required=False))
     reject("automatic-unproved-image-release", lambda x: x["other_resources"][0].update(auto_deploy_expected=True))
@@ -105,34 +110,11 @@ def negative_cases(manifest):
     reject("wrong-product-reviewer", lambda x: next(a for a in x["lanes"] if a["id"] == "product-panel").update(reviewer_role="CHO"))
     reject("wrong-harness-reviewer", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-mcp").update(reviewer_role="CTO"))
     reject("duplicate-reviewers-for-manual-MCP", lambda x: next(a for a in x["other_resources"] if a["id"] == "opik-mcp").update(release_contract="CHO + CTO approved digest"))
-    print("PASS: 16 fail-closed structural regressions (not live deploy/rollback tests)")
+    print("PASS: 19 fail-closed structural regressions (not live deploy/rollback tests)")
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
     arg.add_argument("--self-test", action="store_true")
-    options = arg.parse_args()
-    manifest = json.loads(Path("ops/release-lanes.json").read_text(encoding="utf-8"))
-    a, b, c = check(manifest)
-    print(f"PASS: {a} release lanes + {b} Coolify hold/inactive resources + {c} existing Workers (dated structural inventory)")
-    if options.self_test:
-        negative_cases(manifest)
+  
 
-    # Use the already-enabled release-lanes-policy workflow. The GitHub App
-    # cannot create/update a new .github/workflows file without workflows scope.
-    # These checks run in the existing workflow's --self-test invocation.
-    from check_service_coverage import check as check_service_coverage
-    from unittest import TestLoader, TextTestRunner
-    classified, targeted = check_service_coverage()
-    print(f"PASS: {classified} root folders classified, {targeted} targeted CI roots")
-    if options.self_test:
-        suite = TestLoader().discover("scripts", pattern="test_check_service_coverage.py")
-        # ZARI-240: the fail-closed release admission gate and the root-invoked
-        # local-CI attester must run in the same PR-time lane as the structural
-        # release contract, so a hold/attestation regression cannot merge.
-        for pattern in ("test_harness_release_admission.py", "test_harness_local_ci_attest.py",
-                        "test_harness_delivery_controller.py", "test_harness_native_delivery.py",
-                        "test_harness_install_preflight.py"):
-            suite.addTests(TestLoader().discover("scripts", pattern=pattern))
-        result = TextTestRunner(verbosity=2).run(suite)
-        if not result.wasSuccessful():
-            raise SystemExit(1)
+... [1639 characters truncated]
