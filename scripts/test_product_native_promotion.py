@@ -17,9 +17,20 @@ SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
     def test_noop_when_main_already_deployed(self):
-        with patch.object(p,"ref",side_effect=[OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
+        with patch.object(p,"ref",side_effect=[OLD,OLD,OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
             self.assertEqual(p.process(plan=True)["result"],"already_released")
+
+    def test_already_released_denies_stale_live_read_ref_race(self):
+        # The live HTTP read may outlast a main/release branch move.
+        for after_live in ((NEW, OLD), (OLD, NEW)):
+            with self.subTest(after_live=after_live):
+                with patch.object(p, "ref", side_effect=[OLD, OLD, *after_live]), \
+                     patch.object(p, "live_release", return_value=OLD), \
+                     patch.object(p, "candidate_history", side_effect=AssertionError("no scan")), \
+                     patch.object(p, "github_api", side_effect=AssertionError("no write")):
+                    with self.assertRaisesRegex(p.Denied, "git_ref_race"):
+                        p.process(plan=False)
 
     def test_non_runtime_noop_denies_main_or_release_ref_race(self):
         # A direct metadata-only commit may be followed by a runtime commit
