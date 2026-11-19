@@ -11,10 +11,11 @@ g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)
 OK = {k:{"legacy_ref":False,"dedicated_ref":True} for k in g.CONTROLLERS}
 CANDIDATES = {k:200 for k in g.CONTROLLERS}
+DENIED = {k:403 for k in g.CONTROLLERS}
 
 class RotationGateTests(unittest.TestCase):
   def test_revoked_requires_every_condition(self):
-    self.assertEqual(g.decide("revoked",OK,401,CANDIDATES,False,True), [])
+    self.assertEqual(g.decide("revoked",OK,401,CANDIDATES,False,True,DENIED), [])
   def test_legacy_still_live(self):
     self.assertIn("old_token_not_revoked",g.decide("revoked",OK,200,CANDIDATES,False,True))
   def test_no_self_approval_before_switch(self):
@@ -36,7 +37,7 @@ class RotationGateTests(unittest.TestCase):
   def test_baseline_never_success(self):
     self.assertIn("rotation_incomplete",g.decide("inspect",OK,401,{},False,True))
   def test_staged_is_not_revoked(self):
-    self.assertEqual(g.decide("staged",OK,200,CANDIDATES,False,True),[])
+    self.assertEqual(g.decide("staged",OK,200,CANDIDATES,False,True,DENIED),[])
   def test_symlink_denied(self):
     with tempfile.TemporaryDirectory() as tmp:
       base=Path(tmp)/"secret";base.write_text("test-value");os.chmod(base,0o600)
@@ -59,6 +60,18 @@ class RotationGateTests(unittest.TestCase):
                        {"legacy_ref": False, "dedicated_ref": True})
   def test_invalid_uuid_denied_before_http(self):
     with self.assertRaises(g.Denied):g.get_status("secret","../etc/passwd")
+
+  def test_scoped_token_cannot_read_other_resource(self):
+    wrong = dict(DENIED)
+    wrong["product_image"] = 200
+    self.assertIn("product_image_scope_not_restricted",
+                  g.decide("revoked", OK, 401, CANDIDATES, False, True, wrong))
+
+  def test_scope_negative_must_be_observed(self):
+    without = dict(DENIED)
+    del without["harness"]
+    self.assertIn("harness_scope_denial_unverified",
+                  g.decide("staged", OK, 200, CANDIDATES, False, True, without))
 
   def test_each_controller_uses_correct_coolify_api_route(self):
     self.assertEqual(g.RESOURCE_KIND, {
