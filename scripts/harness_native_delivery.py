@@ -314,9 +314,16 @@ class Transport:
             raise RuntimeError(f"{service}: prepared image carries no exact source revision")
         pinned_ref = image_reference(service, digest, self.registry)
         key = (service, uuid)
+        # Capture pre-deployment identity while the UUID-qualified runtime
+        # is still healthy; a mutable tag alone cannot prove rollback identity.
+        previous = self.health(service, uuid)
+        previous_digest = previous.get("digest")
+        if (previous.get("status") != "ok" or not isinstance(previous_digest, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", previous_digest)):
+            raise RuntimeError(f"{service}: previous running image digest unverified")
         self._rollback_snapshots.pop(key, None)
         def record_snapshot(path):
-            self._rollback_snapshots[key] = path
+            self._rollback_snapshots[key] = (path, previous_digest)
         _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], pinned_ref,
                                     on_backup=record_snapshot)
         return str(body.get("deployment_uuid") or body.get("uuid") or "deploy")
@@ -349,9 +356,14 @@ class Transport:
 
     def rollback(self, service, uuid):
         self._known(service)
-        backup = self._rollback_snapshots.pop((service, uuid), None)
-        if backup is None:
+        snapshot = self._rollback_snapshots.pop((service, uuid), None)
+        if snapshot is None:
             raise RuntimeError(f"{service}: no snapshot from this deployment attempt")
+        if (not isinstance(snapshot, tuple) or len(snapshot) != 2
+                or not isinstance(snapshot[1], str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot[1])):
+            raise RuntimeError(f"{service}: previous image digest not captured")
+        backup, previous_digest = snapshot
         raw = backup.read_text(encoding="utf-8")
         self.host.coolify("PATCH", f"/services/{uuid}",
                           {"docker_compose_raw": base64.b64encode(raw.encode()).decode()})
@@ -365,7 +377,9 @@ class Transport:
         while time.monotonic() < deadline:
             try:
                 current_compose = compose_for(self.host, uuid)
-                if current_compose == raw and self.health(service, uuid).get("status") == "ok":
+                observed = self.health(service, uuid)
+                if (current_compose == raw and observed.get("status") == "ok"
+                        and observed.get("digest") == previous_digest):
                     return str(body.get("deployment_uuid") or body.get("uuid") or "rollback")
             except (OSError, RuntimeError, ValueError):
                 pass
