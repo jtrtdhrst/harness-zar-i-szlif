@@ -121,6 +121,28 @@ class AttesterSecurityTests(unittest.TestCase):
                 with self.assertRaises(ci.Refused):
                     ci.private_github_token()
 
+    def test_docker_client_home_is_fresh_and_credential_empty(self):
+        import shutil
+        with patch.object(ci.os, "chown", return_value=None):
+            home, env = ci.isolated_guest_environment()
+        try:
+            environment = dict(item.split("=", 1) for item in env)
+            self.assertEqual(environment["HOME"], str(home))
+            config = Path(environment["DOCKER_CONFIG"])
+            self.assertEqual(config, home / ".docker")
+            self.assertTrue(config.is_dir())
+            self.assertEqual(list(config.iterdir()), [])
+            self.assertEqual(config.stat().st_mode & 0o777, 0o700)
+            self.assertFalse((home / ".docker" / "config.json").exists())
+        finally:
+            shutil.rmtree(home)
+
+    def test_production_image_smoke_cannot_skip_process_memory_capabilities(self):
+        import inspect
+        source = inspect.getsource(ci.guest_ci)
+        self.assertEqual(source.count("--cap-drop ALL --pids-limit 256 --memory 512m"), 2)
+        self.assertIn('test -z "$(find "$DOCKER_CONFIG"', source)
+
     def test_subprocess_log_file_size_hard_limit(self):
         import subprocess
         with tempfile.TemporaryDirectory() as folder:
