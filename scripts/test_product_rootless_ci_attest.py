@@ -90,8 +90,8 @@ class AttesterSecurityTests(unittest.TestCase):
 
     def test_docker_daemon_must_be_running_with_cgroup_budgets(self):
         from types import SimpleNamespace
-        valid = ("User=zis-ci-guest\\nMemoryMax=6442450944\\nTasksMax=256\\n"
-                 "CPUQuotaPerSecUSec=2s\\nActiveState=active\\n")
+        valid = ("User=zis-ci-guest\nMemoryMax=6442450944\nTasksMax=256\n"
+                 "CPUQuotaPerSecUSec=2s\nActiveState=active\n")
         with patch.object(ci.subprocess, "run", return_value=SimpleNamespace(stdout=valid)):
             ci.daemon_budget_preflight()
         for changed in (valid.replace("MemoryMax=6442450944", "MemoryMax=infinity"),
@@ -128,7 +128,7 @@ class AttesterSecurityTests(unittest.TestCase):
             with log.open("wb") as f:
                 result = subprocess.run(
                     ["/usr/bin/prlimit", "--fsize=1024:1024", "--",
-                     "/usr/bin/python3", "-c", "import os;os.write(1,b'X'*4096)"],
+                     "/usr/bin/python3", "-c", "import os;os.write(1,b'X'*1024);os.write(1,b'Y'*1024)"],
                     stdout=f, stderr=subprocess.DEVNULL, timeout=8)
             self.assertNotEqual(result.returncode, 0)
             self.assertLessEqual(log.stat().st_size, 1024)
