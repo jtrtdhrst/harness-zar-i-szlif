@@ -131,7 +131,7 @@ if __name__ == "__main__":
         # release contract, so a hold/attestation regression cannot merge.
         for pattern in ("test_harness_release_admission.py", "test_harness_local_ci_attest.py",
                         "test_harness_delivery_controller.py", "test_harness_native_delivery.py",
-                        "test_harness_install_preflight.py"):
+                        "test_harness_install_preflight.py", "test_harness_release_parity.py"):
             suite.addTests(TestLoader().discover("scripts", pattern=pattern))
         result = TextTestRunner(verbosity=2).run(suite)
         if not result.wasSuccessful():
