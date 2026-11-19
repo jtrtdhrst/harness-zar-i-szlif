@@ -8,6 +8,7 @@ npm, git hooks, Docker or PR-supplied shell code as root.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import hmac
 import io
@@ -256,15 +257,21 @@ def main() -> int:
         print(json.dumps({"result": "ready_to_attempt", "source": sha,
                           "isolated_uid": uid, "production_deploy": False}))
         return 0
-    tree, tar = github_snapshot(sha)
-    source = prepare_source(sha, tree, tar, uid)
-    log_sha = guest_ci(source, sha)
-    payload = {"schema_version": 2, "sha": sha, "tree": tree,
-               "runner": "zis-ci-guest-rootless", "runner_uid": uid,
-               "command": "docker build && npm run validate:code (network none) && docker build",
-               "exit_code": 0, "log_sha256": log_sha,
-               "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    path = store_receipt(payload, receipt_key())
+    lock = Path("/var/lib/paperclip-gitops/rootless-ci.lock")
+    with lock.open("a+", encoding="utf8") as locked:
+        try:
+            fcntl.flock(locked.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise Refused("rootless_ci_already_running") from exc
+        tree, tar = github_snapshot(sha)
+        source = prepare_source(sha, tree, tar, uid)
+        log_sha = guest_ci(source, sha)
+        payload = {"schema_version": 2, "sha": sha, "tree": tree,
+                   "runner": "zis-ci-guest-rootless", "runner_uid": uid,
+                   "command": "docker build && npm run validate:code (network none) && docker build",
+                   "exit_code": 0, "log_sha256": log_sha,
+                   "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        path = store_receipt(payload, receipt_key())
     print(json.dumps({"result": "attested", "sha": sha, "tree": tree,
                       "runner_uid": uid, "receipt": str(path)}, sort_keys=True))
     return 0
