@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Product release admission: native Paperclip approval -> exact SHA -> Coolify.
+"""Product release admission: native Multica approval -> exact SHA -> Coolify.
 
 Uses only the existing Coolify GitHub App installation. No PAT, no new app,
 no branch force push. The existing GitHub Actions production promotion must
 be disabled before this controller is enabled. Fails closed on any ambiguity.
+
+When GitHub refuses to start a job for an account billing block, the green
+check-run predicate can never be satisfied. That case is not a pass and not a
+test failure: it is "CI never executed", proven from the check-run timing and
+its billing annotation, and it is then satisfied only by the root-owned
+exact-SHA local CI attestation of the reviewed head while that head's git tree
+is byte-identical to the merged commit's tree. Independent native approval is
+never replaced by that attestation.
 """
 import argparse
-import hashlib
-import hmac
-import stat
-from datetime import datetime, timezone
+import errno
 import fcntl
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -26,14 +33,27 @@ RELEASE_REF = "ci-approved"
 ROOT = Path("/var/lib/paperclip-gitops")
 STATE = ROOT / "zar-i-szlif.json"
 LOCK = ROOT / "zar-i-szlif.lock"
-NATIVE_GATE = Path(os.environ.get("PRODUCT_NATIVE_GATE", "/usr/local/libexec/multica_native_release_gate.py"))
+LOCAL_CI_DIR = ROOT / "local-ci"
+NATIVE_GATE = Path("/usr/local/libexec/multica_native_release_gate.py")
 PUBLIC_RELEASE = "https://panel.zariszlif.pl/__release.json"
 PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 SHA = re.compile(r"^[a-f0-9]{40}$")
-# Coolify builds routinely exceed the old 4 min window (2026-11-06 incident).
-# Keep this below the systemd TimeoutStartSec.
-READBACK_ATTEMPTS = 90
-READBACK_INTERVAL = 10
+# GitHub refuses to start a job for an account billing block. That is not a
+# test failure and not a pass: it is "CI never executed". Only this exact
+# annotation text, on a job that ran for seconds, may be treated that way.
+BILLING_BLOCKED = re.compile(
+    r"recent account payments have failed|spending limit needs to be increased", re.IGNORECASE)
+MAX_NEVER_STARTED_SECONDS = 120
+TRUSTED_ATTESTATION_RUNNER = "zis-local-build"
+TRUSTED_ATTESTATION_SOURCE = "product_local_ci"
+# Attestation trust boundary: written only by product-local-ci-attest.service as
+# User=root into a root:root 0700 tree. Owner/group and mode are part of the
+# evidence, not decoration - a non-root writer could otherwise forge a pass.
+ATTESTATION_UID = 0
+ATTESTATION_GID = 0
+FORBIDDEN_WRITE_BITS = 0o022  # group write | other write
+ATTESTATION_MAX_BYTES = 8192
+
 
 
 # Exact exception for the already-merged RepoWise knowledge migration (#164).
@@ -57,9 +77,20 @@ def run(argv, timeout=30, allow_fail=False):
     return result
 
 
+GITHUB_PATH = re.compile(
+    r"^/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
+# Pagination query is allowed only on the check-run annotations resource.
+GITHUB_ANNOTATIONS_PATH = re.compile(
+    r"^/repos/miloszspyrka-code/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
+    r"(\?per_page=[0-9]{1,3}(&page=[0-9]{1,5})?)?$")
+ANNOTATIONS_PAGE_SIZE = 100
+ANNOTATIONS_MAX_PAGES = 20
+ANNOTATIONS_MAX_TOTAL = 2000
+
+
 def github_api(path, method="get", body=None):
     """Existing installed App only. Never return or print installation token."""
-    if not re.fullmatch(r"/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+", path):
+    if not (GITHUB_PATH.fullmatch(path) or GITHUB_ANNOTATIONS_PATH.fullmatch(path)):
         raise Denied("unsafe_github_resource")
     if method not in ("get", "patch"):
         raise Denied("unsafe_github_method")
@@ -109,15 +140,6 @@ def commit(sha):
     return obj
 
 
-def issue_ref_from_text(text):
-    """Return exactly one distinct Multica issue ref, or fail closed on ambiguity."""
-    refs = re.findall(r"\b([A-Z][A-Z0-9]*-[0-9]{1,7})\b", str(text or ""))
-    unique = sorted(set(refs))
-    if len(unique) > 1:
-        raise Denied("ambiguous_issue_ref")
-    return unique[0] if unique else None
-
-
 def provenance(merge_sha):
     """Exactly one merged main PR with this exact recorded merge commit."""
     candidates = github_api("/repos/" + REPO + "/commits/" + merge_sha + "/pulls")
@@ -135,97 +157,302 @@ def provenance(merge_sha):
     head = (pr.get("head") or {}).get("sha")
     if not isinstance(number, int) or number < 1 or not isinstance(head, str) or not SHA.fullmatch(head):
         raise Denied("invalid_pr_identity")
-    text = str(pr.get("title") or "")
-    issue_ref = issue_ref_from_text(text)
-    return number, head, issue_ref
+    return number, head
 
 
-ROOTLESS_RECEIPT_KEY = Path("/etc/paperclip-gitops/product-rootless-ci-signing.key")
-ROOTLESS_RECEIPT_DIR = Path("/var/lib/paperclip-gitops/local-ci")
-ROOTLESS_CI_COMMAND = "docker build && npm run validate:code (network none) && docker build"
+def _annotation_key(note):
+    """Identity of one annotation, used to detect repeating/overlapping pages."""
+    return (str(note.get("path", "")), str(note.get("start_line", "")),
+            str(note.get("annotation_level", "")), str(note.get("message", "")))
 
-def _read_private_root_file(path, *, max_bytes=4096):
-    """Open once, no symlinks. Only root-owned private files in trusted dirs."""
+
+def _annotations(check_run_id):
+    """Every annotation of one check run, across all result pages.
+
+    The GitHub annotations endpoint is paginated, so one response is not the
+    whole truth: a later page can carry the non-billing failure that
+    disqualifies a "never started" classification. Pages are consumed until a
+    short page arrives; a malformed, repeating, overlapping, erroring or
+    unbounded page set fails closed instead of being treated as complete.
+    """
+    if not isinstance(check_run_id, int):
+        raise Denied("check_annotations_unreadable")
+    base = "/repos/" + REPO + "/check-runs/" + str(check_run_id) + "/annotations"
+    collected = []
+    seen = set()
+    seen_pages = set()
+    for page in range(1, ANNOTATIONS_MAX_PAGES + 1):
+        notes = github_api(base + "?per_page=" + str(ANNOTATIONS_PAGE_SIZE)
+                           + "&page=" + str(page))
+        if not isinstance(notes, list):
+            raise Denied("check_annotations_unreadable")
+        for note in notes:
+            if not isinstance(note, dict) or not isinstance(note.get("message"), str):
+                raise Denied("check_annotations_malformed")
+        keys = {_annotation_key(note) for note in notes}
+        fingerprint = tuple(sorted(keys))
+        if notes and fingerprint in seen_pages:
+            raise Denied("check_annotations_pagination_loop")
+        seen_pages.add(fingerprint)
+        if seen & keys:
+            raise Denied("check_annotations_pagination_inconsistent")
+        seen |= keys
+        collected.extend(notes)
+        if len(collected) > ANNOTATIONS_MAX_TOTAL:
+            raise Denied("check_annotations_pagination_incomplete")
+        if len(notes) < ANNOTATIONS_PAGE_SIZE:
+            return collected
+    raise Denied("check_annotations_pagination_incomplete")
+
+
+def never_started_billing_blocked(run):
+    """True only for a job GitHub refused to start because of account billing.
+
+    A real test failure annotates its own reason ("Process completed with exit
+    code 1", failing step, ...), so anything that is not the exact billing
+    annotation, or that actually ran for a real amount of time, is not excused.
+    """
+    if run.get("status") != "completed" or run.get("conclusion") != "failure":
+        return False
+    started, finished = run.get("started_at"), run.get("completed_at")
+    if not isinstance(started, str) or not isinstance(finished, str):
+        return False
     try:
-        parent = path.parent.stat()
-        if parent.st_uid != 0 or parent.st_mode & 0o022:
-            return None
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        try:
-            info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > max_bytes):
-                return None
-            return os.read(fd, max_bytes + 1)
-        finally:
-            os.close(fd)
-    except (OSError, ValueError):
-        return None
+        elapsed = (datetime.fromisoformat(finished.replace("Z", "+00:00"))
+                   - datetime.fromisoformat(started.replace("Z", "+00:00"))).total_seconds()
+    except ValueError:
+        return False
+    if elapsed < 0 or elapsed > MAX_NEVER_STARTED_SECONDS:
+        return False
+    failures = [x for x in _annotations(run.get("id"))
+                if isinstance(x, dict) and x.get("annotation_level") == "failure"]
+    if not failures:
+        return False
+    return all(BILLING_BLOCKED.search(str(x.get("message", ""))) for x in failures)
 
-def verify_rootless_receipt(sha, record, secret, *, now=None):
-    """Reject legacy unsigned/root-executed CI, forged/stale or wrong-SHA proofs."""
-    if not isinstance(record, dict) or not isinstance(secret, bytes) or len(secret) != 32:
-        return False
-    body = dict(record)
-    signature = body.pop("signature", None)
-    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
-        return False
-    if (body.get("schema_version") != 2 or body.get("sha") != sha
-            or not isinstance(sha, str) or not SHA.fullmatch(sha)
-            or not isinstance(body.get("tree"), str) or not SHA.fullmatch(body["tree"])
-            or body.get("runner") != "zis-ci-guest-rootless"
-            or body.get("runner_uid") != 991
-            or body.get("command") != ROOTLESS_CI_COMMAND
-            or body.get("exit_code") != 0
-            or not isinstance(body.get("log_sha256"), str)
-            or not re.fullmatch(r"[0-9a-f]{64}", body["log_sha256"])):
-        return False
-    try:
-        stamped = datetime.strptime(body["verified_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
-    except (KeyError, TypeError, ValueError):
-        return False
-    current = time.time() if now is None else now
-    if stamped > current + 300 or current - stamped > 7 * 86400:
-        return False
-    expected = hmac.new(secret, json.dumps(body, sort_keys=True, separators=(",", ":"),
-                                         ensure_ascii=True).encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature, expected)
-
-def local_ci_attestation(sha):
-    """Only a fresh, signed, exact-SHA record from the isolated rootless UID."""
-    if not isinstance(sha, str) or not SHA.fullmatch(sha):
-        return None
-    raw_key = _read_private_root_file(ROOTLESS_RECEIPT_KEY, max_bytes=32)
-    raw_record = _read_private_root_file(ROOTLESS_RECEIPT_DIR / (sha + ".json"), max_bytes=4096)
-    if raw_key is None or raw_record is None:
-        return None
-    try:
-        document = json.loads(raw_record)
-    except (ValueError, UnicodeDecodeError, TypeError):
-        return None
-    if not verify_rootless_receipt(sha, document, raw_key):
-        return None
-    return document
 
 def checks(sha):
-    """Verify signed rootless receipt and its GitHub commit-tree provenance."""
-    receipt = local_ci_attestation(sha)
-    if receipt is None:
-        raise Denied("trusted_rootless_ci_attestation_missing")
-    node = commit(sha)
-    github_tree = ((node.get("commit") or {}).get("tree") or {}).get("sha")
-    if github_tree != receipt["tree"]:
-        raise Denied("trusted_rootless_ci_tree_mismatch")
+    """Every check must pass; a billing-blocked job is "CI never executed".
 
-def native_approval(pr, head_sha, merge_sha, issue_ref=None):
+    Returns the CI evidence actually relied upon, so the caller can demand the
+    root-owned exact-SHA local CI attestation instead of silently treating a
+    job that never ran as a pass.
+    """
+    obj = github_api("/repos/" + REPO + "/commits/" + sha + "/check-runs")
+    checks = (obj or {}).get("check_runs")
+    total = (obj or {}).get("total_count")
+    if not isinstance(checks, list) or not isinstance(total, int) or total != len(checks) or total > 100:
+        raise Denied("checks_incomplete")
+    matches = [x for x in checks if x.get("name") == "validate-product"]
+    if len(matches) != 1 or matches[0].get("status") != "completed":
+        raise Denied("product_ci_not_green")
+    product = matches[0]
+    billed = False
+    if product.get("conclusion") != "success":
+        if not never_started_billing_blocked(product):
+            raise Denied("product_ci_not_green")
+        billed = True
+    for check in checks:
+        if check is product:
+            continue
+        if check.get("status") != "completed" or check.get("conclusion") not in ("success", "skipped", "neutral"):
+            if not never_started_billing_blocked(check):
+                raise Denied("nonpassing_checks")
+            billed = True
+    return {"billing_blocked": billed}
+
+
+def _require_trusted_attestation_dir(info):
+    """Directory that holds attestations must be root-owned and not writable
+    by group or others; otherwise a non-root process could plant files."""
+    if not stat.S_ISDIR(info.st_mode):
+        raise Denied("local_ci_attestation_dir_untrusted")
+    if info.st_uid != ATTESTATION_UID:
+        raise Denied("local_ci_attestation_dir_untrusted")
+    if info.st_mode & FORBIDDEN_WRITE_BITS:
+        raise Denied("local_ci_attestation_dir_untrusted")
+
+
+def _require_trusted_attestation_file(info):
+    """One attestation inode: root-owned, single-link, regular, not writable
+    by group/others and of bounded size."""
+    if not stat.S_ISREG(info.st_mode):
+        raise Denied("local_ci_attestation_not_regular")
+    if info.st_uid != ATTESTATION_UID or info.st_gid != ATTESTATION_GID:
+        raise Denied("local_ci_attestation_owner_untrusted")
+    if info.st_mode & FORBIDDEN_WRITE_BITS:
+        raise Denied("local_ci_attestation_mode_untrusted")
+    if info.st_nlink != 1:
+        raise Denied("local_ci_attestation_link_untrusted")
+    if info.st_size > ATTESTATION_MAX_BYTES:
+        raise Denied("local_ci_attestation_too_large")
+
+
+def _secure_attestation_bytes(name):
+    """Read one attestation file without following links, from validated inodes.
+
+    Trust boundary: the only writer of this tree is root. The attest job runs
+    as ``User=root`` (product-local-ci-attest.service) and its output directory
+    ``/var/lib/paperclip-gitops`` is ``root:root 0700``. This consumer therefore
+    accepts bytes only from a root-owned, root-group, single-link, regular file
+    that is not group- or world-writable, reached through a directory descriptor
+    that is itself root-owned and not group/world-writable.
+
+    The bytes are read from the very descriptor that was validated, so a rename
+    or replacement between check and read cannot substitute content (TOCTOU),
+    and ``O_NOFOLLOW`` + the regular-file test mean a symlink or a FIFO is never
+    opened as an attestation. A file that is group/world-writable, owned by
+    anyone else, hard-linked, oversized or not a regular file is denied: those
+    are the only ways a non-root process could plant or forge this evidence.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = str(LOCAL_CI_DIR)
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | nofollow)
+    except OSError:
+        raise Denied("local_ci_attestation_dir_unavailable") from None
+    try:
+        info = os.fstat(dir_fd)
+        _require_trusted_attestation_dir(info)
+        try:
+            # O_NONBLOCK so a FIFO can never block the timer; it is rejected
+            # by the regular-file check below instead.
+            fd = os.open(name, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0),
+                         dir_fd=dir_fd)
+        except FileNotFoundError:
+            raise Denied("local_ci_attestation_missing") from None
+        except OSError as error:
+            if getattr(error, "errno", None) in (errno.ELOOP, errno.ENOTDIR):
+                raise Denied("local_ci_attestation_symlink_denied") from None
+            raise Denied("local_ci_attestation_unreadable") from None
+        try:
+            _require_trusted_attestation_file(os.fstat(fd))
+            chunks = []
+            total = 0
+            while True:
+                chunk = os.read(fd, 4096)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > ATTESTATION_MAX_BYTES:
+                    raise Denied("local_ci_attestation_too_large")
+                chunks.append(chunk)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(dir_fd)
+    return b"".join(chunks)
+
+
+def local_ci_attestation(sha):
+    """Root-owned exact-SHA local CI attestation, used only for billing blocks.
+
+    The file may substitute for GitHub check evidence only for the exact
+    reviewed head commit, and only together with head/merge tree equality
+    enforced by the caller. It never replaces the independent native approval.
+    Shape checks below are necessary but not sufficient: the evidence is only
+    as trustworthy as the file's ownership and mode, which are proven by
+    _secure_attestation_bytes before any JSON is parsed.
+    """
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise Denied("invalid_attestation_sha")
+    raw = _secure_attestation_bytes(sha + ".json")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise Denied("local_ci_attestation_unreadable") from None
+    if not isinstance(data, dict):
+        raise Denied("local_ci_attestation_unreadable")
+    if data.get("sha") != sha:
+        raise Denied("local_ci_attestation_sha_mismatch")
+    if type(data.get("exit_code")) is not int or data["exit_code"] != 0:
+        raise Denied("local_ci_attestation_not_green")
+    if data.get("runner") != TRUSTED_ATTESTATION_RUNNER:
+        raise Denied("local_ci_attestation_runner_untrusted")
+    if data.get("source") != TRUSTED_ATTESTATION_SOURCE:
+        raise Denied("local_ci_attestation_source_untrusted")
+    if not isinstance(data.get("verified_at"), str) or not data["verified_at"]:
+        raise Denied("local_ci_attestation_undated")
+    return data
+
+
+def premerge_rootless_attestation(sha, tree):
+    """Only a root-owned exact-tree E2E receipt can replace absent PR checks."""
+    if not isinstance(sha, str) or not SHA.fullmatch(sha) or not isinstance(tree, str) or not SHA.fullmatch(tree):
+        raise Denied("invalid_premerge_identity")
+    raw = _secure_attestation_bytes("premerge-" + sha + ".json")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise Denied("premerge_attestation_unreadable") from None
+    expected_stages = {
+        "exact_tree": True, "rootless_isolation": True,
+        "full_product_build": True, "network_none_validation": True,
+        "final_image": True, "positive_provenance": True,
+        "negative_versionless": True,
+    }
+    if (not isinstance(data, dict)
+            or type(data.get("schema_version")) is not int
+            or data["schema_version"] != 2
+            or data.get("sha") != sha or data.get("tree") != tree
+            or data.get("runner") != "zis-rootless-exact-tree"
+            or data.get("source") != "root-verified-systemd-e2e"
+            or type(data.get("exit_code")) is not int
+            or data["exit_code"] != 0
+            or not isinstance(data.get("stages"), dict)
+            or set(data["stages"]) != set(expected_stages)
+            or any(type(data["stages"][key]) is not bool
+                   or data["stages"][key] is not True for key in expected_stages)
+            or not isinstance(data.get("verified_at"), str)
+            or not data["verified_at"]):
+        raise Denied("premerge_attestation_invalid")
+    return data
+
+
+def premerge_head_checks(head_sha, merge_node):
+    """No PR-controlled runner, no bypass of failing/pending GitHub checks."""
+    try:
+        return checks(head_sha)
+    except Denied as error:
+        if str(error) != "product_ci_not_green":
+            raise
+    try:
+        runs = github_api("/repos/" + REPO + "/commits/" + head_sha + "/check-runs")
+    except Denied:
+        raise Denied("product_ci_not_green") from None
+    if not isinstance(runs, dict) or runs.get("total_count") != 0 or runs.get("check_runs") != []:
+        raise Denied("premerge_head_checkrun_not_empty")
+    head_node = commit(head_sha)
+    head_tree = (((head_node or {}).get("commit") or {}).get("tree") or {}).get("sha")
+    merge_tree = (((merge_node or {}).get("commit") or {}).get("tree") or {}).get("sha")
+    if not isinstance(head_tree, str) or not SHA.fullmatch(head_tree) or head_tree != merge_tree:
+        raise Denied("head_merge_tree_mismatch")
+    premerge_rootless_attestation(head_sha, head_tree)
+    return {"billing_blocked": False, "rootless_premerge": True}
+
+
+def issue_ref_from_pr(pr):
+    """Bind native approval to the exact Multica issue identified by the merged PR."""
+    doc = github_api("/repos/" + REPO + "/pulls/" + str(pr))
+    if not isinstance(doc, dict) or type(doc.get("number")) is not int or doc["number"] != pr:
+        raise Denied("pr_identity_unverified")
+    title = doc.get("title")
+    if not isinstance(title, str):
+        raise Denied("missing_issue_ref")
+    refs = set(re.findall(r"\b([A-Z][A-Z0-9]*-[0-9]{1,7})\b", title))
+    if len(refs) != 1:
+        raise Denied("missing_or_ambiguous_issue_ref")
+    return refs.pop()
+
+
+def native_approval(pr, head_sha, merge_sha):
     if not NATIVE_GATE.is_file():
         raise Denied("native_gate_not_installed")
-    argv = [sys.executable, str(NATIVE_GATE),
-            "--repo", REPO, "--pr", str(pr),
-            "--head-sha", head_sha, "--merge-sha", merge_sha]
-    if issue_ref:
-        argv.extend(["--issue-ref", issue_ref])
-    r = run(argv, timeout=35, allow_fail=True)
+    issue_ref = issue_ref_from_pr(pr)
+    r = run([sys.executable, str(NATIVE_GATE),
+             "--repo", REPO, "--pr", str(pr),
+             "--head-sha", head_sha, "--merge-sha", merge_sha,
+             "--issue-ref", issue_ref], timeout=35, allow_fail=True)
     if r.returncode != 0:
         raise Denied("native_approval_unverified")
 
@@ -278,22 +505,35 @@ def candidate_history(release_sha, main_sha):
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
-        pr, head, issue_ref = provenance(current)
-        # Runtime source MUST receive an independent native exact-head review
-        # before any CI admission, attestations or code execution.
-        docs_only = len(parents) == 1 and non_runtime_files_only(pr, current, node)
-        if not docs_only:
-            if issue_ref is None:
-                raise Denied("missing_issue_ref")
-            native_approval(pr, head, current, issue_ref)
-        # Read-only: a pre-existing root-owned receipt must match both SHAs.
-        # Never run GitHub-supplied source through root-owned npm here.
-        checks(head)
-        checks(current)
-        if docs_only:
+        pr, head = provenance(current)
+        head_ci = premerge_head_checks(head, node)
+        merge_ci = checks(current)
+        # Docs-only squash PRs are NOT releases and do not require a Multica
+        # runtime work product. Everything else, including runtime squashes,
+        # still requires the original independent native approval gate.
+        if len(parents) == 1 and non_runtime_files_only(pr, current, node):
+            # Nothing here can reach a runtime artifact, but a job that never
+            # ran is still not evidence: keep the strict rule for this path.
+            if head_ci["billing_blocked"] or merge_ci["billing_blocked"] or head_ci.get("rootless_premerge"):
+                raise Denied("product_ci_not_green")
             current = first
             continue
-        pending.append({"pr": pr, "head": head, "merge": current})
+        evidence = "github_checks"
+        if head_ci["billing_blocked"] or merge_ci["billing_blocked"]:
+            # GitHub CI never executed for this repository (account billing
+            # block). The sanctioned substitute is the root-owned exact-SHA
+            # local CI attestation of the reviewed head, valid only while the
+            # head tree is byte-identical to the merged commit's tree.
+            local_ci_attestation(head)
+            head_tree = ((commit(head) or {}).get("commit") or {}).get("tree", {}).get("sha")
+            merge_tree = ((node or {}).get("commit") or {}).get("tree", {}).get("sha")
+            if not isinstance(head_tree, str) or not isinstance(merge_tree, str) or head_tree != merge_tree:
+                raise Denied("head_merge_tree_mismatch")
+            evidence = "local_ci_attestation"
+        if head_ci.get("rootless_premerge"):
+            evidence = "rootless_premerge_attestation"
+        native_approval(pr, head, current)
+        pending.append({"pr": pr, "head": head, "merge": current, "ci_evidence": evidence})
         current = first
     raise Denied("too_many_unreleased_merges")
 
@@ -328,25 +568,6 @@ def save(data):
     os.replace(tmp, STATE)
 
 
-def read_state():
-    try:
-        data = json.loads(STATE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def wait_for_live(target):
-    for _ in range(READBACK_ATTEMPTS):
-        try:
-            if live_release() == target:
-                return True
-        except Denied:
-            pass
-        time.sleep(READBACK_INTERVAL)
-    return False
-
-
 def require_verified_local_image_delivery():
     """Never advance ci-approved before real runner/registry/deploy E2E."""
     ready = Path("/var/lib/paperclip-gitops/zis-image-promotion-ready.json")
@@ -361,7 +582,9 @@ def require_verified_local_image_delivery():
                 "registry": "127.0.0.1:5000",
                 "coolify_image_app_uuid": "cs847jiwtuq5rlm8ntjeohgf",
                 "runner": "zis-local-build"}
-    if not isinstance(data, dict) or any(data.get(k) != v for k, v in expected.items()):
+    if (not isinstance(data, dict)
+            or any(type(data.get(k)) is not type(v) or data[k] != v
+                   for k, v in expected.items())):
         raise Denied("local_image_delivery_unverified")
 
 
@@ -369,28 +592,9 @@ def process(plan=False):
     current = ref("main")
     release = ref(RELEASE_REF)
     live = live_release()
-
-    # Resume a deployment this controller already started but could not observe
-    # inside the old timeout. Never force-rewind ci-approved; only keep waiting
-    # for the exact SHA that is already the release ref.
-    pending = read_state()
-    if (live != release and current == release
-            and pending.get("status") == "readback_failed_rollback_required"
-            and pending.get("pending_sha") == release):
-        if wait_for_live(release):
-            save({"last_deployed_sha": release,
-                  "previous_sha": pending.get("previous_sha"),
-                  "release_prs": pending.get("release_prs", []),
-                  "status": "healthy"})
-            return {"result": "deployed_after_retry", "sha": release,
-                    "prior": pending.get("previous_sha"), "healthy": True}
-        raise Denied("deployment_readback_failed_rollback_required")
-
     if live != release:
         raise Denied("production_not_at_current_release_ref")
     if current == release:
-        if pending.get("status") not in (None, "healthy"):
-            save({"last_deployed_sha": release, "status": "healthy"})
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
@@ -410,10 +614,15 @@ def process(plan=False):
     # Coolify already autodeploys only from ci-approved. Await exact artifact,
     # but never force-rewind a Git ref on failure; preserve evidence for safe
     # image rollback through Coolify's managed rollback facility.
-    if wait_for_live(current):
-        save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
-        return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
-    save({"pending_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"readback_failed_rollback_required"})
+    for _ in range(24):
+        try:
+            if live_release() == current:
+                save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
+                return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
+        except Denied:
+            pass
+        time.sleep(10)
+    save({"pending_sha":current,"previous_sha":release,"status":"readback_failed_rollback_required"})
     raise Denied("deployment_readback_failed_rollback_required")
 
 

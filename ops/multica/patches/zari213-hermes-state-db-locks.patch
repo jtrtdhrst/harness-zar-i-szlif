@@ -1,0 +1,153 @@
+diff --git a/server/internal/daemon/execenv/hermes_home.go b/server/internal/daemon/execenv/hermes_home.go
+index 2fbbd7b..a23a1a7 100644
+--- a/server/internal/daemon/execenv/hermes_home.go
++++ b/server/internal/daemon/execenv/hermes_home.go
+@@ -89,7 +89,7 @@ func isHermesOverlayOwnedEntry(name string) bool {
+ }
+ 
+ func isHermesTaskLocalStateEntry(name string) bool {
+-	return name == "state.db" || strings.HasPrefix(name, "state.db-")
++	return name == "state.db" || strings.HasPrefix(name, "state.db-") || name == "state.db.quarantine.lock" || name == "state.db.fts_rebuild.lock"
+ }
+ 
+ // platformDefaultHermesHome returns Hermes' platform-native default home:
+@@ -575,6 +575,28 @@ func reconcileMirroredEntries(hermesHome string, mirrored map[string]struct{}) e
+ // overlay, then record the migration atomically. Hermes lazily creates a fresh
+ // database, and later prepares preserve it because the marker is present.
+ func prepareHermesTaskLocalState(hermesHome string) error {
++	// Pre-fix overlays can already have the task-local-state marker yet still
++	// contain dot-suffixed SQLite lock symlinks into a shared role/global home.
++	// Detach only the symlink directory entries, preserving their targets and
++	// any legitimate task-local regular lock file. Repeat on every reuse:
++	// the marker alone does not prove these two files were isolated.
++	for _, name := range []string{"state.db.quarantine.lock", "state.db.fts_rebuild.lock"} {
++		path := filepath.Join(hermesHome, name)
++		info, err := os.Lstat(path)
++		if os.IsNotExist(err) {
++			continue
++		}
++		if err != nil {
++			return fmt.Errorf("stat legacy SQLite lock %s: %w", path, err)
++		}
++		if info.Mode()&os.ModeSymlink != 0 {
++			if err := os.Remove(path); err != nil {
++				return fmt.Errorf("detach shared SQLite lock symlink %s: %w", path, err)
++			}
++		} else if !info.Mode().IsRegular() {
++			return fmt.Errorf("refuse unexpected SQLite lock entry %s (%s)", path, info.Mode())
++		}
++	}
+ 	marker := filepath.Join(hermesHome, hermesTaskLocalStateMarker)
+ 	if fi, err := os.Lstat(marker); err == nil {
+ 		if !fi.Mode().IsRegular() {
+diff --git a/server/internal/daemon/execenv/hermes_home_test.go b/server/internal/daemon/execenv/hermes_home_test.go
+index 6975b72..e8da978 100644
+--- a/server/internal/daemon/execenv/hermes_home_test.go
++++ b/server/internal/daemon/execenv/hermes_home_test.go
+@@ -273,7 +273,7 @@ func TestHermesOverlayKeepsSessionDatabaseTaskLocal(t *testing.T) {
+ 	t.Parallel()
+ 	sharedHome := t.TempDir()
+ 	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+-	stateFiles := []string{"state.db", "state.db-wal", "state.db-shm", "state.db-journal"}
++	stateFiles := []string{"state.db", "state.db-wal", "state.db-shm", "state.db-journal", "state.db.quarantine.lock", "state.db.fts_rebuild.lock"}
+ 	for _, name := range stateFiles {
+ 		mustWrite(t, filepath.Join(sharedHome, name), "HOST "+name)
+ 	}
+@@ -312,7 +312,7 @@ func TestHermesOverlayMigratesLegacySessionDatabase(t *testing.T) {
+ 	t.Parallel()
+ 	sharedHome := t.TempDir()
+ 	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
+-	stateFiles := []string{"state.db", "state.db-wal", "state.db-shm", "state.db-journal"}
++	stateFiles := []string{"state.db", "state.db-wal", "state.db-shm", "state.db-journal", "state.db.quarantine.lock", "state.db.fts_rebuild.lock"}
+ 	for _, name := range stateFiles {
+ 		mustWrite(t, filepath.Join(sharedHome, name), "HOST "+name)
+ 	}
+@@ -330,6 +330,17 @@ func TestHermesOverlayMigratesLegacySessionDatabase(t *testing.T) {
+ 	if err := os.Symlink(filepath.Join(sharedHome, "state.db-wal"), walPath); err != nil {
+ 		mustWrite(t, walPath, "LEGACY COPY state.db-wal")
+ 	}
++	// Legacy overlays also mirrored the dot-suffixed lock files as
++	// cross-profile symlinks. They must be detached without touching the host.
++	for _, name := range []string{"state.db.quarantine.lock", "state.db.fts_rebuild.lock"} {
++		path := filepath.Join(hermesHome, name)
++		if err := os.Remove(path); err != nil {
++			t.Fatalf("remove copied lock: %v", err)
++		}
++		if err := os.Symlink(filepath.Join(sharedHome, name), path); err != nil {
++			mustWrite(t, path, "LEGACY COPY "+name)
++		}
++	}
+ 	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
+ 	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+ 		t.Fatalf("prepareHermesHome failed: %v", err)
+@@ -358,6 +369,70 @@ func TestHermesOverlayMigratesLegacySessionDatabase(t *testing.T) {
+ 	}
+ }
+ 
++// TestHermesStateFamilyClassificationDoesNotMirrorUnrelatedDotNames ensures
++// known SQLite locking sidecars stay task-local without claiming arbitrary
++// files with a state.db.* prefix as deletable database state.
++func TestHermesStateFamilyClassificationDoesNotMirrorUnrelatedDotNames(t *testing.T) {
++	t.Parallel()
++	for _, name := range []string{"state.db", "state.db-wal", "state.db-shm",
++		"state.db-journal", "state.db.quarantine.lock", "state.db.fts_rebuild.lock"} {
++		if !isHermesTaskLocalStateEntry(name) {
++			t.Errorf("SQLite sidecar %s must be task-local", name)
++		}
++	}
++	for _, name := range []string{"state.db.bak", "state.db.notes",
++		"state.db.quarantine.lock.backup"} {
++		if isHermesTaskLocalStateEntry(name) {
++			t.Errorf("unrelated dot-name %s must not be deleted by migration", name)
++		}
++	}
++}
++
++// TestHermesOverlayReuseDetachesLegacySharedLockLinks proves that the existing
++// state marker does not preserve the old shared-profile lock symlinks.
++func TestHermesOverlayReuseDetachesLegacySharedLockLinks(t *testing.T) {
++	t.Parallel()
++	sharedHome := t.TempDir()
++	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "model: hermes-4\n")
++	lockNames := []string{"state.db.quarantine.lock", "state.db.fts_rebuild.lock"}
++	for _, name := range lockNames {
++		mustWrite(t, filepath.Join(sharedHome, name), "HOST "+name)
++	}
++	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
++	skills := []SkillContextForEnv{{Name: "Review Helper", Content: "x"}}
++	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
++		t.Fatalf("create home: %v", err)
++	}
++	if _, err := os.Stat(filepath.Join(hermesHome, hermesTaskLocalStateMarker)); err != nil {
++		t.Fatalf("marker absent: %v", err)
++	}
++	// Simulate an overlay that was already migrated by an older daemon.
++	for _, name := range lockNames {
++		if err := os.Symlink(filepath.Join(sharedHome, name), filepath.Join(hermesHome, name)); err != nil {
++			t.Skipf("symlink creation unavailable: %v", err)
++		}
++	}
++	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
++		t.Fatalf("reuse home: %v", err)
++	}
++	for _, name := range lockNames {
++		if _, err := os.Lstat(filepath.Join(hermesHome, name)); !os.IsNotExist(err) {
++			t.Errorf("shared lock link %s retained: %v", name, err)
++		}
++		if got, err := os.ReadFile(filepath.Join(sharedHome, name)); err != nil || string(got) != "HOST "+name {
++			t.Errorf("source lock altered %s: %q (%v)", name, got, err)
++		}
++	}
++	// A newly created task-owned regular lock must survive another reuse.
++	mustWrite(t, filepath.Join(hermesHome, lockNames[0]), "TASK LOCK")
++	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
++		t.Fatalf("second reuse: %v", err)
++	}
++	if got, err := os.ReadFile(filepath.Join(hermesHome, lockNames[0])); err != nil || string(got) != "TASK LOCK" {
++		t.Errorf("task lock not preserved: %q (%v)", got, err)
++	}
++}
++
+ // TestHermesOverlayPermissions asserts the task home is 0700 and the derived
+ // config (which can hold inline api_key secrets) is 0600.
+ func TestHermesOverlayPermissions(t *testing.T) {

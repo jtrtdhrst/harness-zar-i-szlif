@@ -8,6 +8,52 @@ evidence_rule: exact SHA + real job + deployed immutable revision + negative tes
 
 # Development lifecycle evidence — 2026-11-18 (UTC)
 
+## Newer verified state — 2026-11-18, 11:35 UTC (supersedes only the dated snapshots below)
+
+- **Publication into RepoWise is now LIVE PASS**: documentation-only PR
+  [#133](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/133)
+  merged as GitHub Harness `main=d293903091f60f6d15b5dd2621732e1932efe6cd`.
+  `repowise-github-sync.service` staged and checked the exact SHA, passed
+  positive harness/product and negative cross-repo MCP smoke, emitted
+  `PROMOTE_OK`, `LIVE_CURRENT`, and `LIVE_STATUS_OK`. Live RepoWise MCP
+  `list_repos` reported Harness indexed at that SHA and Product at
+  `4feef6903dc21be5da0433a77b10549bf0009661`;
+  `search_codebase(mode=path)` found this document, and
+  `get_context(include=skeleton)` returned its text with `verified=true`.
+  This proves **documentation→GitHub→RepoWise index→MCP retrieval**, not
+  a new functional Coolify release or model-driven agent E2E.
+- **Rootless Product Docker build exists since the earlier preflight**:
+  socket `/run/zis-rootless-docker/docker.sock` is owned by
+  `actions-zis-product`; with scoped `DOCKER_HOST`, Docker reports
+  `name=rootless`. Product PR
+  [#183](https://github.com/miloszspyrka-code/zar-i-szlif/pull/183)
+  at `6e43015961ed41ead0efd4507f66a364ba4bd4fb` passed
+  [Product CI run 44290719173](https://github.com/miloszspyrka-code/zar-i-szlif/actions/runs/44290719173):
+  release contract, npm validation, Docker build, source-commit HTTP smoke,
+  and negative versionless start. **This is test capability, not safe PR admission**.
+  CTO's independent native review (ZARI-251) requested changes: the guard
+  against malicious same-repo PRs is embedded in PR-editable workflow YAML.
+  Host runner systemd lacks a verified per-job filesystem and network sandbox.
+  A same-repository author could delete the guard; neither rootless Docker nor
+  a green run proves host confinement. PR is still unmerged; production is
+  unchanged. Never enable unrestricted PR execution or force an approval.
+- **Harness release-source PR #123 was repaired, not released**:
+  head `9f247314fc460f637b9cd443e4bd7e19ee83129a`
+  is a two-parent merge with Harness `main=d293903…`.
+  Its diff now contains **only six** release controller, installer and test
+  paths, no resurrected Paperclip MCP workflow and no broken `ubuntu-latest`
+  PR routing. CI for the new SHA is a separate pending/required gate;
+  independent CTO exact-SHA review, approved root install, restricted
+  per-resource HOLD and controlled deployment/rollback remain necessary.
+- **Hermes ZARI-213 is still NO-GO for unrestricted agents**.
+  A newer daemon binary was seen active, and a CTO native review run completed,
+  but this does not prove task-level Landlock policies, project repo ACL,
+  cross-task denial, concurrent tool-use, or verified rollback.
+
+These observations are deliberately **not** retroactively applied to
+the 11:16 UTC rootless-preflight table: that table records what was actually
+installed and tested at that earlier moment.
+
 This is an **evidence log and troubleshooting runbook**, not an approval to deploy.
 RepoWise indexes committed repository facts and reviewed decisions. It does **not**
 execute native Multica agents, prove production, or turn a red CI result green.

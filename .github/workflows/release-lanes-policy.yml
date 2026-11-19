@@ -30,6 +30,22 @@ jobs:
         run: python scripts/check-release-lanes.py --self-test
       - name: Guard against non-MCP automatic image builds
         run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
+      # Catch truncated or malformed security sources before approving a merge.
+      # The projector regression is synthetic and requires no model credentials.
+      - name: Validate Hermes Landlock syntax and scoped-credential regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            ops/harness/landlock/zari213-hermes-task-landlock.py \
+            ops/harness/landlock/test_role_acl_canary.py
+          if [[ -e ops/harness/credentials/role_env_projector.py ]]; then
+            python3 -m py_compile \
+              ops/harness/credentials/role_env_projector.py \
+              ops/harness/credentials/test_role_env_projector.py \
+              ops/harness/credentials/test_provider_acl_canary.py
+            python3 -m unittest discover -s ops/harness/credentials -p 'test_role_env_projector.py' -v
+          fi
       - name: Set up Node.js 24 for Multica MCP adapter
         uses: actions/setup-node@v4
         with:
