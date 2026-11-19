@@ -18,7 +18,7 @@ class ProductSquashTests(unittest.TestCase):
             {"filename":".repowise/decisions.yaml","status":"added"},
             {"filename":"scripts/ci-path-coverage.mjs","status":"modified"},
             {"filename":"tests/ci-path-coverage.test.mjs","status":"modified"}]}
-        with patch.object(p,"ref",side_effect=[sha,OLD]), \
+        with patch.object(p,"ref",side_effect=[sha,OLD,sha,OLD]), \
              patch.object(p,"live_release",return_value=OLD), \
              patch.object(p,"commit",return_value=node), \
              patch.object(p,"provenance",return_value=(164,HEAD)), \
@@ -109,7 +109,7 @@ class ProductSquashTests(unittest.TestCase):
                for name,status in p.CI_ONLY_REVIEWED_FILES.items()]
         node={"sha":NEW,"parents":[{"sha":OLD}],"files":files}
         self.assertTrue(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,node))
-        with patch.object(p,"ref",side_effect=[NEW,OLD]), \
+        with patch.object(p,"ref",side_effect=[NEW,OLD,NEW,OLD]), \
              patch.object(p,"live_release",return_value=OLD), \
              patch.object(p,"commit",return_value=node), \
              patch.object(p,"provenance",return_value=(183,p.CI_ONLY_REVIEWED_HEAD)), \
