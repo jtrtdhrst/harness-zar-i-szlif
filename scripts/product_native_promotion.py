@@ -63,8 +63,77 @@ LEGACY_KNOWLEDGE_SHA = "81c4b068b89f4c035098c6c9107f755f56919a87"
 LEGACY_KNOWLEDGE_PR = 164
 LEGACY_CI_ONLY_FILES = frozenset({"scripts/ci-path-coverage.mjs", "tests/ci-path-coverage.test.mjs"})
 
+
+# An immutable, independently reviewed CI-only source change. This fixes the
+# PR183 staging deadlock without allowing arbitrary workflow edits or future PR
+# heads to evade runtime release admission. It can never deploy an application.
+CI_ONLY_REVIEWED_PR = 183
+CI_ONLY_REVIEWED_HEAD = "c96007a1cd09227d9815457ada4bb70f8e4b2624"
+CI_ONLY_REVIEWED_FILES = {
+    ".github/workflows/product-ci.yml": "modified",
+    "ops/coolify/Dockerfile.ci": "added",
+    "tests/ci-path-coverage.test.mjs": "modified",
+    "tests/test_release_promotion_contract.py": "modified",
+}
+
 class Denied(Exception):
     pass
+
+
+# These three exact historical changes altered neither tracked product runtime
+# source nor build definitions. They were accidentally pushed directly to main
+# on 2026-11-19. This one-time waiver only allows the history walker to pass
+# these exact Git commits as NO-DEPLOY metadata. No future SHA is admitted.
+# Every runtime PR still requires the original independent approval + CI gates.
+HISTORIC_METADATA_ONLY = {
+    "e6fea9b1b81d7afae9086983160723084cdc2ead": {
+        "parent": "4feef6903dc21be5da0433a77b10549bf0009661",
+        "files": (("modified", ".gitignore"),),
+    },
+    "54f3db248ff35cce3a40b5de99270d8ed283d402": {
+        "parent": "e6fea9b1b81d7afae9086983160723084cdc2ead",
+        "files": (("removed", "docs/dag-e2e-nonhost.md"),),
+    },
+    "63441d5d3056f4845d4bfcaf908429f8f09d620f": {
+        "parent": "54f3db248ff35cce3a40b5de99270d8ed283d402",
+        "files": (
+            ("removed", "mcp/.gitkeep"),
+            ("removed", "product/.gitkeep"),
+            ("removed", "www/landing/.gitkeep"),
+            ("removed", "www/mcp/.gitkeep"),
+        ),
+    },
+}
+
+
+def known_metadata_only_direct_commit(sha, node, first_parent):
+    """Allow only the three audited immutable non-runtime Git commits.
+
+    The commit SHA, parent, and complete changed-file inventory are checked.
+    This never creates a release; the caller advances only the history cursor.
+    A different direct commit or incomplete GitHub response remains denied.
+    """
+    spec = HISTORIC_METADATA_ONLY.get(sha)
+    if spec is None:
+        return False
+    if node.get("sha") != sha or first_parent != spec["parent"]:
+        raise Denied("historic_metadata_identity_mismatch")
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(spec["files"]):
+        raise Denied("historic_metadata_inventory_mismatch")
+    actual = []
+    for entry in files:
+        if (not isinstance(entry, dict)
+                or entry.get("status") not in ("modified", "removed")
+                or not isinstance(entry.get("filename"), str)
+                or entry.get("previous_filename") is not None):
+            raise Denied("historic_metadata_inventory_mismatch")
+        actual.append((entry["status"], entry["filename"]))
+    if sorted(actual) != sorted(spec["files"]):
+        raise Denied("historic_metadata_inventory_mismatch")
+    return True
+
+
 
 
 def run(argv, timeout=30, allow_fail=False):
@@ -483,6 +552,29 @@ def non_runtime_files_only(pr_number, commit_sha, node):
     return True
 
 
+
+def reviewed_ci_only_pr(pr_number, head_sha, node):
+    """Only the exact CTO-reviewed PR183 four-file CI patch may skip runtime.
+
+    The caller still requires a trusted rootless exact-tree premerge receipt,
+    green merged-main GitHub CI and a single-parent squash. No other PR or
+    changed SHA inherits this exception; Docker runtime resources are untouched.
+    """
+    if pr_number != CI_ONLY_REVIEWED_PR or head_sha != CI_ONLY_REVIEWED_HEAD:
+        return False
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(CI_ONLY_REVIEWED_FILES):
+        return False
+    found = {}
+    for file in files:
+        if not isinstance(file, dict):
+            return False
+        name, status = file.get("filename"), file.get("status")
+        if not isinstance(name, str) or name in found or status not in ("added", "modified"):
+            return False
+        found[name] = status
+    return found == CI_ONLY_REVIEWED_FILES
+
 def candidate_history(release_sha, main_sha):
     """Walk first-parent main history and verify *every* new merged PR."""
     if release_sha == main_sha:
@@ -505,9 +597,24 @@ def candidate_history(release_sha, main_sha):
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
+        # A strictly allowlisted historical metadata cleanup is not a release.
+        if len(parents) == 1 and known_metadata_only_direct_commit(current, node, first):
+            current = first
+            continue
         pr, head = provenance(current)
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
+        # Exact reviewed CI-only PR183 must never cause an unnecessary
+        # application rollout. Unlike docs-only PRs this exceptional workflow
+        # change requires a root-controlled, exact-tree, full rootless E2E
+        # attestation BEFORE merge, plus GREEN main CI AFTER merge.
+        if len(parents) == 1 and reviewed_ci_only_pr(pr, head, node):
+            if (head_ci.get("rootless_premerge") is not True
+                    or head_ci.get("billing_blocked")
+                    or merge_ci.get("billing_blocked")):
+                raise Denied("ci_only_rootless_proof_or_main_ci_missing")
+            current = first
+            continue
         # Docs-only squash PRs are NOT releases and do not require a Multica
         # runtime work product. Everything else, including runtime squashes,
         # still requires the original independent native approval gate.
@@ -595,9 +702,17 @@ def process(plan=False):
     if live != release:
         raise Denied("production_not_at_current_release_ref")
     if current == release:
+        # Recheck the refs after the live HTTP read: main may have advanced
+        # while that read was in flight, invalidating the no-change result.
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
+        # Do not report a source-only no-op against an outdated snapshot.
+        # A runtime commit may have appeared while walking first-parent history.
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
         # Main only advanced through independently verified documentation PRs.
         # No Docker build, no branch advancement and no production deployment.
         return {"result": "no_runtime_release_required", "main": current,
