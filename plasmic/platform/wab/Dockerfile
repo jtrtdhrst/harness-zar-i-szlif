@@ -3,30 +3,26 @@
 # Build context is the platform/ workspace root (not platform/wab), e.g.:
 #   docker build -f platform/wab/Dockerfile platform/
 #
-# wab, canvas-packages, loader-bundle-env and loader-html-hydrate share the pnpm
-# workspace rooted at platform/. wab's server reads loader-bundle-env and
-# loader-html-hydrate as sibling directories at runtime
+# wab, canvas-packages, loader-bundle-env, loader-html-hydrate and shared/*
+# share the pnpm workspace rooted at platform/. wab's server reads
+# loader-bundle-env and loader-html-hydrate as sibling directories at runtime
 # (process.cwd()/../loader-bundle-env/node_modules), so the runtime image keeps
-# the /platform/{wab,loader-bundle-env,loader-html-hydrate} peer layout together
-# with the workspace-root node_modules/.pnpm store their symlinks point into.
+# the /platform/{wab,loader-bundle-env,loader-html-hydrate,shared} peer
+# layout together with the workspace-root node_modules/.pnpm store their
+# symlinks point into.
 
 # See https://hub.docker.com/_/node/
 # Pinned to an exact patch (not the floating node:24-alpine tag) to avoid silently
-# pulling in Node patch regressions on rebuild. Node 24.17.0 introduced an http.Agent
-# keep-alive regression (nodejs/node#63989) that broke node-fetch outbound requests with
-# ERR_STREAM_PREMATURE_CLOSE. Bump deliberately once a fixed 24.17.x+ is verified.
-FROM node:24.16.0-alpine AS builder
+# pulling in Node patch regressions on rebuild.
+FROM node:24.22.1-alpine AS builder
 
-ENV PUPPETEER_SKIP_DOWNLOAD=1
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV CYPRESS_INSTALL_BINARY=0
-ENV PLAYWRIGHT_DOWNLOAD_HOST=https://playwright-akamai.azureedge.net
 
 # make + bubblewrap for wab codegen and the runtime code-eval sandbox;
-# build-base/g++/gcc/python3/libc-dev to compile native addons (bcrypt, sharp,
-# @swc/core, ...) during pnpm install.
-RUN apk add --no-cache make~=4 bubblewrap~=0.12 python3 build-base bash g++ gcc libc-dev
+RUN apk add --no-cache make~=4 bubblewrap~=0.12 python3 build-base bash
+
+# Use the image's Node headers instead of downloading them for native addons.
+ENV npm_config_nodedir=/usr/local
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -76,25 +72,29 @@ WORKDIR /platform/wab
 RUN mkdir -p src/wab/gen && make
 
 # Re-resolve without devDependencies for the runtime image, and only for the
-# three packages that actually ship in it — this keeps canvas-packages',
+# packages that actually ship in it — this keeps canvas-packages',
 # analytics-rproxy's and mini-cache's prod deps out of the copied store.
 # NB: `pnpm deploy` would be tidier but flattens node_modules and breaks wab's
 # sibling-dir resolution (../loader-bundle-env/node_modules); see
 # https://github.com/pnpm/pnpm/issues/9283
 WORKDIR /platform
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
-    rm -rf node_modules wab/node_modules loader-bundle-env/node_modules \
-      loader-html-hydrate/node_modules canvas-packages/node_modules \
+    rm -rf node_modules \
+      wab/node_modules \
+      loader-bundle-env/node_modules \
+      loader-html-hydrate/node_modules \
+      canvas-packages/node_modules \
+      shared/*/node_modules \
     && pnpm install --frozen-lockfile --prefer-offline --prod \
       --filter "wab..." --filter "loader-bundle-env..." \
       --filter "@plasmicapp/loader-html-hydrate..." \
       --config.confirmModulesPurge=false
 
-FROM node:24.16.0-alpine AS runner
+FROM node:24.22.1-alpine AS runner
 
 # make + bubblewrap for the runtime code-eval sandbox; toolchain kept so native
 # addons that resolve a prebuilt binary at load time still have their deps.
-RUN apk add --no-cache make~=4 bubblewrap~=0.12 python3 build-base bash g++ gcc libc-dev
+RUN apk add --no-cache make~=4 bubblewrap~=0.12 python3 build-base bash
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -105,7 +105,7 @@ RUN corepack enable
 
 WORKDIR /platform
 
-# Workspace-root store plus manifests, then the three peer packages wab needs at
+# Workspace-root store plus manifests, then the peer packages wab needs at
 # runtime. Symlinks inside each package's node_modules point back into
 # /platform/node_modules/.pnpm, so both must be copied together.
 COPY --from=builder --chown=node:node /platform/node_modules ./node_modules
@@ -117,6 +117,7 @@ COPY --from=builder --chown=node:node /platform/pnpm-workspace.yaml /platform/pn
 RUN pnpm --version && chmod -R a+rX "$COREPACK_HOME"
 COPY --from=builder --chown=node:node /platform/shared ./shared
 COPY --from=builder --chown=node:node /platform/wab ./wab
+COPY --from=builder --chown=node:node /platform/canvas-packages/hostlessList.json ./canvas-packages/hostlessList.json
 COPY --from=builder --chown=node:node /platform/loader-bundle-env ./loader-bundle-env
 COPY --from=builder --chown=node:node /platform/loader-html-hydrate ./loader-html-hydrate
 

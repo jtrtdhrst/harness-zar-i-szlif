@@ -1,9 +1,9 @@
 # plasmic-production
 
 Self-hosted Plasmic (Studio + WAB + codegen) deployed from this repository.
-Everything the deployment needs is in this repo; `platform/` is a vendored copy of
-[`plasmicapp/plasmic`](https://github.com/plasmicapp/plasmic) at
-`85b861115687fde8e7970a9f270660aecb62b38e` with a single local change.
+Everything the deployment needs is in this repo; the build is generated from
+[`plasmicapp/plasmic`](https://github.com/plasmicapp/plasmic) pinned at
+`e2e0b744f22638782736fe3a24ce9772e7cdb1b0` (2026-11-15) with local overrides.
 
 ## What runs
 
@@ -14,13 +14,17 @@ Everything the deployment needs is in this repo; `platform/` is a vendored copy 
 | `plasmic-codegen` | same image, `codegen-backend.ts` | 3005 | `/api/v1/code/*`, `/api/v1/loader/*` |
 | `plasmic-studio` | `studio.Dockerfile` (nginx) | 8080 | Studio UI + reverse proxy |
 
-The only source change against upstream is `githubClientId` / `githubAppName` in
-`platform/wab/src/wab/shared/devflags.ts` (our GitHub App). The GitHub App private
-key is **not** in the image: `plasmic-wab` writes it from
+The only functional source change against upstream is `githubClientId` /
+`githubAppName` in `platform/wab/src/wab/shared/devflags.ts` (our GitHub App).
+The GitHub App private key is **not** in the image: `plasmic-wab` writes it from
 `PLASMIC_GITHUB_SECRETS_B64` at container start.
 
-`platform/shared/.keep` exists because the pinned upstream commit predates
-`platform/shared/`, while `platform/wab/Dockerfile` copies that directory.
+Images are built on the VPS and referenced by exact tag
+(`plasmic-wab:2026-11-15-e2e0b744`, `plasmic-studio:2026-11-15-e2e0b744`);
+Coolify only pulls those local tags. Keep the previous tag until the new one has
+passed health, public readback and the rollback check. WAB runs pending TypeORM
+migrations at startup (`maybeMigrateDatabase`), so the database schema moves
+forward with the first boot of a new image.
 
 ## Local run
 

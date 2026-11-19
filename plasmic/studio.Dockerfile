@@ -4,7 +4,7 @@
 # Build context is the repository root (it needs ./platform and ./studio).
 # The WAB backend image is built separately from ./platform (upstream Dockerfile).
 
-FROM node:24.16.0-alpine AS builder
+FROM node:24.22.1-alpine AS builder
 
 # Same build prerequisites as platform/wab/Dockerfile (native addons, peg parsers,
 # codegen sandbox) plus git: wab's rsbuild config calls `git rev-parse HEAD`.

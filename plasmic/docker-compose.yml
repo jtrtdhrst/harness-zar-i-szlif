@@ -1,5 +1,5 @@
-# Self-hosted Plasmic (Studio + WAB + codegen) built from the vendored
-# upstream source in ./platform (plasmicapp/plasmic @ 85b8611).
+# Self-hosted Plasmic (Studio + WAB + codegen) built from upstream
+# plasmicapp/plasmic @ e2e0b744 plus the local overrides in this directory.
 #
 # Coolify: Docker Compose build pack, base directory /, compose docker-compose.yml.
 # All values below come from Coolify environment variables (see .env.example).
