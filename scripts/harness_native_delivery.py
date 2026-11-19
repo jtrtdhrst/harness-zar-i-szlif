@@ -439,6 +439,9 @@ def build_parser():
                         help="timer mode: take --base-sha/--source-sha from the unit's "
                              "EnvironmentFile (HARNESS_BASE_SHA/HARNESS_SOURCE_SHA); "
                              "absent or malformed = denied, never reconstructed")
+    parser.add_argument("--service", choices=sorted(SERVICES),
+                        help="explicit operator-only lane: release one admitted service while"
+                             " reporting other paths as pending; incompatible with --auto")
     parser.add_argument("--artifact-dir")
     parser.add_argument("--attestation-key")
     parser.add_argument("--state-dir", default=str(STATE_ROOT / "delivery"))
@@ -458,13 +461,28 @@ def main(argv=None):
 
         now = parse_time(args.now) if args.now else None
         base_sha, source_sha = resolve_source_range(args)
+        if args.service and args.auto:
+            raise Denied("scoped_auto_not_allowed")
+        if args.service and args.mode != "plan" and os.geteuid() != 0:
+            raise Denied("scoped_operator_required")
         if base_sha == source_sha:
             # Nothing changed since the last processed main SHA: this is the
             # timer's steady state, and it touches neither docker nor Coolify.
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
                               "result": "no_change"}, sort_keys=True))
             return 0
-        paths = git_changed_paths(args.repo, base_sha, source_sha)
+        # A scoped release is operator-explicit, never silently chosen by the
+        # unattended timer. Every included service still needs the exact SHA,
+        # independent review, per-UUID grant, and signed digest attestation.
+        all_paths = git_changed_paths(args.repo, base_sha, source_sha)
+        if args.service:
+            folder = SERVICES[args.service]["folder"]
+            paths = [p for p in all_paths if p == folder or p.startswith(folder + "/")]
+            if not paths:
+                raise Denied("selected_service_unchanged")
+        else:
+            paths = all_paths
+        pending_paths = sorted(set(all_paths) - set(paths))
         entries = {entry.get("id"): entry
                    for entry in (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
                    if isinstance(entry, dict)}
@@ -482,6 +500,11 @@ def main(argv=None):
                 if path == spec["folder"] or path.startswith(spec["folder"] + "/"):
                     attributed.setdefault(service, []).append(path)
         report: dict = {"mode": args.mode, "source_sha": source_sha,
+                  "scope": args.service or "all",
+                  # Never report a scoped service release as delivery of the
+                  # entire main range. This ledger is necessary for downstream
+                  # Done/E2E checking and for the next per-lane release.
+                  "pending_paths": pending_paths,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
