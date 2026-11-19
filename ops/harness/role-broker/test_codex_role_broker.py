@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from aiohttp import ClientPayloadError
 from aiohttp.test_utils import TestClient, TestServer
 from codex_role_broker import create_app, role_secret, UPSTREAM
 
@@ -12,6 +13,12 @@ COO = "o" * 50
 class FakeStream:
     async def iter_chunked(self, n):
         yield b'data: {"type":"response.completed"}\n\n'
+
+class BrokenStream:
+    async def iter_chunked(self, n):
+        yield b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+        raise ClientPayloadError("SECRET-UPSTREAM-TRANSPORT")
+
 
 class Upstream:
     status = 200
@@ -86,6 +93,19 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers["Authorization"], "Bearer upstream-secret")
         self.assertNotIn("X-Forbidden-Client", headers)
         self.assertFalse(redirect)
+
+    async def test_broken_upstream_sse_is_sanitized_and_fails_terminally(self):
+        from unittest.mock import patch
+        with patch.object(Upstream, "content", BrokenStream()):
+            response = await self.client.post("/p/cho/v1/responses",
+                json=self.payload(), headers=self.auth())
+            body = await response.read()
+        self.assertEqual(response.status, 200)  # headers already streamed
+        self.assertIn(b"event: error", body)
+        self.assertIn(b"upstream_stream_interrupted", body)
+        self.assertNotIn(b"SECRET-UPSTREAM-TRANSPORT", body)
+        self.assertNotIn(b"response.completed", body)
+        self.assertEqual(self.app["capacity"]._active["cho"], 0)
 
     async def test_authenticated_same_role_concurrency_rejected(self):
         capacity = self.app["capacity"]
