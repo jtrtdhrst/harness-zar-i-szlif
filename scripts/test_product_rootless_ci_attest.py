@@ -88,21 +88,74 @@ class AttesterSecurityTests(unittest.TestCase):
                  autospec=True, side_effect=lambda path: fake_lstat(path, socket_mode=S_IFSOCK | 0o600)):
                 self.assertEqual(ci.preflight(), 991)
 
-    def test_docker_daemon_must_be_running_with_cgroup_budgets(self):
+    def test_docker_daemon_budget_and_socket_process_cgroup_binding(self):
         from types import SimpleNamespace
         valid = ("User=zis-ci-guest\nMemoryMax=6442450944\nTasksMax=256\n"
-                 "CPUQuotaPerSecUSec=2s\nActiveState=active\n")
-        with patch.object(ci.subprocess, "run", return_value=SimpleNamespace(stdout=valid)):
-            ci.daemon_budget_preflight()
-        for changed in (valid.replace("MemoryMax=6442450944", "MemoryMax=infinity"),
-                        valid.replace("TasksMax=256", "TasksMax=infinity"),
-                        valid.replace("CPUQuotaPerSecUSec=2s", "CPUQuotaPerSecUSec=infinity"),
-                        valid.replace("ActiveState=active", "ActiveState=inactive"),
-                        valid.replace("User=zis-ci-guest", "User=root")):
-            with self.subTest(changed=changed), \
-                 patch.object(ci.subprocess, "run", return_value=SimpleNamespace(stdout=changed)):
-                with self.assertRaises(ci.Refused):
-                    ci.daemon_budget_preflight()
+                 "CPUQuotaPerSecUSec=2s\nActiveState=active\n"
+                 "ControlGroup=/system.slice/zis-ci-guest-docker.service\nMainPID=123\n")
+        socket = ('u_str LISTEN 0 4096 /run/zis-ci-guest/docker.sock 99 '
+                  '* 0 users:(("dockerd",pid=222,fd=8))')
+        identity = "0::/system.slice/zis-ci-guest-docker.service\n"
+
+        def run(fields, listener):
+            def fake_call(args, **kwargs):
+                return SimpleNamespace(stdout=(fields if args[0] == "/usr/bin/systemctl" else listener))
+            with patch.object(ci.subprocess, "run", side_effect=fake_call), \
+                 patch.object(ci.Path, "read_text", return_value=identity), \
+                 patch.object(ci.os, "stat", return_value=SimpleNamespace(st_uid=991)), \
+                 patch.object(ci, "guest_uid", return_value=991):
+                ci.daemon_budget_preflight()
+
+        run(valid, socket)
+        bad_configs = (
+            valid.replace("MemoryMax=6442450944", "MemoryMax=infinity"),
+            valid.replace("TasksMax=256", "TasksMax=infinity"),
+            valid.replace("CPUQuotaPerSecUSec=2s", "CPUQuotaPerSecUSec=infinity"),
+            valid.replace("ActiveState=active", "ActiveState=inactive"),
+            valid.replace("User=zis-ci-guest", "User=root"),
+            valid.replace("ControlGroup=/system.slice/zis-ci-guest-docker.service",
+                          "ControlGroup=/system.slice/foreign.service"),
+            valid.replace("MainPID=123", "MainPID=0"),
+        )
+        for changed in bad_configs:
+            with self.subTest(config=changed), self.assertRaises(ci.Refused):
+                run(changed, socket)
+        for listener in ("", socket.replace("dockerd", "python"),
+                         socket.replace("pid=222", "pid=xyz")):
+            with self.subTest(listener=listener), self.assertRaises(ci.Refused):
+                run(valid, listener)
+        with patch.object(ci.subprocess, "run",
+                 side_effect=lambda args, **kwargs: SimpleNamespace(
+                     stdout=valid if args[0] == "/usr/bin/systemctl" else socket)), \
+             patch.object(ci.Path, "read_text", return_value="0::/foreign.service\n"), \
+             patch.object(ci.os, "stat", return_value=SimpleNamespace(st_uid=991)), \
+             patch.object(ci, "guest_uid", return_value=991):
+            with self.assertRaises(ci.Refused):
+                ci.daemon_budget_preflight()
+
+    def test_product_dockerfiles_are_from_verified_product_checkout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder)
+            docker = source / "ops" / "coolify"
+            docker.mkdir(parents=True)
+            first = docker / "Dockerfile"
+            second = docker / "Dockerfile.ci"
+            with self.assertRaisesRegex(ci.Refused, "product_dockerfile_missing"):
+                ci.verify_product_build_context(source)
+            first.write_text("FROM scratch\n")
+            second.write_text("FROM product-ci:build\n")
+            ci.verify_product_build_context(source)
+            second.unlink()
+            with self.assertRaisesRegex(ci.Refused, "product_dockerfile_missing"):
+                ci.verify_product_build_context(source)
+
+    def test_write_once_fsyncs_parent_directory_for_crash_durability(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / "one.json"
+            with patch.object(ci, "fsync_directory", wraps=ci.fsync_directory) as synced:
+                ci._write_once(destination, b"test-evidence\n")
+                self.assertGreaterEqual(synced.call_count, 2)
+                self.assertEqual(destination.read_bytes(), b"test-evidence\n")
 
     def test_github_token_private_fd_and_symlink_denial(self):
         with tempfile.TemporaryDirectory() as folder:

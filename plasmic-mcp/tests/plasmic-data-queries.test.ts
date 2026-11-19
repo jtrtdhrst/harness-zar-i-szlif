@@ -523,7 +523,8 @@ test("live stdio server exposes the data-query tools and reports UNVERIFIED with
     ]) {
       assert.ok(names.includes(name), `missing ${name}`);
     }
-    assert.equal(names.length, 37);
+    // ZARI-261 added the anchored comment write surface (5 tools): 37 -> 42.
+    assert.equal(names.length, 42);
     const caps = await rpc("tools/call", { name: "plasmic_get_capabilities", arguments: {} }) as {
       result?: { isError?: boolean; content?: Array<{ text?: string }> };
     };

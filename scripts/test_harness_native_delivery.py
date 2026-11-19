@@ -666,6 +666,86 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertIsNone(payload["deployed"])
 
+    def test_scoped_plan_admits_one_service_and_preserves_pending_paths(self):
+        # Root-owned, per-UUID gates still apply; an explicitly scoped release
+        # cannot claim unrelated folders were delivered.
+        host = FakeHost()
+        code, out = self.run_main(
+            "plan", host,
+            changed=("mantic-mcp/src/server.ts", "playwright-mcp/src/unreviewed.ts",
+                     "plasmic/src/core.ts", "qdrant/data/index.ts"),
+            extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
+        report = json.loads(out)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["scope"], "mantic-mcp")
+        self.assertEqual(report["result"], "ok_scoped")
+        self.assertEqual(list(report["services"]), ["mantic-mcp"])
+        self.assertEqual(report["admitted"], ["mantic-mcp"])
+        self.assertEqual(report["pending_paths"],
+                         ["plasmic/src/core.ts", "playwright-mcp/src/unreviewed.ts",
+                          "qdrant/data/index.ts"])
+        self.assertEqual(host.calls, [])
+
+    def test_scoped_plan_does_not_skip_service_approval_or_signed_ci(self):
+        host = FakeHost()
+        code, out = self.run_main(
+            "plan", host,
+            documents={"request": request(), "grant": None,
+                       "attestation": signed_attestation()},
+            changed=("mantic-mcp/src/server.ts", "playwright-mcp/src/x.ts"),
+            extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1)
+        self.assertIn("release_lane_on_hold", out)
+        self.assertEqual(host.calls, [])
+
+    def test_scoped_service_must_exist_in_exact_diff(self):
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+                                  changed=("plasmic-mcp/src/index.ts",),
+                                  extra=["--service", "mantic-mcp"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.calls, [])
+
+    def test_scoped_deploy_only_touches_admitted_service(self):
+        host = FakeHost(images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": DIGEST})
+        with patch.object(delivery.os, "geteuid", return_value=0):
+            code, out = self.run_main(
+                "deploy", host,
+                changed=("mantic-mcp/src/server.ts",
+                         "playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"),
+                extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
+        report = json.loads(out)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["scope"], "mantic-mcp")
+        self.assertEqual(report["result"], "ok_scoped")
+        self.assertEqual(report["pending_paths"],
+                         ["playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"])
+        decisions = report["deployed"]["decisions"]
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["service"], "mantic-mcp")
+        self.assertEqual(decisions[0]["decision"], "promoted")
+
+    def test_nonroot_cannot_perform_scoped_deploy(self):
+        host = FakeHost()
+        with patch.object(delivery.os, "geteuid", return_value=1000):
+            code, out = self.run_main(
+                "deploy", host, changed=("mantic-mcp/src/server.ts",),
+                extra=["--service", "mantic-mcp"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.calls, [])
+
+    def test_unattended_timer_cannot_use_scoped_release_flag(self):
+        host = FakeHost()
+        code, out = self.run_main(
+            "plan", host, changed=("mantic-mcp/src/server.ts",),
+            extra=["--service", "mantic-mcp", "--auto"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.calls, [])
+
     def test_deploy_mode_denies_without_attestation_and_never_deploys(self):
         host = FakeHost()
         code, out = self.run_main("deploy", host,
@@ -878,3 +958,4 @@ class AutoModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

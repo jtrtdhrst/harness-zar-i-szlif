@@ -90,7 +90,8 @@ def daemon_budget_preflight() -> None:
         result = subprocess.run(
             ["/usr/bin/systemctl", "show", "zis-ci-guest-docker.service",
              "-p", "User", "-p", "MemoryMax", "-p", "TasksMax",
-             "-p", "CPUQuotaPerSecUSec", "-p", "ActiveState", "--no-pager"],
+             "-p", "CPUQuotaPerSecUSec", "-p", "ActiveState",
+             "-p", "ControlGroup", "-p", "MainPID", "--no-pager"],
             check=True, capture_output=True, text=True, timeout=6)
         fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
         memory = int(fields["MemoryMax"])
@@ -104,8 +105,33 @@ def daemon_budget_preflight() -> None:
     if (fields.get("User") != GUEST or fields.get("ActiveState") != "active"
             or not 0 < memory <= MAX_DAEMON_MEMORY
             or not 0 < tasks <= MAX_DAEMON_TASKS
-            or not 0 < cpu_seconds <= MAX_DAEMON_CPU_SECONDS):
+            or not 0 < cpu_seconds <= MAX_DAEMON_CPU_SECONDS
+            or fields.get("ControlGroup") != "/system.slice/zis-ci-guest-docker.service"):
         raise Refused("rootless_daemon_budget_untrusted")
+    try:
+        main_pid = int(fields["MainPID"])
+        if main_pid <= 1:
+            raise ValueError("invalid daemon pid")
+        expected_cgroup = "0::" + fields["ControlGroup"]
+        if expected_cgroup not in Path("/proc", str(main_pid), "cgroup").read_text().splitlines():
+            raise Refused("rootless_daemon_main_cgroup_untrusted")
+        socket = subprocess.run(["/usr/bin/ss", "-H", "-x", "-l", "-n", "-p"],
+                                check=True, capture_output=True, text=True, timeout=6)
+        matching = [line for line in socket.stdout.splitlines()
+                    if re.search(r"(?<!\S)" + re.escape(str(DOCKER_SOCKET)) + r"(?=\s)", line)]
+        if len(matching) != 1:
+            raise Refused("rootless_socket_listener_unverified")
+        owners = re.findall(r'\("dockerd",pid=(\d+),fd=\d+\)', matching[0])
+        if len(owners) != 1:
+            raise Refused("rootless_socket_daemon_unverified")
+        daemon_pid = int(owners[0])
+        if os.stat("/proc/" + str(daemon_pid)).st_uid != guest_uid():
+            raise Refused("rootless_socket_owner_untrusted")
+        if expected_cgroup not in Path("/proc", str(daemon_pid), "cgroup").read_text().splitlines():
+            raise Refused("rootless_socket_cgroup_untrusted")
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired) as exc:
+        raise Refused("rootless_socket_daemon_binding_unverified") from exc
 
 
 def private_github_token() -> str:
@@ -267,6 +293,26 @@ def isolated_guest_environment() -> tuple[Path, list[str]]:
         raise
 
 
+def fsync_directory(path: Path) -> None:
+    """Make create-only evidence directory entries durable after power loss."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def verify_product_build_context(source: Path) -> None:
+    """Dockerfiles belong to the immutable Product checkout, not the Harness repo."""
+    for relative in ("ops/coolify/Dockerfile", "ops/coolify/Dockerfile.ci"):
+        try:
+            info = (source / relative).lstat()
+        except OSError as exc:
+            raise Refused("product_dockerfile_missing") from exc
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size < 65536:
+            raise Refused("product_dockerfile_untrusted")
+
+
 def guest_ci(source: Path, sha: str) -> str:
     LOG_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     LOG_ROOT.chmod(0o700)
@@ -277,6 +323,7 @@ def guest_ci(source: Path, sha: str) -> str:
     log_dir.chmod(0o700)
     if log_dir.stat().st_uid != 0 or LOG_ROOT.stat().st_uid != 0:
         raise Refused("log_directory_owner_untrusted")
+    verify_product_build_context(source)
     fd, log_name = tempfile.mkstemp(prefix="attempt-", suffix=".pending", dir=log_dir)
     log = Path(log_name)
     shell = r'''
@@ -336,12 +383,16 @@ echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
             if immutable.stat().st_uid != 0 or hashlib.sha256(immutable.read_bytes()).hexdigest() != digest:
                 raise Refused("existing_log_digest_mismatch")
         os.chmod(immutable, 0o400)
+        with immutable.open("rb") as evidence:
+            os.fsync(evidence.fileno())
+        fsync_directory(log_dir)
         passed = True
         return digest, immutable
     finally:
         shutil.rmtree(guest_home, ignore_errors=True)
         if passed:
             log.unlink(missing_ok=True)
+            fsync_directory(log_dir)
         elif log.exists():
             # Preserve failed attempt but never let it impersonate signed evidence.
             log.rename(log.with_suffix(".failed"))
@@ -352,8 +403,10 @@ def receipt_key() -> bytes:
         fd = os.open(KEY, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             os.write(fd, os.urandom(32))
+            os.fsync(fd)
         finally:
             os.close(fd)
+        fsync_directory(KEY.parent)
     st = KEY.stat()
     if st.st_uid != 0 or stat.S_IMODE(st.st_mode) != 0o600 or not stat.S_ISREG(st.st_mode):
         raise Refused("attestation_key_not_private")
@@ -376,8 +429,10 @@ def _write_once(name: Path, data: bytes) -> None:
             os.link(temporary, name)  # O_EXCL equivalent; no replacement ever
         except FileExistsError as exc:
             raise Refused("attestation_already_exists") from exc
+        fsync_directory(name.parent)
     finally:
         temporary.unlink(missing_ok=True)
+        fsync_directory(name.parent)
 
 
 def verified_existing(sha: str, expected_tree: str, key: bytes) -> dict | None:

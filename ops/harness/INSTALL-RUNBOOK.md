@@ -177,6 +177,29 @@ for forensics. Its original entrypoint remains the reviewed fail-closed shim,
 including after restoring the old unit. A disabled timer alone is insufficient
 protection against accidental manual invocation; the shim must remain in place.
 
+## Explicit scoped release of an independently admitted MCP lane
+
+When a reviewed main SHA changes several unrelated manifest resources, the
+unattended timer MUST continue to deny a global batch that contains an
+unimplemented transport (for example `plasmic/` or `qdrant/`). Do not
+silently skip those resources, forge a wider approval or mark the whole SHA
+delivered.
+
+An authorized root operator can instead invoke the existing controller with
+`--service plasmic-mcp` and an **explicit** exact base/source SHA pair, after
+the existing per-UUID request, independent head review, grant, root-owned HMAC
+attestation and image digest are verified. Run `--mode plan` first and record
+the `scope` and `pending_paths` fields. The result marker is
+`ok_scoped`, **not** the global `ok`: downstream automation must never treat
+this as a complete-main release. The pending paths are **not deployed** and
+must remain open in the release ledger. Then use `--mode prepare` and
+`--mode deploy` only under separately approved build/release grants.
+
+This switch is intentionally incompatible with `--auto`; systemd is not
+permitted to guess which of several held services was authorized. A missing
+scoped service in the exact diff, or a missing/stale grant, fails closed before
+any Docker or Coolify mutation.
+
 ## Immutable image and rollback acceptance
 
 The transport MUST patch the Coolify Compose image using an exact immutable
@@ -209,3 +232,4 @@ are additional requirements before a delivery issue becomes Done.
 - The checkout this unit builds from, and the `source-range.env` SHA pair, must
   be maintained by an operator or an existing scheduler; this change installs no
   fetcher, no new timer, no baseline state and no SHA reconstruction.
+
