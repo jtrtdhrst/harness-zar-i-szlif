@@ -64,6 +64,21 @@ class AttesterSecurityTests(unittest.TestCase):
             with self.assertRaises(ci.Refused):
                 ci.validated_members(t)
 
+    def test_socket_requires_owner_only_permissions(self):
+        from types import SimpleNamespace
+        from stat import S_IFSOCK
+        with patch.object(ci.os, "geteuid", return_value=0), \
+             patch.object(ci, "guest_uid", return_value=991):
+            for mode in (0o660, 0o666, 0o640):
+                with self.subTest(mode=mode), \
+                     patch.object(ci.DOCKER_SOCKET.__class__, "stat",
+                                  return_value=SimpleNamespace(st_mode=S_IFSOCK | mode, st_uid=991)):
+                    with self.assertRaises(ci.Refused):
+                        ci.preflight()
+            with patch.object(ci.DOCKER_SOCKET.__class__, "stat",
+                              return_value=SimpleNamespace(st_mode=S_IFSOCK | 0o600, st_uid=991)):
+                self.assertEqual(ci.preflight(), 991)
+
     def test_plan_does_not_download_or_build(self):
         with patch.object(ci, "github_snapshot", side_effect=AssertionError("unexpected network")), \
              patch.object(ci, "guest_ci", side_effect=AssertionError("unexpected build")), \
