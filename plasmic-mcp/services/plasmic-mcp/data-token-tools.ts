@@ -153,6 +153,11 @@ async function change(ctx: PlasmicCtx, op: Op, args: Args): Promise<Json> {
   if (!dryRun && (!args.branchId || args.branchId === "main" || !args.idempotencyKey)) {
     return fail("DATA_TOKEN_LIVE_REQUIRES_DESIGN_BRANCH_AND_IDEMPOTENCY_KEY");
   }
+  // Explicit operator-granted project allowlist. WAB Editor permission alone is not release approval.
+  if (!dryRun) {
+    const allowed = new Set((process.env.PLASMIC_MCP_WRITABLE_PROJECT_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+    if (!allowed.has(args.projectId)) return fail("DATA_TOKEN_PROJECT_WRITE_NOT_APPROVED");
+  }
   const process = async (): Promise<Json> => {
     if (!dryRun) {
       const branches = await ctx.client.listBranches(args.projectId);
@@ -183,7 +188,7 @@ async function change(ctx: PlasmicCtx, op: Op, args: Args): Promise<Json> {
     expectedRevision: args.expectedRevision }));
   const cached = await idempotent(ctx.stateDir + "/idempotency", key, () =>
     writeOp(ctx, "plasmic_" + op + "_data_token", args.projectId, args.tokenId, digest,
-      async () => ({ ...await process(), revision: args.expectedRevision! + 1, payloadDigest: digest })));
+      async () => { const saved = await process(); return { ...saved, revision: Number(saved.revision), payloadDigest: digest }; }));
   if (cached.payloadDigest !== digest) return fail("DATA_TOKEN_IDEMPOTENCY_CONFLICT");
   return { ...cached, payloadDigest: undefined };
 }
