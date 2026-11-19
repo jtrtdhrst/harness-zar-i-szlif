@@ -12,7 +12,7 @@ The broker runs outside the task sandbox, resolves Codex OAuth from the trusted 
 
 ## Tests on 2026-11-19 (operator-observed)
 
-- 11/11 unit cases PASS in local Python and on VPS in the actual Hermes virtual environment. Negative checks cover foreign/missing bearer, unsupported route/model/protocol, symlink/private-file mode, no upstream call on denied request, no client header forwarding, no secrets in error.
+- Initial 11/11 unit cases PASS in local Python and on VPS; after independent CTO review found key-path TOCTOU, the broker was hardened with descriptor-relative O_NOFOLLOW opens, verified service UID, private root/role/key inode checks, and FD-only reads. The expanded 13/13 unit cases PASS on VPS in the actual Hermes virtualenv as root and UID 997 (multica-zar). New tests verify 0700 role directories and a symlink swap after file open still reads the original validated inode. Negative checks cover foreign/missing bearer, unsupported route/model/protocol, symlink/private-file mode, no upstream call on denied request, no client header forwarding, no secrets in error.
 - Disposable VPS broker staging: anonymous -> HTTP 401, COO bearer on CHO route -> 401, CHO bearer on CHO route -> 200. No persistent service/profile change.
 - Direct real GPT-6 Luna request via disposable broker returned HTTP 200, valid completed SSE, output OK, about 3.1 seconds. This is proof of the broker data-plane, not full agent runtime.
 - Disposable Hermes gateway-backed one-shot -z exited 2 with an unknown execution outcome; it never reached the broker's Responses route. An additional diagnostic was blocked by execution safeguards. **Normal native Multica/Hermes client -> broker E2E is not yet verified.**
