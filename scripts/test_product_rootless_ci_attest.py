@@ -1,5 +1,7 @@
 """Negative security regressions for source-verified, credential-free Product CI."""
 import io
+import json
+import tempfile
 import os
 import stat
 import tarfile
