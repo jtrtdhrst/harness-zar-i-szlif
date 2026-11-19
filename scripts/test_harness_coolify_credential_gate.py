@@ -45,6 +45,17 @@ class RotationGateTests(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmp:
       p=Path(tmp)/"secret";p.write_text("test-value");os.chmod(p,0o644)
       with self.assertRaises(g.Denied):g.read_secret(p)
+  def test_comments_cannot_spoof_controller_token_switch(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      p = Path(tmp) / "controller.py"
+      candidate = Path("/root/coolify-secrets/harness_delivery_api_token")
+      p.write_text('# COOLIFY_TOKEN = Path("'+str(candidate)+'")\n'
+                   'COOLIFY_TOKEN = Path("'+str(g.OLD)+'")\n')
+      self.assertEqual(g.source_flags(p, candidate),
+                       {"legacy_ref": True, "dedicated_ref": False})
+      p.write_text('from pathlib import Path\nCOOLIFY_TOKEN = Path("'+str(candidate)+'")\n')
+      self.assertEqual(g.source_flags(p, candidate),
+                       {"legacy_ref": False, "dedicated_ref": True})
   def test_invalid_uuid_denied_before_http(self):
     with self.assertRaises(g.Denied):g.get_status("secret","../etc/passwd")
 
