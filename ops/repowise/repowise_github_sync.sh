@@ -325,6 +325,83 @@ if any(m["RW"] and pathlib.Path(m["Source"]).resolve()!=episodes for m in mounts
   CONSUMERS+=("$PUBLISHER")
   echo "SYNC_SCOPED_PUBLISHER_INCLUDED name=$PUBLISHER"
 fi
+# Coolify staging publisher also bind-mounts the Product subtree directly.
+# Discover it by stable, verified Coolify labels (not ephemeral container name).
+# Guard remains authoritative: unknown mounts still abort before any file swap.
+# Scan running containers, not a mutable single-label filter: a changed Coolify
+# label must never silently exclude a publisher that still mounts Product.
+# Capture errors explicitly; a process substitution would hide docker failures.
+RUNNING_IDS=$(docker ps --quiet) || fail "coolify-docker-list-failed"
+[[ -n $RUNNING_IDS ]] || fail "coolify-no-running-containers"
+# Project only the identity/isolation/mount fields required for admission.
+# Never copy unrelated containers' Config.Env into the sync process.
+INSPECT_FORMAT='{"Name":{{json .Name}},"Config":{"User":{{json .Config.User}},"Labels":{"coolify.managed":{{json (index .Config.Labels "coolify.managed")}},"coolify.projectName":{{json (index .Config.Labels "coolify.projectName")}},"coolify.resourceName":{{json (index .Config.Labels "coolify.resourceName")}},"coolify.applicationUuid":{{json (index .Config.Labels "coolify.applicationUuid")}},"com.docker.compose.project":{{json (index .Config.Labels "com.docker.compose.project")}}}},"HostConfig":{"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}},"NetworkMode":{{json .HostConfig.NetworkMode}}},"Mounts":[{{range $i,$m:=.Mounts}}{{if $i}},{{end}}{"Source":{{json $m.Source}},"Destination":{{json $m.Destination}},"RW":{{json $m.RW}}}{{end}}]}'
+ALL_RUNNING_INSPECT=$(docker inspect --format "$INSPECT_FORMAT" $RUNNING_IDS) || fail "coolify-docker-inspect-failed"
+COOLIFY_PUBLISHER=$(python3 -c '
+import json,pathlib,sys
+try: containers=[json.loads(line) for line in sys.stdin if line.strip()]
+except (ValueError,TypeError): raise SystemExit("publisher_discovery_invalid_json")
+if not isinstance(containers,list): raise SystemExit("publisher_discovery_invalid_shape")
+live=pathlib.Path("/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product").resolve()
+episodes=live/".repowise"/"episodes"
+app_uuid="gl8bvfjtw2af8hkox4mguzzr"
+matches=[]
+for c in containers:
+    name=str(c.get("Name") or "").lstrip("/")
+    labels=(c.get("Config") or {}).get("Labels") or {}
+    if not isinstance(labels,dict): raise SystemExit("publisher_discovery_invalid_labels")
+    sources=set()
+    for m in c.get("Mounts") or []:
+        source=m.get("Source")
+        if source: sources.add(pathlib.Path(source).resolve())
+    plausible=(labels.get("coolify.applicationUuid")==app_uuid
+              or labels.get("com.docker.compose.project")==app_uuid
+              or labels.get("coolify.resourceName")=="repowise-deployment-publisher-staging"
+              or (live in sources or episodes in sources)
+                 and name!="repowise-deployment-publisher-product")
+    if plausible: matches.append(name)
+if len(matches)!=1: raise SystemExit("publisher_discovery_expected_exactly_one_got_"+str(len(matches)))
+if not matches[0]: raise SystemExit("publisher_discovery_empty_name")
+print(matches[0])
+' <<< "$ALL_RUNNING_INSPECT") || fail "coolify-publisher-discovery-failed"
+unset ALL_RUNNING_INSPECT
+COOLIFY_PUBLISHERS=("$COOLIFY_PUBLISHER")
+for coolify_publisher in "${COOLIFY_PUBLISHERS[@]}"; do
+  docker inspect --format "$INSPECT_FORMAT" "$coolify_publisher" | python3 -c '
+import json,pathlib,sys
+cs=[json.loads(line) for line in sys.stdin if line.strip()]
+if len(cs)!=1: raise SystemExit("publisher_container_count_mismatch")
+c=cs[0]; cfg=c["Config"]; host=c["HostConfig"]; labels=cfg.get("Labels") or {}
+want={"coolify.managed":"true","coolify.projectName":"repowise-knowledge",
+      "coolify.resourceName":"repowise-deployment-publisher-staging",
+      "coolify.applicationUuid":"gl8bvfjtw2af8hkox4mguzzr"}
+if any(labels.get(k)!=v for k,v in want.items()):
+    raise SystemExit("publisher_identity_changed")
+if cfg.get("User")!="999:999" or not host.get("ReadonlyRootfs") or host.get("NetworkMode")!="host":
+    raise SystemExit("publisher_isolation_changed")
+live=pathlib.Path("/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product").resolve()
+episodes=live/".repowise"/"episodes"
+expected={
+  "/workspace/product":(live,False),
+  "/workspace/product/.repowise/episodes":(episodes,True),
+  "/run/lock/repowise-github-sync.lock":(pathlib.Path("/run/lock/repowise-github-sync.lock").resolve(),False),
+  "/run/secrets/repowise-token":(pathlib.Path("/etc/repowise-publisher/product.token").resolve(),False),
+}
+mounts=c["Mounts"]
+if len(mounts)!=len(expected): raise SystemExit("publisher_unexpected_mount_count")
+seen=set()
+for m in mounts:
+    dest=m["Destination"]
+    if dest not in expected or dest in seen: raise SystemExit("publisher_unexpected_mount")
+    seen.add(dest)
+    source,rw=expected[dest]
+    if pathlib.Path(m["Source"]).resolve()!=source or bool(m["RW"])!=rw:
+        raise SystemExit("publisher_mount_or_rw_mismatch")
+if seen!=set(expected): raise SystemExit("publisher_mount_missing")
+' || fail "coolify-publisher-mount-or-identity-changed"
+  CONSUMERS+=("$coolify_publisher")
+  echo "SYNC_COOLIFY_PUBLISHER_INCLUDED name=$coolify_publisher"
+done
 prepare_live_sources
 check_live_worktrees
 stop_consumers
