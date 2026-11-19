@@ -41,7 +41,7 @@ type Call = { method: string; path: string; body?: Record<string, unknown> };
 
 const ANCHOR = { iid: "elem-card-1", uuid: "uuid-card-1" };
 
-function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean; corruptCreateAfterApply?: "body" | "anchor" | "id"; failReplyAfterApply?: boolean; corruptReplyAfterApply?: boolean } = {}) {
+function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean; corruptCreateAfterApply?: "body" | "anchor" | "id"; failReplyAfterApply?: boolean; corruptReplyAfterApply?: boolean; omitResolveHistory?: boolean } = {}) {
   const actor: "session" | "team" = opts.actor ?? "team";
   const state = {
     revision: 7,
@@ -55,6 +55,7 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
     corruptCreateAfterApply: opts.corruptCreateAfterApply,
     failReplyAfterApply: !!opts.failReplyAfterApply,
     corruptReplyAfterApply: !!opts.corruptReplyAfterApply,
+    omitResolveHistory: !!opts.omitResolveHistory,
     fetches: 0,
   };
   const newThread = (
@@ -162,11 +163,13 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
       }
       if (method === "PUT") {
         thread.resolved = !!body.resolved;
-        thread.commentThreadHistories.push({
-          id: body.id,
-          resolved: !!body.resolved,
-          createdAt: "2026-11-19T12:00:00Z",
-        });
+        if (!state.omitResolveHistory) {
+          thread.commentThreadHistories.push({
+            id: body.id,
+            resolved: !!body.resolved,
+            createdAt: "2026-11-19T12:00:00Z",
+          });
+        }
         return json(200, {});
       }
     }
@@ -196,7 +199,7 @@ function fixture(opts: { actor?: "session" | "team"; failPostAfterApply?: boolea
   return { client, state, posts, puts, fetchImpl };
 }
 
-async function tools(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean; corruptCreateAfterApply?: "body" | "anchor" | "id"; failReplyAfterApply?: boolean; corruptReplyAfterApply?: boolean } = {}) {
+async function tools(opts: { actor?: "session" | "team"; failPostAfterApply?: boolean; corruptCreateAfterApply?: "body" | "anchor" | "id"; failReplyAfterApply?: boolean; corruptReplyAfterApply?: boolean; omitResolveHistory?: boolean } = {}) {
   const f = fixture(opts);
   const stateDir = await mkdtemp(join(tmpdir(), "zari-261-comments-"));
   const defs = plasmicCommentTools({
@@ -324,6 +327,22 @@ test("create refuses a reused key with different content instead of silently pos
   assert.equal(posts().length, 1);
 });
 
+test("deleted root comment is a tombstone, never an idempotent success", async () => {
+  const { byName, state, posts } = await tools();
+  const args = {
+    projectId: "project-1", elementIid: ANCHOR.iid, elementUuid: ANCHOR.uuid,
+    body: "original comment", idempotencyKey: "deleted-create-key", dryRun: false,
+  };
+  const first = (await byName("plasmic_create_comment_thread").handler(args)) as Record<string, any>;
+  const comment = state.threads[0]!.comments.find((c) => c.id === first.commentId)!;
+  comment.deletedAt = "2026-11-19T13:00:00Z";
+  await assert.rejects(
+    byName("plasmic_create_comment_thread").handler(args),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  assert.equal(posts().length, 1, "deleted comment must not be falsely verified or recreated");
+});
+
 test("create fails closed when the native element anchor is missing or mismatched", async () => {
   const { byName, posts, state } = await tools();
   await assert.rejects(
@@ -407,6 +426,25 @@ test("ambiguous reply never falsely verifies a different body", async () => {
     /COMMENT_WRITE_UNVERIFIED/,
   );
   assert.equal(posts().length, 1, "ambiguous reply must not be blindly retried");
+});
+
+test("deleted reply is a tombstone, never an idempotent success", async () => {
+  const { byName, state, posts } = await tools();
+  const created = (await byName("plasmic_create_comment_thread").handler({
+    projectId: "project-1", elementIid: ANCHOR.iid, elementUuid: ANCHOR.uuid,
+    body: "parent", dryRun: false,
+  })) as Record<string, any>;
+  const args = {
+    projectId: "project-1", threadId: created.threadId,
+    body: "original reply", idempotencyKey: "deleted-reply-key", dryRun: false,
+  };
+  const first = (await byName("plasmic_reply_comment_thread").handler(args)) as Record<string, any>;
+  state.threads[0]!.comments.find((c) => c.id === first.commentId)!.deletedAt = "2026-11-19T13:00:00Z";
+  await assert.rejects(
+    byName("plasmic_reply_comment_thread").handler(args),
+    /IDEMPOTENCY_CONFLICT/,
+  );
+  assert.equal(posts().length, 2, "deleted reply must not be falsely verified or recreated");
 });
 
 test("reply lands on the exact thread, is read back, and refuses a resolved thread by default", async () => {
@@ -607,6 +645,24 @@ test("resolve defaults to dryRun, requires an explicit call, and verifies state 
   })) as Record<string, any>;
   assert.equal(reopened.resolved, false);
   assert.equal(state.threads[0]!.resolved, false);
+});
+
+test("resolve fails closed when WAB changes state without the requested history entry", async () => {
+  const { byName, state, puts } = await tools({ omitResolveHistory: true });
+  const created = (await byName("plasmic_create_comment_thread").handler({
+    projectId: "project-1", elementIid: ANCHOR.iid, elementUuid: ANCHOR.uuid,
+    body: "resolve history required", dryRun: false,
+  })) as Record<string, any>;
+  await assert.rejects(
+    byName("plasmic_resolve_comment_thread").handler({
+      projectId: "project-1", threadId: created.threadId,
+      resolved: true, idempotencyKey: "resolve-without-history", dryRun: false,
+    }),
+    /WRITE_READBACK_UNVERIFIED/,
+  );
+  assert.equal(puts().length, 1, "do not blindly replay an unverified PUT");
+  assert.equal(state.threads[0]!.resolved, true, "state changed but verification was correctly refused");
+  assert.equal(state.threads[0]!.commentThreadHistories.length, 0);
 });
 
 test("a 403 on resolve is reported as RESOLVE_FORBIDDEN, not as success", async () => {
