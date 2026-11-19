@@ -403,8 +403,6 @@ class TransportTests(unittest.TestCase):
                 on_backup=lambda backup: transport._rollback_snapshots.__setitem__(
                     ("mantic-mcp", UUID), backup))
             with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
-                 patch.object(delivery, "check_upstream_source",
-                             side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                  patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
                 with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
@@ -842,6 +840,8 @@ class AutoModeTests(unittest.TestCase):
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
                 patch.object(delivery, "check_release_parity",
                              side_effect=parity_error, return_value={"result": "parity_ok"}), \
+                patch.object(delivery, "check_upstream_source",
+                             side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "load_gate_file",
