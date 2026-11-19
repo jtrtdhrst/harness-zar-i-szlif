@@ -223,7 +223,7 @@ async def responses(request: web.Request):
                         # of a traceback, truncated silent success or false DONE.
                         try:
                             await output.write(
-                                b'event: error\\ndata: {"error":{"code":"upstream_stream_interrupted"}}\\n\\n')
+                                b'event: error\ndata: {"error":{"code":"upstream_stream_interrupted"}}\n\n')
                             await output.write_eof()
                         except (ConnectionResetError, OSError):
                             # Client disconnected; never log or relay OAuth details.
