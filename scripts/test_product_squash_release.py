@@ -163,6 +163,8 @@ class ProductSquashTests(unittest.TestCase):
         self.assertIn("! test -w /var/run/docker.sock",workflow)
         self.assertIn("persist-credentials: false",workflow)
         self.assertIn("test_product_squash_release.py -v",workflow)
+        self.assertNotIn("  pull_request:",workflow)
+        self.assertNotIn("  pull_request_target:",workflow)
         self.assertNotIn("runs-on: ubuntu-latest",workflow)
 
 if __name__=="__main__":
