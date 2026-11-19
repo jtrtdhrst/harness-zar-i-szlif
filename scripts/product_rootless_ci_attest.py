@@ -249,9 +249,29 @@ def prepare_source(sha: str, expected_tree: str, tgz: bytes, uid: int) -> Path:
         source.rename(final)
     return final
 
+def isolated_guest_environment() -> tuple[Path, list[str]]:
+    """Create a new credential-empty Docker client identity for each CI run."""
+    guest = pwd.getpwnam(GUEST)
+    home = Path(tempfile.mkdtemp(prefix="zari-product-ci-home-", dir="/var/tmp"))
+    try:
+        os.chown(home, guest.pw_uid, guest.pw_gid)
+        home.chmod(0o700)
+        config = home / ".docker"
+        config.mkdir(mode=0o700)
+        os.chown(config, guest.pw_uid, guest.pw_gid)
+        return home, ["HOME=" + str(home), "DOCKER_CONFIG=" + str(config),
+                      "DOCKER_HOST=unix:///run/zis-ci-guest/docker.sock",
+                      "PYTHONDONTWRITEBYTECODE=1"]
+    except Exception:
+        shutil.rmtree(home, ignore_errors=True)
+        raise
+
+
 def guest_ci(source: Path, sha: str) -> str:
     LOG_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     LOG_ROOT.chmod(0o700)
+    if Path("/var/lib/zis-ci-guest/.docker/config.json").exists():
+        raise Refused("persistent_guest_docker_credentials_present")
     log_dir = LOG_ROOT / require_sha(sha)
     log_dir.mkdir(mode=0o700, exist_ok=True)
     log_dir.chmod(0o700)
@@ -261,6 +281,9 @@ def guest_ci(source: Path, sha: str) -> str:
     log = Path(log_name)
     shell = r'''
 set -eu
+test -n "$DOCKER_CONFIG" && test -d "$DOCKER_CONFIG"
+test -z "$(find "$DOCKER_CONFIG" -mindepth 1 -maxdepth 1 -print -quit)"
+test "$(dirname "$DOCKER_CONFIG")" = "$HOME"
 test "$(git -c safe.directory="$(pwd)" cat-file -t EXPECTED_TREE)" = tree
 test ! -r /opt/zis-actions-runner/.credentials
 test ! -r /srv/multica-zar/.hermes/auth.json
@@ -275,19 +298,17 @@ docker build --progress=plain --file ops/coolify/Dockerfile --tag product-ci:ver
 name=zis-ci-release-EXPECTED_SHORT
 negative=$(mktemp)
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true; rm -f "$negative"' EXIT
-docker run -d --name "$name" --network none --security-opt no-new-privileges -e SOURCE_COMMIT=EXPECTED_SHA product-ci:verified >/dev/null
+docker run -d --name "$name" --network none --cap-drop ALL --pids-limit 256 --memory 512m --security-opt no-new-privileges -e SOURCE_COMMIT=EXPECTED_SHA product-ci:verified >/dev/null
 docker exec "$name" cat /usr/share/nginx/html/__release.json | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["commit"]=="EXPECTED_SHA" and x["source"]=="zar-i-szlif/main"'
 docker rm -f "$name" >/dev/null
-if docker run --rm --network none --security-opt no-new-privileges product-ci:verified >"$negative" 2>&1; then
+if docker run --rm --network none --cap-drop ALL --pids-limit 256 --memory 512m --security-opt no-new-privileges product-ci:verified >"$negative" 2>&1; then
     echo NEGATIVE_VERSIONLESS_ALLOWED
     exit 89
 fi
 grep -q 'release provenance unavailable' "$negative"
 echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
 '''.replace("EXPECTED_TREE", command("git", "write-tree", cwd=source)).replace("EXPECTED_SHA", sha).replace("EXPECTED_SHORT", sha[:12])
-    env = ["HOME=/var/lib/zis-ci-guest",
-           "DOCKER_HOST=unix:///run/zis-ci-guest/docker.sock",
-           "PYTHONDONTWRITEBYTECODE=1"]
+    guest_home, env = isolated_guest_environment()
     argv = ["/usr/bin/prlimit", f"--fsize={MAX_LOG_BYTES}:{MAX_LOG_BYTES}", "--",
             "/usr/sbin/runuser", "-u", GUEST, "--", "env", *env, "/bin/sh", "-c", shell]
     passed = False
@@ -318,6 +339,7 @@ echo ROOTLESS_EXACT_SOURCE_BUILD_AND_TEST_PASS
         passed = True
         return digest, immutable
     finally:
+        shutil.rmtree(guest_home, ignore_errors=True)
         if passed:
             log.unlink(missing_ok=True)
         elif log.exists():
