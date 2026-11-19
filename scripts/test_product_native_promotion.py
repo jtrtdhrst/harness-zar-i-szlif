@@ -752,10 +752,17 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaisesRegex(p.Denied, "release_state_untrusted"):
                     p.read_state()
 
+    def test_slow_http_cannot_extend_wall_clock_readback_deadline(self):
+        with patch.object(p.time, "monotonic", side_effect=[100.0, 1001.0]), \
+             patch.object(p, "live_release", return_value=OLD) as probe, \
+             patch.object(p.time, "sleep", side_effect=AssertionError("no retry after deadline")):
+            self.assertFalse(p.wait_for_live(NEW))
+        probe.assert_called_once()
+
     def test_readback_window_bounded_by_systemd_timeout(self):
         self.assertEqual(p.READBACK_ATTEMPTS, 90)
         self.assertEqual(p.READBACK_INTERVAL, 10)
-        self.assertLess(p.READBACK_ATTEMPTS * p.READBACK_INTERVAL, 20 * 60)
+        self.assertLess(p.READBACK_DEADLINE_SECONDS + 24, 20 * 60)
 
 if __name__=="__main__":
     unittest.main()

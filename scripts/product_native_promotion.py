@@ -42,6 +42,7 @@ SHA = re.compile(r"^[a-f0-9]{40}$")
 # 90 * 10 seconds remains inside the live systemd TimeoutStartSec=20min.
 READBACK_ATTEMPTS = 90
 READBACK_INTERVAL = 10
+READBACK_DEADLINE_SECONDS = 900
 MAX_RELEASE_STATE_BYTES = 8192
 # GitHub refuses to start a job for an account billing block. That is not a
 # test failure and not a pass: it is "CI never executed". Only this exact
@@ -708,15 +709,18 @@ def read_state():
 
 
 def wait_for_live(target):
-    """Observe the exact approved source SHA, never alter Git or Coolify."""
+    """Observe exact SHA under a wall-clock budget, including HTTP latency."""
+    deadline = time.monotonic() + READBACK_DEADLINE_SECONDS
     for attempt in range(READBACK_ATTEMPTS):
         try:
             if live_release() == target:
                 return True
         except Denied:
             pass
-        if attempt + 1 < READBACK_ATTEMPTS:
-            time.sleep(READBACK_INTERVAL)
+        remaining = deadline - time.monotonic()
+        if attempt + 1 == READBACK_ATTEMPTS or remaining <= 0:
+            return False
+        time.sleep(min(READBACK_INTERVAL, remaining))
     return False
 
 
