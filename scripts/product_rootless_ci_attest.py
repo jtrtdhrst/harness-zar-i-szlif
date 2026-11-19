@@ -152,7 +152,7 @@ def freeze_tree(source: Path, uid: int) -> None:
 def prepare_source(sha: str, expected_tree: str, tgz: bytes, uid: int) -> Path:
     gid = pwd.getpwnam(GUEST).pw_gid
     ROOT.mkdir(mode=0o750, parents=True, exist_ok=True)
-    ROOT.chown(0, gid)
+    os.chown(ROOT, 0, gid)
     ROOT.chmod(0o750)
     final = ROOT / sha
     if final.exists():
