@@ -21,6 +21,18 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
             self.assertEqual(p.process(plan=True)["result"],"already_released")
 
+    def test_non_runtime_noop_denies_main_or_release_ref_race(self):
+        # A direct metadata-only commit may be followed by a runtime commit
+        # before the history walk ends. Never report stale no_runtime_release_required.
+        for after_scan in ((MID, OLD), (NEW, MID)):
+            with self.subTest(after_scan=after_scan):
+                with patch.object(p, "ref", side_effect=[NEW, OLD, *after_scan]), \
+                     patch.object(p, "live_release", return_value=OLD), \
+                     patch.object(p, "candidate_history", return_value=[]), \
+                     patch.object(p, "github_api", side_effect=AssertionError("no provider writes")):
+                    with self.assertRaisesRegex(p.Denied, "git_ref_race"):
+                        p.process(plan=False)
+
     def test_one_reviewed_main_merge_admissible_plan_does_not_write(self):
         with patch.object(p,"ref",side_effect=[NEW,OLD,NEW,OLD]),\
              patch.object(p,"live_release",return_value=OLD),\
@@ -64,7 +76,7 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p, "checks", side_effect=AssertionError("no CI for harmless metadata")), \
              patch.object(p, "native_approval", side_effect=AssertionError("no runtime review needed")):
             self.assertEqual(p.candidate_history(prior, start), [])
-            with patch.object(p, "ref", side_effect=[start, prior]), \
+            with patch.object(p, "ref", side_effect=[start, prior, start, prior]), \
                  patch.object(p, "live_release", return_value=prior), \
                  patch.object(p, "github_api", side_effect=AssertionError("must not update release branch")):
                 result = p.process(plan=False)
