@@ -393,6 +393,19 @@ class TransportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no snapshot from this deployment attempt"):
                 transport.rollback("mantic-mcp", UUID)
 
+    def test_retargeted_legacy_tag_cannot_fake_rollback_digest(self):
+        # Exact Compose bytes plus a healthy NEW image are not restoration.
+        host = FakeHost(images={"local/mantic-mcp:old": PREVIOUS})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            transport = transport_for(host)
+            transport.deploy("mantic-mcp", UUID, "service", DIGEST)
+            host.images["local/mantic-mcp:old"] = DIGEST
+            with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \\
+                 patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
+                with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
+                    transport.rollback("mantic-mcp", UUID)
+        self.assertEqual(host.compose, COMPOSE)
+
     def test_rollback_coolify_accepted_is_not_success_without_live_health(self):
         host = FakeHost(service_status="running:unhealthy")
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
@@ -401,7 +414,7 @@ class TransportTests(unittest.TestCase):
                 host, UUID, "mantic-mcp", delivery.SERVICES["mantic-mcp"],
                 f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}",
                 on_backup=lambda backup: transport._rollback_snapshots.__setitem__(
-                    ("mantic-mcp", UUID), backup))
+                    ("mantic-mcp", UUID), (backup, PREVIOUS)))
             with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                  patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
