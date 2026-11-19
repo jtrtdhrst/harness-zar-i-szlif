@@ -44,7 +44,8 @@ GATES = STATE / "gates"
 LEGACY_ENTRYPOINT = "harness_image_delivery.py"
 LEGACY_SHIM_SOURCE = "scripts/harness_legacy_disabled.py"
 MODULES = ("harness_release_admission.py", "harness_local_ci_attest.py",
-           "harness_delivery_controller.py", "harness_native_delivery.py")
+           "harness_delivery_controller.py", "harness_native_delivery.py",
+           "harness_release_parity.py")
 UNITS = (REVIEWED_UNIT,)
 
 
