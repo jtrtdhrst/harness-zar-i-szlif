@@ -204,12 +204,17 @@ async function verifyAnchor(
     );
   }
   const uuid = (raw as Record<string, unknown>).uuid;
-  if (typeof uuid === "string" && uuid !== subject.uuid) {
+  if (typeof uuid !== "string" || !uuid.trim()) {
+    throw new Error(
+      `ELEMENT_ANCHOR_UNVERIFIED: element ${subject.iid} in revision ${rev.revision} has no UUID; cannot prove the exact element identity`,
+    );
+  }
+  if (uuid !== subject.uuid) {
     throw new Error(
       `ELEMENT_ANCHOR_MISMATCH: ${subject.iid} has uuid ${uuid}, not ${subject.uuid} (revision ${rev.revision})`,
     );
   }
-  return { revision: rev.revision, iidFound: true, uuidState: typeof uuid === "string" ? "match" : "missing" };
+  return { revision: rev.revision, iidFound: true, uuidState: "match" };
 }
 
 function assertEntityId(value: string, field: "THREAD_ID" | "COMMENT_ID" | "HISTORY_ID"): void {
@@ -375,11 +380,9 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
           throw new Error("ELEMENT_ID_REQUIRED: supply elementIid or elementUuid");
         }
         const response = await ctx.client.getComments(projectId, branchId);
-        const filtered = toReadableThreads(
-          response,
-          wantsResolved(args),
-          !!args.includeDeleted,
-          { elementIid, elementUuid },
+        const filtered = applyStatus(
+          toReadableThreads(response, wantsResolved(args), !!args.includeDeleted, { elementIid, elementUuid }),
+          args.status as string | undefined,
         );
         const offset = (args.offset as number | undefined) ?? 0;
         const limit = (args.limit as number | undefined) ?? 50;
@@ -496,7 +499,12 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
             const message = e instanceof Error ? e.message : String(e);
             const after = await ctx.client.getComments(projectId, branchId).catch(() => null);
             const raced = after?.threads.find((t) => t.id === threadId);
-            if (raced) {
+            const recoveredComment = raced?.comments.find((c) => c.id === commentId);
+            if (
+              raced && recoveredComment && !recoveredComment.deletedAt && recoveredComment.body === body &&
+              raced.location.subject.iid === subject.iid &&
+              raced.location.subject.uuid === subject.uuid
+            ) {
               return {
                 dryRun: false as const,
                 deduped: true,
@@ -508,7 +516,7 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
                 thread: threadView(after!, raced, false),
               };
             }
-            throw new Error(`COMMENT_WRITE_UNVERIFIED: create may not have applied; inspect Studio before retrying: ${message}`);
+            throw new Error(`COMMENT_WRITE_UNVERIFIED: create did not read back with the expected ID, body, and element anchor; inspect Studio before retrying: ${message}`);
           }
           const after = await ctx.client.getComments(projectId, branchId);
           const created = after.threads.find((t) => t.id === threadId);
@@ -601,7 +609,7 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
             const after = await ctx.client.getComments(projectId, branchId).catch(() => null);
             const racedThread = after?.threads.find((t) => t.id === threadId);
             const raced = racedThread?.comments.find((c) => c.id === commentId);
-            if (after && racedThread && raced) {
+            if (after && racedThread && raced && !raced.deletedAt && raced.body === body) {
               return {
                 dryRun: false as const,
                 deduped: true,
@@ -611,7 +619,7 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
                 thread: threadView(after, racedThread, false),
               };
             }
-            throw new Error(`COMMENT_WRITE_UNVERIFIED: reply may not have applied; inspect Studio before retrying: ${message}`);
+            throw new Error(`COMMENT_WRITE_UNVERIFIED: reply did not read back with the expected ID and body; inspect Studio before retrying: ${message}`);
           }
           const after = await ctx.client.getComments(projectId, branchId);
           const updated = after.threads.find((t) => t.id === threadId);
