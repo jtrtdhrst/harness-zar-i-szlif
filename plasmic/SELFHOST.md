@@ -55,3 +55,23 @@ docker exec -i <new-db-container> psql -U wab -d wab < wab.sql
 `platform/` is AGPL-3.0 (`LICENSE.platform.md`); everything outside `platform/`
 is MIT (`LICENSE.md`). Running this as a public network service means offering
 the corresponding source (including local modifications) to its users.
+
+## Canvas Host: separate origin (production)
+
+The vendored WAB build checks window.origin to distinguish the Studio top frame
+from the Canvas host frame. A host URL under the Studio origin causes the nested
+frame to be misclassified, never sending PLASMIC_HOST_REGISTER (blank editor).
+
+- Studio: https://plasmic.kompaszbiorek.pl
+- Canvas host: https://plasmic-host.51.89.174.58.sslip.io/static/host.html
+- Caddy configuration source: plasmic/host-origin.caddyfile
+- Active mounted config: /data/caddy/Caddyfile (automatic Let's Encrypt TLS).
+- Only /static/* is exposed on the separate Canvas host vhost.
+- Set project.hostUrl to the Canvas host URL and add the host origin to the
+  editor user's trusted_host entries. Studio authentication/API stay unchanged.
+- Keep compiled Studio and WAB defaultHostUrl aligned; the project override
+  is deliberate and independent of that default.
+
+Regression: run plasmic/tests/canvas-host.e2e.cjs in a Playwright environment
+and require PLASMIC_HOST_REGISTER. HTTP 200 alone is not sufficient.
+The script is read-only and does not assert logged-in artboard rendering.
