@@ -19,6 +19,7 @@ freshness check below use the SHA fetched from GitHub instead.
 | `ops/repowise/repowise_refill_all.sh` | `/opt/repowise-knowledge/refill-all.sh` |
 | `ops/systemd/repowise-github-sync.{service,timer}` | `/etc/systemd/system/` |
 | `ops/systemd/repowise-freshness-check.{service,timer}` | `/etc/systemd/system/` |
+| `ops/systemd/repowise-github-sync.service.d/on-success-freshness.conf` | `/etc/systemd/system/repowise-github-sync.service.d/` |
 
 The host's existing `repowise-generate.service` executes `refill-all.sh`.
 Install `ops/systemd/repowise-generate.service.d/fast-freshness.conf` into
@@ -33,6 +34,15 @@ GitHub App polling is used here rather than a public webhook.
 The two private protected `main` branches are checked every 2 minutes
 by `repowise-github-sync.timer`. Staged index promotion still requires
 GitHub SHA verification, replica consistency, and an MCP smoke test.
+
+The systemd `OnSuccess=` drop-in also runs the existing freshness checker
+immediately after an **entire sync service succeeds**, avoiding a lingering failed
+freshness unit after a moving-`main` staging retry. It does not run on a failed
+sync, override a stale-SHA result, or replace the periodic timer. After
+installation, run `systemctl daemon-reload`, verify
+`systemctl show repowise-github-sync.service -p OnSuccess` and confirm a
+freshness service exit 0 with `errors: []`. Roll back by removing **only** the
+drop-in and reloading systemd.
 
 `repowise-freshness-check.timer` runs every 3 minutes and flags
 a last GitHub fetch older than 600 seconds or an out-of-sync checkout.
