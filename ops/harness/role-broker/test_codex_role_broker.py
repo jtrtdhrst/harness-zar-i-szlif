@@ -208,6 +208,16 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(swapped[0])
             self.assertEqual(result, CHO)
 
+    def test_broker_refuses_root_without_accessing_oauth(self):
+        """Privileged launch must stop before opening service or credentials."""
+        from unittest.mock import patch
+        import codex_role_broker as broker
+        with patch.object(broker.os, "geteuid", return_value=0), \
+             patch.object(broker.web, "run_app", side_effect=AssertionError("unexpected listener")), \
+             patch.object(broker, "create_app", side_effect=AssertionError("unexpected OAuth setup")):
+            with self.assertRaisesRegex(RuntimeError, "broker_must_be_unprivileged"):
+                broker.main()
+
     def test_symlink_denied(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "cho"
