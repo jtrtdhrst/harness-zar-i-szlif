@@ -745,11 +745,15 @@ def process(plan=False):
     release = ref(RELEASE_REF)
     live = live_release()
     if live != release:
+        # A newer source ref is not a pending deployment. Reject it before
+        # touching the receipt, so a stale or inaccessible state file cannot
+        # alter this mandatory source/live divergence denial.
+        if current != release:
+            raise Denied("production_not_at_current_release_ref")
         pending = read_state()
         # Resume *only* an exact previously advanced ref, never a new release
         # and never a deployment outside the root-issued pending receipt.
-        if (current != release
-                or pending.get("status") != "readback_failed_rollback_required"
+        if (pending.get("status") != "readback_failed_rollback_required"
                 or pending.get("pending_sha") != release):
             raise Denied("production_not_at_current_release_ref")
         if ref("main") != current or ref(RELEASE_REF) != release:
