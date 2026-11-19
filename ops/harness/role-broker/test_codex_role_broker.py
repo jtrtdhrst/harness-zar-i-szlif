@@ -87,6 +87,42 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("X-Forbidden-Client", headers)
         self.assertFalse(redirect)
 
+    async def test_authenticated_same_role_concurrency_rejected(self):
+        capacity = self.app["capacity"]
+        ok, code = await capacity.admit("cho")
+        self.assertTrue(ok, code)
+        try:
+            r = await self.client.post("/p/cho/v1/responses",
+                json=self.payload(), headers=self.auth())
+            self.assertEqual(r.status, 429)
+            self.assertFalse(self.fake.calls)
+        finally:
+            await capacity.release("cho")
+
+    async def test_per_role_rate_limit_preserves_other_role(self):
+        capacity = self.app["capacity"]
+        for _ in range(capacity.quota):
+            ok, message = await capacity.admit("cho")
+            self.assertTrue(ok, message)
+            await capacity.release("cho")
+        denied = await self.client.post("/p/cho/v1/responses",
+            json=self.payload(), headers=self.auth())
+        self.assertEqual(denied.status, 429)
+        self.assertFalse(self.fake.calls)
+        other = await self.client.post("/p/coo/v1/responses",
+            json=self.payload(), headers=self.auth("coo"))
+        self.assertEqual(other.status, 200)
+        self.assertEqual(len(self.fake.calls), 1)
+
+    async def test_wrong_role_does_not_consume_capacity(self):
+        rejected = await self.client.post("/p/cho/v1/responses",
+            json=self.payload(), headers=self.auth("coo"))
+        self.assertEqual(rejected.status, 401)
+        self.assertEqual(len(self.app["capacity"]._calls["cho"]), 0)
+        ok = await self.client.post("/p/cho/v1/responses",
+            json=self.payload(), headers=self.auth())
+        self.assertEqual(ok.status, 200)
+
     async def test_no_other_endpoint(self):
         r = await self.client.post("/p/cho/v1/chat/completions",json={},headers=self.auth())
         self.assertEqual(r.status, 404)
