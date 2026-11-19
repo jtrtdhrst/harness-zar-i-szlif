@@ -349,7 +349,10 @@ class Transport:
                                     '{{index .Config.Labels "' + REVISION_LABEL + '"}}', reference)
         health_url = SERVICES[service].get("health_url")
         probe_ok = True if not health_url else self.host.probe(health_url) == "200"
-        healthy = "(healthy)" in running and str(service_state.get("status") or "").startswith("running:healthy")
+        statuses = [line.strip() for line in running.splitlines() if line.strip()]
+        healthy = (len(statuses) == 1 and statuses[0].startswith("Up ")
+                   and "(healthy)" in statuses[0]
+                   and str(service_state.get("status") or "").startswith("running:healthy"))
         return {"status": "ok" if healthy and probe_ok else "unhealthy",
                 "digest": repo_digests.split("@", 1)[1] if "@" in repo_digests else None,
                 "source_sha": revision or None}

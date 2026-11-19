@@ -459,6 +459,19 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(status["status"], "unhealthy")
         self.assertTrue(any(call[0:2] == ("docker", "ps") for call in host.calls))
 
+    def test_multiple_uuid_matched_containers_must_not_pass_health(self):
+        # A second container with the same UUID label makes runtime identity
+        # ambiguous, even when one or both Docker statuses report healthy.
+        for statuses in (
+            "Up 2 minutes (healthy)\\nUp 1 minute (unhealthy)",
+            "Up 2 minutes (healthy)\\nUp 1 minute (healthy)",
+        ):
+            with self.subTest(statuses=statuses):
+                host = FakeHost(container_status=statuses.replace("\\n", "\n"))
+                result = transport_for(host).health("mantic-mcp", UUID)
+                self.assertEqual(result["status"], "unhealthy")
+                self.assertEqual(host.mutations(), [])
+
     def test_health_is_not_ok_when_the_service_is_unhealthy(self):
         host = FakeHost(service_status="running:unhealthy",
                         images={f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": DIGEST},
