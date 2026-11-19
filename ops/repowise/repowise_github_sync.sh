@@ -328,10 +328,41 @@ fi
 # Coolify staging publisher also bind-mounts the Product subtree directly.
 # Discover it by stable, verified Coolify labels (not ephemeral container name).
 # Guard remains authoritative: unknown mounts still abort before any file swap.
-mapfile -t COOLIFY_PUBLISHERS < <(docker ps \
-  --filter 'label=coolify.resourceName=repowise-deployment-publisher-staging' \
-  --format '{{.Names}}' | sort)
-((${#COOLIFY_PUBLISHERS[@]} <= 1)) || fail "multiple-coolify-publisher-containers"
+# Scan running containers, not a mutable single-label filter: a changed Coolify
+# label must never silently exclude a publisher that still mounts Product.
+# Capture errors explicitly; a process substitution would hide docker failures.
+RUNNING_IDS=$(docker ps --quiet) || fail "coolify-docker-list-failed"
+[[ -n $RUNNING_IDS ]] || fail "coolify-no-running-containers"
+ALL_RUNNING_INSPECT=$(docker inspect $RUNNING_IDS) || fail "coolify-docker-inspect-failed"
+COOLIFY_PUBLISHER=$(python3 -c '
+import json,pathlib,sys
+try: containers=json.load(sys.stdin)
+except (ValueError,TypeError): raise SystemExit("publisher_discovery_invalid_json")
+if not isinstance(containers,list): raise SystemExit("publisher_discovery_invalid_shape")
+live=pathlib.Path("/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product").resolve()
+episodes=live/".repowise"/"episodes"
+app_uuid="gl8bvfjtw2af8hkox4mguzzr"
+matches=[]
+for c in containers:
+    name=str(c.get("Name") or "").lstrip("/")
+    labels=(c.get("Config") or {}).get("Labels") or {}
+    if not isinstance(labels,dict): raise SystemExit("publisher_discovery_invalid_labels")
+    sources=set()
+    for m in c.get("Mounts") or []:
+        source=m.get("Source")
+        if source: sources.add(pathlib.Path(source).resolve())
+    plausible=(labels.get("coolify.applicationUuid")==app_uuid
+              or labels.get("com.docker.compose.project")==app_uuid
+              or labels.get("coolify.resourceName")=="repowise-deployment-publisher-staging"
+              or (live in sources or episodes in sources)
+                 and name!="repowise-deployment-publisher-product")
+    if plausible: matches.append(name)
+if len(matches)!=1: raise SystemExit("publisher_discovery_expected_exactly_one_got_"+str(len(matches)))
+if not matches[0]: raise SystemExit("publisher_discovery_empty_name")
+print(matches[0])
+' <<< "$ALL_RUNNING_INSPECT") || fail "coolify-publisher-discovery-failed"
+unset ALL_RUNNING_INSPECT
+COOLIFY_PUBLISHERS=("$COOLIFY_PUBLISHER")
 for coolify_publisher in "${COOLIFY_PUBLISHERS[@]}"; do
   docker inspect "$coolify_publisher" | python3 -c '
 import json,pathlib,sys
