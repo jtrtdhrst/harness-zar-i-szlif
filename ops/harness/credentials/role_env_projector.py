@@ -70,10 +70,15 @@ def _provider(profile_dir):
 
 
 def project(root=ROOT, uid=None, gid=None, apply=False):
+    # Guard must execute before *any* credential read or profile mutation.
+    if os.geteuid() == 0:
+        raise PermissionError("root execution refused: run as multica-zar")
     root = pathlib.Path(root)
     if uid is None:
         account = pwd.getpwnam("multica-zar")
         uid, gid = account.pw_uid, account.pw_gid
+    if os.geteuid() != uid:
+        raise PermissionError("executor identity does not own role profiles")
     global_env = root / ".env"
     key = _source_key(global_env, uid)
     profiles = root / "profiles"
@@ -115,8 +120,6 @@ def project(root=ROOT, uid=None, gid=None, apply=False):
         fd, temp = tempfile.mkstemp(prefix=".env.project-", dir=directory)
         try:
             os.fchmod(fd, 0o600)
-            if os.geteuid() == 0:
-                os.fchown(fd, uid, gid)
             with os.fdopen(fd, "w", encoding="utf-8") as out:
                 fd = -1
                 out.write(expected)
@@ -134,6 +137,8 @@ def project(root=ROOT, uid=None, gid=None, apply=False):
 
 
 def main():
+    if os.geteuid() == 0:
+        raise SystemExit("root execution refused: run as multica-zar")
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
