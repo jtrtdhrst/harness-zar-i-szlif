@@ -27,6 +27,7 @@ UUID = re.compile(r"[a-z0-9]{20,32}\Z")
 IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 CONTAINER = re.compile(r"[a-z0-9][a-z0-9_.-]{1,127}\Z")
 BASE = "http://127.0.0.1:8001/api/v1"
+RESOURCE_KIND = {"harness": "services", "product_image": "applications", "product_mcp_host": "applications"}
 
 class Denied(Exception): pass
 
@@ -50,9 +51,10 @@ def read_secret(path):
   finally:
     if fd is not None: os.close(fd)
 
-def get_status(token, uuid):
+def get_status(token, uuid, resource_kind="services"):
   if not UUID.fullmatch(uuid): raise Denied("invalid_service_uuid")
-  req = urllib.request.Request(BASE + "/services/" + uuid, method="GET",
+  if resource_kind not in ("services", "applications"): raise Denied("invalid_resource_kind")
+  req = urllib.request.Request(BASE + "/" + resource_kind + "/" + uuid, method="GET",
                                headers={"Authorization": "Bearer " + token})
   try:
     with urllib.request.urlopen(req, timeout=8) as resp: return resp.status
@@ -135,7 +137,7 @@ def main(argv=None):
       for name,(_,path) in CONTROLLERS.items():
         try: token=read_secret(path)
         except Denied: continue
-        statuses[name] = get_status(token,targets[name])
+        statuses[name] = get_status(token,targets[name],RESOURCE_KIND[name])
         tokens.append(token)
     output["http_statuses"]["candidates"] = statuses
     reused = any(hmac.compare_digest(a,b) for i,a in enumerate(tokens) for b in tokens[i+1:])
