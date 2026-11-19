@@ -95,6 +95,48 @@ def native_credential() -> tuple[str, str, dict[str, str]]:
     return base, key, codex_cloudflare_headers(key, base_url=base)
 
 
+class RoleCapacity:
+    """In-process role budget. Never counts denied credentials against a role.
+
+    The service must bind to loopback and run as a single process; capacity
+    state is deliberately local and restart reset (not a billing ledger).
+    """
+
+    def __init__(self, *, quota: int = 8, window_seconds: float = 60.0,
+                 max_total: int = 3):
+        from collections import deque
+        self.quota = quota
+        self.window_seconds = window_seconds
+        self.max_total = max_total
+        self._calls = {role: deque() for role in ROLES}
+        self._active = {role: 0 for role in ROLES}
+        self._total = 0
+        self._lock = asyncio.Lock()
+
+    async def admit(self, role: str) -> tuple[bool, str]:
+        import time
+        now = time.monotonic()
+        async with self._lock:
+            history = self._calls[role]
+            while history and now - history[0] >= self.window_seconds:
+                history.popleft()
+            if self._active[role] >= 1 or self._total >= self.max_total:
+                return False, "capacity_exceeded"
+            if len(history) >= self.quota:
+                return False, "rate_exceeded"
+            history.append(now)
+            self._active[role] += 1
+            self._total += 1
+            return True, "ok"
+
+    async def release(self, role: str) -> None:
+        async with self._lock:
+            if self._active[role] <= 0 or self._total <= 0:
+                raise RuntimeError("capacity_release_unbalanced")
+            self._active[role] -= 1
+            self._total -= 1
+
+
 def error(code: int, message: str) -> web.Response:
     return web.json_response({"error": {"code": message}}, status=code)
 
@@ -114,7 +156,17 @@ async def trusted_role(request: web.Request, handler):
         return error(503, "role_identity_unavailable")
     if not presented or not hmac.compare_digest(presented, expected):
         return error(401, "role_not_authorized")
-    return await handler(request)
+    # Only actual data-plane requests consume budget; /models remains a
+    # cheap authenticated discovery endpoint.
+    if not (request.method == "POST" and request.path.endswith("/v1/responses")):
+        return await handler(request)
+    admitted, reason = await request.app["capacity"].admit(role)
+    if not admitted:
+        return error(429, reason)
+    try:
+        return await handler(request)
+    finally:
+        await request.app["capacity"].release(role)
 
 
 async def models(request: web.Request):
@@ -177,6 +229,7 @@ def create_app(*, key_resolver=role_secret, credential_resolver=native_credentia
     app["key_resolver"] = key_resolver
     app["credential_resolver"] = credential_resolver
     app["http_factory"] = http_factory
+    app["capacity"] = RoleCapacity()
     async def health(_):
         return web.json_response({"ok": True})
     app.router.add_get("/healthz", health)
