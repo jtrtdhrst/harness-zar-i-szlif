@@ -140,6 +140,21 @@ class PreflightTests(unittest.TestCase):
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
         self.assertIn("harness_release_admission.py_matches_approved_sha", blockers)
 
+    def test_missing_parity_module_is_pending_and_never_ready(self):
+        files = installed_files()
+        files.pop(str(preflight.LIBEXEC / "harness_release_parity.py"))
+        probe = FakeProbe(files=files)
+        checks, blockers, installed, _, pending = preflight.check(probe, REPO, SHA)
+        self.assertNotIn("harness_release_parity.py_present", blockers)
+        self.assertIn("harness_release_parity.py_present", pending)
+        self.assertFalse(checks["harness_release_parity.py_present"]["ok"])
+        self.assertFalse(installed["harness_release_parity.py"]["exists"])
+        with patch.object(preflight, "Probe", lambda: probe):
+            with patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out:
+                code = preflight.main(["--repo", REPO, "--sha", SHA, "--plan"])
+        self.assertEqual(code, 0)
+        self.assertFalse(json.loads(out.getvalue())["ready"])
+
     def test_non_root_owned_installed_module_is_a_blocker(self):
         files = installed_files()
         files[str(preflight.LIBEXEC / "harness_delivery_controller.py")]["uid"] = 997
