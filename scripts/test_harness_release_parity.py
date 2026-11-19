@@ -152,7 +152,7 @@ class ParityTests(unittest.TestCase):
                 check(self.repo, SOURCE, runner=FakeRunner())
 
     def test_forged_image_revision_denied_against_trusted_state(self):
-        self.denied(FakeRunner(config={
+        self.denied(FakeRunner(revision=SOURCE, config={
             "Image": REF,
             "Labels": {"coolify.serviceUuid": UUID,
                        "org.opencontainers.image.revision": SOURCE}}),
