@@ -128,6 +128,7 @@ class ProductSquashTests(unittest.TestCase):
         self.assertFalse(p.reviewed_ci_only_pr(184,p.CI_ONLY_REVIEWED_HEAD,node))
         self.assertFalse(p.reviewed_ci_only_pr(183,HEAD,node))
         self.assertFalse(p.reviewed_ci_only_pr(183,"387e5f9081fa9fa9da4820fae054da617c615a9a",node))
+        self.assertFalse(p.reviewed_ci_only_pr(183,"62d879b2f2ad2cd1bec8758852b14e28848d813b",node))
         self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
                            {"files":base+[{"filename":"app/web/src/index.ts","status":"modified"}]}))
         self.assertFalse(p.reviewed_ci_only_pr(183,p.CI_ONLY_REVIEWED_HEAD,
