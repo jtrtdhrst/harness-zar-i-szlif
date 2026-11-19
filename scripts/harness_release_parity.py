@@ -34,23 +34,9 @@ def checked(argv, fail_code, *, runner=subprocess.run):
     return output
 
 
-def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run):
+def check_source(repo, expected_sha, *, runner=subprocess.run):
     if not isinstance(expected_sha, str) or not SHA.fullmatch(expected_sha):
         raise ParityFailure("expected_sha_invalid")
-    manifest = json.loads((Path(repo) / "ops/release-lanes.json").read_text())
-    entries = manifest.get("lanes", []) + manifest.get("other_resources", [])
-    matches = [entry for entry in entries
-               if isinstance(entry, dict) and entry.get("id") == service]
-    if len(matches) != 1:
-        raise ParityFailure("service_manifest_missing_or_ambiguous")
-    entry = matches[0]
-    uuid = entry.get("coolify_uuid")
-    if (entry.get("platform") != "coolify" or not isinstance(uuid, str)
-            or not re.fullmatch(r"[a-z0-9]{10,40}", uuid)):
-        raise ParityFailure("service_uuid_invalid")
-    if not (Path(repo) / service).is_dir():
-        raise ParityFailure("service_source_unavailable")
-
     # Remote-tracking refs may be weeks old. Query the real upstream; fail
     # closed on missing credentials without echoing stderr or access tokens.
     head = checked(["git", "-C", str(repo), "ls-remote", "--exit-code",
@@ -66,6 +52,23 @@ def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run):
                         "checkout_unverifiable", runner=runner)
     if local_sha != upstream_sha:
         raise ParityFailure("checkout_stale")
+
+    return upstream_sha
+
+def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run):
+    manifest = json.loads((Path(repo) / "ops/release-lanes.json").read_text())
+    entries = manifest.get("lanes", []) + manifest.get("other_resources", [])
+    matches = [entry for entry in entries
+               if isinstance(entry, dict) and entry.get("id") == service]
+    if len(matches) != 1:
+        raise ParityFailure("service_manifest_missing_or_ambiguous")
+    entry = matches[0]
+    uuid = entry.get("coolify_uuid")
+    if (entry.get("platform") not in (None, "coolify") or not isinstance(uuid, str)
+            or not re.fullmatch(r"[a-z0-9]{10,40}", uuid)):
+        raise ParityFailure("service_uuid_invalid")
+    if not (Path(repo) / service).is_dir():
+        raise ParityFailure("service_source_unavailable")
 
     ids = checked(["docker", "ps", "--filter",
                    f"label=coolify.serviceUuid={uuid}", "--format", "{{.ID}}"],
@@ -103,6 +106,27 @@ def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run):
         raise ParityFailure("service_diff_unverifiable")
     return {"result": "parity_ok", "service": service, "source_sha": expected_sha,
             "runtime_revision": full_revision, "coolify_uuid": uuid}
+
+
+
+def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run):
+    check_source(repo, expected_sha, runner=runner)
+    return _check_runtime(repo, expected_sha, service, runner=runner)
+
+
+def check_services(repo, expected_sha, services, *, runner=subprocess.run):
+    """Verify one real upstream SHA and every service before global no_change."""
+    if not services or len(set(services)) != len(services):
+        raise ParityFailure("managed_service_scope_missing_or_ambiguous")
+    check_source(repo, expected_sha, runner=runner)
+    verified = []
+    for service in services:
+        try:
+            verified.append(_check_runtime(repo, expected_sha, service, runner=runner))
+        except ParityFailure as exc:
+            raise ParityFailure(f"{service}:{exc}") from exc
+    return {"result": "parity_ok", "source_sha": expected_sha,
+            "services": [item["service"] for item in verified]}
 
 
 def main(argv=None):
