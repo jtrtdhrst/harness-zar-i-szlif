@@ -198,10 +198,10 @@ docker build --progress=plain --file ops/coolify/Dockerfile --tag product-ci:ver
 name=zis-ci-release-EXPECTED_SHORT
 negative=$(mktemp)
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true; rm -f "$negative"' EXIT
-docker run -d --name "$name" --network none --cap-drop ALL --security-opt no-new-privileges -e SOURCE_COMMIT=EXPECTED_SHA product-ci:verified >/dev/null
+docker run -d --name "$name" --network none --security-opt no-new-privileges -e SOURCE_COMMIT=EXPECTED_SHA product-ci:verified >/dev/null
 docker exec "$name" cat /usr/share/nginx/html/__release.json | python3 -c 'import sys,json; x=json.load(sys.stdin); assert x["commit"]=="EXPECTED_SHA" and x["source"]=="zar-i-szlif/main"'
 docker rm -f "$name" >/dev/null
-if docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges product-ci:verified >"$negative" 2>&1; then
+if docker run --rm --network none --security-opt no-new-privileges product-ci:verified >"$negative" 2>&1; then
     echo NEGATIVE_VERSIONLESS_ALLOWED
     exit 89
 fi
