@@ -403,7 +403,9 @@ class TransportTests(unittest.TestCase):
                 on_backup=lambda backup: transport._rollback_snapshots.__setitem__(
                     ("mantic-mcp", UUID), backup))
             with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
-                 patch.object(delivery, "POLL_SECONDS", 0), \
+                 patch.object(delivery, "check_upstream_source",
+                             side_effect=source_error, return_value=SOURCE), \
+                patch.object(delivery, "POLL_SECONDS", 0), \
                  patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
                 with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
                     transport.rollback("mantic-mcp", UUID)
@@ -753,7 +755,7 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None, parity_error=None):
+                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
         host = host or FakeHost()
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
@@ -843,6 +845,16 @@ class AutoModeTests(unittest.TestCase):
             parity_error=delivery.ParityFailure("service_changes_not_deployed"))
         self.assertEqual(code, 1, out)
         self.assertIn("runtime_parity:service_changes_not_deployed", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": head},
+            source_error=delivery.ParityFailure("source_range_stale"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runtime_parity:source_range_stale", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_denies_a_held_lane_without_touching_the_host(self):
