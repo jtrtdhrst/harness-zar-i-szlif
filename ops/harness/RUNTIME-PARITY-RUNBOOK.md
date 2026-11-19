@@ -29,9 +29,9 @@ and the existing controller checks all manifest-managed transport services\nbefo
 
 ## Safe rollout (NOT achieved by merging this PR alone)
 
-- PR #123 is the parent immutable-digest/controller security patch.
-  This stacked PR must NOT be promoted to main before the parent is reviewed
-  and merged, revalidated, and independently reviewed again at exact SHA.
+- PR #123 is the consolidated immutable-digest/controller security patch,
+  including this runtime-parity gate and the no-execute privileged preflight.
+  It requires independent exact-head review before any merge or installation.
 - Root-host repo-scoped GitHub READ-ONLY credentials are a separate installation
   prerequisite. The current root checkout cannot authenticate a git ls-remote
   of this private repository. Do NOT print or borrow service credentials.

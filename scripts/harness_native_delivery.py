@@ -30,8 +30,9 @@ gate uses, from root-only paths. Nothing here installs, starts, stops or
 reconfigures a host service; installation is the operator step in
 ``ops/harness/INSTALL-RUNBOOK.md``.
 
-Two invocation modes, one CLI (``build_parser``) shared with the install
-preflight:
+Two invocation modes and one runtime CLI (``build_parser``). The root install
+preflight validates the exact reviewed unattended ``ExecStart`` tuple **without
+importing this adapter from the host**:
 
 * explicit - the operator passes ``--base-sha`` and ``--source-sha``;
 * ``--auto`` - the mode the installed 120-second timer uses, because a unit
@@ -444,9 +445,9 @@ def resolve_source_range(args, environ=None):
 def build_parser():
     """The adapter's only CLI surface.
 
-    ``harness_install_preflight`` parses the installed unit's ``ExecStart`` with
-    exactly this parser, so an installed invocation and these arguments can never
-    drift apart again.
+    The root preflight checks a fixed, reviewed unattended ``ExecStart``
+    interface and exact installed file hashes without importing this module.
+    This parser governs runtime CLI processing, not privileged preflight.
     """
     parser = argparse.ArgumentParser(description="Admission-gated Harness image delivery")
     parser.add_argument("--mode", choices=("plan", "prepare", "deploy"), default="plan")
