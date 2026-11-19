@@ -123,6 +123,31 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
             json=self.payload(), headers=self.auth())
         self.assertEqual(ok.status, 200)
 
+    async def test_invalid_payload_does_not_exhaust_role_quota(self):
+        # Regression: eight authenticated HTTP 415s must not starve
+        # the next legitimate request with 429.
+        for _ in range(self.app["capacity"].quota):
+            rejected = await self.client.post("/p/cho/v1/responses",
+                data="not-json", headers={**self.auth(), "Content-Type": "text/plain"})
+            self.assertEqual(rejected.status, 415)
+            await rejected.read()
+        self.assertEqual(len(self.app["capacity"]._calls["cho"]), 0)
+        accepted = await self.client.post("/p/cho/v1/responses",
+            json=self.payload(), headers=self.auth())
+        self.assertEqual(accepted.status, 200)
+        self.assertEqual(len(self.fake.calls), 1)
+
+    async def test_disallowed_model_does_not_exhaust_role_quota(self):
+        for _ in range(self.app["capacity"].quota):
+            rejected = await self.client.post("/p/cho/v1/responses",
+                json=self.payload(model="invalid"), headers=self.auth())
+            self.assertEqual(rejected.status, 403)
+            await rejected.read()
+        self.assertEqual(len(self.app["capacity"]._calls["cho"]), 0)
+        accepted = await self.client.post("/p/cho/v1/responses",
+            json=self.payload(), headers=self.auth())
+        self.assertEqual(accepted.status, 200)
+
     async def test_no_other_endpoint(self):
         r = await self.client.post("/p/cho/v1/chat/completions",json={},headers=self.auth())
         self.assertEqual(r.status, 404)
