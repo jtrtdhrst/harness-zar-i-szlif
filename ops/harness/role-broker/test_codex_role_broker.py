@@ -100,7 +100,7 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
     def test_private_key_and_mode(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "cho"
-            directory.mkdir()
+            directory.mkdir(mode=0o700)
             key = directory / "api-key"
             key.write_text(CHO)
             key.chmod(0o600)
@@ -112,7 +112,7 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
     def test_private_directory_required(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "cho"
-            directory.mkdir()
+            directory.mkdir(mode=0o700)
             key = directory / "api-key"
             key.write_text(CHO)
             key.chmod(0o600)
@@ -126,7 +126,7 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
         import os
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "cho"
-            directory.mkdir()
+            directory.mkdir(mode=0o700)
             key = directory / "api-key"
             key.write_text(CHO)
             key.chmod(0o600)
@@ -150,7 +150,7 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
     def test_symlink_denied(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "cho"
-            directory.mkdir()
+            directory.mkdir(mode=0o700)
             actual = Path(root) / "a"
             actual.write_text(CHO)
             actual.chmod(0o600)
