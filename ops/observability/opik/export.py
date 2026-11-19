@@ -5,6 +5,7 @@ Never exports prompt, model response, errors, paths, comments or credentials.
 """
 import argparse,datetime,json,re,subprocess,sys,urllib.error,urllib.parse,urllib.request,uuid
 from pathlib import Path
+from value_metrics import price_usage, objective_scores
 CLI='/opt/experiments/multica-poc/bin/multica'
 BASE='http://127.0.0.1:5173/api/v1/private'
 WORKSPACES={
@@ -78,6 +79,7 @@ def run_payload(run,issue,workspace):
      source_issue_id=issue_id,source_run_id=run_id,agent_id=agent_id,runtime_id=runtime_id,
      run_status=status,attempt=attempt if type(attempt)==int else None,
      usage_token_counts=usage)
+  meta.update(price_usage(meta,created))
   if sdk_thread_id:
     # The lifecycle trace continues to group by ISSUE; SDK roots use session IDs.
     # This safe, non-secret join key enables exact run->SDK correlation.
@@ -88,6 +90,29 @@ def run_payload(run,issue,workspace):
               environment='production' if workspace['project']=='multica-zar-i-szlif' else 'isolated-e2e',
               input={'issue_identifier':identifier,'run_id':run_id},
               output={'status':status},metadata=meta)
+def sync_objective_scores(item,record,proj):
+  if record.get('project_id')!=proj:
+    raise RuntimeError('score_wrong_project')
+  previous={s.get('name'):s for s in (record.get('feedback_scores') or []) if isinstance(s,dict)}
+  scores=objective_scores(item['metadata'])
+  for name,value in scores.items():
+    prior=previous.get(name)
+    if prior is not None and prior.get('source')!='sdk':
+      raise RuntimeError('refuse_override_non_sdk_score')
+    if prior is not None and prior.get('value')==value:
+      continue
+    reason=('Native run terminal status (NOT correctness or E2E proof)' if name=='multica_run_completed'
+            else 'Estimated OpenCode Go quota usage from published rates; NOT an invoice')
+    route='/traces/'+urllib.parse.quote(item['id'],safe='')+'/feedback-scores'
+    state,_=api('PUT',route,{'name':name,'value':value,'source':'sdk','reason':reason})
+    if state!=204:
+      raise RuntimeError('opik_score_write_http_'+str(state))
+    status,readback=api('GET','/traces/'+urllib.parse.quote(item['id'],safe=''))
+    have={s.get('name'):s for s in (readback.get('feedback_scores') or []) if isinstance(s,dict)}
+    if status!=200 or name not in have or have[name].get('value')!=value:
+      raise RuntimeError('opik_score_readback_failed')
+    previous=have
+
 def export_one(profile,limit,dry):
   workspace=WORKSPACES[profile]
   try:
@@ -128,6 +153,7 @@ def export_one(profile,limit,dry):
         verify_status,verify=api('GET','/traces/'+urllib.parse.quote(item['id'],safe=''))
         if verify_status!=200 or any((verify.get('metadata') or {}).get(k)!=v for k,v in requested_meta.items()):
           raise RuntimeError('opik_trace_metadata_patch_verify_failed')
+      sync_objective_scores(item,old,proj)
       already+=1;continue
     if status!=404:raise RuntimeError('opik_trace_read_http_'+str(status))
     status,_=api('POST','/traces',item)
@@ -135,6 +161,7 @@ def export_one(profile,limit,dry):
     check,readback=api('GET','/traces/'+urllib.parse.quote(item['id'],safe=''))
     if check!=200 or readback.get('project_id')!=proj or readback.get('thread_id')!=item['thread_id']:
       raise RuntimeError('opik_trace_readback_failed')
+    sync_objective_scores(item,readback,proj)
     count+=1
   print('EXPORT',profile,'eligible',len(collected),'created',count,'existing',already,'project',workspace['project'])
   return count
