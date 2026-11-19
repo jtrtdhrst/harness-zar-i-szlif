@@ -17,6 +17,7 @@ freshness check below use the SHA fetched from GitHub instead.
 | `ops/repowise/repowise_unwritten.py` | `/opt/repowise-knowledge/unwritten.py` |
 | `ops/repowise/repowise_refill_pages.sh` | `/opt/repowise-knowledge/refill-pages.sh` |
 | `ops/repowise/repowise_refill_all.sh` | `/opt/repowise-knowledge/refill-all.sh` |
+| `ops/repowise/repowise_retire_orphan_flows.py` | `/opt/repowise-knowledge/repowise_retire_orphan_flows.py` |
 | `ops/systemd/repowise-github-sync.{service,timer}` | `/etc/systemd/system/` |
 | `ops/systemd/repowise-freshness-check.{service,timer}` | `/etc/systemd/system/` |
 
