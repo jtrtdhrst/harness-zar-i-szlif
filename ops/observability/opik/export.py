@@ -6,6 +6,7 @@ Never exports prompt, model response, errors, paths, comments or credentials.
 import argparse,datetime,json,re,subprocess,sys,urllib.error,urllib.parse,urllib.request,uuid
 from pathlib import Path
 from value_metrics import price_usage, objective_scores
+from execution_hygiene import pairing_metrics, scores as tool_flow_scores
 CLI='/opt/experiments/multica-poc/bin/multica'
 BASE='http://127.0.0.1:5173/api/v1/private'
 WORKSPACES={
@@ -95,6 +96,7 @@ def sync_objective_scores(item,record,proj):
     raise RuntimeError('score_wrong_project')
   previous={s.get('name'):s for s in (record.get('feedback_scores') or []) if isinstance(s,dict)}
   scores=objective_scores(item['metadata'])
+  scores.update(tool_flow_scores(item['metadata']))
   for name,value in scores.items():
     prior=previous.get(name)
     if prior is not None and prior.get('source')!='sdk':
@@ -113,7 +115,7 @@ def sync_objective_scores(item,record,proj):
       raise RuntimeError('opik_score_readback_failed')
     previous=have
 
-def export_one(profile,limit,dry):
+def export_one(profile,limit,dry,scan_window_days=None,quality_items=0):
   workspace=WORKSPACES[profile]
   try:
     visible=cli(workspace,'workspace','list')
@@ -122,8 +124,16 @@ def export_one(profile,limit,dry):
     return 0
   if not any(x.get('id')==workspace['workspace_id'] for x in visible):raise RuntimeError('wrong_workspace_auth')
   collected=[]
+  # Stable bounds across pagination. A later update is picked up next timer cycle.
+  filters=[]
+  if scan_window_days is not None:
+    now=datetime.datetime.now(datetime.timezone.utc)
+    since=now-datetime.timedelta(days=scan_window_days)
+    filters=['--updated-since',since.isoformat().replace('+00:00','Z'),
+             '--updated-until',now.isoformat().replace('+00:00','Z')]
   for page in range(6):
-    d=cli(workspace,'issue','list','--limit','100','--offset',str(page*100),'--fields','id,identifier,workspace_id,status')
+    d=cli(workspace,'issue','list','--limit','100','--offset',str(page*100),
+          *filters,'--fields','id,identifier,workspace_id,status')
     for issue in d.get('issues',[]):
       if issue.get('workspace_id')!=workspace['workspace_id']:raise RuntimeError('cross_workspace_issue_rejected')
       for run in cli(workspace,'issue','runs',issue['id']):
@@ -136,7 +146,14 @@ def export_one(profile,limit,dry):
     return 0
   proj=ensure_project(workspace['project'])
   count=0;already=0
-  for item in collected[:limit]:
+  for index,item in enumerate(collected[:limit]):
+    if index<quality_items:
+      try:
+        # Process native messages in memory only; do not export tool payload.
+        items=cli(workspace,'issue','run-messages',item['id'])
+        item['metadata'].update(pairing_metrics(items))
+      except Exception:
+        item['metadata']['tool_flow_state']='unavailable'
     status,old=api('GET','/traces/'+urllib.parse.quote(item['id'],safe=''))
     if status==200:
       if old.get('project_id')!=proj or (old.get('metadata') or {}).get('source_run_id')!=item['id']:
@@ -170,10 +187,14 @@ def main():
   p.add_argument('--profile',choices=['test','zar','both'],default='zar')
   p.add_argument('--max-items',type=int,default=100)
   p.add_argument('--dry-run',action='store_true')
+  p.add_argument('--scan-window-days',type=int)
+  p.add_argument('--quality-items',type=int,default=0)
   args=p.parse_args()
   if args.max_items<1 or args.max_items>250:raise RuntimeError('invalid_limit')
+  if args.scan_window_days is not None and not 1<=args.scan_window_days<=30:raise RuntimeError('invalid_scan_window')
+  if args.quality_items<0 or args.quality_items>args.max_items:raise RuntimeError('invalid_quality_items')
   for profile in ['test','zar'] if args.profile=='both' else [args.profile]:
-    export_one(profile,args.max_items,args.dry_run)
+    export_one(profile,args.max_items,args.dry_run,args.scan_window_days,args.quality_items)
 if __name__=='__main__':
   try:main()
   except Exception as e:
