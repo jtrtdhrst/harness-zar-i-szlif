@@ -109,6 +109,44 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 role_secret("cho", Path(root))
 
+    def test_private_directory_required(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "cho"
+            directory.mkdir()
+            key = directory / "api-key"
+            key.write_text(CHO)
+            key.chmod(0o600)
+            directory.chmod(0o755)
+            with self.assertRaises(ValueError):
+                role_secret("cho", Path(root))
+
+    def test_path_replacement_after_open_reads_pinned_inode(self):
+        """Replace visible path with symlink after open: must read original FD."""
+        from unittest.mock import patch
+        import os
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "cho"
+            directory.mkdir()
+            key = directory / "api-key"
+            key.write_text(CHO)
+            key.chmod(0o600)
+            other = Path(root) / "alternate"
+            other.write_text("ATTACKER-CONTROLLED-BYTES" * 4)
+            other.chmod(0o600)
+            original_open = os.open
+            swapped = [False]
+            def interpose(path, flags, *args, **kwargs):
+                fd = original_open(path, flags, *args, **kwargs)
+                if path == "api-key" and not swapped[0]:
+                    swapped[0] = True
+                    key.rename(directory / "previous")
+                    key.symlink_to(other)
+                return fd
+            with patch("codex_role_broker.os.open", side_effect=interpose):
+                result = role_secret("cho", Path(root))
+            self.assertTrue(swapped[0])
+            self.assertEqual(result, CHO)
+
     def test_symlink_denied(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "cho"
