@@ -184,10 +184,9 @@ authority, a production release gate, or per-role model credential isolation.
   identifying the panel's deployment.
 - **Native readback:** `get_deployment_observation(product,
   3ebdc8488ecdfc76)` returned `found=true` with matching source SHA,
-  issue and deployment ID. The operator separately queried the Product
-  episode SQLite DB using `mode=ro` before and after the existing
-  `repowise-github-sync.service` run; exactly one unchanged record
-  survived, sync returned `success` / exit `0`.
+  issue and deployment ID. This claim is based on the COO native MCP
+  tool result only; no separate host SQLite or post-sync durability
+  verification is attributed to that agent run.
 - **Bounded evidence only:** the writer checked the public Product
   release SHA and `healthz=200`; it explicitly retains
   `immutable_digest=NOT_VERIFIED`, independent authenticated QA
