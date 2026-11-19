@@ -19,8 +19,8 @@ for page in "${pages[@]}"; do
   [[ -n "$page" ]] && args+=(--page "$page")
 done
 echo "PAGE_BATCH_BEGIN repo=$REPO pending=${#pages[@]} $(date -u +%FT%TZ)"
-timeout 420 docker exec --workdir "/workspace/$REPO" "$MCP" "${args[@]}" || {
-  echo "PAGE_BATCH_FAILED repo=$REPO" >&2; exit 1;
+timeout 150 docker exec --workdir "/workspace/$REPO" "$MCP" "${args[@]}" || {
+  rc=$?; echo "PAGE_BATCH_FAILED repo=$REPO exit=$rc timeout_s=150" >&2; exit 1;
 }
 remaining=$(docker exec -i "$MCP" python3 - < "$BASE/unwritten.py" "$REPO" --pending | wc -l)
 echo "PAGES_DONE repo=$REPO selected=${#pages[@]} remaining=$remaining"
