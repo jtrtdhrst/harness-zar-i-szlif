@@ -14,6 +14,13 @@ import sys
 TARGET = "/opt/hermes/.venv/bin/hermes"
 ROOT = Path("/srv/multica-zar/workspaces")
 UID_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
+# Root-owned, independently reviewed role/provider authority. Do not derive
+# this grant from task-writable profile YAML: that would let a task select the
+# more privileged OpenAI OAuth credential merely by changing its model field.
+CODEX_ROLES = frozenset({"ceo", "cho", "cmo", "coo", "cpo", "cto"})
+OPENCODE_ROLES = frozenset({"designer", "email-creative", "engineer",
+    "harness-engineer", "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"})
+
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 EXECUTE = 1
@@ -139,6 +146,10 @@ def restrict(task, tmpdir):
                 or not UUID.fullmatch(rel_home.parts[1])):
             raise ValueError("unverified Hermes session for profile read ACL")
         own_profile = rel_home.parts[0]
+        if not UID_NAME.fullmatch(role) or own_profile != role:
+            raise ValueError("agent role and trusted persisted session profile disagree")
+        if role not in CODEX_ROLES and role not in OPENCODE_ROLES:
+            raise ValueError("no approved model credential policy for this role")
         if own_profile != "default":
             own_shared = shared_home / "profiles" / own_profile
             if not own_shared.is_dir() or own_shared.is_symlink():
@@ -147,11 +158,18 @@ def restrict(task, tmpdir):
         # Only exact shared bootstrap files needed for profile symlinks;
         # never grant other profiles, global session DBs, logs or backups.
         grant(ruleset, shared_home / "installs", READ)
-        for name in ("auth.json", ".env", "auth.lock", "install_id",
-                     "SOUL.md", ".codex_gpt55_autoraise_notice",
-                     "models_dev_cache.json", "provider_models_cache.json",
-                     "context_length_cache.yaml"):
+        # Provider-scoped model secrets: never grant global OpenCode .env to a
+        # task. The root projector creates a private role-local .env before
+        # policy cutover. OpenCode roles never need root Codex OAuth auth.json;
+        # Codex roles still require shared OAuth until a trusted broker exists.
+        bootstrap_names = ("auth.lock", "install_id", "SOUL.md",
+                           ".codex_gpt55_autoraise_notice",
+                           "models_dev_cache.json", "provider_models_cache.json",
+                           "context_length_cache.yaml")
+        for name in bootstrap_names:
             grant(ruleset, shared_home / name, READ_FILE)
+        if role in CODEX_ROLES:
+            grant(ruleset, shared_home / "auth.json", READ_FILE)
         # Hermes startup uses an existing per-install flock. Permit only
         # this single lock file to be opened for writing, never shared config
         # or a parent directory, so no other task's data becomes writable.
