@@ -17,9 +17,32 @@ SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
     def test_noop_when_main_already_deployed(self):
-        with patch.object(p,"ref",side_effect=[OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
+        with patch.object(p,"ref",side_effect=[OLD,OLD,OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
             self.assertEqual(p.process(plan=True)["result"],"already_released")
+
+    def test_already_released_denies_stale_live_read_ref_race(self):
+        # The live HTTP read may outlast a main/release branch move.
+        for after_live in ((NEW, OLD), (OLD, NEW)):
+            with self.subTest(after_live=after_live):
+                with patch.object(p, "ref", side_effect=[OLD, OLD, *after_live]), \
+                     patch.object(p, "live_release", return_value=OLD), \
+                     patch.object(p, "candidate_history", side_effect=AssertionError("no scan")), \
+                     patch.object(p, "github_api", side_effect=AssertionError("no write")):
+                    with self.assertRaisesRegex(p.Denied, "git_ref_race"):
+                        p.process(plan=False)
+
+    def test_non_runtime_noop_denies_main_or_release_ref_race(self):
+        # A direct metadata-only commit may be followed by a runtime commit
+        # before the history walk ends. Never report stale no_runtime_release_required.
+        for after_scan in ((MID, OLD), (NEW, MID)):
+            with self.subTest(after_scan=after_scan):
+                with patch.object(p, "ref", side_effect=[NEW, OLD, *after_scan]), \
+                     patch.object(p, "live_release", return_value=OLD), \
+                     patch.object(p, "candidate_history", return_value=[]), \
+                     patch.object(p, "github_api", side_effect=AssertionError("no provider writes")):
+                    with self.assertRaisesRegex(p.Denied, "git_ref_race"):
+                        p.process(plan=False)
 
     def test_one_reviewed_main_merge_admissible_plan_does_not_write(self):
         with patch.object(p,"ref",side_effect=[NEW,OLD,NEW,OLD]),\
@@ -47,6 +70,55 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertEqual(result["sha"],NEW)
         self.assertEqual(observed,[(f"/repos/{p.REPO}/git/refs/heads/ci-approved","patch",{"sha":NEW,"force":False})])
         self.assertEqual(save.call_args[0][0]["previous_sha"],OLD)
+
+
+    def test_three_exact_historic_metadata_direct_commits_are_noop(self):
+        rows = p.HISTORIC_METADATA_ONLY
+        nodes = {
+            sha: {"sha": sha, "parents": [{"sha": spec["parent"]}],
+                  "files": [{"status": status, "filename": path}
+                            for status, path in spec["files"]]}
+            for sha, spec in rows.items()
+        }
+        start = "63441d5d3056f4845d4bfcaf908429f8f09d620f"
+        prior = "4feef6903dc21be5da0433a77b10549bf0009661"
+        with patch.object(p, "commit", side_effect=lambda sha: nodes[sha]), \
+             patch.object(p, "provenance", side_effect=AssertionError("no PR lookup for known harmless metadata")), \
+             patch.object(p, "checks", side_effect=AssertionError("no CI for harmless metadata")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("no runtime review needed")):
+            self.assertEqual(p.candidate_history(prior, start), [])
+            with patch.object(p, "ref", side_effect=[start, prior, start, prior]), \
+                 patch.object(p, "live_release", return_value=prior), \
+                 patch.object(p, "github_api", side_effect=AssertionError("must not update release branch")):
+                result = p.process(plan=False)
+                self.assertEqual(result["result"], "no_runtime_release_required")
+                self.assertEqual(result["release_ref"], prior)
+
+    def test_historic_metadata_identity_and_file_list_fail_closed(self):
+        for sha, spec in p.HISTORIC_METADATA_ONLY.items():
+            good = {"sha": sha, "files": [{"status": status, "filename": path}
+                                            for status, path in spec["files"]]}
+            self.assertTrue(p.known_metadata_only_direct_commit(sha, good, spec["parent"]))
+            corrupt = [
+                ({**good, "sha": "f"*40}, spec["parent"]),
+                (good, "a"*40),
+                ({**good, "files": []}, spec["parent"]),
+                ({**good, "files": good["files"]+[{"status":"modified","filename":"src/index.ts"}]}, spec["parent"]),
+                ({**good, "files": [{**good["files"][0],"status":"added"}]+good["files"][1:]}, spec["parent"]),
+            ]
+            for node, parent in corrupt:
+                with self.subTest(sha=sha, node=node, parent=parent):
+                    with self.assertRaisesRegex(p.Denied,"historic_metadata"):
+                        p.known_metadata_only_direct_commit(sha,node,parent)
+
+    def test_future_direct_commit_with_same_paths_still_denied(self):
+        self.assertFalse(p.known_metadata_only_direct_commit(
+            "f"*40, {"sha":"f"*40,"files":[{"status":"removed","filename":"mcp/.gitkeep"}]},
+            "63441d5d3056f4845d4bfcaf908429f8f09d620f"))
+        with patch.object(p,"commit",return_value={"sha":"f"*40,"parents":[{"sha":"63441d5d3056f4845d4bfcaf908429f8f09d620f"}]}), \
+             patch.object(p,"provenance",side_effect=p.Denied("missing_or_ambiguous_main_pr")):
+            with self.assertRaisesRegex(p.Denied,"missing_or_ambiguous_main_pr"):
+                p.candidate_history("63441d5d3056f4845d4bfcaf908429f8f09d620f","f"*40)
 
     def test_provenance_denies_unreviewed_main_direct_commit(self):
         with patch.object(p,"commit",return_value={"sha":NEW,"parents":[{"sha":OLD}]}),\
