@@ -16,6 +16,50 @@ MID="c"*40
 SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
+
+    def test_pinned_nonruntime_commits_require_exact_sha_and_file_inventory(self):
+        for sha, files in p.KNOWN_NONRUNTIME_MAINTENANCE.items():
+            node = {"parents": [{"sha": OLD}],
+                    "files": [{"filename": path, "status": status}
+                              for path, status in files]}
+            with self.subTest(sha=sha):
+                self.assertTrue(p.known_nonruntime_maintenance(sha, node))
+                self.assertFalse(p.known_nonruntime_maintenance(NEW, node))
+                self.assertFalse(p.known_nonruntime_maintenance(sha, {**node, "parents": [{}, {}]}))
+                self.assertFalse(p.known_nonruntime_maintenance(sha, {**node, "files": []}))
+                self.assertFalse(p.known_nonruntime_maintenance(
+                    sha, {**node, "files": node["files"] + [{"filename": "product/src/index.ts", "status": "modified"}]}))
+                mutated = list(node["files"])
+                mutated[0] = {"filename": "product/src/index.ts", "status": "modified"}
+                self.assertFalse(p.known_nonruntime_maintenance(sha, {**node, "files": mutated}))
+
+    def test_pinned_housekeeping_chain_does_not_require_runtime_release(self):
+        shas = [
+            "63441d5d3056f4845d4bfcaf908429f8f09d620f",
+            "54f3db248ff35cce3a40b5de99270d8ed283d402",
+            "e6fea9b1b81d7afae9086983160723084cdc2ead",
+        ]
+        nodes = {
+            sha: {"sha": sha, "parents": [{"sha": shas[i + 1] if i + 1 < len(shas) else OLD}],
+                  "files": [{"filename": path, "status": status}
+                            for path, status in p.KNOWN_NONRUNTIME_MAINTENANCE[sha]]}
+            for i, sha in enumerate(shas)
+        }
+        with patch.object(p, "commit", side_effect=lambda sha: nodes[sha]), \
+             patch.object(p, "provenance", side_effect=AssertionError("no PR provenance for pinned housekeeping")), \
+             patch.object(p, "checks", side_effect=AssertionError("no runtime CI for housekeeping")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("no runtime approval for housekeeping")):
+            self.assertEqual(p.candidate_history(OLD, shas[0]), [])
+
+    def test_unrecognized_direct_commit_remains_denied_after_housekeeping(self):
+        sha = "63441d5d3056f4845d4bfcaf908429f8f09d620f"
+        malicious = {"sha": sha, "parents": [{"sha": OLD}],
+                     "files": [{"filename": "product/src/index.ts", "status": "modified"}]}
+        with patch.object(p, "commit", return_value=malicious), \
+             patch.object(p, "provenance", side_effect=p.Denied("missing_or_ambiguous_main_pr")):
+            with self.assertRaisesRegex(p.Denied, "missing_or_ambiguous_main_pr"):
+                p.candidate_history(OLD, sha)
+
     def test_noop_when_main_already_deployed(self):
         with patch.object(p,"ref",side_effect=[OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
