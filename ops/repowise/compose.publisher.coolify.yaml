@@ -33,19 +33,7 @@ services:
       GIT_CONFIG_KEY_0: safe.directory
       GIT_CONFIG_VALUE_0: /workspace/product
     volumes:
-      - type: bind
-        source: "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product"
-        target: /workspace/product
-        read_only: true
-      - type: bind
-        source: "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product/.repowise/episodes"
-        target: /workspace/product/.repowise/episodes
-        read_only: false
-      - type: bind
-        source: "/run/lock/repowise-github-sync.lock"
-        target: /run/lock/repowise-github-sync.lock
-        read_only: true
-      - type: bind
-        source: "/etc/repowise-publisher/product.token"
-        target: /run/secrets/repowise-token
-        read_only: true
+      - "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product:/workspace/product:ro"
+      - "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product/.repowise/episodes:/workspace/product/.repowise/episodes:rw"
+      - "/run/lock/repowise-github-sync.lock:/run/lock/repowise-github-sync.lock:ro"
+      - "/etc/repowise-publisher/product.token:/run/secrets/repowise-token:ro"
