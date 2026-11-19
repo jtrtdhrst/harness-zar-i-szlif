@@ -152,5 +152,18 @@ class ProductSquashTests(unittest.TestCase):
                 with self.assertRaisesRegex(p.Denied,"ci_only_rootless_proof_or_main_ci_missing"):
                     p.candidate_history(OLD,NEW)
 
+
+    def test_native_product_ci_never_runs_untrusted_pr_on_persistent_runner(self):
+        from pathlib import Path
+        workflow=(Path(__file__).resolve().parent.parent /
+                  ".github/workflows/native-product-release-ci.yml").read_text()
+        self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/main'",workflow)
+        self.assertIn("runs-on: [self-hosted, linux, x64, local-build]",workflow)
+        self.assertIn("test \"$(id -un)\" = actions-zis",workflow)
+        self.assertIn("! test -w /var/run/docker.sock",workflow)
+        self.assertIn("persist-credentials: false",workflow)
+        self.assertIn("test_product_squash_release.py -v",workflow)
+        self.assertNotIn("runs-on: ubuntu-latest",workflow)
+
 if __name__=="__main__":
     unittest.main()
