@@ -63,6 +63,19 @@ LEGACY_KNOWLEDGE_SHA = "81c4b068b89f4c035098c6c9107f755f56919a87"
 LEGACY_KNOWLEDGE_PR = 164
 LEGACY_CI_ONLY_FILES = frozenset({"scripts/ci-path-coverage.mjs", "tests/ci-path-coverage.test.mjs"})
 
+
+# An immutable, independently reviewed CI-only source change. This fixes the
+# PR183 staging deadlock without allowing arbitrary workflow edits or future PR
+# heads to evade runtime release admission. It can never deploy an application.
+CI_ONLY_REVIEWED_PR = 183
+CI_ONLY_REVIEWED_HEAD = "387e5f9081fa9fa9da4820fae054da617c615a9a"
+CI_ONLY_REVIEWED_FILES = {
+    ".github/workflows/product-ci.yml": "modified",
+    "ops/coolify/Dockerfile.ci": "added",
+    "tests/ci-path-coverage.test.mjs": "modified",
+    "tests/test_release_promotion_contract.py": "modified",
+}
+
 class Denied(Exception):
     pass
 
@@ -483,6 +496,29 @@ def non_runtime_files_only(pr_number, commit_sha, node):
     return True
 
 
+
+def reviewed_ci_only_pr(pr_number, head_sha, node):
+    """Only the exact CTO-reviewed PR183 four-file CI patch may skip runtime.
+
+    The caller still requires a trusted rootless exact-tree premerge receipt,
+    green merged-main GitHub CI and a single-parent squash. No other PR or
+    changed SHA inherits this exception; Docker runtime resources are untouched.
+    """
+    if pr_number != CI_ONLY_REVIEWED_PR or head_sha != CI_ONLY_REVIEWED_HEAD:
+        return False
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(CI_ONLY_REVIEWED_FILES):
+        return False
+    found = {}
+    for file in files:
+        if not isinstance(file, dict):
+            return False
+        name, status = file.get("filename"), file.get("status")
+        if not isinstance(name, str) or name in found or status not in ("added", "modified"):
+            return False
+        found[name] = status
+    return found == CI_ONLY_REVIEWED_FILES
+
 def candidate_history(release_sha, main_sha):
     """Walk first-parent main history and verify *every* new merged PR."""
     if release_sha == main_sha:
@@ -508,6 +544,17 @@ def candidate_history(release_sha, main_sha):
         pr, head = provenance(current)
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
+        # Exact reviewed CI-only PR183 must never cause an unnecessary
+        # application rollout. Unlike docs-only PRs this exceptional workflow
+        # change requires a root-controlled, exact-tree, full rootless E2E
+        # attestation BEFORE merge, plus GREEN main CI AFTER merge.
+        if len(parents) == 1 and reviewed_ci_only_pr(pr, head, node):
+            if (head_ci.get("rootless_premerge") is not True
+                    or head_ci.get("billing_blocked")
+                    or merge_ci.get("billing_blocked")):
+                raise Denied("ci_only_rootless_proof_or_main_ci_missing")
+            current = first
+            continue
         # Docs-only squash PRs are NOT releases and do not require a Multica
         # runtime work product. Everything else, including runtime squashes,
         # still requires the original independent native approval gate.
