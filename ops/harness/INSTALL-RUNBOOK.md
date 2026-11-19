@@ -188,7 +188,9 @@ An authorized root operator can instead invoke the existing controller with
 `--service plasmic-mcp` and an **explicit** exact base/source SHA pair, after
 the existing per-UUID request, independent head review, grant, root-owned HMAC
 attestation and image digest are verified. Run `--mode plan` first and record
-the `scope` and `pending_paths` fields. The latter are **not deployed** and
+the `scope` and `pending_paths` fields. The result marker is
+`ok_scoped`, **not** the global `ok`: downstream automation must never treat
+this as a complete-main release. The pending paths are **not deployed** and
 must remain open in the release ledger. Then use `--mode prepare` and
 `--mode deploy` only under separately approved build/release grants.
 

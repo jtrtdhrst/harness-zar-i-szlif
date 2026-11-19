@@ -676,6 +676,7 @@ class MainWiringTests(unittest.TestCase):
         report = json.loads(out)
         self.assertEqual(code, 0, report)
         self.assertEqual(report["scope"], "mantic-mcp")
+        self.assertEqual(report["result"], "ok_scoped")
         self.assertEqual(list(report["services"]), ["mantic-mcp"])
         self.assertEqual(report["admitted"], ["mantic-mcp"])
         self.assertEqual(report["pending_paths"],
@@ -716,6 +717,7 @@ class MainWiringTests(unittest.TestCase):
         report = json.loads(out)
         self.assertEqual(code, 0, report)
         self.assertEqual(report["scope"], "mantic-mcp")
+        self.assertEqual(report["result"], "ok_scoped")
         self.assertEqual(report["pending_paths"],
                          ["playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"])
         decisions = report["deployed"]["decisions"]

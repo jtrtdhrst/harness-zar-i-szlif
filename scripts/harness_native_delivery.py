@@ -570,7 +570,9 @@ def main(argv=None):
                 print(json.dumps(report, sort_keys=True))
                 return 1
 
-        report["result"] = "ok"
+        # A successful per-lane release is NOT delivery of the complete main
+        # range. Keep the global success marker exclusive to unscoped batches.
+        report["result"] = "ok_scoped" if args.service else "ok"
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
