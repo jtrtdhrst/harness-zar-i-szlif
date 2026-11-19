@@ -238,6 +238,10 @@ def create_app(*, key_resolver=role_secret, credential_resolver=native_credentia
 
 
 def main():
+    # Fail closed before opening global OAuth or starting an HTTP listener.
+    # This is a broker process, never a root-executed agent or release hook.
+    if os.geteuid() == 0:
+        raise RuntimeError("broker_must_be_unprivileged")
     if os.environ.get("HERMES_HOME") != "/srv/multica-zar/.hermes":
         raise RuntimeError("trusted_hermes_home_required")
     host = os.getenv("ROLE_BROKER_HOST", "127.0.0.1")
