@@ -7,9 +7,9 @@
 # hold-blind controller (`harness_image_delivery.py --auto`) and the reviewed
 # adapter does not read that invocation's arguments the same way.
 #
-# The ExecStart line is parsed by scripts/harness_install_preflight.py with the
-# adapter's own argparse (harness_native_delivery.build_parser), so the installed
-# invocation and the adapter's CLI cannot drift apart again.
+# The ExecStart line is compared to a fixed reviewed invocation by
+# scripts/harness_install_preflight.py without importing host-installed code.
+# Exact root-owned unit and module hashes are checked separately.
 #
 # --auto exists because a 120-second timer cannot know a merge SHA in advance.
 # It does NOT reconstruct one: the exact pair comes from the operator-written

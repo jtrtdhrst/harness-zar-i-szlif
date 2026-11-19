@@ -7,6 +7,7 @@ root-owned. These tests use a fake probe; nothing here touches a real unit.
 """
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -30,14 +31,16 @@ EXPECTED = {name: (REAL_BLOB if name == "harness_release_admission.py" else "d" 
 EXPECTED[preflight.REVIEWED_UNIT] = "e" * 64
 EXPECTED[preflight.LEGACY_ENTRYPOINT] = "f" * 64
 
-ADAPTER = str(Path(REPO) / "scripts" / "harness_native_delivery.py")
+ADAPTER = str(preflight.LIBEXEC / preflight.ADAPTER)
 REVIEWED_UNIT_TEXT = f"""[Unit]
 Description=test unit
 # ExecStart is what the timer really runs
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 {ADAPTER} --mode deploy --auto \
-  --artifact-dir /var/lib/harness-image-delivery/gates
+  --artifact-dir /var/lib/harness-image-delivery/gates \
+  --attestation-key /etc/paperclip-gitops/harness-attestation.key \
+  --state-dir /var/lib/harness-image-delivery/delivery
 Nice=10
 """
 
@@ -317,6 +320,25 @@ class UnitWiringTests(unittest.TestCase):
     def test_the_reviewed_unit_passes_the_adapter_parser(self):
         argv = preflight.parse_execstart(REVIEWED_UNIT_TEXT)
         self.assertIsNone(preflight.execstart_problem(argv))
+
+    def test_unverified_adapter_top_level_code_is_never_executed(self):
+        with tempfile.TemporaryDirectory() as root:
+            marker = Path(root) / "SHOULD_NOT_EXIST"
+            foreign = Path(root) / preflight.ADAPTER
+            foreign.write_text(
+                "from pathlib import Path\n"
+                + "Path(" + repr(str(marker)) + ").write_text('executed')\n")
+            argv = list(preflight.APPROVED_EXECSTART)
+            argv[1] = str(foreign)
+            self.assertEqual(preflight.execstart_problem(argv),
+                             "adapter_rejects_execstart_arguments")
+            self.assertFalse(marker.exists())
+
+    def test_incomplete_adapter_execstart_is_not_accepted(self):
+        argv = list(preflight.APPROVED_EXECSTART)
+        del argv[-2:]  # missing signed attestation state-directory binding
+        self.assertEqual(preflight.execstart_problem(argv),
+                         "adapter_rejects_execstart_arguments")
 
     def test_an_argument_the_adapter_rejects_is_detected(self):
         # This is exactly the d3f4055 defect: the timer's invocation was not an

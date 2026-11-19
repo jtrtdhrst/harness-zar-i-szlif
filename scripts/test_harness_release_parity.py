@@ -83,6 +83,21 @@ class ParityTests(unittest.TestCase):
         self.assertFalse(any(c[0] in ("curl", "docker") and
                          c[1] in ("run", "stop", "push") for c in runner.calls))
 
+    def test_source_changed_during_last_runtime_check_denies_no_change(self):
+        base = FakeRunner()
+        remote_reads = [0]
+        def drifter(argv, **kwargs):
+            if "ls-remote" in argv:
+                remote_reads[0] += 1
+                if remote_reads[0] == 2:
+                    base.upstream = OLD
+            return base(argv, **kwargs)
+        with patch("harness_release_parity._check_runtime",
+                   return_value={"service": "plasmic-mcp", "result": "parity_ok"}):
+            with self.assertRaisesRegex(ParityFailure, "source_range_stale"):
+                check_services(self.repo, SOURCE, ["plasmic-mcp"], runner=drifter)
+        self.assertEqual(remote_reads[0], 2)
+
     def test_secondary_service_drift_blocks_global_no_change(self):
         runner = FakeRunner()
         with patch("harness_release_parity._check_runtime",

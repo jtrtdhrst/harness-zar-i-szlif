@@ -183,7 +183,11 @@ def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run, state_
 
 def check(repo, expected_sha, service="plasmic-mcp", *, runner=subprocess.run, state_file=ROOT_STATE):
     check_source(repo, expected_sha, runner=runner)
-    return _check_runtime(repo, expected_sha, service, runner=runner, state_file=state_file)
+    result = _check_runtime(repo, expected_sha, service, runner=runner, state_file=state_file)
+    # GitHub main may advance while Docker/health proofs are collected.
+    # The final read prevents reporting parity for an obsolete source SHA.
+    check_source(repo, expected_sha, runner=runner)
+    return result
 
 
 def check_services(repo, expected_sha, services, *, runner=subprocess.run, state_file=ROOT_STATE):
@@ -197,6 +201,9 @@ def check_services(repo, expected_sha, services, *, runner=subprocess.run, state
             verified.append(_check_runtime(repo, expected_sha, service, runner=runner, state_file=state_file))
         except ParityFailure as exc:
             raise ParityFailure(f"{service}:{exc}") from exc
+    # Final freshness check is mandatory even when every service passed.
+    # A source update during the last service check must deny no_change.
+    check_source(repo, expected_sha, runner=runner)
     return {"result": "parity_ok", "source_sha": expected_sha,
             "services": [item["service"] for item in verified]}
 

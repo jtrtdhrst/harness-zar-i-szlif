@@ -20,7 +20,6 @@ The install itself, the timer stop and the negative canaries on the live host ar
 OPERATOR_ONLY steps documented in ``ops/harness/INSTALL-RUNBOOK.md``.
 """
 import argparse
-import importlib.util
 import json
 import os
 import shlex
@@ -117,46 +116,27 @@ def parse_execstart(unit_text):
     return []
 
 
-def adapter_parser(script_path):
-    """Load ``build_parser`` from the adapter file the unit actually runs.
-
-    The module is executed from the path in ``ExecStart``, so the check validates
-    the installed adapter, not a repository copy. Importing is side-effect free:
-    the adapter reads no secret at import time.
-    """
-    script = Path(script_path)
-    if not script.is_file():
-        raise ImportError("adapter missing")
-    parent = str(script.parent)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
-    spec = importlib.util.spec_from_file_location("_harness_adapter_under_test", script)
-    if spec is None or spec.loader is None:
-        raise ImportError("adapter not loadable")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.build_parser()
+# Fixed, reviewed timer invocation. Never import host-installed adapter source
+# during root preflight: a mismatched adapter could execute at module import time.
+# Unit SHA/owner checks below independently require the approved bytes on disk.
+APPROVED_EXECSTART = (
+    "/usr/bin/python3", str(LIBEXEC / ADAPTER),
+    "--mode", "deploy", "--auto",
+    "--artifact-dir", str(GATES),
+    "--attestation-key", str(KEY),
+    "--state-dir", str(STATE / "delivery"),
+)
 
 
 def execstart_problem(argv):
-    """None when the adapter's own parser accepts this invocation, else a reason.
-
-    This is the wiring gate: an installed ``ExecStart`` the adapter would reject
-    (as the legacy ``--auto``-only invocation was) can never be reported ready.
-    """
+    """Validate exact root-reviewed unattended invocation without executing code."""
     if len(argv) < 2:
         return "execstart_missing_or_unparsable"
-    script, rest = argv[1], argv[2:]
-    if Path(script).name != ADAPTER:
+    if Path(argv[1]).name != ADAPTER:
         return "execstart_runs_the_hold_blind_controller"
-    try:
-        adapter_parser(script).parse_args(rest)
-    except SystemExit:
+    if tuple(argv) != APPROVED_EXECSTART:
         return "adapter_rejects_execstart_arguments"
-    except (ImportError, OSError, AttributeError):
-        return "adapter_not_importable"
     return None
-
 
 def blob_sha256(repo, sha, path):
     """sha256 of one file as committed at an exact SHA (no checkout needed)."""
