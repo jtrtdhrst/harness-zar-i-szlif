@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Role-authenticated, constrained Responses API relay for Hermes OAuth Codex.
+
+Trusted service holds the upstream OAuth account. Landlocked agent tasks only
+receive a role-specific bearer, never auth.json, refresh tokens or shared .env.
+This is a staging candidate: activation requires a separate reviewed release.
+"""
+from __future__ import annotations
+
+import asyncio
+import hmac
+import json
+import os
+import stat
+from pathlib import Path
+from typing import Callable
+
+from aiohttp import ClientSession, ClientTimeout, web
+
+UPSTREAM = "https://chatgpt.com/backend-api/codex"
+ROLES = frozenset(("ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
+                   "email-creative", "engineer", "harness-engineer",
+                   "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"))
+MODEL_ALLOWLIST = frozenset(("gpt-6-luna",))
+MAX_BODY = 1_048_576
+KEY_ROOT = Path("/srv/multica-zar/.config/hermes")
+
+
+def role_secret(role: str, root: Path = KEY_ROOT) -> str:
+    """Read only a known role's own regular private key; reject symlink tricks."""
+    if role not in ROLES:
+        raise ValueError("role_not_allowed")
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("role_key_root_unavailable")
+    directory = root / role
+    path = directory / "api-key"
+    if directory.is_symlink() or not directory.is_dir() or path.is_symlink():
+        raise ValueError("role_key_path_invalid")
+    st = path.stat()
+    if not stat.S_ISREG(st.st_mode) or (st.st_mode & 0o077):
+        raise ValueError("role_key_permissions_invalid")
+    key = path.read_text(encoding="utf-8").strip()
+    if len(key) < 40:
+        raise ValueError("role_key_too_short")
+    return key
+
+
+def native_credential() -> tuple[str, str, dict[str, str]]:
+    """Resolve+refresh OAuth solely inside the trusted service, never a task."""
+    from hermes_cli.auth_codex import resolve_codex_runtime_credentials
+    from agent.codex_headers import codex_cloudflare_headers
+
+    credential = resolve_codex_runtime_credentials()
+    base = str(credential.get("base_url") or "").rstrip("/")
+    if base != UPSTREAM:
+        raise RuntimeError("upstream_not_pinned")
+    key = str(credential.get("api_key") or "").strip()
+    if not key:
+        raise RuntimeError("upstream_credential_missing")
+    return base, key, codex_cloudflare_headers(key, base_url=base)
+
+
+def error(code: int, message: str) -> web.Response:
+    return web.json_response({"error": {"code": message}}, status=code)
+
+
+@web.middleware
+async def trusted_role(request: web.Request, handler):
+    if request.path == "/healthz":
+        return await handler(request)
+    role = request.match_info.get("role", "")
+    if role not in ROLES:
+        return error(404, "route_not_allowed")
+    header = request.headers.get("Authorization", "")
+    presented = header.removeprefix("Bearer ") if header.startswith("Bearer ") else ""
+    try:
+        expected = request.app["key_resolver"](role)
+    except (ValueError, OSError):
+        return error(503, "role_identity_unavailable")
+    if not presented or not hmac.compare_digest(presented, expected):
+        return error(401, "role_not_authorized")
+    return await handler(request)
+
+
+async def models(request: web.Request):
+    return web.json_response({"object": "list", "data": [
+        {"id": v, "object": "model", "owned_by": "role-broker"}
+        for v in sorted(MODEL_ALLOWLIST)
+    ]})
+
+
+async def responses(request: web.Request):
+    if request.content_length is not None and request.content_length > MAX_BODY:
+        return error(413, "request_too_large")
+    if request.content_type != "application/json":
+        return error(415, "json_required")
+    try:
+        body = await request.read()
+        if len(body) > MAX_BODY:
+            return error(413, "request_too_large")
+        document = json.loads(body)
+    except (ValueError, UnicodeDecodeError, web.HTTPException):
+        return error(400, "invalid_json")
+    if not isinstance(document, dict) or document.get("model") not in MODEL_ALLOWLIST:
+        return error(403, "model_not_allowed")
+    if document.get("stream") is not True or document.get("store") is not False:
+        return error(400, "codex_requires_stream_true_store_false")
+    if "input" not in document:
+        return error(400, "input_required")
+    try:
+        base, token, official_headers = await asyncio.to_thread(request.app["credential_resolver"])
+    except Exception:
+        # No OAuth details, provider errors, account IDs or tokens leak to clients.
+        return error(503, "upstream_auth_unavailable")
+    if base != UPSTREAM:
+        return error(503, "upstream_not_pinned")
+    headers = {"Authorization": "Bearer " + token, "Accept": "text/event-stream",
+               "Content-Type": "application/json", **official_headers}
+    client: Callable = request.app["http_factory"]
+    try:
+        async with client(timeout=ClientTimeout(total=None, sock_connect=10, sock_read=180)) as session:
+            async with session.post(base + "/responses", data=body, headers=headers,
+                                    allow_redirects=False) as upstream:
+                if upstream.status != 200:
+                    # Never relay upstream error bodies: they may include auth metadata.
+                    return error(502, "upstream_http_failure")
+                output = web.StreamResponse(status=200, headers={
+                    "Content-Type": "text/event-stream", "Cache-Control": "no-store",
+                    "X-Accel-Buffering": "no"})
+                await output.prepare(request)
+                async for chunk in upstream.content.iter_chunked(16384):
+                    await output.write(chunk)
+                await output.write_eof()
+                return output
+    except (asyncio.TimeoutError, OSError):
+        return error(502, "upstream_transport_failure")
+
+
+def create_app(*, key_resolver=role_secret, credential_resolver=native_credential,
+               http_factory=ClientSession):
+    app = web.Application(middlewares=[trusted_role], client_max_size=MAX_BODY)
+    app["key_resolver"] = key_resolver
+    app["credential_resolver"] = credential_resolver
+    app["http_factory"] = http_factory
+    async def health(_):
+        return web.json_response({"ok": True})
+    app.router.add_get("/healthz", health)
+    app.router.add_get("/p/{role}/v1/models", models)
+    app.router.add_post("/p/{role}/v1/responses", responses)
+    return app
+
+
+def main():
+    if os.environ.get("HERMES_HOME") != "/srv/multica-zar/.hermes":
+        raise RuntimeError("trusted_hermes_home_required")
+    host = os.getenv("ROLE_BROKER_HOST", "127.0.0.1")
+    if host != "127.0.0.1":
+        raise RuntimeError("loopback_only")
+    port = int(os.getenv("ROLE_BROKER_PORT", "7468"))
+    if port < 1024 or port > 65535:
+        raise RuntimeError("invalid_port")
+    web.run_app(create_app(), host=host, port=port, access_log=None)
+
+
+if __name__ == "__main__":
+    main()
