@@ -492,7 +492,8 @@ def main(argv=None):
                         (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
                         if isinstance(entry, dict) and entry.get("id") in SERVICES
                     })
-                    check_release_parity(args.repo, source_sha, managed)
+                    check_release_parity(args.repo, source_sha, managed,
+                                         state_file=Path(args.state_dir) / "delivery.json")
                 else:
                     check_upstream_source(args.repo, source_sha)
             except ParityFailure as exc:
