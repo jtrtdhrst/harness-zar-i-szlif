@@ -220,6 +220,10 @@ def check(probe, repo, sha):
         digest = probe.sha256(path) if info["exists"] else None
         installed[name] = {"exists": info["exists"], "uid": info["uid"],
                            "mode": info["mode"], "sha256": digest}
+        # Absence is not success: missing imports would crash the wired unit.
+        # Installing a missing reviewed file is an operator install step, so
+        # report it as pending (never ready), not silently skip the module.
+        install_assertion(f"{name}_present", info["exists"], str(path), False)
         if info["exists"]:
             record(f"{name}_root_owned", info["uid"] == 0 and info["mode"] == 0o644,
                    f"uid={info['uid']} mode={oct(info['mode'] or 0)} (expected root:root 0644)")
