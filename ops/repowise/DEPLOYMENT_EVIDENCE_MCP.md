@@ -162,10 +162,57 @@ exact-HEAD run instead.
    independently verifiable source. Never mark a delivery issue Done on
    this tool's PARTIAL result.
 
+## Native Multica publisher tool-use — 2026-11-19
+
+This section supersedes the earlier pre-binding checklist for the **single
+already-authorized Product writer**. It is not proof of wider agent deployment
+authority, a production release gate, or per-role model credential isolation.
+
+- **Real native run:** COO agent task
+  `01a1f405-6f8f-7276-ba2c-ab33951f0361` on existing issue `ZARI-240`;
+  trigger comment `01a1f405-6f66-7da8-b0b2-a8b443e965f4`. Actual native
+  `tool_use`/`tool_result` records are in that run (sequences 65/66, 70/71);
+  they used the pre-enabled `repowise-deployment-product` binding and did
+  not require a new MCP server or credential grant.
+- **Read negative:** Product episode ID `0000000000000000` returned
+  `found=false`. **Write:** `publish_deployment_observation` returned
+  `stored=true, created=true`, immutable episode `3ebdc8488ecdfc76` with
+  `PARTIAL_LIVE_OBSERVED`, source SHA
+  `4feef6903dc21be5da0433a77b10549bf0009661`, issue `ZARI-240`,
+  deployment `npedmph1mo14h8b6rgpr9pg1`. The deployment UUID is from
+  the **Product mascot-worker** Coolify resource; it is not evidence
+  identifying the panel's deployment.
+- **Native readback:** `get_deployment_observation(product,
+  3ebdc8488ecdfc76)` returned `found=true` with matching source SHA,
+  issue and deployment ID. This claim is based on the COO native MCP
+  tool result only; no separate host SQLite or post-sync durability
+  verification is attributed to that agent run.
+- **Bounded evidence only:** the writer checked the public Product
+  release SHA and `healthz=200`; it explicitly retains
+  `immutable_digest=NOT_VERIFIED`, independent authenticated QA
+  `NOT_RUN`, and rollback `NOT_RUN`. Do not convert the partial episode
+  into an automatic Multica Done or a full delivery PASS. COO's
+  GitHub/Coolify MCP bindings were still disabled at this readback.
+
+**Separate unresolved native isolation failure** — CHO task run
+`01a1f40a-ca05-71a1-bea5-86ceeda8fe9b`, existing `ZARI-213`,
+performed a no-content file-descriptor probe: own role open allowed,
+foreign CTO profile and shared repository cache denied (`EACCES`),
+but global Hermes `auth.json` and `.env` **both opened successfully**.
+No secret content was read. This is a confirmed shared-credential access
+gap; keep ZARI-213 HOLD and do not enable broad agent permissions or
+release status transitions. A genuine role-scoped credential broker
+with two-role native positive/negative tests is still required; merely
+copying shared credentials into per-role files does not make their
+identities independent.
+
 ## Rollback
 
-The module is additive, not yet installed as an auto-start service and not
-bound to any agent. Revert this feature branch/PR without changing existing
+Historical pre-deployment note (2026-11-18): the module was additive, and
+was not then installed as an auto-start service or bound to agents. As of
+2026-11-19 a Product writer instance is running and scoped to COO, with the
+bounded native observation/readback recorded above. This does not authorize
+other roles or a release-grade write. Revert this feature branch/PR without changing existing
 RepoWise MCP. Do not delete archived deployment episodes without a
 separate audited retention decision. Never touch other repos or global
 agent permissions.
