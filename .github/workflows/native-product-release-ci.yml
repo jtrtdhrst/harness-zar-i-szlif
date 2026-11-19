@@ -7,6 +7,7 @@ on:
       - "scripts/test_paperclip_native_release_gate.py"
       - "scripts/product_native_promotion.py"
       - "scripts/test_product_native_promotion.py"
+      - "scripts/test_product_squash_release.py"
       - "ops/systemd/product-native-promotion.*"
       - ".github/workflows/native-product-release-ci.yml"
   push:
@@ -16,6 +17,7 @@ on:
       - "scripts/test_paperclip_native_release_gate.py"
       - "scripts/product_native_promotion.py"
       - "scripts/test_product_native_promotion.py"
+      - "scripts/test_product_squash_release.py"
       - "ops/systemd/product-native-promotion.*"
       - ".github/workflows/native-product-release-ci.yml"
 
@@ -28,13 +30,30 @@ permissions:
 
 jobs:
   validate-native-product-release:
-    runs-on: ubuntu-latest
+    # PR YAML is untrusted. Validate exact PR trees in the root-owned rootless
+    # premerge lane; only reviewed main may execute on the persistent runner.
+    # This also removes the billing-blocked ubuntu-latest false failure.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 5
     steps:
+      - name: Trusted main-only admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = 'push'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_REPOSITORY" = 'miloszspyrka-code/harness-zar-i-szlif'
+          test "$(id -un)" = actions-zis
+          ! test -w /var/run/docker.sock
+          ! test -r /opt/zis-actions-runner/.credentials
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Verify actual native approvals, stale SHA and unreviewed merges fail closed
         run: |
           set -euo pipefail
           python3 -m unittest discover -s scripts -p test_paperclip_native_release_gate.py -v
           python3 -m unittest discover -s scripts -p test_product_native_promotion.py -v
+          python3 -m unittest discover -s scripts -p test_product_squash_release.py -v
           python3 -m py_compile scripts/paperclip_native_release_gate.py scripts/product_native_promotion.py
