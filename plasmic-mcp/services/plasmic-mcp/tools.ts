@@ -18,6 +18,7 @@ import { plasmicUiTools } from "./ui-tools.ts";
 import { plasmicCatalogTools } from "./catalog-tools.ts";
 import { cloneInstanceAsPrivate, plasmicCompositionTools } from "./composition-tools.ts";
 import { plasmicDataQueryTools } from "./data-query-tools.ts";
+import { plasmicDataTokenTools } from "./data-token-tools.ts";
 
 export interface PlasmicCtx {
   client: PlasmicClient;
@@ -250,6 +251,7 @@ export function plasmicTools(ctx: PlasmicCtx): ToolDef[] {
     ...plasmicCatalogTools(ctx),
     ...plasmicCompositionTools(ctx),
     ...plasmicDataQueryTools(ctx),
+    ...plasmicDataTokenTools(ctx),
 
     {
       name: "plasmic_list_projects",
