@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 path = Path(__file__).with_name("harness_coolify_credential_gate.py")
 spec = importlib.util.spec_from_file_location("gate", path)
@@ -58,6 +59,35 @@ class RotationGateTests(unittest.TestCase):
                        {"legacy_ref": False, "dedicated_ref": True})
   def test_invalid_uuid_denied_before_http(self):
     with self.assertRaises(g.Denied):g.get_status("secret","../etc/passwd")
+
+  def test_each_controller_uses_correct_coolify_api_route(self):
+    self.assertEqual(g.RESOURCE_KIND, {
+      "harness": "services",
+      "product_image": "applications",
+      "product_mcp_host": "applications",
+    })
+    paths = []
+    class Response:
+      status = 200
+      def __enter__(self): return self
+      def __exit__(self, *args): return False
+    def open_request(req, timeout):
+      paths.append((req.full_url, req.get_method()))
+      return Response()
+    with patch.object(g.urllib.request, "urlopen", side_effect=open_request):
+      for kind in g.RESOURCE_KIND.values():
+        self.assertEqual(g.get_status("fixture-token", "a" * 20, kind), 200)
+    self.assertEqual(paths, [
+      (g.BASE + "/services/" + "a" * 20, "GET"),
+      (g.BASE + "/applications/" + "a" * 20, "GET"),
+      (g.BASE + "/applications/" + "a" * 20, "GET"),
+    ])
+
+  def test_invalid_kind_denied_without_http(self):
+    with patch.object(g.urllib.request, "urlopen") as spy:
+      with self.assertRaises(g.Denied):
+        g.get_status("fixture-token", "a" * 20, "servers")
+      spy.assert_not_called()
 
 if __name__=="__main__":
   unittest.main(verbosity=2)
