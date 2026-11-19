@@ -18,14 +18,14 @@ The read-only scripts/harness_release_parity.py probe checks:
 5. Valid revision commit and no git diff under plasmic-mcp/ between running
    revision and current main.
 
-The Harness AUTO NO-CHANGE path calls this check before reporting success.
+Every Harness AUTO cycle verifies real upstream main and the checkout.\nThe AUTO NO-CHANGE path verifies every manifest-managed service in the\nHarness delivery transport before reporting global success.
 Unknown GitHub auth, missing revision/labels, ambiguous containers, stale
 checkout, unapplied service changes and Git failures produce nonzero
 denied/blocked. No git fetch, Docker mutation, auto-deploy, release grant,
 timer creation or alternative controller is performed.
 
 The standalone probe accepts --service NAME for other manifest services,
-but the existing controller's first coverage scope is plasmic-mcp.
+and the existing controller checks all manifest-managed transport services\nbefore global AUTO NO-CHANGE.
 
 ## Safe rollout (NOT achieved by merging this PR alone)
 
