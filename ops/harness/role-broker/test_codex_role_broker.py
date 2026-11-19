@@ -101,8 +101,7 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
                 json=self.payload(), headers=self.auth())
             body = await response.read()
         self.assertEqual(response.status, 200)  # headers already streamed
-        self.assertIn(b"event: error", body)
-        self.assertIn(b"upstream_stream_interrupted", body)
+        self.assertIn(b'event: error\ndata: {"error":{"code":"upstream_stream_interrupted"}}\n\n', body)
         self.assertNotIn(b"SECRET-UPSTREAM-TRANSPORT", body)
         self.assertNotIn(b"response.completed", body)
         self.assertEqual(self.app["capacity"]._active["cho"], 0)
