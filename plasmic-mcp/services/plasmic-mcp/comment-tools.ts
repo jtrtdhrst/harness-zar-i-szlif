@@ -470,7 +470,7 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
         if (existing) {
           const sameAnchor =
             existing.location.subject.iid === subject.iid && existing.location.subject.uuid === subject.uuid;
-          const sameComment = existing.comments.some((c) => c.id === commentId && c.body === body);
+          const sameComment = existing.comments.some((c) => c.id === commentId && c.body === body && !c.deletedAt);
           if (!sameAnchor || !sameComment) {
             throw new Error(
               `IDEMPOTENCY_CONFLICT: thread ${threadId} already exists with a different anchor or body; use a new idempotencyKey`,
@@ -589,6 +589,9 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
         }
         const existing = thread.comments.find((c) => c.id === commentId);
         if (existing) {
+          if (existing.deletedAt) {
+            throw new Error(`IDEMPOTENCY_CONFLICT: comment ${commentId} is deleted; cannot treat a tombstone as a successful reply`);
+          }
           if (existing.body !== body) {
             throw new Error(`IDEMPOTENCY_CONFLICT: comment ${commentId} exists with a different body`);
           }
@@ -790,7 +793,10 @@ export function plasmicCommentTools(ctx: PlasmicCtx): ToolDef[] {
           if (!updated || updated.resolved !== resolved) {
             throw new Error(`WRITE_READBACK_UNVERIFIED: thread ${threadId} did not read back as resolved=${resolved}`);
           }
-          const historyRead = (updated.commentThreadHistories ?? []).some((h) => h.id === historyId);
+          const historyRead = (updated.commentThreadHistories ?? []).some((h) => h.id === historyId && h.resolved === resolved);
+          if (!historyRead) {
+            throw new Error(`WRITE_READBACK_UNVERIFIED: thread ${threadId} changed state but expected history ${historyId} was not returned; inspect Studio before retrying`);
+          }
           return {
             dryRun: false as const,
             changed: true,
