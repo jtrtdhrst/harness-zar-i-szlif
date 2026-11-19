@@ -183,7 +183,7 @@ def guest_ci(source: Path, sha: str) -> str:
     log = LOG_ROOT / (sha + ".log")
     shell = r'''
 set -eu
-test "$(git write-tree)" = EXPECTED_TREE
+test "$(git -c safe.directory="$(pwd)" write-tree)" = EXPECTED_TREE
 test ! -r /opt/zis-actions-runner/.credentials
 test ! -r /srv/multica-zar/.hermes/auth.json
 test ! -r /etc/multica-git-credential/roles/release.json
