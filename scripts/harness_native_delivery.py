@@ -65,7 +65,8 @@ from pathlib import Path
 
 from harness_delivery_controller import git_changed_paths, load_artifacts, run_promotion
 from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
-from harness_release_parity import ParityFailure, check as check_release_parity
+from harness_release_parity import (ParityFailure, check_source as check_upstream_source,
+                                    check_services as check_release_parity)
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
@@ -459,16 +460,23 @@ def main(argv=None):
 
         now = parse_time(args.now) if args.now else None
         base_sha, source_sha = resolve_source_range(args)
+        # The timer's pinned SHA must match real upstream main and checkout
+        # on EVERY auto cycle, including cycles with a non-empty source range.
+        # A global no_change additionally requires all managed runtimes to match.
+        if args.auto:
+            try:
+                if base_sha == source_sha:
+                    managed = sorted({
+                        entry.get("id") for entry in
+                        (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
+                        if isinstance(entry, dict) and entry.get("id") in SERVICES
+                    })
+                    check_release_parity(args.repo, source_sha, managed)
+                else:
+                    check_upstream_source(args.repo, source_sha)
+            except ParityFailure as exc:
+                raise Denied("runtime_parity:" + str(exc)) from exc
         if base_sha == source_sha:
-            # Equal operator-supplied SHAs do NOT prove that the checkout is
-            # current, or that a held service's changes reached the live image.
-            # The read-only parity gate also checks actual upstream main;
-            # missing GitHub read credentials fail closed, never "no_change".
-            if args.auto:
-                try:
-                    check_release_parity(args.repo, source_sha)
-                except ParityFailure as exc:
-                    raise Denied("runtime_parity:" + str(exc)) from exc
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
                               "result": "no_change", "runtime_parity": "verified" if args.auto
                               else "not_checked_explicit_mode"}, sort_keys=True))
