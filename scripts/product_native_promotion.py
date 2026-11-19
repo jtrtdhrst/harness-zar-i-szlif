@@ -702,6 +702,10 @@ def process(plan=False):
     if live != release:
         raise Denied("production_not_at_current_release_ref")
     if current == release:
+        # Recheck the refs after the live HTTP read: main may have advanced
+        # while that read was in flight, invalidating the no-change result.
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
