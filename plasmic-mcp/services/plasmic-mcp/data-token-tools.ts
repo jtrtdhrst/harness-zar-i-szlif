@@ -48,7 +48,7 @@ export function tokenValue(value: unknown, kind: Kind): string {
       codeForbidden.test(value) || /[;][\s]*(?:fetch|eval|import|require)\b/i.test(value)) {
     fail("UNSAFE_DATA_TOKEN_CODE");
   }
-  const trimmed = value.trim();
+  const trimmed = (value as string).trim();
   return trimmed.startsWith("(") && trimmed.endsWith(")") ? trimmed : "(" + trimmed + ")";
 }
 function safeName(name: unknown): string {
@@ -60,7 +60,7 @@ function safeName(name: unknown): string {
   return name;
 }
 function siteOf(bundle: BundleDoc): { iid: string; site: Json; refs: string[] } {
-  const iid = bundle.root;
+  const iid = typeof bundle.root === "string" ? bundle.root : fail("DATA_TOKEN_ROOT_INVALID");
   const site: unknown = bundle.map[iid];
   if (!isObj(site) || site.__type !== "Site" || !Array.isArray(site.dataTokens)) {
     return fail("DATA_TOKEN_SITE_MODEL_UNSUPPORTED");
@@ -158,7 +158,7 @@ async function change(ctx: PlasmicCtx, op: Op, args: Args): Promise<Json> {
     const allowed = new Set((process.env.PLASMIC_MCP_WRITABLE_PROJECT_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
     if (!allowed.has(args.projectId)) return fail("DATA_TOKEN_PROJECT_WRITE_NOT_APPROVED");
   }
-  const process = async (): Promise<Json> => {
+  const performChange = async (): Promise<Json> => {
     if (!dryRun) {
       const branches = await ctx.client.listBranches(args.projectId);
       if (!branches.branches.some((b) => b.id === args.branchId)) return fail("DATA_TOKEN_BRANCH_NOT_FOUND");
@@ -181,16 +181,17 @@ async function change(ctx: PlasmicCtx, op: Op, args: Args): Promise<Json> {
     }
     return { dryRun: false, revision: after.revision, ...patch.result };
   };
-  if (dryRun) return process();
+  if (dryRun) return performChange();
   const key = "live:data-token:" + args.projectId + ":" + args.branchId + ":" + op + ":" + args.idempotencyKey;
   const digest = sha256(JSON.stringify({ op, projectId: args.projectId, branchId: args.branchId,
     tokenId: args.tokenId, name: args.name, value: args.value, valueType: args.valueType,
     expectedRevision: args.expectedRevision }));
   const cached = await idempotent(ctx.stateDir + "/idempotency", key, () =>
     writeOp(ctx, "plasmic_" + op + "_data_token", args.projectId, args.tokenId, digest,
-      async () => { const saved = await process(); return { ...saved, revision: Number(saved.revision), payloadDigest: digest }; }));
-  if (cached.payloadDigest !== digest) return fail("DATA_TOKEN_IDEMPOTENCY_CONFLICT");
-  return { ...cached, payloadDigest: undefined };
+      async () => { const saved = await performChange(); return { ...saved, revision: Number(saved.revision), payloadDigest: digest }; }));
+  if (cached.result.payloadDigest !== digest) return fail("DATA_TOKEN_IDEMPOTENCY_CONFLICT");
+  const { payloadDigest: _hiddenDigest, ...result } = cached.result;
+  return { ...result, deduped: cached.deduped };
 }
 const common = { projectId: z.string().min(1), branchId: z.string().optional() };
 const writeCommon = { ...common, expectedRevision: z.number().int().nonnegative().optional(),
