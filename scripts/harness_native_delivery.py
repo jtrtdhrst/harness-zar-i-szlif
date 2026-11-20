@@ -524,7 +524,9 @@ def main(argv=None):
 
         now = parse_time(args.now) if args.now else None
         base_sha, source_sha = resolve_source_range(args)
-        if args.auto:
+        if args.auto and not args.source_sha:
+            # Explicit --source-sha is an operator pin and must never be
+            # silently promoted to a newer checkout tip.
             # Source SHA may follow an already advanced, clean checkout; the
             # operator's last-delivered BASE must never be advanced on a tick.
             # check_upstream_source below verifies exact live GitHub main and
