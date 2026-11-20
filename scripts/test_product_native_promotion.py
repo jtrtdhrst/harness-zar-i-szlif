@@ -72,6 +72,62 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertEqual(save.call_args[0][0]["previous_sha"],OLD)
 
 
+
+    def test_exact_merged_maintenance_history_is_not_a_runtime_release(self):
+        """Exact Product 185/186/153 are metadata; current-main CI is required."""
+        records = p.VERIFIED_MAINTENANCE_MERGES
+        nodes = {sha: {
+            "sha": sha, "parents": [{"sha": spec["parent"]}],
+            "files": [{"status": status, "filename": path}
+                      for status, path in spec["files"]],
+        } for sha, spec in records.items()}
+        prior = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        latest = "9974009ed208e3586892a3839d57704424f70f51"
+        pr_by_sha = {sha: (spec["pr"], "e" * 40) for sha, spec in records.items()}
+        with patch.object(p, "commit", side_effect=lambda sha: nodes[sha]), \
+             patch.object(p, "provenance", side_effect=lambda sha: pr_by_sha[sha]), \
+             patch.object(p, "checks", return_value={"billing_blocked": False}) as ci, \
+             patch.object(p, "premerge_head_checks", side_effect=AssertionError("no runtime head needed")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("no runtime review needed")):
+            self.assertEqual(p.candidate_history(prior, latest), [])
+            self.assertEqual(ci.call_count, 3)
+            ci.assert_any_call(latest)
+
+    def test_maintenance_skip_denies_mutated_parent_pr_or_file_inventory(self):
+        for sha, spec in p.VERIFIED_MAINTENANCE_MERGES.items():
+            original = {"sha": sha, "files": [
+                {"status": status, "filename": path} for status, path in spec["files"]]}
+            self.assertTrue(p.verified_maintenance_merge(
+                sha, original, spec["parent"], spec["pr"]))
+            bad = [
+                ({**original, "sha": "f" * 40}, spec["parent"], spec["pr"]),
+                (original, "f" * 40, spec["pr"]),
+                (original, spec["parent"], spec["pr"] + 1),
+                ({**original, "files": original["files"] +
+                  [{"status": "modified", "filename": "app/web/src/index.ts"}]},
+                 spec["parent"], spec["pr"]),
+                ({**original, "files": original["files"][:-1]}, spec["parent"], spec["pr"]),
+            ]
+            for node, parent, pr in bad:
+                with self.subTest(sha=sha, node=node, parent=parent, pr=pr):
+                    with self.assertRaisesRegex(p.Denied, "maintenance_"):
+                        p.verified_maintenance_merge(sha, node, parent, pr)
+        self.assertFalse(p.verified_maintenance_merge(
+            "f" * 40, {"sha": "f" * 40}, "a" * 40, 185))
+
+    def test_maintenance_skip_requires_current_main_ci(self):
+        latest = "9974009ed208e3586892a3839d57704424f70f51"
+        spec = p.VERIFIED_MAINTENANCE_MERGES[latest]
+        node = {"sha": latest, "parents": [{"sha": spec["parent"]}],
+                "files": [{"status": status, "filename": path}
+                          for status, path in spec["files"]]}
+        with patch.object(p, "commit", return_value=node), \
+             patch.object(p, "provenance", return_value=(spec["pr"], "d" * 40)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "native_approval", side_effect=AssertionError("must fail before review")):
+            with self.assertRaisesRegex(p.Denied, "maintenance_current_main_ci_not_green"):
+                p.candidate_history(spec["parent"], latest)
+
     def test_three_exact_historic_metadata_direct_commits_are_noop(self):
         rows = p.HISTORIC_METADATA_ONLY
         nodes = {
