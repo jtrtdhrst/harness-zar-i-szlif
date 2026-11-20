@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from retrieval_evidence import summarize as retrieval_summary
 
 BANKS={"0425b468-4ded-4350-a8b4-539ff601a1eb":"hermes-lifecycle-ops","7d8fe327-8143-4b17-8906-00ce435758b1":"hermes-cpo","a9de363c-345f-4b32-822d-4c847c4819fe":"hermes-designer","78608591-71b4-471f-a5eb-17122d8db7da":"hermes-cmo","ada5390b-b87e-43f3-a250-3657811e7a0c":"hermes-harness-engineer","da8d1a1d-dd22-4716-a142-0420b0147672":"hermes-coo","7cbc484a-bd04-4a7b-bc16-cbd643acf519":"hermes-ceo","2e4b7d95-5938-43fa-af09-a86245a1ef47":"hermes-email-creative","1a9eba12-8a05-4a58-ac99-17d1bc80ed62":"hermes-mcp-engineer","2642a166-36dc-475b-8e17-f9332f769636":"hermes-ui-qa","ff703eba-3c3d-46f0-b265-df0db1101a19":"hermes-cto","5595f2c4-95e2-4c3e-97b4-c00d4e4d6601":"hermes-cho","3fe90c23-8386-40d5-b0a8-52d8c40f812e":"hermes-engineer","43957949-8d00-4020-85d7-b69caf71d8c2":"hermes-mascot-designer"}
 UUID=re.compile(r"^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$")
@@ -300,6 +301,18 @@ def enrich(log,agent,run,opik,hindsight,cache):
     "paperclip.run.retrieval_evidence",evidence,
     {"evidence":"observed_pc_obs_retrieval_events_only",
      "not_functional_correctness":True,"payload_exported":False},
+    trace["start_time"],trace["end_time"])
+   added+=1
+ if "paperclip.run.retrieval_evidence" not in present:
+  raw=log.read_bytes()
+  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
+   raise RuntimeError("log_changed")
+  evidence=retrieval_summary(raw,run,agent)
+  if evidence["observed_retrieval_events"]:
+   emit(opik,project,trace["id"],run,agent,
+    "paperclip.run.retrieval_evidence",evidence,
+    {"evidence":"observed_retrieval_events_only",
+     "not_functional_correctness":True,"raw_payload_exported":False},
     trace["start_time"],trace["end_time"])
    added+=1
  if hindsight and "hindsight.bank.stats_snapshot" not in present:
