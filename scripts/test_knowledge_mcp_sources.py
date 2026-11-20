@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline structural regressions for the repo-owned knowledge MCP builds."""
+"""Offline structural regressions for the Hindsight MCP gateway."""
 import pathlib
 import re
 import unittest
@@ -15,7 +15,6 @@ class KnowledgeMcpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.caddy = (ROOT / "hindsight-mcp/Caddyfile").read_text()
-        cls.repowise = (ROOT / "repowise-mcp/Dockerfile").read_text()
 
     def test_exact_fourteen_banks_and_auth(self):
         for role in ROLES:
@@ -40,19 +39,6 @@ class KnowledgeMcpTests(unittest.TestCase):
         self.assertIn('header Authorization "Bearer {$VECTORIZE_ADMIN_MCP_TOKEN}"', self.caddy)
         self.assertNotIn("header_up Authorization \"Bearer {$VECTORIZE_ADMIN_MCP_TOKEN}\"", self.caddy)
 
-    def test_repowise_version_and_command(self):
-        self.assertIn("ARG REPOWISE_VERSION=0.60.1", self.repowise)
-        self.assertIn('ENTRYPOINT ["repowise", "mcp"]', self.repowise)
-        self.assertIn('"streamable-http"', self.repowise)
-        self.assertIn("USER repowise", self.repowise)
-
-    def test_overrides_are_part_of_repowise_build(self):
-        self.assertIn("COPY apply_overrides.py", self.repowise)
-        self.assertIn("COPY overrides/", self.repowise)
-        self.assertIn("RUN python /tmp/repowise-custom/apply_overrides.py", self.repowise)
-        source = (ROOT / "repowise-mcp/apply_overrides.py").read_text()
-        self.assertIn("Only .py overrides are allowed", source)
-        self.assertIn("Target must be an existing RepoWise Python module", source)
 
     def test_no_inlined_tokens(self):
         for token_line in re.findall(r'Bearer ([^"\s]+)', self.caddy):
