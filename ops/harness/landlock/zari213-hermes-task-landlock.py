@@ -235,6 +235,53 @@ def restrict(task, tmpdir):
     finally:
         os.close(ruleset)
 
+def localize_private_vision_cache(home: Path, shared_profile: Path):
+    """Keep Hermes vision temp images inside the authenticated task session.
+
+    The daemon projects cache as a link to a shared role profile. Under Landlock
+    that shared profile is READ-only. Remove ONLY that exact expected link and
+    create a private cache/vision; never grant shared write or follow unknown links.
+    """
+    import errno
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    home_fd = os.open(home, flags)
+    try:
+        try:
+            link = os.readlink("cache", dir_fd=home_fd)
+        except OSError as exc:
+            if exc.errno not in (errno.EINVAL, errno.ENOENT):
+                raise
+            link = None
+        if link is not None:
+            if link != str(shared_profile / "cache"):
+                raise ValueError("unexpected Hermes cache symlink target")
+            os.unlink("cache", dir_fd=home_fd)
+        try:
+            os.mkdir("cache", 0o700, dir_fd=home_fd)
+        except FileExistsError:
+            pass
+        cache_fd = os.open("cache", flags, dir_fd=home_fd)
+        try:
+            st = os.fstat(cache_fd)
+            if st.st_uid != os.getuid() or (st.st_mode & 0o077):
+                raise ValueError("unsafe task-local Hermes cache")
+            try:
+                os.mkdir("vision", 0o700, dir_fd=cache_fd)
+            except FileExistsError:
+                pass
+            vision_fd = os.open("vision", flags, dir_fd=cache_fd)
+            try:
+                st = os.fstat(vision_fd)
+                if st.st_uid != os.getuid() or (st.st_mode & 0o077):
+                    raise ValueError("unsafe task-local vision cache")
+            finally:
+                os.close(vision_fd)
+        finally:
+            os.close(cache_fd)
+    finally:
+        os.close(home_fd)
+
+
 def localize_sqlite_locks(task):
     """Do not let Hermes SQLite lockfiles follow shared-profile symlinks.
 
@@ -270,6 +317,7 @@ def localize_sqlite_locks(task):
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
         fd = os.open(str(lock), flags, 0o600)
         os.close(fd)
+    localize_private_vision_cache(home, shared)
 
 
 def main():
