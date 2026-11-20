@@ -70,7 +70,7 @@ class NonMcpBuildGuardTests(unittest.TestCase):
         self.assertIn("      packages: write", text)
         self.assertIn("scripts/select_mcp_builds.py", text)
         self.assertNotIn("curl -X PATCH", text)
-        self.assertNotIn("coolify", text.lower())
+        self.assertNotIn("/api/v1/deploy", text.lower())
 
     def test_retired_paperclip_mcp_ci_stays_absent(self):
         self.assertFalse((WORKFLOWS / "paperclip-mcp-ci.yml").exists(),
