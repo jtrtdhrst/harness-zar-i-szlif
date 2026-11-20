@@ -5,7 +5,7 @@ A separate, minimal GitHub MCP endpoint for operations absent from the regular G
 ## Fail-closed defaults
 
 - Hard-coded repository ceiling: `miloszspyrka-code/harness-zar-i-szlif`, `miloszspyrka-code/zar-i-szlif`.
-- `POST /mcp` always needs `GITHUB_OPS_CALLER_TOKEN`; `GITHUB_TOKEN` needs an appropriately limited GitHub App installation credential or fine-grained PAT. Never put either in git, a URL or Multica CLI args.
+- `POST /mcp` requires either a constant-time checked `GITHUB_OPS_CALLER_TOKEN` or a cryptographically verified Cloudflare Access JWT restricted to the configured issuer, application AUD and owner email. The Cloudflare path requires `CF_ACCESS_ISSUER`, `CF_ACCESS_AUD`, `CF_ACCESS_OWNER_EMAIL` and Cloudflare Managed OAuth on the Access application. `GITHUB_TOKEN` is still required to execute real GitHub operations. Never commit secrets, embed them in URLs, or put them in Multica CLI args.
 - `GITHUB_OPS_WRITES_ENABLED` defaults to false, `GITHUB_OPS_BRANCH_DELETION` defaults to false, and **`GITHUB_OPS_DELETE_ALLOWLIST` defaults to empty** (comma-separated exact entries like `miloszspyrka-code/harness-zar-i-szlif:fix/retired@<40-character SHA>`). `GITHUB_OPS_WORKFLOWS` defaults to `release-lanes-policy.yml` only. An enabled deletion flag without an exact matching approval cannot delete anything.
 - `GET /health` is a liveness endpoint; `ready=false` explicitly means **not operational**, even if Coolify reports the container healthy.
 - No generic shell, no arbitrary GitHub URL, no self-approval, branch protection mutation, auto-merge, token provisioning, Coolify deploy, HOLD bypass or implicit user delegation.
@@ -30,3 +30,12 @@ Use a Coolify **private, manual** staging application with `base_directory=/gith
 - With a scoped production credential: verify GitHub `repo_info`, `get_deployments` for a known exact SHA, and provider error handling before enabling any write. Independent QA must read back effect and correlate immutable image digest + authenticated live service QA via Coolify.
 
 The current native Multica ZARI-213 isolation HOLD applies: do **not** grant a high-privilege operator server to unisolated agents or move it into production until that trust boundary is independently proven.
+
+## Live Cloudflare staging state (2026-11-20)
+
+- URL: \`https://github-ops-mcp.zariszlif.pl/mcp\`, behind an owner-only Cloudflare Access app with Managed OAuth.
+- Cloudflare Access forwards \`Cf-Access-Jwt-Assertion\`; the origin validates RS256 signature, issuer, AUD, expiration and exact owner identity against Cloudflare's JWKS. Docker network access does **not** skip JWT checks.
+- GitHub Ops MCP is registered in the Multica workspace MCP library but **not assigned to any agent** while ZARI-213 isolation and independent review remain blocked.
+- Coolify staging auto-deploy is disabled. Existing main and production containers are unchanged.
+- **Status is not ready:** no scoped GitHub API credential has been provisioned; \`/health.ready=false\`. The server only provides OAuth/MCP discovery and safe structured errors without it.
+- Full external OAuth authorization-code login and a real GitHub provider E2E remain unverified; do not report source-only tests or Docker health as operational readiness.
