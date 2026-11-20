@@ -46,7 +46,8 @@ def select(changed_paths, *, event_name, manual_service="all"):
             }
     else:
         raise ValueError("untrusted_event")
-    return [{"service": service, "directory": MCP_BUILD_CONTEXTS[service]}
+    return [{"service": service, "directory": MCP_BUILD_CONTEXTS[service],
+             "dockerfile": "Dockerfile.http" if service == "mantic-mcp" else "Dockerfile"}
             for service in sorted(selected)]
 
 
@@ -75,7 +76,7 @@ def main():
                       manual_service=os.environ.get("INPUT_SERVICE", "all"))
     for item in selected:
         folder = Path(item["directory"])
-        if not (folder / "Dockerfile").is_file():
+        if not (folder / item["dockerfile"]).is_file():
             raise SystemExit("missing_dockerfile:" + item["service"])
     value = json.dumps(selected, separators=(",", ":"))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
