@@ -1,0 +1,41 @@
+name: GitHub Ops MCP CI
+
+# Source-only verification. Production releases remain governed by the existing
+# reviewed, SHA-bound Harness/Multica/Coolify release controls.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'github-ops-mcp/**'
+      - '.github/workflows/github-ops-mcp-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'github-ops-mcp/**'
+      - '.github/workflows/github-ops-mcp-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and build GitHub Ops MCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact event revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax validation
+        run: node --check github-ops-mcp/server.mjs
+      - name: MCP HTTP regression tests
+        run: npm --prefix github-ops-mcp test
+      - name: Build production Dockerfile
+        run: docker build -t github-ops-mcp:ci ./github-ops-mcp
+      - name: Validate packaged server syntax
+        run: docker run --rm --entrypoint node github-ops-mcp:ci --check /app/server.mjs
