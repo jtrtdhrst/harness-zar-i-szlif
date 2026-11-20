@@ -9,6 +9,8 @@ on:
       - "scripts/product_native_promotion.py"
       - "scripts/test_product_native_promotion.py"
       - "scripts/test_product_squash_release.py"
+      - "scripts/product_image_delivery.py"
+      - "scripts/test_product_image_delivery.py"
       - "ops/systemd/product-native-promotion.*"
       - ".github/workflows/native-product-release-ci.yml"
 
@@ -47,4 +49,5 @@ jobs:
           python3 -m unittest discover -s scripts -p test_paperclip_native_release_gate.py -v
           python3 -m unittest discover -s scripts -p test_product_native_promotion.py -v
           python3 -m unittest discover -s scripts -p test_product_squash_release.py -v
-          python3 -m py_compile scripts/paperclip_native_release_gate.py scripts/product_native_promotion.py
+          python3 -m unittest discover -s scripts -p test_product_image_delivery.py -v
+          python3 -m py_compile scripts/paperclip_native_release_gate.py scripts/product_native_promotion.py scripts/product_image_delivery.py
