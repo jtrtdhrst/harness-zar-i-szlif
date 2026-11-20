@@ -46,7 +46,7 @@ def compliant(workflow_name, job):
         # may push OCI artifacts (this does NOT grant Coolify promotion).
         return ("    runs-on: ubuntu-latest" in job
                 and "      packages: write" in job
-                and "docker/build-push-action@v6" in job
+                and "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8" in job
                 and "ghcr.io/" in job)
     return (re.search(r"(?m)^    if: .*workflow_dispatch.*refs/heads/main", job) is not None
             and re.search(r"(?m)^    runs-on: \[self-hosted,.*local-build.*\]", job) is not None)
@@ -69,6 +69,17 @@ class NonMcpBuildGuardTests(unittest.TestCase):
         self.assertIn("github.ref == 'refs/heads/main'", text)
         self.assertIn("      packages: write", text)
         self.assertIn("scripts/select_mcp_builds.py", text)
+        # Protect SHA-bound package publication and prevent lost push events.
+        self.assertNotIn("\nconcurrency:", text)
+        pins = {
+            "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
+            "docker/setup-buildx-action": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+            "docker/login-action": "c94ce9fb468520275223c153574b00df6fe4bcc9",
+            "docker/build-push-action": "10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
+        }
+        for action, commit in pins.items():
+            self.assertIn("uses: " + action + "@" + commit, text)
+            self.assertNotRegex(text, r"uses: " + re.escape(action) + r"@v\d")
         self.assertNotIn("curl -X PATCH", text)
         self.assertNotIn("/api/v1/deploy", text.lower())
 
