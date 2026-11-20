@@ -528,8 +528,20 @@ def main(argv=None):
         unmodelled = sorted(service for service in entries
                             if service not in SERVICES
                             and any(path == service or path.startswith(service + "/") for path in paths))
-        if unmodelled:
-            raise Denied("service_not_in_transport:" + ",".join(unmodelled))
+        # Standalone/manual Coolify resources are not MCP image transport targets.
+        # Keep their paths pending, not silently delivered. Unknown or approved
+        # unmodelled resources still fail closed: no new deployable surface.
+        manual_pending = [service for service in unmodelled
+                          if entries[service].get("release_route") == "coolify_reviewed_digest_manual"
+                          and entries[service].get("promotion_state", "hold") == "hold"]
+        unsupported = sorted(set(unmodelled) - set(manual_pending))
+        if unsupported:
+            raise Denied("service_not_in_transport:" + ",".join(unsupported))
+        manual_paths = {path for path in paths
+                        if any(path == service or path.startswith(service + "/")
+                               for service in manual_pending)}
+        paths = [path for path in paths if path not in manual_paths]
+        pending_paths = sorted(set(pending_paths) | manual_paths)
         attributed = {}
         for path in paths:
             for service, spec in SERVICES.items():
@@ -541,13 +553,15 @@ def main(argv=None):
                   # entire main range. This ledger is necessary for downstream
                   # Done/E2E checking and for the next per-lane release.
                   "pending_paths": pending_paths,
+                  "manual_pending_services": manual_pending,
+                  "release_complete": not bool(manual_pending or pending_paths),
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
         if not attributed:
-            report["result"] = "no_service_change"
+            report["result"] = "manual_release_pending" if manual_pending else "no_service_change"
             print(json.dumps(report, sort_keys=True))
-            return 0
+            return 1 if manual_pending else 0
         # Phase 1: admit EVERY changed service before ANY preparation or
         # deployment. A partial set of valid grants must not cause a partial
         # production release. Plan mode checks the same real evidence as deploy
@@ -608,7 +622,8 @@ def main(argv=None):
 
         # A successful per-lane release is NOT delivery of the complete main
         # range. Keep the global success marker exclusive to unscoped batches.
-        report["result"] = "ok_scoped" if args.service else "ok"
+        report["result"] = ("ok_scoped" if args.service else
+                            "ok_with_manual_pending" if manual_pending else "ok")
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
