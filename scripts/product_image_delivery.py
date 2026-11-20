@@ -10,8 +10,8 @@ import fcntl
 import json
 import os
 import re
-import shutil
 import stat
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -43,64 +43,114 @@ def valid_commit_sha(value):
     return isinstance(value, str) and COMMIT_SHA_RE.fullmatch(value) is not None
 
 
-def trusted_directory(path, *, private=False):
-    """Refuse symlinked, foreign-owned or writable-by-others release state."""
+def ensure_owned_directory(path, private=True):
+    """Never trust pre-existing state directories or directory symlinks."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700 if private else 0o755)
     info = path.lstat()
     mode = stat.S_IMODE(info.st_mode)
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-            or (private and mode != 0o700)
-            or (not private and bool(mode & 0o022))):
-        raise RuntimeError("untrusted_release_directory")
+    if (not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_gid != os.getegid()
+            or mode & 0o022
+            or (private and mode & 0o077)):
+        raise PermissionError("untrusted_state_directory")
 
 
-def trusted_directory_fd(path, *, private=True):
-    """Hold a non-symlink directory descriptor and verify this exact inode."""
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    fd = os.open(path, flags)
-    info = os.fstat(fd)
-    mode = stat.S_IMODE(info.st_mode)
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-            or (private and mode != 0o700)
-            or (not private and bool(mode & 0o022))):
-        os.close(fd)
-        raise RuntimeError("untrusted_release_directory")
-    return fd
-
-
-def read_marker_protected(path):
-    """Same opened inode is checked and decoded; never follow a marker symlink."""
-    dfd = trusted_directory_fd(path.parent)
-    try:
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
-        with os.fdopen(fd, "r", encoding="utf-8") as reader:
-            info = os.fstat(reader.fileno())
-            if (info.st_uid != os.geteuid() or not stat.S_ISREG(info.st_mode)
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
-                raise RuntimeError("untrusted_build_attestation")
-            return json.load(reader)
-    finally:
-        os.close(dfd)
-
-
-def atomic_json_replace(path, payload):
-    """Write exclusively under a verified dirfd, never through stale symlinks."""
-    dfd = trusted_directory_fd(path.parent)
-    temp_name = path.with_suffix(".tmp").name
+def atomic_private_json(path, value):
+    """Create a fresh O_EXCL/0600 temp inode; never follow a planted .tmp symlink."""
+    dirfd = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY |
+                    os.O_NOFOLLOW | os.O_CLOEXEC)
+    name = f".{path.name}.{os.urandom(16).hex()}.tmp"
     created = False
     try:
-        fd = os.open(temp_name, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
-                     os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+        info = os.fstat(dirfd)
+        if (not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_gid != os.getegid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise PermissionError("untrusted_state_directory")
+        descriptor = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                             os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dirfd)
         created = True
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, path.name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        with os.fdopen(descriptor, "w") as file:
+            json.dump(value, file, sort_keys=True)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(name, path.name, src_dir_fd=dirfd, dst_dir_fd=dirfd)
         created = False
+        os.fsync(dirfd)
     finally:
         if created:
-            os.unlink(temp_name, dir_fd=dfd)
-        os.close(dfd)
+            os.unlink(name, dir_fd=dirfd)
+        os.close(dirfd)
+
+
+def open_owned_state_file(path, append=False):
+    """Open one trusted root-owned regular inode without following symlinks."""
+    dirfd = os.open(str(path.parent), os.O_RDONLY | os.O_DIRECTORY |
+                    os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        d = os.fstat(dirfd)
+        if (not stat.S_ISDIR(d.st_mode) or d.st_uid != os.geteuid()
+                or d.st_gid != os.getegid()
+                or stat.S_IMODE(d.st_mode) & 0o077):
+            raise PermissionError("untrusted_state_directory")
+        flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
+        if append:
+            flags |= os.O_APPEND
+        fd = os.open(path.name, flags, 0o600, dir_fd=dirfd)
+        try:
+            f = os.fstat(fd)
+            if (not stat.S_ISREG(f.st_mode)
+                    or f.st_uid != os.geteuid()
+                    or f.st_gid != os.getegid()
+                    or stat.S_IMODE(f.st_mode) & 0o077
+                    or f.st_nlink != 1):
+                raise PermissionError("untrusted_state_file")
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+    finally:
+        os.close(dirfd)
+
+
+def read_build_attestation(expected_uid=0, expected_gid=0):
+    """Read the marker from one validated inode under a non-writable directory.
+
+    Directory and file are opened with O_NOFOLLOW. Metadata is checked using
+    fstat of the SAME descriptors from which the JSON bytes are consumed.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    dirfd = os.open(str(MARKER.parent), flags)
+    try:
+        parent = os.fstat(dirfd)
+        if (not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != expected_uid
+                or parent.st_gid != expected_gid
+                or stat.S_IMODE(parent.st_mode) & 0o077):
+            raise PermissionError("untrusted_marker_directory")
+        fd = os.open(MARKER.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     dir_fd=dirfd)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != expected_uid or info.st_gid != expected_gid
+                    or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_nlink != 1 or info.st_size > 8192):
+                raise PermissionError("untrusted_build_attestation")
+            with os.fdopen(fd, "r", encoding="utf-8") as file:
+                fd = -1
+                raw = file.read(8193)
+            if len(raw) > 8192:
+                raise ValueError("oversized_build_attestation")
+            return json.loads(raw)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    finally:
+        os.close(dirfd)
 
 
 def github_token():
@@ -141,8 +191,8 @@ def target_readback(sha):
         return deny("invalid_sha")
     try:
         try:
-            proof = read_marker_protected(MARKER)
-        except (OSError, RuntimeError, ValueError):
+            proof = read_build_attestation()
+        except (OSError, ValueError, PermissionError):
             return deny("untrusted_build_attestation")
         image=f"{REGISTRY}/{IMAGE}:{sha}"
         digest=proof.get("digest")
@@ -162,19 +212,23 @@ def target_readback(sha):
         raw=subprocess.run(["docker","inspect","--format",
                 "{{.Image}}|{{.Config.Image}}|{{.State.Status}}",name],
                 capture_output=True,text=True,timeout=12,check=True).stdout.strip().split("|")
-        if len(raw)!=3 or raw[1:] != [image, "running"]:
+        if len(raw) != 3 or raw[1:] != [image, "running"]:
             return deny("target_runtime_digest_or_ref_mismatch")
-        # Docker's config image ID and registry manifest digest are distinct
-        # identifiers; compare each to its authoritative source separately.
-        meta=subprocess.run(["docker","image","inspect","--format",
-                "{{.Id}}|{{json .RepoDigests}}",image],
-                capture_output=True,text=True,timeout=12,check=True).stdout.strip().split("|",1)
-        if len(meta)!=2 or meta[0]!=raw[0] or not re.fullmatch(r"sha256:[a-f0-9]{64}",meta[0]):
-            return deny("target_runtime_image_id_mismatch")
-        repositories=json.loads(meta[1])
-        if (not isinstance(repositories,list)
-                or f"{REGISTRY}/{IMAGE}@{digest}" not in repositories):
-            return deny("repository_digest_mismatch")
+        image_metadata = subprocess.run(
+            ["docker", "image", "inspect", "--format",
+             "{{.Id}}|{{json .RepoDigests}}", image],
+            capture_output=True, text=True, timeout=12, check=True
+        ).stdout.strip().split("|", 1)
+        if len(image_metadata) != 2:
+            return deny("target_runtime_digest_or_ref_mismatch")
+        image_id = image_metadata[0]
+        repo_digests = json.loads(image_metadata[1])
+        expected_repo_digest = f"{REGISTRY}/{IMAGE}@{digest}"
+        if (not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id)
+                or raw[0] != image_id
+                or not isinstance(repo_digests, list)
+                or expected_repo_digest not in repo_digests):
+            return deny("target_runtime_digest_or_ref_mismatch")
         release=subprocess.run(["docker","exec",name,"cat",
                 "/usr/share/nginx/html/__release.json"],
                 capture_output=True,text=True,timeout=12,check=True)
@@ -221,19 +275,19 @@ def download_source(sha):
     # validation. Refuse path traversal before any download or filesystem write.
     if not valid_commit_sha(sha):
         raise ValueError("invalid_source_sha")
-    trusted_directory(STATE_DIR, private=True)
-    SOURCE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    trusted_directory(SOURCE_DIR)
-    tarball = SOURCE_DIR / f"src-{sha}.tar.gz"
+    ensure_owned_directory(STATE_DIR)
+    ensure_owned_directory(SOURCE_DIR, private=False)
+    tarfd, tarname = tempfile.mkstemp(prefix=f"src-{sha}-",
+                                       suffix=".tar.gz", dir=str(SOURCE_DIR))
+    tarball = Path(tarname)
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPO}/tarball/{sha}",
         headers={"Authorization": "token " + github_token(), "Accept": "application/vnd.github+json",
                  "User-Agent": "multica-image-delivery"},
     )
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
-    with urllib.request.urlopen(request, timeout=120) as response, \
-         os.fdopen(os.open(tarball, flags, 0o600), "wb") as out:
-        shutil.copyfileobj(response, out)
+    with os.fdopen(tarfd, "wb") as out:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            shutil.copyfileobj(response, out)
     work = SOURCE_DIR / sha
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
@@ -249,12 +303,7 @@ def download_source(sha):
 def build_and_push(sha, log):
     context = download_source(sha)
     image = f"{REGISTRY}/{IMAGE}:{sha}"
-    fd = os.open(log, os.O_CREAT | os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "ab") as output:
-        info = os.fstat(output.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
-            raise RuntimeError("untrusted_build_log")
+    with os.fdopen(open_owned_state_file(log, append=True), "ab") as output:
         result = subprocess.run(
             ["docker", "build", "--file", "ops/coolify/Dockerfile", "--tag", image, "."],
             cwd=context, stdout=output, stderr=subprocess.STDOUT, check=False,
@@ -279,8 +328,7 @@ def update_marker(sha, image, digest):
         "image": image, "digest": digest, "sha": sha,
         "verified_at": time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime()),
     }
-    trusted_directory(MARKER.parent, private=True)
-    atomic_json_replace(MARKER, json.dumps(payload) + "\n")
+    atomic_private_json(MARKER, payload)
 
 
 def deploy(sha):
@@ -303,8 +351,7 @@ def wait_live(sha, attempts=90, interval=10):
 
 
 def save(state):
-    trusted_directory(STATE_DIR, private=True)
-    atomic_json_replace(STATE, json.dumps(state, sort_keys=True) + "\n")
+    atomic_private_json(STATE, state)
 
 
 def main():
@@ -313,12 +360,18 @@ def main():
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--plan", action="store_true")
     args = parser.parse_args()
-    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    trusted_directory(STATE_DIR, private=True)
-    docker_dir = STATE_DIR / "docker"
-    docker_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    trusted_directory(docker_dir, private=True)
-    with open(LOCK, "a+") as lock:
+    try:
+        ensure_owned_directory(STATE_DIR)
+        ensure_owned_directory(STATE_DIR / "docker")
+    except (OSError, ValueError):
+        print(json.dumps({"result": "untrusted_state_directory"}), file=sys.stderr)
+        return 1
+    try:
+        lockfd = open_owned_state_file(LOCK)
+    except (OSError, ValueError):
+        print(json.dumps({"result": "untrusted_state_file"}), file=sys.stderr)
+        return 1
+    with os.fdopen(lockfd, "a+") as lock:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
