@@ -28,11 +28,12 @@ class SafeRefreshPathTests(unittest.TestCase):
         self.target = self.parent / "roles"
         self.original_fstat = os.fstat
 
-    def run_refresh(self):
+    def run_refresh(self, *, uid=0, gid=0, lock_uid=0):
         def root_fstat(fd):
             info = self.original_fstat(fd)
-            return types.SimpleNamespace(st_mode=info.st_mode, st_uid=0,
-                                         st_gid=0, st_nlink=info.st_nlink)
+            owner = lock_uid if stat.S_ISREG(info.st_mode) else uid
+            return types.SimpleNamespace(st_mode=info.st_mode, st_uid=owner,
+                                         st_gid=gid, st_nlink=info.st_nlink)
         with patch.object(refresh, "DEST", self.target), \
              patch.object(refresh.os, "geteuid", return_value=0), \
              patch.object(refresh.os, "fstat", side_effect=root_fstat), \
@@ -55,6 +56,7 @@ class SafeRefreshPathTests(unittest.TestCase):
     def test_symlinked_token_dir_refused_without_chmod_target(self):
         victim = pathlib.Path(self.tmp.name) / "victim"
         victim.mkdir(mode=0o755)
+        victim.chmod(0o755)  # independent of CI/agent umask
         self.target.symlink_to(victim, target_is_directory=True)
         with self.assertRaises(OSError):
             self.run_refresh()
@@ -76,6 +78,24 @@ class SafeRefreshPathTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.run_refresh()
         self.assertEqual(victim.read_text(), "unchanged")
+        self.assertEqual(self.minted_count, 0)
+
+    def test_nonroot_directory_uid_refused(self):
+        self.target.mkdir(mode=0o700)
+        with self.assertRaisesRegex(RuntimeError, "Untrusted root-only"):
+            self.run_refresh(uid=997)
+        self.assertEqual(self.minted_count, 0)
+
+    def test_nonroot_directory_gid_refused(self):
+        self.target.mkdir(mode=0o700)
+        with self.assertRaisesRegex(RuntimeError, "Untrusted root-only"):
+            self.run_refresh(gid=981)
+        self.assertEqual(self.minted_count, 0)
+
+    def test_nonroot_lock_owner_refused(self):
+        self.target.mkdir(mode=0o700)
+        with self.assertRaisesRegex(RuntimeError, "Untrusted refresh lock"):
+            self.run_refresh(lock_uid=997)
         self.assertEqual(self.minted_count, 0)
 
     def test_lock_mode_0644_refused(self):
