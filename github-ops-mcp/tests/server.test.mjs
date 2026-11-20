@@ -53,14 +53,14 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,8);
+    assert.equal((await y.json()).result.tools.length,7);
   }finally{await f.close()}
 });
-test('tool metadata requires OAuth for all eight tools',async()=>{
+test('tool metadata requires OAuth for all seven tools',async()=>{
  const f=await fixture();try{
   const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   const tools=(await response.json()).result.tools;
-  assert.equal(tools.length,8);
+  assert.equal(tools.length,7);
   for(const tool of tools){
     assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
     assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
@@ -145,53 +145,16 @@ test('staging and known live Coolify branch are never eligible',async()=>{
   assert.equal(f.calls.length,0);
  }finally{await f.close()}
 });
-test('workflow dispatch returns only independently verified run ID and SHA',async()=>{
- const f=await fixture({writesEnabled:true});
- try{
-  assert.match((await f.request('github_dispatch_workflow',{repo:REPO,workflow:'danger.yml',expected_sha:SHA})).body.result.content[0].text,/WORKFLOW_DENIED/);
-  const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
-  assert.equal(out.body.result.structuredContent.dispatched,true);
-  assert.equal(out.body.result.structuredContent.verified,true);
-  assert.equal(out.body.result.structuredContent.run_id,321);
-  assert.equal(out.body.result.structuredContent.source_sha,SHA);
-  assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/actions/runs/321')));
- }finally{await f.close()}
+test('workflow dispatch is unavailable even with write flag enabled',async()=>{
+  const f=await fixture({writesEnabled:true});try{
+    const list=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+    assert.equal((await list.json()).result.tools.some(t=>t.name==='github_dispatch_workflow'),false);
+    const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
+    assert.match(out.body.result.content[0].text,/TOOL_UNKNOWN/);
+    assert.equal(f.calls.length,0);
+  }finally{await f.close()}
 });
-test('main moves between SHA check and workflow dispatch: never claim success',async()=>{
- const f=await fixture({writesEnabled:true,dispatchRunSHA:'b'.repeat(40)});
- try{
-  const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
-  assert.match(out.body.result.content[0].text,/DISPATCH_SHA_MISMATCH/);
-  assert.equal(out.body.result.structuredContent,undefined);
- }finally{await f.close()}
-});
-test('legacy 204 dispatch response is never claimed as verified; no blind retry',async()=>{
- const f=await fixture({writesEnabled:true,dispatchRunId:false});
- try{
-  const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
-  assert.match(out.body.result.content[0].text,/DISPATCH_UNVERIFIED/);
-  assert.equal(f.calls.filter(([method,path])=>method==='POST'&&path.endsWith('/dispatches')).length,1);
- }finally{await f.close()}
-});
-test('accepted workflow dispatch retries transient run GET 404 without redispatch',async()=>{
- const f=await fixture({writesEnabled:true,run404Count:2});
- try{
-  const x=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
-  assert.equal(x.body.result.structuredContent.run_id,321);
-  assert.equal(f.calls.filter(([method,path])=>method==='GET'&&path.endsWith('/actions/runs/321')).length,3);
-  assert.equal(f.calls.filter(([method,path])=>method==='POST'&&path.endsWith('/dispatches')).length,1);
- }finally{await f.close()}
-});
-test('run remains unreadable: explicit ambiguous result, no second dispatch',async()=>{
- const f=await fixture({writesEnabled:true,run404Count:100});
- try{
-  const x=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
-  assert.match(x.body.result.content[0].text,/DISPATCH_UNVERIFIED/);
-  assert.match(x.body.result.content[0].text,/321/);
-  assert.equal(f.calls.filter(([method,path])=>method==='GET'&&path.endsWith('/actions/runs/321')).length,6);
-  assert.equal(f.calls.filter(([method,path])=>method==='POST'&&path.endsWith('/dispatches')).length,1);
- }finally{await f.close()}
-});
+
 test('run cancellation exact SHA and allowlisted flow',async()=>{
  const f=await fixture({writesEnabled:true});try{
     assert.match((await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:'b'.repeat(40)})).body.result.content[0].text,/STALE_SHA/);
