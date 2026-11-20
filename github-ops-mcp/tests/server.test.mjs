@@ -128,3 +128,39 @@ test('read-only tools fail closed for missing provider admin rights',async()=>{
     for(const name of ['github_get_rulesets','github_get_actions_permissions','github_get_branch_protection'])assert.ok((await f.request(name,{repo:REPO})).body.result.structuredContent);
  }finally{await f.close()}
 });
+
+test('Cloudflare Access RS256 JWT accepts owner but rejects forgery and wrong claims',async()=>{
+ const {generateKeyPairSync,sign}=await import('node:crypto');
+ const {privateKey,publicKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+ const jwk={...publicKey.export({format:'jwk'}),kid:'test-kid',alg:'RS256',use:'sig'};
+ const issuer='https://example.cloudflareaccess.com', audience='example-aud', now=Math.floor(Date.now()/1000);
+ const jwt=(extra={},forged=false)=>{
+   const hdr=Buffer.from(JSON.stringify({alg:'RS256',typ:'JWT',kid:'test-kid'})).toString('base64url');
+   const body=Buffer.from(JSON.stringify({iss:issuer,aud:audience,email:'owner@example.com',iat:now-10,nbf:now-10,exp:now+600,...extra})).toString('base64url');
+   const data=hdr+'.'+body;
+   const sig=sign('RSA-SHA256',Buffer.from(data),privateKey).toString('base64url');
+   return data+'.'+(forged?'a'.repeat(64):sig);
+ };
+ let reads=0;
+ const server=makeServer({
+   callerToken:'',githubToken:'gh-test',accessIssuer:issuer,accessAudience:audience,accessOwnerEmail:'owner@example.com',
+   accessFetchImpl:async()=>new Response(JSON.stringify({keys:[jwk]}),{status:200}),
+   fetchImpl:async()=>{reads++;return new Response(JSON.stringify({full_name:REPO,default_branch:'main'}),{status:200})}
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const root='http://127.0.0.1:'+server.address().port;
+ const call=async(token)=>{
+   const res=await fetch(root+'/mcp',{method:'POST',headers:{'content-type':'application/json',...(token?{'cf-access-jwt-assertion':token}:{})},
+     body:JSON.stringify({jsonrpc:'2.0',id:42,method:'tools/call',params:{name:'github_repo_info',arguments:{repo:REPO}}})});
+   return {status:res.status,body:await res.json()};
+ };
+ try{
+   assert.equal((await call('')).status,401);
+   assert.equal((await call(jwt())).body.result.structuredContent.full_name,REPO);
+   assert.equal(reads,1);
+   for(const bad of [jwt({aud:'wrong'}),jwt({email:'attacker@example.com'}),jwt({iss:'https://evil.cloudflareaccess.com'}),jwt({exp:now-1}),jwt({},true)]){
+     assert.equal((await call(bad)).status,401);
+   }
+   assert.equal(reads,1,'invalid requests never reach GitHub');
+ }finally{await new Promise(resolve=>server.close(resolve))}
+});
