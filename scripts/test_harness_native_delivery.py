@@ -1501,7 +1501,7 @@ class AutoMainCycleTests(unittest.TestCase):
             "coolify_uuid": UUID, "auto_deploy_expected": True,
         }]}
 
-    def cycle(self, mode):
+    def cycle(self, mode, *, build_fails=False):
         from contextlib import redirect_stdout
         from types import SimpleNamespace
         args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state")
@@ -1516,7 +1516,9 @@ class AutoMainCycleTests(unittest.TestCase):
                     "image_prefix": "local/mantic-mcp", "health_url": None}}), \
                 patch.object(delivery, "Transport", return_value=object()), \
                 patch.object(delivery, "prepare",
-                             return_value=("tag", self.DEPLOY_DIGEST)) as prepare, \
+                             return_value=("tag", self.DEPLOY_DIGEST),
+                             side_effect=(RuntimeError("injected failure")
+                                          if build_fails else None)) as prepare, \
                 patch.object(delivery, "run_promotion",
                              return_value={"result": "promoted",
                                            "decisions": [{"service": "mantic-mcp",
@@ -1531,6 +1533,15 @@ class AutoMainCycleTests(unittest.TestCase):
         self.assertEqual(report["services"][0]["decision"], "would_deploy")
         self.assertEqual(report["result"], "plan")
         prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_failed_build_returns_error_not_clean_no_op(self):
+        code, report, prepare, promote = self.cycle("deploy", build_fails=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(report["result"], "build_failed")
+        self.assertEqual(report["services"][0]["decision"], "build_failed")
+        self.assertEqual(report["services"][0]["reason"], "RuntimeError")
+        prepare.assert_called_once()
         promote.assert_not_called()
 
     def test_deploy_builds_exact_sha_and_pre_admits_digest(self):
