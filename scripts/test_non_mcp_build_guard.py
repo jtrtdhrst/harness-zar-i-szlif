@@ -9,9 +9,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
-AUTO_MCP_IMAGE_WORKFLOWS = {"opik-mcp-access-guard.yml"}
+AUTO_MCP_IMAGE_WORKFLOWS = {"github-ops-mcp-ci.yml", "opik-mcp-access-guard.yml"}
 # Reviewed inventory: deleting a workflow must require an explicit policy update.
 EXPECTED_DOCKER_BUILD_JOBS = {
+    ("github-ops-mcp-ci.yml", "verify"),
     ("hermes-gateway-image.yml", "validate-hermes-gateway-image"),
     ("hermes-paperclip-adapter-overlay.yml", "validate-and-publish"),
     ("opik-mcp-access-guard.yml", "jwt-regression"),
