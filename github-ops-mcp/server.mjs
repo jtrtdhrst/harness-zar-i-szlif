@@ -11,7 +11,6 @@ const TOOLS = [
   ['github_get_branch_protection', 'Read main branch protection; report missing administration permission', ['repo']],
   ['github_get_deployments', 'Read deployments for one exact source commit', ['repo', 'sha']],
   ['github_preview_branch_delete', 'Verify branch SHA, protection and merge status; no write', ['repo', 'branch', 'expected_sha']],
-  ['github_dispatch_workflow', 'Dispatch an allowlisted Actions workflow at verified main SHA', ['repo', 'workflow', 'expected_sha']],
   ['github_cancel_workflow_run', 'Cancel an allowlisted in-flight run at its verified SHA', ['repo', 'run_id', 'expected_sha']],
 ];
 function secureEqual(a,b) {
@@ -127,32 +126,7 @@ export function makeServer(config={}) {
     }
     // Explicit error for legacy callers; never issue a non-atomic DELETE.
     if(name==='github_delete_merged_branch')throw error('DELETE_NONATOMIC','GitHub ref deletion cannot guarantee expected SHA under concurrent updates');
-    if(name==='github_dispatch_workflow'){
-      const sha=assertSHA(p.expected_sha),workflow=p.workflow;
-      if(typeof workflow!=='string'||!WORKFLOW.test(workflow)||!workflows.has(workflow))throw error('WORKFLOW_DENIED','Workflow is not in the explicit allowlist');
-      if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
-      const main=await api('GET',`${root}/branches/main`);
-      if(main.commit?.sha!==sha)throw error('STALE_SHA','Main branch moved');
-      // GitHub API 2026-03-10 returns workflow_run_id for workflow dispatch.
-      // The branch can advance between our GET and POST: never claim that
-      // expected_sha ran until we read back the specific run's actual SHA.
-      const submission=await api('POST',`${root}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,{ref:'main'});
-      const runId=submission?.workflow_run_id;
-      if(!Number.isSafeInteger(runId)||runId<1)throw error('DISPATCH_UNVERIFIED','Dispatch response has no run ID; submission may have occurred; do not retry blindly');
-      // GitHub Actions can return 404 briefly after accepting a dispatch.
-      // Poll only this exact run ID; NEVER submit the dispatch again.
-      let run=null;
-      for(let attempt=0;attempt<6;attempt++){
-        if(attempt)await new Promise(resolve=>setTimeout(resolve,(config.dispatchPollDelayMs??350)*attempt));
-        try{run=await api('GET',`${root}/actions/runs/${runId}`);break;}
-        catch(e){if(e.code!=='GITHUB_HTTP_404')throw e;}
-      }
-      if(!run)throw error('DISPATCH_UNVERIFIED',`Workflow run ${runId} submitted but its SHA is not yet readable; do not retry dispatch`);
-      if(run.id!==runId||run.head_sha?.toLowerCase()!==sha.toLowerCase()||run.event!=='workflow_dispatch'
-        ||run.path?.split('/').pop()!==workflow)
-        throw error('DISPATCH_SHA_MISMATCH',`Dispatched run ${runId} does not verify against requested workflow and SHA; inspect/cancel the run`);
-      return {dispatched:true,verified:true,repo,workflow,run_id:runId,source_sha:run.head_sha,run_url:run.html_url??null};
-    }
+    // Disabled: workflow_dispatch with ref:main cannot atomically bind the requested SHA.
     if(name==='github_cancel_workflow_run'){
       const sha=assertSHA(p.expected_sha),runid=p.run_id;
       if(!Number.isSafeInteger(runid)||runid<1)throw error('RUN_INVALID','Positive numeric run ID required');
