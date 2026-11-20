@@ -768,6 +768,22 @@ class MainWiringTests(unittest.TestCase):
         self.assertFalse(payload["release_complete"])
         self.assertEqual(host.mutations(), [])
 
+    def test_ops_infrastructure_dockerfile_is_pending_not_an_unknown_service(self):
+        # Regression from live production plan on merged PR #180:
+        # ops/repowise/Dockerfile.publisher is infrastructure, not a new
+        # runtime service root; it must remain pending and never count as delivered.
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts",
+                     "ops/repowise/Dockerfile.publisher"),
+            extra=["--now", NOW.isoformat()])
+        self.assertEqual(code, 0, out)
+        report = json.loads(out)
+        self.assertEqual(report["pending_paths"],
+                         ["ops/repowise/Dockerfile.publisher"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
     def test_missing_manual_source_remains_pending_without_build(self):
         host = FakeHost()
         data = manifest()
