@@ -111,6 +111,8 @@ class FakeHost:
             return self.container_status
         if args[0] == "push":
             return ""
+        if args[0] == "pull":
+            return ""
         raise AssertionError(f"unexpected docker call {args}")
 
     def docker_build(self, argv, log_path):
@@ -668,7 +670,7 @@ class MainWiringTests(unittest.TestCase):
 
     def test_auto_approved_release_builds_and_attests_before_promotion(self):
         host = FakeHost(images={
-            f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": DIGEST})
+            f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}": DIGEST})
         with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
                 patch.object(delivery, "auto_ci_policy", return_value={"out_dir": "/tmp"}), \
                 patch.object(delivery, "auto_prepare_and_attest",
@@ -681,6 +683,35 @@ class MainWiringTests(unittest.TestCase):
         self.assertTrue(report["prepared"]["mantic-mcp"]["signed_local_ci"])
         self.assertEqual(report["deployed"]["decisions"][0]["decision"], "promoted")
         auto.assert_called_once()
+        self.assertIn(
+            ("docker", "pull", f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"),
+            host.calls)
+        self.assertEqual(host.mutations(), [], "production transport must not build a second image")
+
+    def test_ghcr_transport_denies_missing_digest_before_pull(self):
+        host = FakeHost()
+        tx = delivery.Transport(host, registry=delivery.GHCR)
+        with self.assertRaisesRegex(RuntimeError, "auto_ghcr_digest_unavailable"):
+            tx.build("mantic-mcp", SOURCE)
+        self.assertEqual(host.calls, [])
+
+    def test_ghcr_transport_denies_retargeted_digest_before_deploy(self):
+        pinned = f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"
+        host = FakeHost(images={pinned: PREVIOUS})
+        tx = delivery.Transport(
+            host, registry=delivery.GHCR, expected_digests={"mantic-mcp": DIGEST})
+        with self.assertRaisesRegex(RuntimeError, "auto_ghcr_repo_digest_mismatch"):
+            tx.build("mantic-mcp", SOURCE)
+        self.assertFalse(any(x[0] == "coolify" for x in host.calls))
+
+    def test_ghcr_transport_denies_image_with_wrong_revision(self):
+        pinned = f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"
+        host = FakeHost(revision="f" * 40, images={pinned: DIGEST})
+        tx = delivery.Transport(
+            host, registry=delivery.GHCR, expected_digests={"mantic-mcp": DIGEST})
+        with self.assertRaisesRegex(RuntimeError, "auto_ghcr_source_revision_mismatch"):
+            tx.build("mantic-mcp", SOURCE)
+        self.assertFalse(any(x[0] == "coolify" for x in host.calls))
 
     def test_auto_unapproved_release_never_builds(self):
         host = FakeHost()
