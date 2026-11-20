@@ -72,6 +72,92 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertEqual(save.call_args[0][0]["previous_sha"],OLD)
 
 
+
+    def test_exact_merged_maintenance_history_is_not_a_runtime_release(self):
+        """Exact Product 185/186/153/187 are metadata; current-main CI is required."""
+        records = p.VERIFIED_MAINTENANCE_MERGES
+        nodes = {sha: {
+            "sha": sha, "parents": [{"sha": spec["parent"]}],
+            "files": [{"status": status, "filename": path}
+                      for status, path in spec["files"]],
+        } for sha, spec in records.items()}
+        prior = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        latest = "c38e011a8df91ec910534928ee26d90e3435247a"
+        pr_by_sha = {sha: (spec["pr"], "e" * 40) for sha, spec in records.items()}
+        with patch.object(p, "commit", side_effect=lambda sha: nodes[sha]), \
+             patch.object(p, "provenance", side_effect=lambda sha: pr_by_sha[sha]), \
+             patch.object(p, "checks", return_value={"billing_blocked": False}) as ci, \
+             patch.object(p, "premerge_head_checks", side_effect=AssertionError("no runtime head needed")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("no runtime review needed")):
+            self.assertEqual(p.candidate_history(prior, latest), [])
+            self.assertEqual(ci.call_count, 4)
+            ci.assert_any_call(latest)
+
+    def test_maintenance_skip_denies_mutated_parent_pr_or_file_inventory(self):
+        for sha, spec in p.VERIFIED_MAINTENANCE_MERGES.items():
+            original = {"sha": sha, "files": [
+                {"status": status, "filename": path} for status, path in spec["files"]]}
+            self.assertTrue(p.verified_maintenance_merge(
+                sha, original, spec["parent"], spec["pr"]))
+            bad = [
+                ({**original, "sha": "f" * 40}, spec["parent"], spec["pr"]),
+                (original, "f" * 40, spec["pr"]),
+                (original, spec["parent"], spec["pr"] + 1),
+                ({**original, "files": original["files"] +
+                  [{"status": "modified", "filename": "app/web/src/index.ts"}]},
+                 spec["parent"], spec["pr"]),
+                ({**original, "files": original["files"][:-1]}, spec["parent"], spec["pr"]),
+            ]
+            for node, parent, pr in bad:
+                with self.subTest(sha=sha, node=node, parent=parent, pr=pr):
+                    with self.assertRaisesRegex(p.Denied, "maintenance_"):
+                        p.verified_maintenance_merge(sha, node, parent, pr)
+        self.assertFalse(p.verified_maintenance_merge(
+            "f" * 40, {"sha": "f" * 40}, "a" * 40, 185))
+
+    def test_maintenance_skip_requires_current_main_ci(self):
+        latest = "c38e011a8df91ec910534928ee26d90e3435247a"
+        spec = p.VERIFIED_MAINTENANCE_MERGES[latest]
+        node = {"sha": latest, "parents": [{"sha": spec["parent"]}],
+                "files": [{"status": status, "filename": path}
+                          for status, path in spec["files"]]}
+        with patch.object(p, "commit", return_value=node), \
+             patch.object(p, "provenance", return_value=(spec["pr"], "d" * 40)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "native_approval", side_effect=AssertionError("must fail before review")):
+            with self.assertRaisesRegex(p.Denied, "maintenance_current_main_ci_not_green"):
+                p.candidate_history(spec["parent"], latest)
+
+    def test_exact_pr183_unrelated_cloudflare_failure_does_not_veto_green_product_ci(self):
+        sha = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        product = {"name": "validate-product", "status": "completed",
+                   "conclusion": "success", "app": {"slug": "github-actions"}}
+        foreign = {"id": 136273095146, "name": "Workers Builds: stronaglowna",
+                   "status": "completed", "conclusion": "failure",
+                   "app": {"slug": "cloudflare-workers-and-pages"}}
+        with patch.object(p, "github_api", return_value={"check_runs": [product, foreign], "total_count": 2}):
+            self.assertEqual(p.checks(sha), {"billing_blocked": False})
+        for wrong in [
+            {**foreign, "id": 2},
+            {**foreign, "name": "validate-other"},
+            {**foreign, "app": {"slug": "github-actions"}},
+        ]:
+            with self.subTest(wrong=wrong), patch.object(
+                    p, "github_api",
+                    return_value={"check_runs": [product, wrong], "total_count": 2}):
+                with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+                    p.checks(sha)
+        with patch.object(p, "github_api",
+                          return_value={"check_runs": [product, foreign], "total_count": 2}):
+            with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+                p.checks("a" * 40)
+        failed_product = {**product, "conclusion": "failure"}
+        with patch.object(p, "github_api",
+                          return_value={"check_runs": [failed_product, foreign], "total_count": 2}), patch.object(
+                                  p, "never_started_billing_blocked", return_value=False):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.checks(sha)
+
     def test_three_exact_historic_metadata_direct_commits_are_noop(self):
         rows = p.HISTORIC_METADATA_ONLY
         nodes = {
