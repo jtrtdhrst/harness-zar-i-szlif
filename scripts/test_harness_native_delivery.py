@@ -709,6 +709,22 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(payload["pending_paths"], ["plasmic/studio/Dockerfile"])
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertEqual(payload["result"], "partial_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_manual_only_held_external_is_not_false_success(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "qdrant", "promotion_state": "hold",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("qdrant/README.md",), manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(payload["pending_paths"], ["qdrant/README.md"])
         self.assertEqual(host.mutations(), [])
 
     def test_missing_manual_source_remains_pending_without_build(self):
@@ -721,10 +737,11 @@ class MainWiringTests(unittest.TestCase):
             changed=("paperclip-mcp/Dockerfile",),
             manifest_override=data)
         payload = json.loads(out)
-        self.assertEqual(code, 0, payload)
+        self.assertEqual(code, 1, payload)
         self.assertEqual(payload["retired_source_pending"], ["paperclip-mcp"])
         self.assertEqual(payload["pending_paths"], ["paperclip-mcp/Dockerfile"])
         self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertFalse(payload["release_complete"])
         self.assertEqual(payload["admitted"], [])
         self.assertEqual(host.mutations(), [])
 
