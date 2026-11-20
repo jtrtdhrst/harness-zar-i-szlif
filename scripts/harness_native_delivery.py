@@ -528,24 +528,45 @@ def main(argv=None):
         unmodelled = sorted(service for service in entries
                             if service not in SERVICES
                             and any(path == service or path.startswith(service + "/") for path in paths))
-        if unmodelled:
-            raise Denied("service_not_in_transport:" + ",".join(unmodelled))
+        # Separate Coolify resources are not images this controller can build.
+        # Defer ONLY manifest-owned, explicitly non-auto resources requiring
+        # review. They remain pending; no image, grant or release is fabricated.
+        # An unknown or auto-deployable unmodelled service still fails closed.
+        deferred_paths = []
+        for service in unmodelled:
+            entry = entries[service]
+            if (entry.get("auto_deploy_expected") is not False
+                    or entry.get("review_required") is not True):
+                raise Denied("service_not_in_transport:" + service)
+            deferred_paths.extend(path for path in paths
+                                  if path == service or path.startswith(service + "/"))
         attributed = {}
         for path in paths:
             for service, spec in SERVICES.items():
                 if path == spec["folder"] or path.startswith(spec["folder"] + "/"):
                     attributed.setdefault(service, []).append(path)
+        # A deleted/retired source cannot produce a new Docker build. Keep its
+        # paths explicitly pending for a separately reviewed retirement; never
+        # stop a running service or mistake deletion for an approved release.
+        retired = sorted(service for service in attributed
+                         if not (Path(args.repo) / SERVICES[service]["folder"]).is_dir())
+        for service in retired:
+            deferred_paths.extend(attributed.pop(service))
+        pending_paths = sorted(set(pending_paths + deferred_paths))
         report: dict = {"mode": args.mode, "source_sha": source_sha,
                   "scope": args.service or "all",
                   # Never report a scoped service release as delivery of the
                   # entire main range. This ledger is necessary for downstream
                   # Done/E2E checking and for the next per-lane release.
                   "pending_paths": pending_paths,
+                  "pending_external_resources": unmodelled,
+                  "pending_retired_resources": retired,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
         if not attributed:
-            report["result"] = "no_service_change"
+            report["result"] = ("pending_nontransport_changes" if deferred_paths
+                                else "no_service_change")
             print(json.dumps(report, sort_keys=True))
             return 0
         # Phase 1: admit EVERY changed service before ANY preparation or
