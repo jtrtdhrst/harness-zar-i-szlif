@@ -66,8 +66,7 @@ from pathlib import Path
 
 from harness_delivery_controller import git_changed_paths, load_artifacts, run_promotion
 from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
-from harness_release_parity import (ParityFailure, check_source as check_upstream_source,
-                                    check_services as check_release_parity)
+from harness_release_parity import ParityFailure, check_source as check_upstream_source
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
@@ -485,27 +484,19 @@ def main(argv=None):
             raise Denied("scoped_auto_not_allowed")
         if args.service and args.mode != "plan" and os.geteuid() != 0:
             raise Denied("scoped_operator_required")
-        # The timer's pinned SHA must match real upstream main and checkout
-        # on EVERY auto cycle, including cycles with a non-empty source range.
-        # A global no_change additionally requires all managed runtimes to match.
+        # Release admission checks only source freshness here. Runtime health,
+        # per-service digest and rollback are verified when a specific service
+        # is admitted, never globally as a precondition to an idle source tick.
         if args.auto:
             try:
-                if base_sha == source_sha:
-                    managed = sorted({
-                        entry.get("id") for entry in
-                        (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
-                        if isinstance(entry, dict) and entry.get("id") in SERVICES
-                    })
-                    check_release_parity(args.repo, source_sha, managed,
-                                         state_file=Path(args.state_dir) / "delivery.json")
-                else:
-                    check_upstream_source(args.repo, source_sha)
+                check_upstream_source(args.repo, source_sha)
             except ParityFailure as exc:
-                raise Denied("runtime_parity:" + str(exc)) from exc
+                raise Denied("source_parity:" + str(exc)) from exc
         if base_sha == source_sha:
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
-                              "result": "no_change", "runtime_parity": "verified" if args.auto
-                              else "not_checked_explicit_mode"}, sort_keys=True))
+                              "result": "source_range_unchanged",
+                              "runtime_parity": "not_claimed",
+                              "release_complete": False}, sort_keys=True))
             return 0
         # A scoped release is operator-explicit, never silently chosen by the
         # unattended timer. Every included service still needs the exact SHA,
@@ -518,36 +509,81 @@ def main(argv=None):
                 raise Denied("selected_service_unchanged")
         else:
             paths = all_paths
-        pending_paths = sorted(set(all_paths) - set(paths))
         entries = {entry.get("id"): entry
                    for entry in (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
                    if isinstance(entry, dict)}
-        # A manifest service this transport does not implement must stop the run
-        # rather than be skipped: the changed source would be unreleasable and an
-        # attempt to promote it must fail before any host call.
+        # A held resource without a reviewed transport must stay outside this
+        # controller. Report it as pending; never pretend it was deployed.
         unmodelled = sorted(service for service in entries
                             if service not in SERVICES
                             and any(path == service or path.startswith(service + "/") for path in paths))
-        if unmodelled:
-            raise Denied("service_not_in_transport:" + ",".join(unmodelled))
+        held = [service for service in unmodelled
+                if (entries[service].get("promotion_state") == "hold"
+                    and entries[service].get("auto_deploy_expected") is False
+                    and entries[service].get("review_required") is True)]
+        unsupported = sorted(set(unmodelled) - set(held))
+        if unsupported:
+            raise Denied("service_not_in_transport:" + ",".join(unsupported))
+        manual_paths = {p for p in paths for service in held
+                        if p == service or p.startswith(service + "/")}
+        paths = [p for p in paths if p not in manual_paths]
+        pending_paths = sorted((set(all_paths) - set(paths)) if args.service
+                               else manual_paths)
         attributed = {}
         for path in paths:
             for service, spec in SERVICES.items():
                 if path == spec["folder"] or path.startswith(spec["folder"] + "/"):
                     attributed.setdefault(service, []).append(path)
+        # A removed source directory cannot be built. Defer only explicitly
+        # manual/reviewed retirements; otherwise refuse rather than silently
+        # skipping a service that is expected to deploy.
+        retired = []
+        for service in sorted(attributed):
+            if (Path(args.repo) / SERVICES[service]["folder"]).is_dir():
+                continue
+            entry = entries.get(service)
+            if entry is None:
+                # Unknown modeled services are denied by the existing admission
+                # gate, not converted into a supposed retirement.
+                continue
+            if not (entry.get("auto_deploy_expected") is False
+                    and entry.get("review_required") is True
+                    and (entry.get("promotion_state") == "hold"
+                         or entry.get("mode") == "manual_pinned")):
+                raise Denied("missing_build_context:" + service)
+            if args.service:
+                raise Denied("selected_source_unavailable:" + service)
+            pending_paths.extend(attributed.pop(service))
+            retired.append(service)
+        # A changed build definition outside the reviewed transport must never
+        # be silently treated as shipped with an admitted MCP service.
+        # Other unclassified paths remain pending, rather than being included
+        # in an unscoped release_complete claim.
+        accounted = {path for changed in attributed.values() for path in changed}
+        unclassified_paths = sorted(set(paths) - accounted - set(pending_paths))
+        unexpected_builds = sorted({path.split("/", 1)[0] for path in unclassified_paths
+            if Path(path).name.startswith("Dockerfile")
+            or Path(path).name in ("docker-compose.yml", "docker-compose.yaml",
+                                   "compose.yml", "compose.yaml")})
+        if unexpected_builds:
+            raise Denied("unclassified_build_source:" + ",".join(unexpected_builds))
+        pending_paths = sorted(set(pending_paths) | set(unclassified_paths))
         report: dict = {"mode": args.mode, "source_sha": source_sha,
                   "scope": args.service or "all",
                   # Never report a scoped service release as delivery of the
                   # entire main range. This ledger is necessary for downstream
                   # Done/E2E checking and for the next per-lane release.
                   "pending_paths": pending_paths,
+                  "held_outside_transport": held,
+                  "retired_source_pending": retired,
+                  "release_complete": False,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
         if not attributed:
-            report["result"] = "no_service_change"
+            report["result"] = "held_manual_pending" if held or retired else "no_service_change"
             print(json.dumps(report, sort_keys=True))
-            return 0
+            return 1 if held or retired else 0
         # Phase 1: admit EVERY changed service before ANY preparation or
         # deployment. A partial set of valid grants must not cause a partial
         # production release. Plan mode checks the same real evidence as deploy
@@ -608,11 +644,19 @@ def main(argv=None):
 
         # A successful per-lane release is NOT delivery of the complete main
         # range. Keep the global success marker exclusive to unscoped batches.
-        report["result"] = "ok_scoped" if args.service else "ok"
+        report["result"] = ("ok_scoped" if args.service else
+                            "partial_manual_pending" if held or retired else "ok")
+        # Positive plan/prepare is only release admission. Never mark a full
+        # release without a real deployed digest/health readback and no pending
+        # paths; scoped releases also cannot certify unrelated changes.
+        report["release_complete"] = bool(args.mode == "deploy"
+            and not args.service and not pending_paths and report.get("deployed")
+            and report["deployed"].get("promoted"))
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
-        print(json.dumps({"result": "denied", "reason": str(exc)}), file=sys.stderr)
+        print(json.dumps({"result": "denied", "reason": str(exc),
+                          "release_complete": False}), file=sys.stderr)
         return 1
     except (OSError, RuntimeError, ValueError) as exc:
         print(json.dumps({"result": "error", "reason": str(exc)[:300]}), file=sys.stderr)

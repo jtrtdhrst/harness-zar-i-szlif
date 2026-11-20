@@ -626,21 +626,23 @@ class MainWiringTests(unittest.TestCase):
     """main() must route prepare through evaluate_build and deploy through run_promotion."""
 
     def run_main(self, mode, host, *, documents=None, changed=("mantic-mcp/src/server.ts",),
-                 extra=(), source_sha=SOURCE, attestation_key=True):
+                 extra=(), source_sha=SOURCE, attestation_key=True,
+                 manifest_override=None):
         documents = documents if documents is not None else {
             "request": request(), "grant": grant(), "attestation": signed_attestation()}
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "git_changed_paths", lambda *a, **k: list(changed)), \
                 patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: manifest()), \
+                             side_effect=lambda path, label, require_root=False:
+                             manifest_override if manifest_override is not None else manifest()), \
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY):
+            (Path(tmp) / "mantic-mcp").mkdir()
             if mode == "prepare":
-                (Path(tmp) / "mantic-mcp").mkdir()
                 (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
-            argv = ["--mode", mode, "--repo", ".", "--base-sha", "0" * 40,
+            argv = ["--mode", mode, "--repo", tmp, "--base-sha", "0" * 40,
                     "--source-sha", source_sha, "--artifact-dir", tmp]
             if attestation_key:
                 argv += ["--attestation-key", str(Path(tmp) / "key")]
@@ -689,6 +691,125 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "plan")
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertIsNone(payload["deployed"])
+
+    def test_held_unmodelled_resource_does_not_block_managed_plan(self):
+        # An explicitly held upstream resource is not this transport's deploy
+        # target; its files remain reported as pending, with no host mutation.
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "plasmic", "promotion_state": "hold",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "plasmic/studio/Dockerfile"),
+            extra=["--now", NOW.isoformat()], manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["held_outside_transport"], ["plasmic"])
+        self.assertEqual(payload["pending_paths"], ["plasmic/studio/Dockerfile"])
+        self.assertEqual(list(payload["services"]), ["mantic-mcp"])
+        self.assertEqual(payload["result"], "partial_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_manual_only_held_external_is_not_false_success(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "qdrant", "promotion_state": "hold",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("qdrant/README.md",), manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(payload["pending_paths"], ["qdrant/README.md"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_unclassified_build_source_denied_before_any_promotion(self):
+        # A release of a known service must never claim that an unregistered
+        # runtime Dockerfile in the same source range was delivered.
+        for mode in ("plan", "deploy"):
+            host = FakeHost()
+            code, out = self.run_main(mode, host,
+                changed=("mantic-mcp/src/server.ts", "rogue-service/Dockerfile"),
+                extra=["--now", NOW.isoformat()])
+            self.assertEqual(code, 1, (mode, out))
+            self.assertEqual(host.mutations(), [])
+            self.assertEqual(out, "")
+
+    def test_unclassified_build_denial_explicitly_reports_incomplete(self):
+        host = FakeHost()
+        err = io.StringIO()
+        with patch.object(delivery, "Host", return_value=host), \
+             patch.object(delivery, "load_gate_file", return_value=manifest()), \
+             patch.object(delivery, "git_changed_paths", return_value=[
+                 "mantic-mcp/src/server.ts", "rogue-service/Dockerfile"]), \
+             patch.object(sys, "stderr", err):
+            code = delivery.main([
+                "--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
+                "--source-sha", SOURCE])
+        self.assertEqual(code, 1)
+        response = json.loads(err.getvalue())
+        self.assertEqual(response["reason"],
+                         "unclassified_build_source:rogue-service")
+        self.assertFalse(response["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_unclassified_nonbuild_change_remains_pending_and_not_complete(self):
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "docs/README.md"),
+            extra=["--now", NOW.isoformat()])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["pending_paths"], ["docs/README.md"])
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_manual_source_remains_pending_without_build(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "paperclip-mcp", "mode": "manual_pinned",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("paperclip-mcp/Dockerfile",),
+            manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["retired_source_pending"], ["paperclip-mcp"])
+        self.assertEqual(payload["pending_paths"], ["paperclip-mcp/Dockerfile"])
+        self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(payload["admitted"], [])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_expected_build_source_is_refused(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "paperclip-mcp", "auto_deploy_expected": True,
+            "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("paperclip-mcp/Dockerfile",),
+            manifest_override=data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.mutations(), [])
+
+    def test_held_unreviewed_resource_is_not_silently_skipped(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "plasmic", "promotion_state": "hold",
+            "auto_deploy_expected": True, "review_required": False})
+        code, out = self.run_main("plan", host,
+            changed=("plasmic/README.md",), manifest_override=data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.mutations(), [])
 
     def test_scoped_plan_admits_one_service_and_preserves_pending_paths(self):
         # Root-owned, per-UUID gates still apply; an explicitly scoped release
@@ -864,8 +985,6 @@ class AutoModeTests(unittest.TestCase):
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
-                patch.object(delivery, "check_release_parity",
-                             side_effect=parity_error, return_value={"result": "parity_ok"}), \
                 patch.object(delivery, "check_upstream_source",
                              side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
@@ -940,17 +1059,17 @@ class AutoModeTests(unittest.TestCase):
                                                  "HARNESS_SOURCE_SHA": head})
         payload = json.loads(out)
         self.assertEqual(code, 0)
-        self.assertEqual(payload["result"], "no_change")
+        self.assertEqual(payload["result"], "source_range_unchanged")
+        self.assertEqual(payload["runtime_parity"], "not_claimed")
         self.assertEqual(host.mutations(), [])
 
-    def test_auto_no_change_denies_stale_runtime(self):
+    def test_idle_tick_never_claims_running_service_parity(self):
         repo, base, head = self.repo()
         code, out, host = self.run_auto(
             repo, tempfile.mkdtemp(), source_sha=head,
-            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head},
-            parity_error=delivery.ParityFailure("service_changes_not_deployed"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("runtime_parity:service_changes_not_deployed", out)
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["runtime_parity"], "not_claimed")
         self.assertEqual(host.mutations(), [])
 
     def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
@@ -960,7 +1079,7 @@ class AutoModeTests(unittest.TestCase):
             environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": head},
             source_error=delivery.ParityFailure("source_range_stale"))
         self.assertEqual(code, 1, out)
-        self.assertIn("runtime_parity:source_range_stale", out)
+        self.assertIn("source_parity:source_range_stale", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_denies_a_held_lane_without_touching_the_host(self):
