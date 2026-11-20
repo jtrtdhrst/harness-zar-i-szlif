@@ -1218,8 +1218,11 @@ class AutoModeTests(unittest.TestCase):
 
     def test_unmapped_dockerfile_is_not_automatically_a_live_release_target(self):
         repo, base, head = self.repo()
-        paths, unknown = delivery.pending_per_service_source_paths(
-            repo, head, tempfile.mkdtemp(), {"lanes": [], "other_resources": []})
+        # Unit fixture's directory is owned by the unprivileged test runner.
+        # Production's required ledger UID remains hard-coded to root.
+        with patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid()):
+            paths, unknown = delivery.pending_per_service_source_paths(
+                repo, head, tempfile.mkdtemp(), {"lanes": [], "other_resources": []})
         self.assertEqual(paths, [])
         self.assertEqual(unknown, [])
 
