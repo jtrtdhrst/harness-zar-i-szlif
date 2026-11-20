@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { makeServer } from '../server.mjs';
 const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
-  branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true}={}){
+  branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true}={}){
   const calls=[];
   let branchDeleted=false;
   const mergeSHA='c'.repeat(40);
@@ -27,8 +27,12 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
           head:{ref:'fix/old',sha:SHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
     }
     else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable?0:1};
+    else if(u.pathname.endsWith('/actions/runs/321'))v={id:321,head_sha:dispatchRunSHA,event:'workflow_dispatch',path:'.github/workflows/release-lanes-policy.yml',html_url:'https://github.com/example/actions/runs/321'};
     else if(u.pathname.endsWith('/actions/runs/123'))v={head_sha:SHA,status:'in_progress',path:'.github/workflows/release-lanes-policy.yml'};
     else if(u.pathname.endsWith(`/repos/${REPO}`))v={full_name:REPO,default_branch:'main',permissions:{push:true}};
+    if(opts.method==='POST'&&u.pathname.endsWith('/dispatches'))
+      return new Response(dispatchRunId?JSON.stringify({workflow_run_id:321}):null,
+        {status:dispatchRunId?200:204,headers:{'content-type':'application/json'}});
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
   const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
@@ -45,7 +49,7 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,9);
+    assert.equal((await y.json()).result.tools.length,8);
   }finally{await f.close()}
 });
 test('repo allowlist and live read',async()=>{
@@ -60,62 +64,83 @@ test('no GitHub token fails closed',async()=>{
     const x=await f.request('github_repo_info',{repo:REPO});assert.match(x.body.result.content[0].text,/AUTH_NOT_CONFIGURED/);assert.equal(f.calls.length,0);
   }finally{await f.close()}
 });
-test('branch deletion rejects nonmerged, stale and protected branches',async()=>{
-  for(const opt of [{merged:false,err:'MERGE_NOT_VERIFIED'},{branchSHA:'b'.repeat(40),err:'STALE_SHA'},{protectedBranch:true,err:'PROTECTED'}]){
-    const f=await fixture({...opt,writesEnabled:true,allowDeletion:true});try{const x=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});assert.match(x.body.result.content[0].text,new RegExp(opt.err));assert.equal(f.calls.some(x=>x[0]==='DELETE'),false)}finally{await f.close()}
-  }
-});
-test('write requires both gates and merged branch',async()=>{
-  let f=await fixture({writesEnabled:true});try{
-    assert.match((await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA})).body.result.content[0].text,/WRITE_DISABLED/);
-  }finally{await f.close()}
-  f=await fixture({writesEnabled:true,allowDeletion:true});try{
-    assert.equal((await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA})).body.result.structuredContent.deleted,true);
-    assert.equal(f.calls.filter(x=>x[0]==='DELETE').length,1);
-  }finally{await f.close()}
-});
-test('deletion requires explicit exact SHA-scoped operator allowlist',async()=>{
- const f=await fixture({writesEnabled:true,allowDeletion:true,approved:false});
- try {
-   const out=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
-   assert.match(out.body.result.content[0].text,/BRANCH_NOT_APPROVED/);
-   assert.equal(f.calls.length,0);
- }finally{await f.close()}
-});
-test('open PR and unreachable merge commit independently prevent deletion',async()=>{
- for(const opt of [{openPR:true,err:'OPEN_PR'},{mergeReachable:false,err:'MERGE_NOT_REACHABLE'}]){
-  const f=await fixture({...opt,writesEnabled:true,allowDeletion:true});
-  try{
-    const out=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
-    assert.match(out.body.result.content[0].text,new RegExp(opt.err));
-    assert.equal(f.calls.some(([method])=>method==='DELETE'),false);
+test('preview rejects nonmerged, stale and protected branches without DELETE',async()=>{
+ for(const opt of [{merged:false,err:'MERGE_NOT_VERIFIED'},{branchSHA:'b'.repeat(40),err:'STALE_SHA'},{protectedBranch:true,err:'PROTECTED'}]){
+  const f=await fixture(opt);
+  try {
+   const x=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+   assert.match(x.body.result.content[0].text,new RegExp(opt.err));
+   assert.equal(f.calls.some(([method])=>method==='DELETE'),false);
   }finally{await f.close()}
  }
 });
-test('squash-merged PR passes when merge SHA is on main even with unmerged feature commits',async()=>{
- const f=await fixture({ahead:9,writesEnabled:true,allowDeletion:true});
- try{
-  const out=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
-  assert.equal(out.body.result.structuredContent.verified_missing,true);
-  assert.equal(out.body.result.structuredContent.merged_pr,987);
-  assert.equal(f.calls.filter(([method])=>method==='DELETE').length,1);
- }finally{await f.close()}
-});
-test('staging and known live Coolify ref ZARI-155 are never deletable',async()=>{
+test('non-atomic deletion is not advertised and legacy call cannot write',async()=>{
  const f=await fixture({writesEnabled:true,allowDeletion:true});
  try{
+  const list=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+  assert.equal((await list.json()).result.tools.some(t=>t.name==='github_delete_merged_branch'),false);
+  const x=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+  assert.match(x.body.result.content[0].text,/TOOL_UNKNOWN/);
+  assert.equal(f.calls.length,0);
+ }finally{await f.close()}
+});
+test('open PR and unreachable merge commit prevent preview',async()=>{
+ for(const opt of [{openPR:true,err:'OPEN_PR'},{mergeReachable:false,err:'MERGE_NOT_REACHABLE'}]){
+  const f=await fixture(opt);
+  try{
+   const x=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+   assert.match(x.body.result.content[0].text,new RegExp(opt.err));
+  }finally{await f.close()}
+ }
+});
+test('squash-merged PR is eligible for preview only, never deletes',async()=>{
+ const f=await fixture({ahead:9});
+ try{
+  const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+  assert.equal(out.body.result.structuredContent.eligible,true);
+  assert.equal(out.body.result.structuredContent.deletion_supported,false);
+  assert.equal(out.body.result.structuredContent.merged_pr,987);
+  assert.equal(f.calls.filter(([method])=>method==='DELETE').length,0);
+ }finally{await f.close()}
+});
+test('staging and known live Coolify branch are never eligible',async()=>{
+ const f=await fixture();
+ try{
   for(const branch of ['ZARI-155','staging/github-ops','hold/release','operator/safety']){
-   const out=await f.request('github_delete_merged_branch',{repo:REPO,branch,expected_sha:SHA});
+   const out=await f.request('github_preview_branch_delete',{repo:REPO,branch,expected_sha:SHA});
    assert.match(out.body.result.content[0].text,/BRANCH_DENIED/);
   }
   assert.equal(f.calls.length,0);
  }finally{await f.close()}
 });
-test('workflow dispatch only allowlisted and exact sha',async()=>{
-  const f=await fixture({writesEnabled:true});try{
-    assert.match((await f.request('github_dispatch_workflow',{repo:REPO,workflow:'danger.yml',expected_sha:SHA})).body.result.content[0].text,/WORKFLOW_DENIED/);
-    assert.equal((await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA})).body.result.structuredContent.dispatched,true);
-  }finally{await f.close()}
+test('workflow dispatch returns only independently verified run ID and SHA',async()=>{
+ const f=await fixture({writesEnabled:true});
+ try{
+  assert.match((await f.request('github_dispatch_workflow',{repo:REPO,workflow:'danger.yml',expected_sha:SHA})).body.result.content[0].text,/WORKFLOW_DENIED/);
+  const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
+  assert.equal(out.body.result.structuredContent.dispatched,true);
+  assert.equal(out.body.result.structuredContent.verified,true);
+  assert.equal(out.body.result.structuredContent.run_id,321);
+  assert.equal(out.body.result.structuredContent.source_sha,SHA);
+  assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/actions/runs/321')));
+ }finally{await f.close()}
+});
+test('main moves between SHA check and workflow dispatch: never claim success',async()=>{
+ const f=await fixture({writesEnabled:true,dispatchRunSHA:'b'.repeat(40)});
+ try{
+  const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
+  assert.match(out.body.result.content[0].text,/DISPATCH_SHA_MISMATCH/);
+  assert.equal(out.body.result.structuredContent,undefined);
+ }finally{await f.close()}
+});
+test('legacy 204 dispatch response is never claimed as verified; no blind retry',async()=>{
+ const f=await fixture({writesEnabled:true,dispatchRunId:false});
+ try{
+  const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
+  assert.match(out.body.result.content[0].text,/DISPATCH_UNVERIFIED/);
+  assert.equal(f.calls.filter(([method,path])=>method==='POST'&&path.endsWith('/dispatches')).length,1);
+ }finally{await f.close()}
 });
 test('run cancellation exact SHA and allowlisted flow',async()=>{
  const f=await fixture({writesEnabled:true});try{
