@@ -9,7 +9,6 @@ on:
       - 'github-ops-mcp/**'
       - '.github/workflows/github-ops-mcp-ci.yml'
   push:
-    branches: [main]
     paths:
       - 'github-ops-mcp/**'
       - '.github/workflows/github-ops-mcp-ci.yml'
