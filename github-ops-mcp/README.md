@@ -1,21 +1,22 @@
 # GitHub Ops MCP — scoped augmentation (not a deployment controller)
 
-A separate, minimal GitHub MCP endpoint for operations absent from the regular GitHub connector: read branch protection/rulesets/Actions permissions and deployment evidence; preview/delete *already merged* branches; dispatch a specifically allowlisted GitHub Actions workflow; cancel an allowlisted, SHA-pinned in-flight workflow.
+A separate, minimal GitHub MCP endpoint for operations absent from the regular GitHub connector: read branch protection/rulesets/Actions permissions and deployment evidence; preview *already merged* branches without deletion; dispatch a specifically allowlisted GitHub Actions workflow with post-dispatch run SHA verification; cancel an allowlisted, SHA-verified in-flight workflow.
 
 ## Fail-closed defaults
 
 - Hard-coded repository ceiling: `miloszspyrka-code/harness-zar-i-szlif`, `miloszspyrka-code/zar-i-szlif`.
 - `POST /mcp` requires either a constant-time checked `GITHUB_OPS_CALLER_TOKEN` or a cryptographically verified Cloudflare Access JWT restricted to the configured issuer, application AUD and owner email. The Cloudflare path requires `CF_ACCESS_ISSUER`, `CF_ACCESS_AUD`, `CF_ACCESS_OWNER_EMAIL` and Cloudflare Managed OAuth on the Access application. `GITHUB_TOKEN` is still required to execute real GitHub operations. Never commit secrets, embed them in URLs, or put them in Multica CLI args.
-- `GITHUB_OPS_WRITES_ENABLED` defaults to false, `GITHUB_OPS_BRANCH_DELETION` defaults to false, and **`GITHUB_OPS_DELETE_ALLOWLIST` defaults to empty** (comma-separated exact entries like `miloszspyrka-code/harness-zar-i-szlif:fix/retired@<40-character SHA>`). `GITHUB_OPS_WORKFLOWS` defaults to `release-lanes-policy.yml` only. An enabled deletion flag without an exact matching approval cannot delete anything.
+- `GITHUB_OPS_WRITES_ENABLED` defaults to false. `GITHUB_OPS_WORKFLOWS` defaults to `release-lanes-policy.yml` only. Non-atomic branch deletion is not exposed or configurable.
 - `GET /health` is a liveness endpoint; `ready=false` explicitly means **not operational**, even if Coolify reports the container healthy.
 - No generic shell, no arbitrary GitHub URL, no self-approval, branch protection mutation, auto-merge, token provisioning, Coolify deploy, HOLD bypass or implicit user delegation.
-- A branch deletion needs **both write gates**, an explicit exact `repo:branch@sha` approval in `GITHUB_OPS_DELETE_ALLOWLIST`, and a verified merged PR whose precise head SHA matches the branch. The PR merge commit must be reachable from current `main`, including squash-merge cases. Open PR bases/heads, protected branches, special release/hold/operator/staging prefixes and the live Coolify `ZARI-155` ref are rejected. Deletion rechecks SHA and open PRs, then reads back that the ref is absent. **Coolify bindings cannot be verified solely from GitHub:** the operator must check live Coolify inventory before adding an approval. GitHub DELETE has no atomic lease; quiescent exact-SHA branches only.
+- `github_preview_branch_delete` verifies exact source SHA, a merged PR, a reachable merge commit and no open PR references. It NEVER deletes. GitHub REST `DELETE /git/refs/...` has no expected-SHA conditional delete, so a concurrent push cannot be excluded. The old `github_delete_merged_branch` tool was removed and its legacy call fails closed.
+- `github_dispatch_workflow` uses GitHub REST API version `2026-03-10`, requires a returned `workflow_run_id`, and reads that exact run back to verify workflow, event and actual `head_sha`. A main-branch move that changes the run SHA fails with `DISPATCH_SHA_MISMATCH`; a legacy/no-ID response fails with `DISPATCH_UNVERIFIED` (submission may already have occurred, so do not retry blindly). This is observation/verification, not an atomic dispatch or guarantee against a wrongly-versioned run starting; never use unverified results to release software.
 - Branch protection/ruleset endpoints may reply HTTP 403 due to GitHub App scopes or private-repository plan limitations. Never treat that as protection enabled.
 - All writes must satisfy the separate existing CTO review, release HOLD, CI and operator access boundaries. This service does not enforce the complete GitHub→Coolify promotion policy.
 
 ## Run and check
 
-`npm test` — 12 HTTP-level mocked-provider positive/negative tests (verified 12/12 on the exact GitHub branch code in an isolated network namespace, with a fake GitHub API and no production writes).
+`npm test` — 14 HTTP-level mocked-provider positive/negative tests (verified 14/14 using exact updated GitHub files on Ubuntu with Node 24, fake GitHub API, no real provider writes). These include main-move-between-check-and-dispatch regression, legacy 204 response, missing authentication and non-atomic branch deletion rejection.
 
 `PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_TOKEN=<scoped-secret> node server.mjs`
 
@@ -23,7 +24,7 @@ Use a Coolify **private, manual** staging application with `base_directory=/gith
 
 ## MCP verification
 
-- `initialize` then `tools/list` (authenticated): nine tools.
+- `initialize` then `tools/list` (authenticated): eight tools.
 - `tools/call` with repo outside ceiling: `REPO_DENIED` without provider traffic.
 - Without `GITHUB_TOKEN`: `AUTH_NOT_CONFIGURED` without provider traffic.
 - Without caller token or invalid token: 401.
