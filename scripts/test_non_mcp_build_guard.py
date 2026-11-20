@@ -16,6 +16,7 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("hermes-paperclip-adapter-overlay.yml", "validate-and-publish"),
     ("opik-mcp-access-guard.yml", "jwt-regression"),
     ("paperclip-core-review-recovery.yml", "validate"),
+    ("mcp-images-ghcr.yml", "build-and-push"),
 }
 DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@")
 
@@ -39,6 +40,14 @@ def image_build_jobs(content):
 def compliant(workflow_name, job):
     if workflow_name in AUTO_MCP_IMAGE_WORKFLOWS:
         return True
+    if workflow_name == "mcp-images-ghcr.yml":
+        # Docker executes on disposable GitHub-hosted workers, never on the
+        # persistent local-build runner; only the job with package-write access
+        # may push OCI artifacts (this does NOT grant Coolify promotion).
+        return ("    runs-on: ubuntu-latest" in job
+                and "      packages: write" in job
+                and "docker/build-push-action@v6" in job
+                and "ghcr.io/" in job)
     return (re.search(r"(?m)^    if: .*workflow_dispatch.*refs/heads/main", job) is not None
             and re.search(r"(?m)^    runs-on: \[self-hosted,.*local-build.*\]", job) is not None)
 
@@ -52,6 +61,16 @@ class NonMcpBuildGuardTests(unittest.TestCase):
                                 f"{workflow.name}/{job_name} can build outside local manual release")
         self.assertEqual(observed, EXPECTED_DOCKER_BUILD_JOBS,
                          "Docker build workflow inventory changed without explicit review")
+
+    def test_mcp_image_workflow_uses_unprivileged_ephemeral_runner(self):
+        text = (WORKFLOWS / "mcp-images-ghcr.yml").read_text(encoding="utf8")
+        self.assertIn("    runs-on: ubuntu-latest", text)
+        self.assertNotIn("runs-on: [self-hosted", text)
+        self.assertIn("github.ref == 'refs/heads/main'", text)
+        self.assertIn("      packages: write", text)
+        self.assertIn("scripts/select_mcp_builds.py", text)
+        self.assertNotIn("curl -X PATCH", text)
+        self.assertNotIn("coolify", text.lower())
 
     def test_retired_paperclip_mcp_ci_stays_absent(self):
         self.assertFalse((WORKFLOWS / "paperclip-mcp-ci.yml").exists(),
