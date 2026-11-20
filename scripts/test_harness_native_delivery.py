@@ -279,9 +279,34 @@ class DeployStageTests(unittest.TestCase):
                     transport_for(host), now=NOW, state_path=state, source_sha=SOURCE)
             self.assertTrue(state.exists())
         self.assertTrue(report["promoted"], report)
-        self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose)
+        self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}", host.compose)
+        self.assertNotIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose,
+                         "a mutable tag must never be the deployed image reference")
         self.assertEqual([call[0] for call in host.calls].count("build"), 0,
                          "the deploy transport must never rebuild")
+        ps_calls = [call for call in host.calls if call[:2] == ("docker", "ps")]
+        self.assertTrue(ps_calls)
+        self.assertTrue(all(f"label=coolify.serviceUuid={UUID}" in call for call in ps_calls),
+                        "a healthy container from another Coolify service is not release evidence")
+
+    def test_transport_deploys_attested_digest_not_retargetable_tag(self):
+        host = FakeHost(images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": PREVIOUS})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            deployment = transport_for(host).deploy("mantic-mcp", UUID, "service", DIGEST)
+        self.assertEqual(deployment, "dep-1")
+        self.assertIn(f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}", host.compose)
+        self.assertNotIn(f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}", host.compose)
+        self.assertEqual([call for call in host.calls if call[0] == "build"], [])
+
+    def test_transport_rejects_invalid_digest_without_any_host_call(self):
+        host = FakeHost()
+        for invalid in ("sha256:abc", "not-a-digest", None, "sha256:" + "z" * 64):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(RuntimeError, "invalid immutable image digest"):
+                    transport_for(host).deploy("mantic-mcp", UUID, "service", invalid)
+        self.assertEqual(host.calls, [])
+        self.assertEqual(host.compose, COMPOSE)
 
     def test_transport_refuses_an_image_with_a_foreign_revision(self):
         host = FakeHost(revision="f" * 40)
@@ -368,6 +393,37 @@ class TransportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no snapshot from this deployment attempt"):
                 transport.rollback("mantic-mcp", UUID)
 
+    def test_retargeted_legacy_tag_cannot_fake_rollback_digest(self):
+        # Exact Compose bytes plus a healthy NEW image are not restoration.
+        host = FakeHost(images={"local/mantic-mcp:old": PREVIOUS})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            transport = transport_for(host)
+            transport.deploy("mantic-mcp", UUID, "service", DIGEST)
+            host.images["local/mantic-mcp:old"] = DIGEST
+            with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
+                 patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
+                with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
+                    transport.rollback("mantic-mcp", UUID)
+        self.assertEqual(host.compose, COMPOSE)
+
+    def test_rollback_coolify_accepted_is_not_success_without_live_health(self):
+        host = FakeHost(service_status="running:unhealthy")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
+            transport = transport_for(host)
+            delivery.patch_compose(
+                host, UUID, "mantic-mcp", delivery.SERVICES["mantic-mcp"],
+                f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}",
+                on_backup=lambda backup: transport._rollback_snapshots.__setitem__(
+                    ("mantic-mcp", UUID), (backup, PREVIOUS)))
+            with patch.object(delivery, "HEALTH_DEADLINE", 0.5), \
+                patch.object(delivery, "POLL_SECONDS", 0), \
+                 patch.object(delivery.time, "monotonic", side_effect=[0, 0, 1]):
+                with self.assertRaisesRegex(RuntimeError, "rollback compose or live health not verified"):
+                    transport.rollback("mantic-mcp", UUID)
+        self.assertEqual(host.compose, COMPOSE, "Compose must be restored even on failed QA")
+        self.assertEqual(host.calls.count(("coolify", "POST", "/deploy")), 1,
+                         "an accepted rollback POST must not be repeated or declared healthy")
+
     def test_compose_patch_refuses_an_ambiguous_image_set(self):
         host = FakeHost(compose=COMPOSE + "  second:\n    image: local/mantic-mcp:also-old\n")
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)):
@@ -383,6 +439,38 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(health["status"], "ok")
         self.assertEqual(health["digest"], DIGEST)
         self.assertEqual(health["source_sha"], SOURCE)
+
+    def test_other_coolify_service_container_cannot_satisfy_health(self):
+        host = FakeHost(compose=COMPOSE.replace(
+            "local/mantic-mcp:old",
+            f"127.0.0.1:5000/harness-mantic-mcp@{DIGEST}"))
+        original_docker = host.docker
+
+        def only_other_service_is_healthy(*args, **kwargs):
+            if args[0] == "ps":
+                self.assertIn(f"label=coolify.serviceUuid={UUID}", args,
+                              "ps must bind healthy container to this exact resource")
+                host.calls.append(("docker",) + args)
+                return ""  # target UUID has no matching running container
+            return original_docker(*args, **kwargs)
+
+        host.docker = only_other_service_is_healthy
+        status = transport_for(host).health("mantic-mcp", UUID)
+        self.assertEqual(status["status"], "unhealthy")
+        self.assertTrue(any(call[0:2] == ("docker", "ps") for call in host.calls))
+
+    def test_multiple_uuid_matched_containers_must_not_pass_health(self):
+        # A second container with the same UUID label makes runtime identity
+        # ambiguous, even when one or both Docker statuses report healthy.
+        for statuses in (
+            "Up 2 minutes (healthy)\\nUp 1 minute (unhealthy)",
+            "Up 2 minutes (healthy)\\nUp 1 minute (healthy)",
+        ):
+            with self.subTest(statuses=statuses):
+                host = FakeHost(container_status=statuses.replace("\\n", "\n"))
+                result = transport_for(host).health("mantic-mcp", UUID)
+                self.assertEqual(result["status"], "unhealthy")
+                self.assertEqual(host.mutations(), [])
 
     def test_health_is_not_ok_when_the_service_is_unhealthy(self):
         host = FakeHost(service_status="running:unhealthy",
@@ -602,6 +690,86 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertIsNone(payload["deployed"])
 
+    def test_scoped_plan_admits_one_service_and_preserves_pending_paths(self):
+        # Root-owned, per-UUID gates still apply; an explicitly scoped release
+        # cannot claim unrelated folders were delivered.
+        host = FakeHost()
+        code, out = self.run_main(
+            "plan", host,
+            changed=("mantic-mcp/src/server.ts", "playwright-mcp/src/unreviewed.ts",
+                     "plasmic/src/core.ts", "qdrant/data/index.ts"),
+            extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
+        report = json.loads(out)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["scope"], "mantic-mcp")
+        self.assertEqual(report["result"], "ok_scoped")
+        self.assertEqual(list(report["services"]), ["mantic-mcp"])
+        self.assertEqual(report["admitted"], ["mantic-mcp"])
+        self.assertEqual(report["pending_paths"],
+                         ["plasmic/src/core.ts", "playwright-mcp/src/unreviewed.ts",
+                          "qdrant/data/index.ts"])
+        self.assertEqual(host.calls, [])
+
+    def test_scoped_plan_does_not_skip_service_approval_or_signed_ci(self):
+        host = FakeHost()
+        code, out = self.run_main(
+            "plan", host,
+            documents={"request": request(), "grant": None,
+                       "attestation": signed_attestation()},
+            changed=("mantic-mcp/src/server.ts", "playwright-mcp/src/x.ts"),
+            extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1)
+        self.assertIn("release_lane_on_hold", out)
+        self.assertEqual(host.calls, [])
+
+    def test_scoped_service_must_exist_in_exact_diff(self):
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+                                  changed=("plasmic-mcp/src/index.ts",),
+                                  extra=["--service", "mantic-mcp"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.calls, [])
+
+    def test_scoped_deploy_only_touches_admitted_service(self):
+        host = FakeHost(images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": DIGEST})
+        with patch.object(delivery.os, "geteuid", return_value=0):
+            code, out = self.run_main(
+                "deploy", host,
+                changed=("mantic-mcp/src/server.ts",
+                         "playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"),
+                extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
+        report = json.loads(out)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["scope"], "mantic-mcp")
+        self.assertEqual(report["result"], "ok_scoped")
+        self.assertEqual(report["pending_paths"],
+                         ["playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"])
+        decisions = report["deployed"]["decisions"]
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["service"], "mantic-mcp")
+        self.assertEqual(decisions[0]["decision"], "promoted")
+
+    def test_nonroot_cannot_perform_scoped_deploy(self):
+        host = FakeHost()
+        with patch.object(delivery.os, "geteuid", return_value=1000):
+            code, out = self.run_main(
+                "deploy", host, changed=("mantic-mcp/src/server.ts",),
+                extra=["--service", "mantic-mcp"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.calls, [])
+
+    def test_unattended_timer_cannot_use_scoped_release_flag(self):
+        host = FakeHost()
+        code, out = self.run_main(
+            "plan", host, changed=("mantic-mcp/src/server.ts",),
+            extra=["--service", "mantic-mcp", "--auto"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.calls, [])
+
     def test_deploy_mode_denies_without_attestation_and_never_deploys(self):
         host = FakeHost()
         code, out = self.run_main("deploy", host,
@@ -691,11 +859,15 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None):
+                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
         host = host or FakeHost()
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
+                patch.object(delivery, "check_release_parity",
+                             side_effect=parity_error, return_value={"result": "parity_ok"}), \
+                patch.object(delivery, "check_upstream_source",
+                             side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "load_gate_file",
@@ -771,6 +943,26 @@ class AutoModeTests(unittest.TestCase):
         self.assertEqual(payload["result"], "no_change")
         self.assertEqual(host.mutations(), [])
 
+    def test_auto_no_change_denies_stale_runtime(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head},
+            parity_error=delivery.ParityFailure("service_changes_not_deployed"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runtime_parity:service_changes_not_deployed", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
+        repo, base, head = self.repo()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": head},
+            source_error=delivery.ParityFailure("source_range_stale"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runtime_parity:source_range_stale", out)
+        self.assertEqual(host.mutations(), [])
+
     def test_auto_denies_a_held_lane_without_touching_the_host(self):
         repo, base, head = self.repo()
         documents = self.documents_for(head)
@@ -792,3 +984,4 @@ class AutoModeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
