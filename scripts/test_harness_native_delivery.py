@@ -1504,9 +1504,11 @@ class AutoMainCycleTests(unittest.TestCase):
     def cycle(self, mode, *, build_fails=False):
         from contextlib import redirect_stdout
         from types import SimpleNamespace
-        args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state")
+        args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state",
+                               manifest="ops/release-lanes.json")
         out = io.StringIO()
         with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE), \
+                patch.object(delivery, "load_gate_file", return_value=self.manifest()), \
                 patch.object(delivery, "read_private_delivery_ledger",
                              return_value={"mantic-mcp": {"source_sha": self.BASE}}), \
                 patch.object(delivery, "git_changed_paths",
