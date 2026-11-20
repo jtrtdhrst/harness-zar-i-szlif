@@ -8,7 +8,7 @@ class McpBuildSelectionTests(unittest.TestCase):
         self.assertEqual(images.select(
             ["docs/README.md", "plasmic-mcp/src/index.ts"],
             event_name="push"),
-            [{"service": "plasmic-mcp", "directory": "plasmic-mcp"}])
+            [{"service": "plasmic-mcp", "directory": "plasmic-mcp", "dockerfile": "Dockerfile"}])
 
     def test_unrelated_or_held_external_paths_never_trigger_builds(self):
         self.assertEqual(images.select(
@@ -41,7 +41,8 @@ class McpBuildSelectionTests(unittest.TestCase):
         for service in images.MCP_BUILD_CONTEXTS:
             self.assertEqual(images.select([], event_name="workflow_dispatch",
                 manual_service=service),
-                [{"service": service, "directory": service}])
+                [{"service": service, "directory": service,
+                  "dockerfile": "Dockerfile.http" if service == "mantic-mcp" else "Dockerfile"}])
         self.assertEqual(len(images.select([], event_name="workflow_dispatch",
                                            manual_service="all")), 6)
 
@@ -56,12 +57,27 @@ class McpBuildSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "untrusted_event"):
             images.select([], event_name="pull_request")
 
+    def test_mantic_artifact_is_production_http_bridge_not_stdio(self):
+        mantic = images.select([], event_name="workflow_dispatch",
+                               manual_service="mantic-mcp")[0]
+        self.assertEqual(mantic["dockerfile"], "Dockerfile.http")
+        from pathlib import Path
+        path = Path(__file__).resolve().parent.parent / mantic["directory"] / mantic["dockerfile"]
+        source = path.read_text(encoding="utf8")
+        self.assertIn('EXPOSE 8090', source)
+        self.assertIn('ENTRYPOINT ["node", "/app/bridge/bridge.mjs"]', source)
+        workflow = (Path(__file__).resolve().parent.parent /
+                    ".github" / "workflows" / "mcp-images-ghcr.yml").read_text(encoding="utf8")
+        self.assertIn("matrix.dockerfile", workflow)
+        self.assertIn('test -f "$BUILD_ROOT/$DOCKERFILE"', workflow)
+
     def test_allowlist_has_real_dockerfiles(self):
         from pathlib import Path
         repo = Path(__file__).resolve().parent.parent
         for service, directory in images.MCP_BUILD_CONTEXTS.items():
             with self.subTest(service=service):
-                self.assertTrue((repo / directory / "Dockerfile").is_file())
+                self.assertTrue((repo / directory /
+                                 ("Dockerfile.http" if service == "mantic-mcp" else "Dockerfile")).is_file())
 
 
 if __name__ == "__main__":
