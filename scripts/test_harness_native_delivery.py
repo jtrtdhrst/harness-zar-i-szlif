@@ -652,6 +652,49 @@ class MainWiringTests(unittest.TestCase):
                 code = delivery.main(argv)
         return code, stdout.getvalue()
 
+
+    def test_auto_missing_ci_policy_refuses_before_build(self):
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy", side_effect=Denied("service_not_in_policy")), \
+                patch.object(delivery, "auto_prepare_and_attest") as auto:
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(), "attestation": None},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("service_not_in_policy", out)
+        self.assertEqual(host.mutations(), [])
+        auto.assert_not_called()
+
+    def test_auto_approved_release_builds_and_attests_before_promotion(self):
+        host = FakeHost(images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{SOURCE[:12]}": DIGEST})
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy", return_value={"out_dir": "/tmp"}), \
+                patch.object(delivery, "auto_prepare_and_attest",
+                             return_value=(attestation(), DIGEST)) as auto:
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(), "attestation": None},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 0, out)
+        report = json.loads(out)
+        self.assertTrue(report["prepared"]["mantic-mcp"]["signed_local_ci"])
+        self.assertEqual(report["deployed"]["decisions"][0]["decision"], "promoted")
+        auto.assert_called_once()
+
+    def test_auto_unapproved_release_never_builds(self):
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy") as policy, \
+                patch.object(delivery, "auto_prepare_and_attest") as auto:
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": None, "attestation": None},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertEqual(host.mutations(), [])
+        policy.assert_not_called()
+        auto.assert_not_called()
+
     def test_prepare_mode_denies_a_held_lane_and_builds_nothing(self):
         host = FakeHost()
         code, out = self.run_main("prepare", host,
