@@ -514,6 +514,50 @@ def pending_per_service_source_paths(repo, source_sha, state_dir, manifest):
     return sorted(pending), sorted(unknown_baselines)
 
 
+def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
+    """Use a fast-forward checkout tip in AUTO; never change the source tree.
+
+    A timer can observe a newer, externally advanced main checkout after its
+    root-owned EnvironmentFile was pinned. This read-only bridge eliminates a
+    stale pin without making a release decision. The caller still independently
+    verifies that the tip is CURRENT GitHub main, and the ordinary signed,
+    per-UUID admission gate remains mandatory before any Docker/Coolify write.
+    Neither the pinned baseline nor release-state evidence is updated here.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("auto_checkout_unverifiable") from None
+    tip = result.stdout.strip()
+    if result.returncode != 0 or not SHA.fullmatch(tip):
+        raise Denied("auto_checkout_unverifiable")
+    try:
+        worktree = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain",
+             "--untracked-files=all"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("auto_checkout_unverifiable") from None
+    if worktree.returncode != 0:
+        raise Denied("auto_checkout_unverifiable")
+    if worktree.stdout.strip():
+        raise Denied("auto_checkout_dirty")
+    for ancestor in (pinned_sha, base_sha):
+        if ancestor == tip:
+            continue
+        try:
+            probe = subprocess.run(
+                ["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                 ancestor, tip], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            raise Denied("auto_source_not_fast_forward") from None
+        if probe.returncode != 0:
+            raise Denied("auto_source_not_fast_forward")
+    return tip
+
+
 def build_parser():
     """The adapter's only CLI surface.
 
@@ -553,6 +597,14 @@ def main(argv=None):
 
         now = parse_time(args.now) if args.now else None
         base_sha, source_sha = resolve_source_range(args)
+        if args.auto and not args.source_sha:
+            # Explicit --source-sha is an operator pin and must never be
+            # silently promoted to a newer checkout tip.
+            # Source SHA may follow an already advanced, clean checkout; the
+            # operator's last-delivered BASE must never be advanced on a tick.
+            # check_upstream_source below verifies exact live GitHub main and
+            # refuses a dirty or stale checkout before ANY build/deploy call.
+            source_sha = resolve_verified_checkout_tip(args.repo, source_sha, base_sha)
         if args.service and args.auto:
             raise Denied("scoped_auto_not_allowed")
         if args.service and args.mode != "plan" and os.geteuid() != 0:
