@@ -6,16 +6,16 @@ A separate, minimal GitHub MCP endpoint for operations absent from the regular G
 
 - Hard-coded repository ceiling: `miloszspyrka-code/harness-zar-i-szlif`, `miloszspyrka-code/zar-i-szlif`.
 - `POST /mcp` always needs `GITHUB_OPS_CALLER_TOKEN`; `GITHUB_TOKEN` needs an appropriately limited GitHub App installation credential or fine-grained PAT. Never put either in git, a URL or Multica CLI args.
-- `GITHUB_OPS_WRITES_ENABLED` defaults to false, `GITHUB_OPS_BRANCH_DELETION` defaults to false. `GITHUB_OPS_WORKFLOWS` defaults to `release-lanes-policy.yml` only.
+- `GITHUB_OPS_WRITES_ENABLED` defaults to false, `GITHUB_OPS_BRANCH_DELETION` defaults to false, and **`GITHUB_OPS_DELETE_ALLOWLIST` defaults to empty** (comma-separated exact entries like `miloszspyrka-code/harness-zar-i-szlif:fix/retired@<40-character SHA>`). `GITHUB_OPS_WORKFLOWS` defaults to `release-lanes-policy.yml` only. An enabled deletion flag without an exact matching approval cannot delete anything.
 - `GET /health` is a liveness endpoint; `ready=false` explicitly means **not operational**, even if Coolify reports the container healthy.
 - No generic shell, no arbitrary GitHub URL, no self-approval, branch protection mutation, auto-merge, token provisioning, Coolify deploy, HOLD bypass or implicit user delegation.
-- A branch deletion needs an exact SHA, protected=false, `ahead_by=0` against `main`, and a second SHA check. GitHub's ref DELETE has no atomic lease, so it cannot strictly eliminate the check/delete race. Use only on quiescent branches with review.
+- A branch deletion needs **both write gates**, an explicit exact `repo:branch@sha` approval in `GITHUB_OPS_DELETE_ALLOWLIST`, and a verified merged PR whose precise head SHA matches the branch. The PR merge commit must be reachable from current `main`, including squash-merge cases. Open PR bases/heads, protected branches, special release/hold/operator/staging prefixes and the live Coolify `ZARI-155` ref are rejected. Deletion rechecks SHA and open PRs, then reads back that the ref is absent. **Coolify bindings cannot be verified solely from GitHub:** the operator must check live Coolify inventory before adding an approval. GitHub DELETE has no atomic lease; quiescent exact-SHA branches only.
 - Branch protection/ruleset endpoints may reply HTTP 403 due to GitHub App scopes or private-repository plan limitations. Never treat that as protection enabled.
 - All writes must satisfy the separate existing CTO review, release HOLD, CI and operator access boundaries. This service does not enforce the complete GitHub→Coolify promotion policy.
 
 ## Run and check
 
-`npm test` — 8 HTTP-level mocked-provider positive/negative tests.
+`npm test` — 12 HTTP-level mocked-provider positive/negative tests (verified 12/12 on the exact GitHub branch code in an isolated network namespace, with a fake GitHub API and no production writes).
 
 `PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_TOKEN=<scoped-secret> node server.mjs`
 
