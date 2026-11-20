@@ -52,3 +52,43 @@
 - Build / signed CI / per-service authorization: `scripts/harness_native_delivery.py` and the current reviewed admission mechanism.
 
 **Not established by this document:** deployed source SHAs for all services, CI completeness, automatic build execution, any production test E2E, or permission to merge, delete branches, release services or bypass HOLD. These require live checks.
+
+## Observed Compose service image selectors (2026-11-20 UTC)
+
+These are **configured Coolify service image references**, not an authenticated build history, not Git branches, not verified running digests, and not evidence of a successful automatic release. An image tag containing a commit-like prefix (e.g. `deb907a88591`) is **only a label** until independently bound to a build attestation. Mutable tags (`latest`, `HEAD`) and unresolved `${...}` expressions need special attention. The `*` and `...` notation below abbreviates multi-image stacks; inspect `get_service(uuid)` for complete current lists.
+
+| Compose service | Coolify UUID | Configured image selectors (summary) |
+| --- | --- | --- |
+| `plasmic` | `mzmlcorgkfgdy44hqfmmtxgw` | `plasmic-studio:2026-11-15-e2e0b744; plasmic-wab:2026-11-15-e2e0b744` |
+| `hindsight-core` | `hjda7ckq5z4luhd1vpdepi0r` | `ghcr.io/vectorize-io/hindsight:latest-slim` |
+| `hindsight-mcp` | `aglen8ervlo2lpi30oz8iii9` | `caddy:2-alpine` |
+| `opik` | `s7a4rwqbij7w4fxlnauriblo` | `ghcr.io/comet-ml/opik/*:2.2.121; zookeeper:3.9.4; clickhouse:26.3.16.16-alpine; MinIO image` |
+| `mautic` | `8byf8qjxdixpwp7lsnr8zpto` | `${MAUTIC_IMAGE:-mautic/mautic:7.2.0-20260902-apache} (unresolved Compose fallback; verify effective env)` |
+| `supabase` | `r2gnunvpkqwmuew1tupbf7lx` | `upstream Supabase images: storage-api:v1.60.4, gotrue:v2.189.0, postgrest:v14.12, etc.` |
+| `opik-mcp` | `egasedqaofxnzcqppuxi805h` | `local/opik-mcp:3.0.7; local/opik-access-guard:20261105-v2; nginx:alpine` |
+| `emailens-mcp` | `16qnapdkj0qqqmeokepdechk` | `127.0.0.1:5000/harness-emailens-mcp:deb907a88591` |
+| `plasmic-mcp` | `a6ci2beifbinzckfnneiqnjd` | `127.0.0.1:5000/harness-plasmic-mcp:deb907a88591` |
+| `coolify-mcp` | `f7smgdueq8frlex9lfhp9iji` | `ghcr.io/stumason/coolify-mcp:3.9.0` |
+| `qdrant-mcp` | `a4zgmthjspz8hwvyu6llr8dh` | `127.0.0.1:5000/harness-qdrant-mcp:deb907a88591` |
+| `supabase-mcp` | `tjit4c8m0kjh8brkmdhyvkde` | `127.0.0.1:5000/harness-supabase-mcp:deb907a88591` |
+| `qdrant` | `eciprwgeyol4znmdd0dpu3xc` | `qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2` |
+| `comfy-mcp` | `kkhfw0napmeaqewgdirwhc1h` | `local/comfyui-mcp:0.52.206-chatfiles7` |
+| `opencode` | `26aqp0flyvdinjn6dklxnb1c` | `local/opencode-standalone:2.2.5-custom; alpine/socat` |
+| `ubuntu-mcp` | `lcnjb3vreec7saihkhan6akh` | `127.0.0.1:5000/harness-ubuntu-mcp:3c8da46902d2` |
+| `comfy` | `hdn0rl4wznbvaoizna61bbyy` | `local/comfyui-cpu:KOMAA1599-fe26d14f; local/comfyui-mcp:0.52.206` |
+| `cloudflared-mcp` | `3byzyvjxsycixyzcpxbujzev` | `cloudflare/cloudflared:latest` |
+| `mcp-activation` | `ra0iy2xs7abgms1r0phx4iqg` | `sablierapp/sablier@sha256:c24b7198...; tecnativa/docker-socket-proxy@sha256:1f5038b5...` |
+| `outline-knowledge` | `g16yynrbdpkab4hnmaoj7vxk` | `docker.getoutline.com/outlinewiki/outline:1.12.0` |
+| `mantic-mcp` | `bioufw4uxwuhmr51ueyahf0u` | `127.0.0.1:5000/harness-mantic-mcp:deb907a88591` |
+| `playwright-mcp` | `9e4fzsodixl4qzzap4zg0ntp` | `127.0.0.1:5000/harness-playwright-mcp:deb907a88591` |
+| `multica-stack` | `6ihjnudsifbcvklz5hqxdldc` | `ghcr.io/multica-ai/multica-backend:v0.8.1; ghcr.io/multica-ai/multica-web:v0.8.1; axllent/mailpit:v1.27.2` |
+| `multica-edge` | `vwe5lv4bniosxug34uhyf0ag` | `cloudflare/cloudflared:2026.9.3` |
+| `repowise-mcp-runtime` | `lecwi3emh9hjxir7gphmalie` | `fciqzgceop7mqtqickkfomd7:HEAD` |
+
+**Runtime-provenance next check per row:** current effective image ID/digest from Docker, exact built source SHA + CI attestation where applicable, release authorization, Coolify deployment ID, and functional live E2E. Nothing in this table supplies those missing proofs.
+
+## RepoWise retrieval negative control (verified 2026-11-20)
+
+At indexed Harness source SHA `2b1794e00d7fc17568b18b3fcc371a1bc7152bfd`, `get_answer` failed to retrieve the `github-ops-mcp` branch from this markdown file. This is a **retrieval gap**, not missing source. A live `search_codebase(mode="hybrid", query="github-ops-mcp")` returned zero `lines`, while **`query="`github-ops-mcp`"`** returned this file, line 23, with `feat/github-ops-mcp-20261120`. The equivalent backtick-quoted queries for `zar-i-szlif-web` and `multica-mcp` also returned relevant source lines. Querying the exact Coolify UUID `t09dqe2eppn2eiqmhzlf8xzp` likewise returned line 23. `get_context` for this markdown path returns a triage/preview, **not the complete source bytes**.
+
+Agents with authorized access: prefer one **backtick-quoted exact identifier** in `search_codebase`, then check the source's `lines` and indexed SHA; if absent, query the exact current Coolify UUID or read this file from the authorized GitHub exact commit. Never promote a `get_answer` LOW-confidence guess into a branch fact. See existing native Multica skill `repowise-evidence-gate`, section 2a; a skill instruction is not a guaranteed server-side retrieval fix.
