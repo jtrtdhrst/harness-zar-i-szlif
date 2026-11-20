@@ -128,6 +128,36 @@ class ProductPromotionTests(unittest.TestCase):
             with self.assertRaisesRegex(p.Denied, "maintenance_current_main_ci_not_green"):
                 p.candidate_history(spec["parent"], latest)
 
+    def test_exact_pr183_unrelated_cloudflare_failure_does_not_veto_green_product_ci(self):
+        sha = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        product = {"name": "validate-product", "status": "completed",
+                   "conclusion": "success", "app": {"slug": "github-actions"}}
+        foreign = {"id": 136273095146, "name": "Workers Builds: stronaglowna",
+                   "status": "completed", "conclusion": "failure",
+                   "app": {"slug": "cloudflare-workers-and-pages"}}
+        with patch.object(p, "github_api", return_value={"check_runs": [product, foreign], "total_count": 2}):
+            self.assertEqual(p.checks(sha), {"billing_blocked": False})
+        for wrong in [
+            {**foreign, "id": 2},
+            {**foreign, "name": "validate-other"},
+            {**foreign, "app": {"slug": "github-actions"}},
+        ]:
+            with self.subTest(wrong=wrong), patch.object(
+                    p, "github_api",
+                    return_value={"check_runs": [product, wrong], "total_count": 2}):
+                with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+                    p.checks(sha)
+        with patch.object(p, "github_api",
+                          return_value={"check_runs": [product, foreign], "total_count": 2}):
+            with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+                p.checks("a" * 40)
+        failed_product = {**product, "conclusion": "failure"}
+        with patch.object(p, "github_api",
+                          return_value={"check_runs": [failed_product, foreign], "total_count": 2}), patch.object(
+                                  p, "never_started_billing_blocked", return_value=False):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.checks(sha)
+
     def test_three_exact_historic_metadata_direct_commits_are_noop(self):
         rows = p.HISTORIC_METADATA_ONLY
         nodes = {
