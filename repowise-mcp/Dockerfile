@@ -7,6 +7,8 @@ RUN python -m pip install --no-cache-dir "repowise==${REPOWISE_VERSION}"
 COPY apply_overrides.py /tmp/repowise-custom/apply_overrides.py
 COPY overrides/ /tmp/repowise-custom/overrides/
 RUN python /tmp/repowise-custom/apply_overrides.py
+COPY tests/ /tmp/repowise-custom/tests/
+RUN python -m unittest discover -s /tmp/repowise-custom/tests -p 'test_*.py' -v
 RUN groupadd -r repowise && useradd -r -g repowise -m -d /home/repowise -s /usr/sbin/nologin repowise \
     && mkdir -p /workspace /home/repowise/codex-state && chown -R repowise:repowise /workspace /home/repowise
 USER repowise
