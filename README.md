@@ -8,6 +8,10 @@ This repository owns **infrastructure services and standalone integration MCPs**
 
 The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md), [candidate receiver API contract](integrations/hermes-paperclip/gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md), [Paperclip overlay specification](integrations/hermes-paperclip/paperclip-core-overlay/README.md) and [historical evidence index](integrations/hermes-paperclip/README.md) are maintained on `main`. For work involving Hermes, Paperclip Named MCP, per-run authorization, agent isolation or release, consult this runbook before action and verify the real issue/PR/runtime state. **PR #36 was merged, but this alone is not proof of runtime installation, authenticated E2E, independent release approval, or production readiness.**
 
+## Agent/operator contract for MCP delivery
+
+**Before changing a service, building an image or declaring a production release**, read [Harness MCP delivery — authoritative operator and agent contract](docs/architecture/HARNESS-DELIVERY-CONTRACT.md). It links the actual root controller, signed per-UUID admission, source range, Coolify readback, rollback and authenticated E2E. The live GitHub SHA and production digest, not RepoWise alone, decide whether a release succeeded. RepoWise agents should retrieve the `harness` repository at the **current** GitHub main SHA.
+
 ## Service folders
 
 - `plasmic/` — Plasmic self-hosted application
