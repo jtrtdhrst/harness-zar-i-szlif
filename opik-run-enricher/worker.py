@@ -114,6 +114,64 @@ def safe_timeline(raw,run,agent,limit=200):
   "raw_memory_contents_exported":False,
   "source_log_sha256":hashlib.sha256(raw).hexdigest()}
 
+def retrieval_evidence(raw, run, agent):
+ """Count *observed* role-scoped retrieval calls, never arguments or memories.
+
+ A tool invocation is not evidence of the right repo, helpful recall or
+ a completed task. RepoWise hints are derived from observed server labels.
+ """
+ allowed_tools=frozenset(("get_answer","get_context","get_symbol",
+  "search_codebase","get_risk","get_change_risk","get_why","get_overview",
+  "get_health","get_dead_code","list_repos","get_architecture",
+  "get_blast_radius","get_dependency_path","get_execution_flows",
+  "get_conformance"))
+ attempts=results=recalls=retains=0
+ errors={}
+ targets=set()
+ for line in raw.splitlines():
+  if b"pc_obs " not in line:continue
+  try:
+   outer=json.loads(line)
+   chunk=outer.get("chunk")
+   if not isinstance(chunk,str) or not chunk.startswith("pc_obs "):continue
+   ev=json.loads(chunk[7:])
+   if ev.get("paperclip_run_id")!=run or ev.get("paperclip_agent_id")!=agent:continue
+   kind=ev.get("kind")
+   if kind=="HINDSIGHT_RECALL":
+    recalls+=1;continue
+   if kind=="HINDSIGHT_RETAIN":
+    retains+=1;continue
+   if kind not in ("MCP_CALL_ATTEMPT","MCP_CALL_RESULT"):continue
+   tool=ev.get("tool")
+   server=ev.get("mcp_server")
+   if not isinstance(tool,str) or not isinstance(server,str):continue
+   if not re.fullmatch(r"repowise(?:[-_.][a-z0-9]+)*",server.lower()):continue
+   normalized=tool.removeprefix("mcp__Repowise__").rsplit(".",1)[-1]
+   if normalized not in allowed_tools:continue
+   parts=re.split("[-_.]",server.lower())
+   if "harness" in parts:targets.add("harness")
+   elif "product" in parts:targets.add("product")
+   else:targets.add("unknown")
+   if kind=="MCP_CALL_ATTEMPT":attempts+=1
+   else:
+    results+=1
+    code=ev.get("error_code")
+    label=code if isinstance(code,str) and code in SAFE_ERRORS else "OTHER_UNCLASSIFIED"
+    errors[label]=errors.get(label,0)+1
+  except (ValueError,TypeError,KeyError):
+   continue
+ return {"repowise_attempt_events":attempts,
+  "repowise_result_events":results,
+  "repowise_result_categories":errors,
+  "observed_repowise_target_hints":sorted(targets),
+  "hindsight_recall_events":recalls,
+  "hindsight_retain_events":retains,
+  "observed_retrieval_events":attempts+results+recalls+retains,
+  "repo_head_verified":False,"role_bank_verified":False,
+  "task_outcome_verified":False,"raw_arguments_exported":False,
+  "raw_memory_contents_exported":False,
+  "source_log_sha256":hashlib.sha256(raw).hexdigest()}
+
 def candidates(root,quiet,age_hours):
  if root.is_symlink() or not root.is_dir():raise RuntimeError("bad_log_root")
  found=[];ts=time.time()
@@ -230,6 +288,18 @@ def enrich(log,agent,run,opik,hindsight,cache):
      "source_event_count":timeline["event_count"],
      "provenance":"agent_run_log",
      "raw_log_content_exported":False},
+    trace["start_time"],trace["end_time"])
+   added+=1
+ if "paperclip.run.retrieval_evidence" not in present:
+  raw=log.read_bytes()
+  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
+   raise RuntimeError("log_changed")
+  evidence=retrieval_evidence(raw,run,agent)
+  if evidence["observed_retrieval_events"]:
+   emit(opik,project,trace["id"],run,agent,
+    "paperclip.run.retrieval_evidence",evidence,
+    {"evidence":"observed_pc_obs_retrieval_events_only",
+     "not_functional_correctness":True,"payload_exported":False},
     trace["start_time"],trace["end_time"])
    added+=1
  if hindsight and "hindsight.bank.stats_snapshot" not in present:
