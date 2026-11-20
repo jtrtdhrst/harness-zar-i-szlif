@@ -300,6 +300,24 @@ def never_started_billing_blocked(run):
     return all(BILLING_BLOCKED.search(str(x.get("message", ""))) for x in failures)
 
 
+# One historically failed Cloudflare Workers build on the CI-only Product PR
+# #183 squash must not veto the independently green Product CI test.  This
+# exception is immutable (commit, run ID, provider identity and status) and
+# never applies to app/runtime releases or any other failure.
+def historical_foreign_check(sha, row):
+    return (
+        sha == "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        and isinstance(row, dict)
+        and type(row.get("id")) is int
+        and row["id"] == 136273095146
+        and row.get("name") == "Workers Builds: stronaglowna"
+        and row.get("status") == "completed"
+        and row.get("conclusion") == "failure"
+        and isinstance(row.get("app"), dict)
+        and row["app"].get("slug") == "cloudflare-workers-and-pages"
+    )
+
+
 def checks(sha):
     """Every check must pass; a billing-blocked job is "CI never executed".
 
@@ -323,6 +341,8 @@ def checks(sha):
         billed = True
     for check in checks:
         if check is product:
+            continue
+        if historical_foreign_check(sha, check):
             continue
         if check.get("status") != "completed" or check.get("conclusion") not in ("success", "skipped", "neutral"):
             if not never_started_billing_blocked(check):
