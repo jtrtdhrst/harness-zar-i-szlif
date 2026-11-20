@@ -626,14 +626,16 @@ class MainWiringTests(unittest.TestCase):
     """main() must route prepare through evaluate_build and deploy through run_promotion."""
 
     def run_main(self, mode, host, *, documents=None, changed=("mantic-mcp/src/server.ts",),
-                 extra=(), source_sha=SOURCE, attestation_key=True):
+                 extra=(), source_sha=SOURCE, attestation_key=True,
+                 manifest_override=None):
         documents = documents if documents is not None else {
             "request": request(), "grant": grant(), "attestation": signed_attestation()}
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "git_changed_paths", lambda *a, **k: list(changed)), \
                 patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: manifest()), \
+                             side_effect=lambda path, label, require_root=False:
+                             manifest_override if manifest_override is not None else manifest()), \
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY):
@@ -689,6 +691,23 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "plan")
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertIsNone(payload["deployed"])
+
+    def test_held_unmodelled_resource_does_not_block_managed_plan(self):
+        # An explicitly held upstream resource is not this transport's deploy
+        # target; its files remain reported as pending, with no host mutation.
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({"id": "plasmic", "promotion_state": "hold"})
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "plasmic/studio/Dockerfile"),
+            extra=["--now", NOW.isoformat()], manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["held_outside_transport"], ["plasmic"])
+        self.assertEqual(payload["pending_paths"], ["plasmic/studio/Dockerfile"])
+        self.assertEqual(list(payload["services"]), ["mantic-mcp"])
+        self.assertEqual(payload["result"], "partial_manual_pending")
+        self.assertEqual(host.mutations(), [])
 
     def test_scoped_plan_admits_one_service_and_preserves_pending_paths(self):
         # Root-owned, per-UUID gates still apply; an explicitly scoped release
@@ -864,8 +883,6 @@ class AutoModeTests(unittest.TestCase):
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
-                patch.object(delivery, "check_release_parity",
-                             side_effect=parity_error, return_value={"result": "parity_ok"}), \
                 patch.object(delivery, "check_upstream_source",
                              side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
@@ -940,17 +957,17 @@ class AutoModeTests(unittest.TestCase):
                                                  "HARNESS_SOURCE_SHA": head})
         payload = json.loads(out)
         self.assertEqual(code, 0)
-        self.assertEqual(payload["result"], "no_change")
+        self.assertEqual(payload["result"], "source_range_unchanged")
+        self.assertEqual(payload["runtime_parity"], "not_claimed")
         self.assertEqual(host.mutations(), [])
 
-    def test_auto_no_change_denies_stale_runtime(self):
+    def test_idle_tick_never_claims_running_service_parity(self):
         repo, base, head = self.repo()
         code, out, host = self.run_auto(
             repo, tempfile.mkdtemp(), source_sha=head,
-            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head},
-            parity_error=delivery.ParityFailure("service_changes_not_deployed"))
-        self.assertEqual(code, 1, out)
-        self.assertIn("runtime_parity:service_changes_not_deployed", out)
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["runtime_parity"], "not_claimed")
         self.assertEqual(host.mutations(), [])
 
     def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
@@ -960,7 +977,7 @@ class AutoModeTests(unittest.TestCase):
             environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": head},
             source_error=delivery.ParityFailure("source_range_stale"))
         self.assertEqual(code, 1, out)
-        self.assertIn("runtime_parity:source_range_stale", out)
+        self.assertIn("source_parity:source_range_stale", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_denies_a_held_lane_without_touching_the_host(self):
