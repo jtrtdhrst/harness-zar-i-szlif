@@ -11,10 +11,6 @@
         ".github/workflows/release-lanes-policy.yml"
       ]
     },
-    "_archive": {
-      "mode": "manual_only",
-      "reason": "Archived sources are retained for reference and are not built or released."
-    },
     "cloudflare-ingress": {
       "mode": "manual_only",
       "reason": "Existing ingress is a protected runtime resource; no repository build or promotion workflow is authorized."
@@ -72,7 +68,7 @@
       ],
       "required_test_step": {
         "job": "validate-release-lanes",
-        "name": "Test Multica MCP adapter (required on every PR)",
+        "name": "Test Multica MCP adapter on trusted main",
         "working_directory": "multica-mcp",
         "run": "npm test"
       }

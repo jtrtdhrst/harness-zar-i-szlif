@@ -30,8 +30,9 @@ gate uses, from root-only paths. Nothing here installs, starts, stops or
 reconfigures a host service; installation is the operator step in
 ``ops/harness/INSTALL-RUNBOOK.md``.
 
-Two invocation modes, one CLI (``build_parser``) shared with the install
-preflight:
+Two invocation modes and one runtime CLI (``build_parser``). The root install
+preflight validates the exact reviewed unattended ``ExecStart`` tuple **without
+importing this adapter from the host**:
 
 * explicit - the operator passes ``--base-sha`` and ``--source-sha``;
 * ``--auto`` - the mode the installed 120-second timer uses, because a unit
@@ -65,6 +66,8 @@ from pathlib import Path
 
 from harness_delivery_controller import git_changed_paths, load_artifacts, run_promotion
 from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
+from harness_release_parity import (ParityFailure, check_source as check_upstream_source,
+                                    check_services as check_release_parity)
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
@@ -239,7 +242,9 @@ def deploy_service(host, uuid, service, spec, tag, *, on_backup=None):
     state = ""
     while time.time() < deadline:
         time.sleep(POLL_SECONDS)
-        running = host.docker("ps", "--filter", f"ancestor={tag}", "--format", "{{.Status}}")
+        running = host.docker("ps", "--filter", f"ancestor={tag}",
+                              "--filter", f"label=coolify.serviceUuid={uuid}",
+                              "--format", "{{.Status}}")
         _, current = host.coolify("GET", f"/services/{uuid}")
         state = str(current.get("status") or "")
         if "(healthy)" in running and state.startswith("running:healthy"):
@@ -301,15 +306,26 @@ class Transport:
 
     def deploy(self, service, uuid, kind, digest):
         self._known(service)
+        # The attested SHA-256 digest, not the mutable :sha12 tag, is the
+        # deployment identity. A tag can be retargeted after attestation.
+        if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise RuntimeError(f"{service}: invalid immutable image digest")
         revision = running_revision(self.host, service, digest, self.registry)
-        if not isinstance(revision, str) or len(revision) != 40:
+        if not isinstance(revision, str) or not SHA.fullmatch(revision):
             raise RuntimeError(f"{service}: prepared image carries no exact source revision")
-        tag = image_tag(service, revision, self.registry)
+        pinned_ref = image_reference(service, digest, self.registry)
         key = (service, uuid)
+        # Capture pre-deployment identity while the UUID-qualified runtime
+        # is still healthy; a mutable tag alone cannot prove rollback identity.
+        previous = self.health(service, uuid)
+        previous_digest = previous.get("digest")
+        if (previous.get("status") != "ok" or not isinstance(previous_digest, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", previous_digest)):
+            raise RuntimeError(f"{service}: previous running image digest unverified")
         self._rollback_snapshots.pop(key, None)
         def record_snapshot(path):
-            self._rollback_snapshots[key] = path
-        _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], tag,
+            self._rollback_snapshots[key] = (path, previous_digest)
+        _, _, body = deploy_service(self.host, uuid, service, SERVICES[service], pinned_ref,
                                     on_backup=record_snapshot)
         return str(body.get("deployment_uuid") or body.get("uuid") or "deploy")
 
@@ -323,29 +339,56 @@ class Transport:
             return {"status": "no_image", "digest": None, "source_sha": None}
         reference = match.group(0).split("image:", 1)[-1].strip().strip("'\"")
         image_id = self.host.docker("image", "inspect", "--format", "{{.Id}}", reference)
-        running = self.host.docker("ps", "--filter", f"ancestor={image_id}", "--format", "{{.Status}}")
+        # Do not count an unrelated healthy container using the same image.
+        # Coolify's own resource identity is carried in coolify.serviceUuid.
+        # Missing legacy labels fail closed until a verified redeployment.
+        running = self.host.docker("ps", "--filter", f"ancestor={image_id}",
+                                   "--filter", f"label=coolify.serviceUuid={uuid}",
+                                   "--format", "{{.Status}}")
         repo_digests = self.host.docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", reference)
         revision = self.host.docker("image", "inspect", "--format",
                                     '{{index .Config.Labels "' + REVISION_LABEL + '"}}', reference)
         health_url = SERVICES[service].get("health_url")
         probe_ok = True if not health_url else self.host.probe(health_url) == "200"
-        healthy = "(healthy)" in running and str(service_state.get("status") or "").startswith("running:healthy")
+        statuses = [line.strip() for line in running.splitlines() if line.strip()]
+        healthy = (len(statuses) == 1 and statuses[0].startswith("Up ")
+                   and "(healthy)" in statuses[0]
+                   and str(service_state.get("status") or "").startswith("running:healthy"))
         return {"status": "ok" if healthy and probe_ok else "unhealthy",
                 "digest": repo_digests.split("@", 1)[1] if "@" in repo_digests else None,
                 "source_sha": revision or None}
 
     def rollback(self, service, uuid):
         self._known(service)
-        backup = self._rollback_snapshots.pop((service, uuid), None)
-        if backup is None:
+        snapshot = self._rollback_snapshots.pop((service, uuid), None)
+        if snapshot is None:
             raise RuntimeError(f"{service}: no snapshot from this deployment attempt")
+        if (not isinstance(snapshot, tuple) or len(snapshot) != 2
+                or not isinstance(snapshot[1], str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot[1])):
+            raise RuntimeError(f"{service}: previous image digest not captured")
+        backup, previous_digest = snapshot
         raw = backup.read_text(encoding="utf-8")
         self.host.coolify("PATCH", f"/services/{uuid}",
                           {"docker_compose_raw": base64.b64encode(raw.encode()).decode()})
         status, body = self.host.coolify("POST", "/deploy", {"uuid": uuid})
         if status not in (200, 201):
             raise RuntimeError(f"rollback deploy http {status}")
-        return str(body.get("deployment_uuid") or body.get("uuid") or "rollback")
+        # A 200/201 only proves Coolify accepted the request. It does NOT prove
+        # the old service came back. Read back exact Compose and live health;
+        # failed restoration remains rollback_failed in the controller audit.
+        deadline = time.monotonic() + HEALTH_DEADLINE
+        while time.monotonic() < deadline:
+            try:
+                current_compose = compose_for(self.host, uuid)
+                observed = self.health(service, uuid)
+                if (current_compose == raw and observed.get("status") == "ok"
+                        and observed.get("digest") == previous_digest):
+                    return str(body.get("deployment_uuid") or body.get("uuid") or "rollback")
+            except (OSError, RuntimeError, ValueError):
+                pass
+            time.sleep(POLL_SECONDS)
+        raise RuntimeError(f"{service}: rollback compose or live health not verified")
 
 
 def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
@@ -402,9 +445,9 @@ def resolve_source_range(args, environ=None):
 def build_parser():
     """The adapter's only CLI surface.
 
-    ``harness_install_preflight`` parses the installed unit's ``ExecStart`` with
-    exactly this parser, so an installed invocation and these arguments can never
-    drift apart again.
+    The root preflight checks a fixed, reviewed unattended ``ExecStart``
+    interface and exact installed file hashes without importing this module.
+    This parser governs runtime CLI processing, not privileged preflight.
     """
     parser = argparse.ArgumentParser(description="Admission-gated Harness image delivery")
     parser.add_argument("--mode", choices=("plan", "prepare", "deploy"), default="plan")
@@ -416,6 +459,9 @@ def build_parser():
                         help="timer mode: take --base-sha/--source-sha from the unit's "
                              "EnvironmentFile (HARNESS_BASE_SHA/HARNESS_SOURCE_SHA); "
                              "absent or malformed = denied, never reconstructed")
+    parser.add_argument("--service", choices=sorted(SERVICES),
+                        help="explicit operator-only lane: release one admitted service while"
+                             " reporting other paths as pending; incompatible with --auto")
     parser.add_argument("--artifact-dir")
     parser.add_argument("--attestation-key")
     parser.add_argument("--state-dir", default=str(STATE_ROOT / "delivery"))
@@ -435,13 +481,44 @@ def main(argv=None):
 
         now = parse_time(args.now) if args.now else None
         base_sha, source_sha = resolve_source_range(args)
+        if args.service and args.auto:
+            raise Denied("scoped_auto_not_allowed")
+        if args.service and args.mode != "plan" and os.geteuid() != 0:
+            raise Denied("scoped_operator_required")
+        # The timer's pinned SHA must match real upstream main and checkout
+        # on EVERY auto cycle, including cycles with a non-empty source range.
+        # A global no_change additionally requires all managed runtimes to match.
+        if args.auto:
+            try:
+                if base_sha == source_sha:
+                    managed = sorted({
+                        entry.get("id") for entry in
+                        (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
+                        if isinstance(entry, dict) and entry.get("id") in SERVICES
+                    })
+                    check_release_parity(args.repo, source_sha, managed,
+                                         state_file=Path(args.state_dir) / "delivery.json")
+                else:
+                    check_upstream_source(args.repo, source_sha)
+            except ParityFailure as exc:
+                raise Denied("runtime_parity:" + str(exc)) from exc
         if base_sha == source_sha:
-            # Nothing changed since the last processed main SHA: this is the
-            # timer's steady state, and it touches neither docker nor Coolify.
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
-                              "result": "no_change"}, sort_keys=True))
+                              "result": "no_change", "runtime_parity": "verified" if args.auto
+                              else "not_checked_explicit_mode"}, sort_keys=True))
             return 0
-        paths = git_changed_paths(args.repo, base_sha, source_sha)
+        # A scoped release is operator-explicit, never silently chosen by the
+        # unattended timer. Every included service still needs the exact SHA,
+        # independent review, per-UUID grant, and signed digest attestation.
+        all_paths = git_changed_paths(args.repo, base_sha, source_sha)
+        if args.service:
+            folder = SERVICES[args.service]["folder"]
+            paths = [p for p in all_paths if p == folder or p.startswith(folder + "/")]
+            if not paths:
+                raise Denied("selected_service_unchanged")
+        else:
+            paths = all_paths
+        pending_paths = sorted(set(all_paths) - set(paths))
         entries = {entry.get("id"): entry
                    for entry in (manifest.get("lanes") or []) + (manifest.get("other_resources") or [])
                    if isinstance(entry, dict)}
@@ -459,6 +536,11 @@ def main(argv=None):
                 if path == spec["folder"] or path.startswith(spec["folder"] + "/"):
                     attributed.setdefault(service, []).append(path)
         report: dict = {"mode": args.mode, "source_sha": source_sha,
+                  "scope": args.service or "all",
+                  # Never report a scoped service release as delivery of the
+                  # entire main range. This ledger is necessary for downstream
+                  # Done/E2E checking and for the next per-lane release.
+                  "pending_paths": pending_paths,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
@@ -524,7 +606,9 @@ def main(argv=None):
                 print(json.dumps(report, sort_keys=True))
                 return 1
 
-        report["result"] = "ok"
+        # A successful per-lane release is NOT delivery of the complete main
+        # range. Keep the global success marker exclusive to unscoped batches.
+        report["result"] = "ok_scoped" if args.service else "ok"
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
@@ -537,3 +621,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
