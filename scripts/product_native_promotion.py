@@ -310,11 +310,14 @@ def historical_foreign_check(sha, row):
         and isinstance(row, dict)
         and type(row.get("id")) is int
         and row["id"] == 136273095146
+        and row.get("head_sha") == sha
         and row.get("name") == "Workers Builds: stronaglowna"
         and row.get("status") == "completed"
         and row.get("conclusion") == "failure"
         and isinstance(row.get("app"), dict)
         and row["app"].get("slug") == "cloudflare-workers-and-pages"
+        and type(row["app"].get("id")) is int
+        and row["app"]["id"] == 85455
     )
 
 
@@ -331,7 +334,12 @@ def checks(sha):
     if not isinstance(checks, list) or not isinstance(total, int) or total != len(checks) or total > 100:
         raise Denied("checks_incomplete")
     matches = [x for x in checks if x.get("name") == "validate-product"]
-    if len(matches) != 1 or matches[0].get("status") != "completed":
+    if (len(matches) != 1 or matches[0].get("status") != "completed"
+            or matches[0].get("head_sha") != sha
+            or not isinstance(matches[0].get("app"), dict)
+            or matches[0]["app"].get("slug") != "github-actions"
+            or type(matches[0]["app"].get("id")) is not int
+            or matches[0]["app"]["id"] != 15368):
         raise Denied("product_ci_not_green")
     product = matches[0]
     billed = False
@@ -342,6 +350,8 @@ def checks(sha):
     for check in checks:
         if check is product:
             continue
+        if not isinstance(check, dict) or check.get("head_sha") != sha:
+            raise Denied("nonpassing_checks")
         if historical_foreign_check(sha, check):
             continue
         if check.get("status") != "completed" or check.get("conclusion") not in ("success", "skipped", "neutral"):
