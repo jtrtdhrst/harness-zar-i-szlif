@@ -359,6 +359,23 @@ def verified_product_workflow(sha, check):
             or not isinstance(doc.get("repository"), dict)
             or doc["repository"].get("full_name") != REPO):
         raise Denied("product_ci_untrusted_workflow")
+    job = github_api("/repos/" + REPO + "/actions/jobs/" + str(check["id"]))
+    if (not isinstance(job, dict)
+            or type(job.get("id")) is not int or job["id"] != check["id"]
+            or type(job.get("run_id")) is not int or job["run_id"] != run_id
+            or type(job.get("run_attempt")) is not int
+            or type(doc.get("run_attempt")) is not int
+            or job["run_attempt"] != doc["run_attempt"]
+            or job.get("head_sha") != sha
+            or job.get("name") != "validate-product"
+            or job.get("workflow_name") != "Product CI"
+            or job.get("status") != "completed"
+            or job.get("conclusion") != "success"
+            or job.get("html_url") != details
+            or job.get("check_run_url") != (
+                "https://api.github.com/repos/" + REPO +
+                "/check-runs/" + str(check["id"]))):
+        raise Denied("product_ci_untrusted_job")
     return True
 
 
