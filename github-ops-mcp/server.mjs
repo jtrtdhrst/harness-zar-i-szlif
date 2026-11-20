@@ -11,7 +11,6 @@ const TOOLS = [
   ['github_get_branch_protection', 'Read main branch protection; report missing administration permission', ['repo']],
   ['github_get_deployments', 'Read deployments for one exact source commit', ['repo', 'sha']],
   ['github_preview_branch_delete', 'Verify branch SHA, protection and merge status; no write', ['repo', 'branch', 'expected_sha']],
-  ['github_delete_merged_branch', 'Delete a verified merged branch when deletion is explicitly enabled', ['repo', 'branch', 'expected_sha']],
   ['github_dispatch_workflow', 'Dispatch an allowlisted Actions workflow at verified main SHA', ['repo', 'workflow', 'expected_sha']],
   ['github_cancel_workflow_run', 'Cancel an allowlisted in-flight run at its verified SHA', ['repo', 'run_id', 'expected_sha']],
 ];
@@ -72,7 +71,7 @@ function assertBranch(branch){
 function githubClient({token,fetchImpl=fetch}){
   return async(method,path,body)=>{
     if(!token)throw error('AUTH_NOT_CONFIGURED','A scoped GitHub App or fine-grained credential is required');
-    const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`,'X-GitHub-Api-Version':'2022-11-28','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
+    const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`,'X-GitHub-Api-Version':'2026-03-10','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
     if(!result.ok){throw error(`GITHUB_HTTP_${result.status}`,`GitHub API denied ${method} (${result.status})`);}
     if(result.status===204)return {accepted:true};
     return result.json();
@@ -82,9 +81,6 @@ export function makeServer(config={}) {
   const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
-  const allowDeletion=config.allowDeletion??(process.env.GITHUB_OPS_BRANCH_DELETION==='true');
-  // A separate, exact ref + SHA owner allowlist prevents accidental Coolify ref deletion.
-  const deletionAllowlist=new Set(config.deletionAllowlist??(process.env.GITHUB_OPS_DELETE_ALLOWLIST??'').split(',').map(x=>x.trim()).filter(Boolean));
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
   const api=githubClient({token:githubToken,fetchImpl:config.fetchImpl});
   const access=cloudflareJwtVerifier({
@@ -103,11 +99,8 @@ export function makeServer(config={}) {
     if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
     if(name==='github_get_branch_protection')return api('GET',`${root}/branches/main/protection`);
     if(name==='github_get_deployments')return api('GET',`${root}/deployments?sha=${assertSHA(p.sha)}&per_page=30`);
-    if(name==='github_preview_branch_delete'||name==='github_delete_merged_branch'){
+    if(name==='github_preview_branch_delete'){
       const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase(),q=branch.split('/').map(encodeURIComponent).join('/');
-      const approval=`${repo}:${branch}@${sha}`;
-      if(name==='github_delete_merged_branch'&&(!writesEnabled||!allowDeletion))throw error('WRITE_DISABLED','Writes and deletion must be independently authorized');
-      if(name==='github_delete_merged_branch'&&!deletionAllowlist.has(approval))throw error('BRANCH_NOT_APPROVED','Exact repository, ref and SHA must be operator-allowlisted');
       const listPulls=async(state)=>{
         const items=[];
         for(let page=1;page<=20;page++){
@@ -116,39 +109,41 @@ export function makeServer(config={}) {
           items.push(...batch);
           if(batch.length<100)return items;
         }
-        throw error('PR_PAGE_LIMIT','Cannot certify all GitHub pull requests; refuse deletion');
+        throw error('PR_PAGE_LIMIT','Cannot verify all GitHub pull requests');
       };
-      const openHasRef=(items)=>items.some(pr=>pr.base?.ref===branch||(pr.head?.ref===branch&&pr.head?.repo?.full_name===repo));
+      const openHasRef=items=>items.some(pr=>pr.base?.ref===branch||(pr.head?.ref===branch&&pr.head?.repo?.full_name===repo));
       const current=await api('GET',`${root}/branches/${q}`);
-      if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved: expected SHA does not match');
+      if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved');
       if(current.protected)throw error('PROTECTED','GitHub reports branch protection');
       if(openHasRef(await listPulls('open')))throw error('OPEN_PR','An open pull request uses this branch');
-      // A branch that is merely an ancestor of main is not proof of an approved merge.
       const merged=(await listPulls('closed')).find(pr=>pr.merged_at&&pr.base?.ref==='main'
         &&pr.head?.ref===branch&&pr.head?.sha?.toLowerCase()===sha
         &&pr.head?.repo?.full_name===repo&&SHA.test(pr.merge_commit_sha||''));
-      if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with the exact branch head SHA');
+      if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with this exact branch SHA');
       const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
-      if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit is not reachable from current main');
-      if(name==='github_preview_branch_delete')return {eligible:true,approved:deletionAllowlist.has(approval),repo,branch,sha,merged_pr:merged.number,note:'Deletion is non-atomic; verify Coolify and other external deployment bindings before exact-SHA approval'};
-      const fresh=await api('GET',`${root}/branches/${q}`);
-      if(fresh.commit?.sha?.toLowerCase()!==sha||fresh.protected)throw error('STALE_SHA','Branch changed before deletion');
-      if(openHasRef(await listPulls('open')))throw error('OPEN_PR','A new pull request references this branch');
-      await api('DELETE',`${root}/git/refs/heads/${q}`);
-      let confirmedMissing=false;
-      try{await api('GET',`${root}/branches/${q}`);}
-      catch(e){if(e.code==='GITHUB_HTTP_404')confirmedMissing=true;else throw e;}
-      if(!confirmedMissing)throw error('DELETE_NOT_VERIFIED','GitHub branch ref still exists after DELETE');
-      return {deleted:true,verified_missing:true,repo,branch,sha,merged_pr:merged.number};
+      if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
+      return {eligible:true,repo,branch,sha,merged_pr:merged.number,
+        deletion_supported:false,note:'Preview only. GitHub DELETE has no atomic expected-SHA precondition; concurrent push can change the ref before deletion'};
     }
+    // Explicit error for legacy callers; never issue a non-atomic DELETE.
+    if(name==='github_delete_merged_branch')throw error('DELETE_NONATOMIC','GitHub ref deletion cannot guarantee expected SHA under concurrent updates');
     if(name==='github_dispatch_workflow'){
       const sha=assertSHA(p.expected_sha),workflow=p.workflow;
       if(typeof workflow!=='string'||!WORKFLOW.test(workflow)||!workflows.has(workflow))throw error('WORKFLOW_DENIED','Workflow is not in the explicit allowlist');
       if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
       const main=await api('GET',`${root}/branches/main`);
       if(main.commit?.sha!==sha)throw error('STALE_SHA','Main branch moved');
-      await api('POST',`${root}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,{ref:'main'});
-      return {dispatched:true,repo,workflow,source_sha:sha,verification:'Poll workflow runs by exact SHA before promoting'};
+      // GitHub API 2026-03-10 returns workflow_run_id for workflow dispatch.
+      // The branch can advance between our GET and POST: never claim that
+      // expected_sha ran until we read back the specific run's actual SHA.
+      const submission=await api('POST',`${root}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,{ref:'main'});
+      const runId=submission?.workflow_run_id;
+      if(!Number.isSafeInteger(runId)||runId<1)throw error('DISPATCH_UNVERIFIED','Dispatch response has no run ID; submission may have occurred; do not retry blindly');
+      const run=await api('GET',`${root}/actions/runs/${runId}`);
+      if(run.id!==runId||run.head_sha?.toLowerCase()!==sha.toLowerCase()||run.event!=='workflow_dispatch'
+        ||run.path?.split('/').pop()!==workflow)
+        throw error('DISPATCH_SHA_MISMATCH',`Dispatched run ${runId} does not verify against requested workflow and SHA; inspect/cancel the run`);
+      return {dispatched:true,verified:true,repo,workflow,run_id:runId,source_sha:run.head_sha,run_url:run.html_url??null};
     }
     if(name==='github_cancel_workflow_run'){
       const sha=assertSHA(p.expected_sha),runid=p.run_id;
