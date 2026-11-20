@@ -38,7 +38,8 @@ permissions:
 jobs:
   select:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    # Trusted main only; hosted ubuntu-latest jobs cannot start in this repo.
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -51,12 +52,21 @@ jobs:
         id: detect
         env:
           INPUT_SERVICE: ${{ inputs.service || 'all' }}
-        run: python3 scripts/select_mcp_builds.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = miloszspyrka-code/harness-zar-i-szlif
+          test "$(id -un)" = actions-zis
+          ! test -w /var/run/docker.sock
+          ! test -w /run/zis-ci-guest/docker.sock
+          python3 scripts/select_mcp_builds.py
 
   build-and-push:
     needs: select
-    if: needs.select.outputs.matrix != '[]'
-    runs-on: ubuntu-latest
+    if: needs.select.outputs.matrix != '[]' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Private rootless user namespace. Never attach the production Docker daemon.
+    runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 55
     permissions:
       contents: read
@@ -70,41 +80,46 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned v4
         with:
           persist-credentials: false
-      - name: Verify exact source and build context
-        env:
-          BUILD_ROOT: ${{ matrix.directory }}
-          DOCKERFILE: ${{ matrix.dockerfile }}
+      - name: Build and publish exact main SHA with isolated rootless Buildah
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/main
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test -f "$BUILD_ROOT/$DOCKERFILE"
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # pinned v3
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # pinned v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish image bound to exact main SHA
-        id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # pinned v6
-        with:
-          context: ./${{ matrix.directory }}
-          file: ./${{ matrix.directory }}/${{ matrix.dockerfile }}
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/harness-${{ matrix.service }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          provenance: mode=min
-      - name: Record immutable digest (artifact, not production release)
         env:
           SERVICE: ${{ matrix.service }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        shell: bash
+          BUILD_ROOT: ${{ matrix.directory }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "$DIGEST"
-          [[ "$DIGEST" == sha256:* ]]
-          printf '%s %s %s\n' "$SERVICE" "$GITHUB_SHA" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          umask 077
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REPOSITORY" = miloszspyrka-code/harness-zar-i-szlif
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(id -un)" = actions-zis
+          ! test -w /var/run/docker.sock
+          ! test -w /run/zis-ci-guest/docker.sock
+          test -f "$BUILD_ROOT/$DOCKERFILE"
+          test "${#GITHUB_SHA}" -eq 40
+          command -v buildah
+          work=$(mktemp -d "$RUNNER_TEMP/ghcr-rootless.XXXXXXXX")
+          chmod 0700 "$work"
+          mkdir -m 0700 "$work/home" "$work/run" "$work/data" "$work/config"
+          export HOME="$work/home"
+          export XDG_RUNTIME_DIR="$work/run"
+          export XDG_DATA_HOME="$work/data"
+          export XDG_CONFIG_HOME="$work/config"
+          export BUILDAH_ISOLATION=chroot
+          cleanup() { buildah unshare rm -rf -- "$work" || :; }
+          trap cleanup EXIT
+          tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/harness-${SERVICE}:sha-${GITHUB_SHA}"
+          buildah bud --isolation=chroot --format=oci --pull=always \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -f "$BUILD_ROOT/$DOCKERFILE" -t "$tag" "$BUILD_ROOT"
+          # Inject GHCR credentials only after source compilation.
+          printf '%s' "$GHCR_TOKEN" | buildah login --authfile "$work/auth.json" \
+            --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          buildah push --authfile "$work/auth.json" --digestfile "$work/digest" \
+            "$tag" "docker://$tag"
+          digest=$(cat "$work/digest")
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf '%s %s %s\n' "$SERVICE" "$GITHUB_SHA" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          echo 'OCI artifact published; Coolify promotion is separately gated.'
