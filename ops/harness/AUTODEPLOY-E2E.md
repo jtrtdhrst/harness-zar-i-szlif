@@ -6,7 +6,7 @@ Stan na 20.11.2026. Jedyna natywna ścieżka wdrażania obrazów Harness: istnie
 
 1. PR przechodzi niezależny review dla dokładnego HEAD; zatwierdzony merge trafia na Harness `main`.
 2. Operatorowy synchronizator aktualizuje dokładny checkout `/var/lib/harness-image-delivery/checkout` oraz `source-range.env`. Kontroler sprawdza, że `origin/main == HEAD == HARNESS_SOURCE_SHA`.
-3. Dla każdej zmienionej usługi muszą istnieć root-owned `<service>-request.json` i ważny, nieodwołany `<service>-grant.json`, zgodny z UUID, SHA i niezależnym review. Niczego z tego kontroler nie dopisuje ani nie zatwierdza sam.
+3. Dla usług z `promotion_state: auto_main` i `auto_deploy_expected: true` (sześć MCP: emailens, mantic, plasmic, playwright, supabase, ubuntu) autoryzacją wydania jest merge do trusted `main`. Kontroler sam pobiera exact main, buduje obraz lokalnie z tego SHA i promuje po weryfikacji digestu, health i źródłowego SHA. Nie ma per-merge request/grant. Usługi `hold` nadal wymagają root-owned request/grant i niezależnego review.
 4. Workflow `.github/workflows/mcp-images-ghcr.yml` (PR #186) buduje sześć źródłowych obrazów MCP na zaufanym `main`, publikuje `ghcr.io/miloszspyrka-code/harness-<service>:sha-<FULL_SHA>` i zapisuje niezmienny digest. Niczego nie wdraża do Coolify.
 5. Po niezależnej autoryzacji wydania `--mode deploy --auto` sprawdza request, grant i wszystkie bramki polityki. Istniejąca podpisana atestacja CI jest weryfikowana i używana. **Jeśli jej nie ma**, kontroler:
    - pobiera **wyłącznie** obraz `ghcr.io/miloszspyrka-code/harness-<service>@sha256:<APPROVED_DIGEST>` (bez drugiego buildu na VPS),
@@ -19,6 +19,8 @@ Stan na 20.11.2026. Jedyna natywna ścieżka wdrażania obrazów Harness: istnie
 **Fail closed przed jakimkolwiek buildem:** brak request/grantu, niezatwierdzony SHA, inny UUID, brak root-owned polityki CI dla usługi, inny repo/key, zmiana źródła, brak zatwierdzonego digestu GHCR. **Fail closed przed deployem:** digest niezgodny, brak testów, błędny podpis, zły SHA lub nieudany smoke. Stan produkcji pozostaje bez zmian; nie nadpisywać danych ani nie odblokowywać HOLD przez zgadywanie.
 
 ## Ważny stan realny
+
+- Auto-main buduje lokalnie z exact `main`, bo GitHub App nie ma `packages:read` i nie może pobrać prywatnego obrazu z GHCR. Workflow GHCR pozostaje niezależną walidacją/buildem, nie ścieżką wdrożenia.
 
 - Mapa aktywnych usług Compose/Git znajduje się na PR #182 w `ops/mcp-autodeploy/routes.json`. To tylko mapa; nie jest triggerem deploymentu. Przestarzały `zar-i-szlif-mcp-host` nie powinien być aktywnym celem.
 - Na VPS root-owned `/etc/paperclip-gitops/harness-ci-policy.json` zawiera aktualnie **tylko `ubuntu-mcp`**; testy innych usług trzeba niezależnie zdefiniować i sprawdzić przed aktywowaniem autoprepare.
@@ -36,9 +38,8 @@ git -C /var/lib/harness-image-delivery/checkout rev-parse HEAD
 git -C /var/lib/harness-image-delivery/checkout ls-remote origin refs/heads/main
 journalctl -u harness-image-delivery.service -n 45 --no-pager
 python3 /usr/local/libexec/harness_native_delivery.py \
-  --mode plan --auto \
+  --mode plan --auto-main \
   --repo /var/lib/harness-image-delivery/checkout \
-  --artifact-dir /var/lib/harness-image-delivery/gates \
   --attestation-key /etc/paperclip-gitops/harness-attestation.key \
   --state-dir /var/lib/harness-image-delivery/delivery
 ```

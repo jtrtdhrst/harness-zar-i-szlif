@@ -1487,3 +1487,60 @@ class AutoModeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class AutoMainCycleTests(unittest.TestCase):
+    """Trusted-main lane: changed auto services only, plan mutates nothing."""
+
+    BASE = "e" * 40
+    DEPLOY_DIGEST = "sha256:" + "d" * 64
+
+    def manifest(self):
+        return {"lanes": [], "other_resources": [{
+            "id": "mantic-mcp", "platform": "coolify", "coolify_kind": "service",
+            "coolify_uuid": UUID, "auto_deploy_expected": True,
+        }]}
+
+    def cycle(self, mode):
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state")
+        out = io.StringIO()
+        with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE), \
+                patch.object(delivery, "read_private_delivery_ledger",
+                             return_value={"mantic-mcp": {"source_sha": self.BASE}}), \
+                patch.object(delivery, "git_changed_paths",
+                             return_value=["mantic-mcp/Dockerfile"]), \
+                patch.object(delivery, "SERVICES", {"mantic-mcp": {
+                    "folder": "mantic-mcp", "dockerfile": "Dockerfile",
+                    "image_prefix": "local/mantic-mcp", "health_url": None}}), \
+                patch.object(delivery, "Transport", return_value=object()), \
+                patch.object(delivery, "prepare",
+                             return_value=("tag", self.DEPLOY_DIGEST)) as prepare, \
+                patch.object(delivery, "run_promotion",
+                             return_value={"result": "promoted",
+                                           "decisions": [{"service": "mantic-mcp",
+                                                          "decision": "promoted"}]}) as promote:
+            with redirect_stdout(out):
+                code = delivery.auto_main_cycle(args, self.manifest(), object())
+        return code, json.loads(out.getvalue()), prepare, promote
+
+    def test_plan_reports_change_and_never_builds(self):
+        code, report, prepare, promote = self.cycle("plan")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["services"][0]["decision"], "would_deploy")
+        self.assertEqual(report["result"], "plan")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_deploy_builds_exact_sha_and_pre_admits_digest(self):
+        code, report, prepare, promote = self.cycle("deploy")
+        self.assertEqual(code, 0)
+        prepare.assert_called_once_with(unittest.mock.ANY, "/repo",
+                                        "mantic-mcp", SOURCE)
+        kwargs = promote.call_args.kwargs
+        self.assertEqual(kwargs["source_sha"], SOURCE)
+        self.assertEqual(kwargs["pre_admitted"]["mantic-mcp"]["image_digest"],
+                         self.DEPLOY_DIGEST)
+        self.assertEqual(kwargs["pre_admitted"]["mantic-mcp"]["source_sha"], SOURCE)
+        self.assertEqual(report["result"], "ok")
