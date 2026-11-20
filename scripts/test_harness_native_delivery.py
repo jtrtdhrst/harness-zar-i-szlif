@@ -996,7 +996,8 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
+                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None,
+                 manifest_override=None):
         host = host or FakeHost()
         explicit_documents = documents is not None
         documents = documents if documents is not None else self.documents_for(source_sha)
@@ -1012,7 +1013,8 @@ class AutoModeTests(unittest.TestCase):
                 patch.object(delivery, "POLL_SECONDS", 0), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: manifest()), \
+                             side_effect=lambda path, label, require_root=False:
+                             manifest_override if manifest_override is not None else manifest()), \
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY), \
@@ -1140,6 +1142,47 @@ class AutoModeTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("delivery_ledger_invalid_sha:mantic-mcp", out)
         self.assertEqual(host.mutations(), [])
+
+    def test_unmapped_dockerfile_is_not_automatically_a_live_release_target(self):
+        repo, base, head = self.repo()
+        paths, unknown = delivery.pending_per_service_source_paths(
+            repo, head, tempfile.mkdtemp(), {"lanes": [], "other_resources": []})
+        self.assertEqual(paths, [])
+        self.assertEqual(unknown, [])
+
+    def test_auto_promotes_only_granted_service_and_preserves_other_backlog(self):
+        repo, base, head = self.repo(commits=1)
+        second = Path(repo) / "playwright-mcp"
+        second.mkdir()
+        (second / "Dockerfile").write_text("FROM scratch\\n", encoding="utf-8")
+        subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", repo, "commit", "-qm", "add second MCP"], check=True)
+        head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+        state_dir = tempfile.mkdtemp()
+        other = {"id": "playwright-mcp", "coolify_kind": "service",
+                 "coolify_uuid": "9e4fzsodixl4qzzap4zg0ntp",
+                 "promotion_state": "hold", "review_required": True}
+        policy = manifest()
+        policy["other_resources"].append(other)
+        host = FakeHost(revision=head, images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{head[:12]}": DIGEST})
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            documents=self.documents_for(head), host=host, manifest_override=policy,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        report = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(report["result"], "partial_release_pending")
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(report["awaiting_release_evidence"], ["playwright-mcp"])
+        self.assertEqual(len(report["deployed"]["decisions"]), 1)
+        self.assertEqual(report["deployed"]["decisions"][0]["service"], "mantic-mcp")
+        self.assertEqual(report["deployed"]["decisions"][0]["decision"], "promoted")
+        self.assertTrue(all("9e4fzsodixl4qzzap4zg0ntp" not in str(call)
+                            for call in host.mutations()), "unapproved service must stay untouched")
+        ledger = json.loads((Path(state_dir) / "delivery.json").read_text())
+        self.assertEqual(ledger["mantic-mcp"]["source_sha"], head)
+        self.assertNotIn("playwright-mcp", ledger)
 
     def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
         repo, base, head = self.repo()
