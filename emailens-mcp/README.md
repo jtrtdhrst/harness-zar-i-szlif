@@ -17,3 +17,11 @@ curl -fsS http://127.0.0.1:3100/healthz
 
 The bridge keeps one Emailens child process alive, restarts it on demand and drops
 it after `IDLE_SECONDS` without traffic.
+
+## Deployment (Harness auto-main)
+
+A merge to `miloszspyrka-code/harness-zar-i-szlif` `main` that touches this
+directory is built and promoted by the existing `harness-image-delivery.timer`
+(`--auto-main`): exact main SHA, immutable local digest, Coolify service
+`16qnapdkj0qqqmeokepdechk`, live health readback and one rollback. No per-release
+request/grant or operator source pin is required for this service.
