@@ -54,6 +54,7 @@ field is ever executed: the only commands this module runs are its own fixed
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import stat
@@ -460,6 +461,14 @@ def auto_ci_policy(service, repo, attestation_key):
         raise Denied("auto_ci_repo_mismatch")
     if Path(policy["key_file"]).resolve() != Path(attestation_key).resolve():
         raise Denied("auto_ci_key_mismatch")
+    # Preflight the root-owned private signing key BEFORE GHCR Docker pull,
+    # even when the current request has no attestation artifact yet.
+    key = ci.read_trusted_file(attestation_key, "signing_key", require_root=True)
+    if len(key) < 32:
+        raise Denied("signing_key_weak")
+    # Existing signed attestations must match the CURRENT root-owned policy;
+    # an older valid HMAC does not authorize a service after policy revocation.
+    policy["_verified_digest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
     return policy
 
 
@@ -919,6 +928,16 @@ def main(argv=None):
                     evaluate(manifest, bundle.get("request"), grant=bundle.get("grant"),
                              attestation=bundle.get("attestation"), now=now,
                              expected_source_sha=source_sha)
+                    if args.auto and args.mode == "deploy":
+                        # The HMAC verifies integrity, not freshness of host CI
+                        # policy. Fail closed before any Docker/Coolify call if
+                        # a policy or key is revoked, absent, or changed.
+                        policy = auto_ci_policy(service, args.repo, args.attestation_key)
+                        policies[service] = policy
+                        existing = bundle.get("attestation")
+                        if (not isinstance(existing, dict)
+                                or existing.get("policy_digest") != policy["_verified_digest"]):
+                            raise Denied("auto_ci_policy_digest_mismatch")
                 report["admitted"].append(service)
             except Denied as exc:
                 report["denied"][service] = str(exc)
