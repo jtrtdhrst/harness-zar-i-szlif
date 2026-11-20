@@ -107,6 +107,10 @@
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
+    "repowise-mcp": {
+      "mode": "manual_only",
+      "reason": "RepoWise MCP pinned Git-owned build; source review, immutable image and isolated production cutover are required."
+    },
     "scripts": {
       "mode": "workflow",
       "workflows": [
