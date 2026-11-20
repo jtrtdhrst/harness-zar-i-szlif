@@ -233,7 +233,7 @@ def _promote(service, record, transport, state, state_path):
 
 
 def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
-                  state_path=None, lock_path=None, *, source_sha):
+                  state_path=None, lock_path=None, *, source_sha, pre_admitted=None):
     """Return an audit report; mutate nothing unless every gate admits.
 
     ``artifacts(service)`` returns ``{"request": ..., "grant": ..., "attestation": ...}``
@@ -267,13 +267,25 @@ def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
         for service in sorted(attributed):
             decision = {"service": service, "changed_paths": sorted(attributed[service])}
             try:
-                bundle = artifacts(service)
-                if not isinstance(bundle, dict):
-                    raise Denied("gate_artifacts_invalid")
-                request = bundle.get("request")
-                record = evaluate(manifest, request, grant=bundle.get("grant"),
-                                  attestation=bundle.get("attestation"), now=now,
-                                  expected_source_sha=source_sha)
+                if pre_admitted is not None and service in pre_admitted:
+                    # Trusted-main auto lane: the caller already verified exact
+                    # source/digest and the manifest authorizes automatic
+                    # promotion. No per-release request/grant artifact exists.
+                    record = pre_admitted[service]
+                    if (not isinstance(record, dict)
+                            or record.get("service") != service
+                            or record.get("source_sha") != source_sha
+                            or not isinstance(record.get("image_digest"), str)
+                            or not DIGEST.fullmatch(record["image_digest"])):
+                        raise Denied("auto_admission_invalid")
+                else:
+                    bundle = artifacts(service)
+                    if not isinstance(bundle, dict):
+                        raise Denied("gate_artifacts_invalid")
+                    request = bundle.get("request")
+                    record = evaluate(manifest, request, grant=bundle.get("grant"),
+                                      attestation=bundle.get("attestation"), now=now,
+                                      expected_source_sha=source_sha)
             except Denied as exc:
                 decision.update(decision="denied", reason=str(exc))
                 report["decisions"].append(decision)

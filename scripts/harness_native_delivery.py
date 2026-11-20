@@ -710,6 +710,186 @@ def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
     return tip
 
 
+TRUSTED_ORIGINS = (
+    r"https://github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+    r"git@github\.com:miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+    r"ssh://git@github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+)
+
+
+def _git(repo, *args, timeout=120):
+    return subprocess.run(["git", "-C", str(repo), *args],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def sync_checkout_to_main(repo):
+    """Fast-forward the delivery checkout to the real GitHub main tip.
+
+    This replaces the operator-written EnvironmentFile pin. It only advances a
+    clean checkout by fast-forward; a dirty tree, divergent history or
+    unverifiable origin fails closed before any build.
+    """
+    try:
+        origin = _git(repo, "remote", "get-url", "origin")
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("source_remote_unverifiable") from None
+    if origin.returncode != 0 or not any(
+            re.fullmatch(pattern, origin.stdout.strip(), flags=re.IGNORECASE)
+            for pattern in TRUSTED_ORIGINS):
+        raise Denied("source_remote_untrusted")
+    try:
+        ls = _git(repo, "ls-remote", "--exit-code", "origin", "refs/heads/main")
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("upstream_main_unverifiable") from None
+    lines = ls.stdout.splitlines()
+    if (ls.returncode != 0 or len(lines) != 1
+            or not re.fullmatch(r"[0-9a-f]{40}\trefs/heads/main", lines[0])):
+        raise Denied("upstream_main_unverifiable")
+    source_sha = lines[0].split("\t", 1)[0]
+    try:
+        fetch = _git(repo, "fetch", "--quiet", "origin", "main")
+        status = _git(repo, "status", "--porcelain", "--untracked-files=all")
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("checkout_fetch_failed") from None
+    if fetch.returncode != 0:
+        raise Denied("checkout_fetch_failed")
+    if status.returncode != 0:
+        raise Denied("checkout_unverifiable")
+    if status.stdout.strip():
+        raise Denied("checkout_dirty")
+    head = _git(repo, "rev-parse", "HEAD")
+    if head.returncode != 0 or not SHA.fullmatch(head.stdout.strip()):
+        raise Denied("checkout_unverifiable")
+    if head.stdout.strip() != source_sha:
+        probe = _git(repo, "merge-base", "--is-ancestor", head.stdout.strip(), source_sha)
+        if probe.returncode != 0:
+            raise Denied("checkout_not_fast_forward")
+        checkout = _git(repo, "checkout", "--quiet", "--detach", source_sha)
+        if checkout.returncode != 0:
+            raise Denied("checkout_update_failed")
+    if _git(repo, "rev-parse", "HEAD").stdout.strip() != source_sha:
+        raise Denied("checkout_stale")
+    return source_sha
+
+
+def deployed_source_sha(host, transport, repo, service, uuid):
+    """Resolve the source SHA actually running for one service.
+
+    The release ledger wins when present. Otherwise the OCI revision label of
+    the running image is used; a legacy 12-hex image tag is accepted only when
+    git resolves it uniquely. An unknown baseline never guesses a deployment.
+    """
+    try:
+        health = transport.health(service, uuid)
+    except Exception:
+        health = {}
+    sha = health.get("source_sha") if isinstance(health, dict) else None
+    if isinstance(sha, str) and SHA.fullmatch(sha):
+        return sha, health
+    try:
+        raw = compose_for(host, uuid)
+        match = image_pattern(service, SERVICES[service]).search(raw)
+    except Exception:
+        match = None
+    if match:
+        reference = match.group(0).split("image:", 1)[-1].strip().strip("'\"")
+        tag = reference.rsplit(":", 1)[-1]
+        if re.fullmatch(r"[0-9a-f]{12,40}", tag):
+            probe = _git(repo, "rev-parse", "--verify", tag + "^{commit}")
+            if probe.returncode == 0 and SHA.fullmatch(probe.stdout.strip()):
+                return probe.stdout.strip(), health
+    raise Denied("auto_baseline_unavailable:" + service)
+
+
+def auto_main_cycle(args, manifest, host):
+    """Build and promote every auto service whose source changed on main.
+
+    The merge to trusted main is the release authorization for entries with
+    ``auto_deploy_expected: true``. Exact source SHA, a locally built immutable
+    digest, live health/source readback and one rollback remain mandatory.
+    """
+    source_sha = sync_checkout_to_main(args.repo)
+    transport = Transport(host)
+    ledger = read_private_delivery_ledger(args.state_dir)
+    entries = {entry.get("id"): entry
+               for entry in (manifest.get("lanes") or []) +
+                            (manifest.get("other_resources") or [])
+               if isinstance(entry, dict)}
+    plan, pre, changed_paths = [], {}, []
+    for service, spec in sorted(SERVICES.items()):
+        entry = entries.get(service)
+        if not entry or entry.get("auto_deploy_expected") is not True:
+            continue
+        if (entry.get("platform", "coolify") != "coolify"
+                or entry.get("coolify_kind") != "service"):
+            plan.append({"service": service, "decision": "unsupported_kind"})
+            continue
+        uuid = entry.get("coolify_uuid")
+        if not isinstance(uuid, str) or not re.fullmatch(r"[a-z0-9]{10,40}", uuid):
+            plan.append({"service": service, "decision": "invalid_uuid"})
+            continue
+        previous = None
+        record = ledger.get(service)
+        if isinstance(record, dict):
+            previous = record.get("source_sha")
+        if not (isinstance(previous, str) and SHA.fullmatch(previous)):
+            try:
+                previous, _ = deployed_source_sha(host, transport, args.repo, service, uuid)
+            except Denied as exc:
+                plan.append({"service": service, "decision": "denied",
+                             "reason": str(exc)})
+                continue
+        if previous == source_sha:
+            plan.append({"service": service, "decision": "current",
+                         "source_sha": previous})
+            continue
+        try:
+            paths = [path for path in git_changed_paths(args.repo, previous, source_sha)
+                     if path == spec["folder"] or path.startswith(spec["folder"] + "/")]
+        except Exception as exc:
+            plan.append({"service": service, "decision": "denied",
+                         "reason": "diff_failed:" + type(exc).__name__})
+            continue
+        if not paths:
+            plan.append({"service": service, "decision": "source_unchanged",
+                         "source_sha": previous})
+            continue
+        item = {"service": service, "decision": "would_deploy",
+                "baseline": previous, "changed_paths": sorted(paths)}
+        plan.append(item)
+        if args.mode == "plan":
+            continue
+        try:
+            _, digest = prepare(host, args.repo, service, source_sha)
+        except Exception as exc:
+            item.update(decision="build_failed", reason=type(exc).__name__)
+            continue
+        pre[service] = {"service": service, "coolify_uuid": uuid,
+                        "coolify_kind": "service", "source_sha": source_sha,
+                        "image_digest": digest}
+        changed_paths.extend(paths)
+        item.update(decision="built", image_digest=digest)
+    report = {"mode": args.mode, "source_sha": source_sha, "services": plan}
+    if args.mode == "plan" or not pre:
+        report["result"] = "plan" if args.mode == "plan" else "no_service_change"
+        print(json.dumps(report, sort_keys=True))
+        return 0
+    promotion = run_promotion(
+        manifest, changed_paths, lambda service: {}, transport,
+        state_path=str(Path(args.state_dir) / "delivery.json"),
+        lock_path=str(Path(args.state_dir) / "delivery.lock"),
+        source_sha=source_sha, pre_admitted=pre)
+    report["promotion"] = promotion
+    good = {"promoted", "already_delivered"}
+    decisions = promotion.get("decisions", [])
+    ok = (len(decisions) == len(pre)
+          and all(decision.get("decision") in good for decision in decisions)
+          and promotion.get("result") != "denied")
+    report["result"] = "ok" if ok else "denied"
+    print(json.dumps(report, sort_keys=True))
+    return 0 if ok else 1
+
+
 def build_parser():
     """The adapter's only CLI surface.
 
@@ -727,6 +907,10 @@ def build_parser():
                         help="timer mode: take --base-sha/--source-sha from the unit's "
                              "EnvironmentFile (HARNESS_BASE_SHA/HARNESS_SOURCE_SHA); "
                              "absent or malformed = denied, never reconstructed")
+    parser.add_argument("--auto-main", action="store_true",
+                        help="trusted-main auto lane: verified main tip replaces the "
+                             "operator pin; every changed auto service is built and "
+                             "promoted with digest, health and rollback")
     parser.add_argument("--service", choices=sorted(SERVICES),
                         help="explicit operator-only lane: release one admitted service while"
                              " reporting other paths as pending; incompatible with --auto")
@@ -748,6 +932,10 @@ def main(argv=None):
         from harness_release_admission import parse_time
 
         now = parse_time(args.now) if args.now else None
+        if args.auto_main:
+            if args.auto or args.service:
+                raise Denied("auto_main_exclusive")
+            return auto_main_cycle(args, manifest, host)
         base_sha, source_sha = resolve_source_range(args)
         if args.auto and not args.source_sha:
             # Explicit --source-sha is an operator pin and must never be
