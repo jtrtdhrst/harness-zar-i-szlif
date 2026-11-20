@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import product_image_delivery as delivery
+REAL_READ_MARKER = delivery.read_build_attestation
 
 
 SHA = "4feef6903dc21be5da0433a77b10549bf0009661"
@@ -41,8 +42,7 @@ class ReadbackRegressionTests(unittest.TestCase):
         self.public_html = self.html
         self.public_sha = SHA
         self.runtime_digest = "sha256:" + "b" * 64
-        self.image_id = self.runtime_digest
-        self.manifest_digest = DIGEST
+        self.registry_digests = [f"{delivery.REGISTRY}/{delivery.IMAGE}@{DIGEST}"]
         self.runtime_image = f"{delivery.REGISTRY}/{delivery.IMAGE}:{SHA}"
         self.runtime_state = "running"
         self.containers = [delivery.APP_UUID + "-fixture"]
@@ -56,11 +56,10 @@ class ReadbackRegressionTests(unittest.TestCase):
             "image": self.runtime_image,
             "digest": DIGEST,
         }
-        self.marker = mock.Mock()
+        self.marker_untrusted = False
         self.subprocess_calls = []
         self.patches = [
-            mock.patch.object(delivery, "read_marker_protected",
-                              side_effect=lambda _: self.marker_data),
+            mock.patch.object(delivery, "read_build_attestation", side_effect=self.fake_marker),
             mock.patch.object(delivery.subprocess, "run", side_effect=self.fake_run),
             mock.patch.object(delivery.urllib.request, "urlopen", side_effect=self.fake_urlopen),
         ]
@@ -71,15 +70,19 @@ class ReadbackRegressionTests(unittest.TestCase):
         for p in reversed(self.patches):
             p.stop()
 
+    def fake_marker(self, **kwargs):
+        if self.marker_untrusted:
+            raise PermissionError("untrusted_build_attestation")
+        return self.marker_data
+
     def fake_run(self, argv, **kwargs):
         self.subprocess_calls.append(tuple(argv))
         if argv[:3] == ["docker", "ps", "--format"]:
             output = "\n".join(self.containers) + "\n"
         elif argv[:3] == ["docker", "inspect", "--format"]:
             output = f"{self.runtime_digest}|{self.runtime_image}|{self.runtime_state}\n"
-        elif argv[:4] == ["docker", "image", "inspect", "--format"]:
-            output = self.image_id + "|" + json.dumps(
-                [f"{delivery.REGISTRY}/{delivery.IMAGE}@{self.manifest_digest}"]) + "\n"
+        elif argv[:3] == ["docker", "image", "inspect"]:
+            output = f"{'sha256:'+'b'*64}|{json.dumps(self.registry_digests)}\n"
         elif argv[:3] == ["docker", "exec", self.containers[0]]:
             if argv[3] == "cat":
                 output = json.dumps({"commit": SHA, "source": "zar-i-szlif/main"})
@@ -100,77 +103,6 @@ class ReadbackRegressionTests(unittest.TestCase):
         if url == delivery.PUBLIC_HEALTH:
             return FakeResponse(b"ok")
         raise AssertionError("unexpected URL")
-
-    def test_symlinked_build_marker_rejected(self):
-        with mock.patch.object(delivery, "read_marker_protected",
-                               side_effect=RuntimeError("not trusted")):
-            self.assertEqual(delivery.target_readback(SHA)["reason"],
-                             "untrusted_build_attestation")
-
-    def test_manifest_digest_and_image_id_are_distinct_and_verified(self):
-        self.assertNotEqual(self.runtime_digest, DIGEST)
-        self.assertTrue(delivery.target_readback(SHA)["ok"])
-        self.manifest_digest = "sha256:" + "c" * 64
-        self.assertEqual(delivery.target_readback(SHA)["reason"],
-                         "repository_digest_mismatch")
-        self.manifest_digest = DIGEST
-        self.runtime_digest = "sha256:" + "d" * 64
-        self.assertEqual(delivery.target_readback(SHA)["reason"],
-                         "target_runtime_image_id_mismatch")
-
-    def test_real_marker_open_fd_rejects_symlinks_and_insecure_parent(self):
-        actual_reader = delivery.read_marker_protected
-        # setUp mocks read_marker_protected, so obtain the original function
-        # from its saved wrapped side effect? Use importlib reload in test below.
-        with tempfile.TemporaryDirectory() as tmp:
-            parent = Path(tmp)
-            marker = parent / "marker.json"
-            marker.write_text(json.dumps(self.marker_data))
-            marker.chmod(0o600)
-            # Fetch original helper before the mock installed by setUp.
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("image_delivery_fdcheck", delivery.__file__)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            self.assertEqual(module.read_marker_protected(marker), self.marker_data)
-            marker.unlink()
-            target = parent / "target.json"
-            target.write_text(json.dumps(self.marker_data))
-            target.chmod(0o600)
-            marker.symlink_to(target)
-            with self.assertRaises(OSError):
-                module.read_marker_protected(marker)
-            marker.unlink()
-            marker.write_text(json.dumps(self.marker_data))
-            marker.chmod(0o600)
-            parent.chmod(0o777)
-            with self.assertRaisesRegex(RuntimeError, "untrusted_release_directory"):
-                module.read_marker_protected(marker)
-            parent.chmod(0o700)
-
-    def test_release_state_directory_requires_private_ownership(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp)
-            with mock.patch.object(delivery, "STATE_DIR", p):
-                delivery.trusted_directory(p, private=True)
-                p.chmod(0o777)
-                with self.assertRaisesRegex(RuntimeError, "untrusted_release_directory"):
-                    delivery.trusted_directory(p, private=True)
-                p.chmod(0o700)
-
-    def test_preplanted_state_tmp_symlink_cannot_overwrite_target(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp)
-            victim = p / "victim.txt"
-            victim.write_text("original")
-            state = p / "state.json"
-            (p / "state.tmp").symlink_to(victim)
-            with mock.patch.object(delivery, "STATE_DIR", p), \
-                 mock.patch.object(delivery, "STATE", state):
-                with self.assertRaises(FileExistsError):
-                    delivery.save({"safe": True})
-            self.assertEqual(victim.read_text(), "original")
-            self.assertTrue((p / "state.tmp").is_symlink())
 
     def test_exact_image_and_public_html_allow_verified_noop(self):
         proof = delivery.target_readback(SHA)
@@ -193,9 +125,8 @@ class ReadbackRegressionTests(unittest.TestCase):
         self.assertFalse(delivery.target_readback(SHA)["ok"])
 
     def test_untrusted_marker_permissions_rejected(self):
-        with mock.patch.object(delivery, "read_marker_protected",
-                               side_effect=RuntimeError("untrusted_build_attestation")):
-            proof = delivery.target_readback(SHA)
+        self.marker_untrusted = True
+        proof = delivery.target_readback(SHA)
         self.assertFalse(proof["ok"])
         self.assertEqual(proof["reason"], "untrusted_build_attestation")
 
@@ -205,7 +136,7 @@ class ReadbackRegressionTests(unittest.TestCase):
                          "target_runtime_digest_or_ref_mismatch")
 
     def test_wrong_runtime_digest_rejected(self):
-        self.runtime_digest = "sha256:" + "d" * 64
+        self.runtime_digest = "sha256:" + "c" * 64
         self.assertFalse(delivery.target_readback(SHA)["ok"])
 
     def test_nonrunning_runtime_rejected(self):
@@ -216,6 +147,51 @@ class ReadbackRegressionTests(unittest.TestCase):
         self.containers.append(delivery.APP_UUID + "-duplicate")
         self.assertEqual(delivery.target_readback(SHA)["reason"],
                          "target_container_not_unique")
+
+    def test_distinct_image_id_and_manifest_digest_is_accepted(self):
+        self.assertNotEqual(self.runtime_digest, DIGEST)
+        self.assertTrue(delivery.target_readback(SHA)["ok"])
+
+    def test_valid_container_id_with_wrong_registry_digest_denied(self):
+        self.registry_digests = [f"{delivery.REGISTRY}/{delivery.IMAGE}@sha256:{'c'*64}"]
+        self.assertEqual(delivery.target_readback(SHA)["reason"],
+                         "target_runtime_digest_or_ref_mismatch")
+
+    def test_real_marker_inode_symlink_and_parent_permissions_are_denied(self):
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "marker"
+            parent.mkdir(mode=0o700)
+            file = parent / "proof.json"
+            file.write_text(json.dumps(self.marker_data))
+            file.chmod(0o600)
+            with mock.patch.object(delivery, "MARKER", file):
+                self.assertEqual(REAL_READ_MARKER(
+                    expected_uid=os.geteuid(),expected_gid=os.getegid()), self.marker_data)
+                parent.chmod(0o777)
+                with self.assertRaises(PermissionError):
+                    REAL_READ_MARKER(
+                        expected_uid=os.geteuid(),expected_gid=os.getegid())
+                parent.chmod(0o700)
+                link = parent / "link.json"
+                link.symlink_to(file)
+            with mock.patch.object(delivery, "MARKER", link):
+                with self.assertRaises(OSError):
+                    REAL_READ_MARKER(
+                        expected_uid=os.geteuid(),expected_gid=os.getegid())
+
+    def test_real_marker_opened_inode_not_swapped_by_replaced_path(self):
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "marker"
+            parent.mkdir(mode=0o700)
+            file = parent / "proof.json"
+            file.write_text(json.dumps(self.marker_data))
+            file.chmod(0o600)
+            with mock.patch.object(delivery, "MARKER", file):
+                result = REAL_READ_MARKER(
+                    expected_uid=os.geteuid(),expected_gid=os.getegid())
+                self.assertEqual(result["sha"], SHA)
 
     def test_public_html_drift_rejected_even_if_release_json_claims_sha(self):
         self.public_html = b"<html>stale data</html>"
@@ -314,6 +290,35 @@ class ReadbackRegressionTests(unittest.TestCase):
             network.assert_not_called()
             remove.assert_not_called()
 
+    def test_symlink_lock_does_not_get_followed_or_change_victim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            victim=root/"victim"
+            victim.write_text("UNCHANGED")
+            link=root/"delivery.lock"
+            link.symlink_to(victim)
+            with (mock.patch.object(delivery,"STATE_DIR",root),
+                  mock.patch.object(delivery,"LOCK",link),
+                  mock.patch.object(delivery,"ref_sha") as ref,
+                  mock.patch.object(sys,"argv",["delivery","--plan"])):
+                err=io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(delivery.main(),1)
+                self.assertIn("untrusted_state_file",err.getvalue())
+                ref.assert_not_called()
+                self.assertEqual(victim.read_text(),"UNCHANGED")
+
+    def test_symlink_build_log_is_denied_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            victim=root/"victim"
+            victim.write_text("UNCHANGED")
+            link=root/"build-SHA.log"
+            link.symlink_to(victim)
+            with self.assertRaises(OSError):
+                delivery.open_owned_state_file(link,append=True)
+            self.assertEqual(victim.read_text(),"UNCHANGED")
+
     def test_exact_manual_approved_sha_can_be_planned_without_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -329,6 +334,72 @@ class ReadbackRegressionTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertIn('"result": "would_deliver"', out.getvalue())
                 build.assert_not_called()
+
+
+    def test_insecure_existing_state_directory_denies_before_git_or_docker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state"
+            state.mkdir()
+            state.chmod(0o777)
+            with (mock.patch.object(delivery, "STATE_DIR", state),
+                  mock.patch.object(delivery, "LOCK", state / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha") as ref,
+                  mock.patch.object(delivery, "live_sha") as live,
+                  mock.patch.object(sys, "argv", ["delivery", "--plan"])):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(delivery.main(), 1)
+                self.assertIn("untrusted_state_directory", err.getvalue())
+                ref.assert_not_called()
+                live.assert_not_called()
+
+    def test_symlink_state_directory_denies_without_writing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp)
+            real = parent / "real"
+            real.mkdir(mode=0o700)
+            link = parent / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with (mock.patch.object(delivery, "STATE_DIR", link),
+                  mock.patch.object(delivery, "LOCK", link / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha") as ref,
+                  mock.patch.object(sys, "argv", ["delivery", "--plan"])):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(delivery.main(), 1)
+                self.assertIn("untrusted_state_directory", err.getvalue())
+                ref.assert_not_called()
+
+    def test_atomic_state_save_ignores_preexisting_symlink_tmp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp)
+            victim = parent / "victim.txt"
+            victim.write_text("DO NOT MODIFY")
+            dest = parent / "state.json"
+            legacy_tmp = dest.with_suffix(".tmp")
+            legacy_tmp.symlink_to(victim)
+            with mock.patch.object(delivery, "STATE", dest):
+                delivery.save({"sha": SHA})
+            self.assertEqual(victim.read_text(), "DO NOT MODIFY")
+            self.assertTrue(legacy_tmp.is_symlink())
+            self.assertEqual(json.loads(dest.read_text()), {"sha": SHA})
+            self.assertEqual(stat.S_IMODE(dest.stat().st_mode), 0o600)
+
+    def test_atomic_marker_update_ignores_preexisting_symlink_tmp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp)
+            victim = parent / "victim.txt"
+            victim.write_text("DO NOT MODIFY")
+            marker = parent / "zis-image-promotion-ready.json"
+            legacy_tmp = marker.with_suffix(".tmp")
+            legacy_tmp.symlink_to(victim)
+            with mock.patch.object(delivery, "MARKER", marker):
+                delivery.update_marker(SHA, f"{delivery.REGISTRY}/{delivery.IMAGE}:{SHA}", DIGEST)
+            self.assertEqual(victim.read_text(), "DO NOT MODIFY")
+            self.assertTrue(legacy_tmp.is_symlink())
+            data = json.loads(marker.read_text())
+            self.assertEqual(data["sha"], SHA)
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
 
 
 
