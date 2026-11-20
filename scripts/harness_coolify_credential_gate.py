@@ -66,21 +66,38 @@ def source_flags(src, candidate):
     tree = ast.parse(src.read_text(encoding="utf8"))
   except (OSError, SyntaxError):
     raise Denied("controller_source_invalid") from None
-  assignments = [node.value for node in tree.body
-                 if isinstance(node, ast.Assign)
-                 and any(isinstance(t, ast.Name) and t.id == "COOLIFY_TOKEN"
-                         for t in node.targets)]
+  # Scan ALL real AST string literals, including assignments to aliases and
+  # string-concatenated paths. A second alias pointing to the old secret must
+  # never be hidden by a clean COOLIFY_TOKEN assignment.
+  literals = [node.value for node in ast.walk(tree)
+              if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+  old_ref = any(str(OLD) in value or value == OLD.name for value in literals)
+  assignments = []
+  for node in ast.walk(tree):
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+      targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+      if any(isinstance(t, ast.Name) and t.id == "COOLIFY_TOKEN"
+             for t in targets):
+        assignments.append(node.value)
   values = []
   for value in assignments:
     if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
         and value.func.id == "Path" and len(value.args) == 1
         and isinstance(value.args[0], ast.Constant)
-        and isinstance(value.args[0].value, str)):
+        and isinstance(value.args[0].value, str)
+        and not value.keywords):
       values.append(value.args[0].value)
     else:
       values.append(None)
-  return {"legacy_ref": str(OLD) in values,
-          "dedicated_ref": len(values) == 1 and values[0] == str(candidate)}
+  # Another token loading path, even an indirect/split Path('/root/...') /
+  # 'coolify_api_token', invalidates the proof of a clean switch.
+  suspicious_paths = [
+      v for v in literals if v.startswith(str(OLD.parent)) and v != str(candidate)
+      and v != str(candidate.parent)]
+  old_ref = old_ref or any(v == str(OLD.parent) for v in literals)
+  return {"legacy_ref": old_ref or bool(suspicious_paths),
+          "dedicated_ref": len(values) == 1 and values[0] == str(candidate)
+                           and not old_ref and not suspicious_paths}
 
 
 def decide(phase, refs, legacy_status, candidate_status, collision, same_image, denied_status=None):
@@ -166,3 +183,4 @@ def main(argv=None):
 
 if __name__=="__main__":
   sys.exit(main())
+
