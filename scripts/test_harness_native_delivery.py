@@ -1068,6 +1068,20 @@ class AutoModeTests(unittest.TestCase):
             self.assertIn("auto_source_not_fast_forward", out)
             self.assertEqual(host.mutations(), [])
 
+    def test_auto_rejects_untracked_build_source_before_any_mutation(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        rogue = Path(repo) / "rogue-service"
+        rogue.mkdir()
+        (rogue / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous})
+        self.assertEqual(code, 1, out)
+        self.assertIn("auto_checkout_dirty", out)
+        self.assertEqual(host.mutations(), [])
+
     def test_auto_checkout_tip_always_needs_live_upstream_parity(self):
         repo, base, head = self.repo(commits=3)
         previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
