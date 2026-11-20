@@ -998,7 +998,13 @@ class AutoModeTests(unittest.TestCase):
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
                  source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
         host = host or FakeHost()
+        explicit_documents = documents is not None
         documents = documents if documents is not None else self.documents_for(source_sha)
+        if explicit_documents:
+            # Only the real root gate writer creates request artifacts; this
+            # marker models an existing request, never a new release grant.
+            Path(state_dir).mkdir(parents=True, exist_ok=True)
+            (Path(state_dir) / "mantic-mcp-request.json").write_text("{}", encoding="utf-8")
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
                 patch.object(delivery, "check_upstream_source",
@@ -1060,7 +1066,7 @@ class AutoModeTests(unittest.TestCase):
         # later run could mistake for a delivery baseline.
         repo, base, head = self.repo()
         state_dir = tempfile.mkdtemp()
-        code, out, host = self.run_auto(repo, state_dir, mode="prepare", source_sha=head,
+        code, out, host = self.run_auto(repo, state_dir, mode="plan", source_sha=head,
                                         environ={"HARNESS_BASE_SHA": base,
                                                  "HARNESS_SOURCE_SHA": head})
         self.assertEqual(code, 0, out)
@@ -1070,7 +1076,10 @@ class AutoModeTests(unittest.TestCase):
 
     def test_auto_reports_no_change_when_the_range_is_empty(self):
         repo, base, head = self.repo()
-        code, out, host = self.run_auto(repo, tempfile.mkdtemp(), source_sha=head,
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        code, out, host = self.run_auto(repo, state_dir, source_sha=head,
                                         environ={"HARNESS_BASE_SHA": head,
                                                  "HARNESS_SOURCE_SHA": head})
         payload = json.loads(out)
@@ -1081,11 +1090,55 @@ class AutoModeTests(unittest.TestCase):
 
     def test_idle_tick_never_claims_running_service_parity(self):
         repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
         code, out, host = self.run_auto(
-            repo, tempfile.mkdtemp(), source_sha=head,
+            repo, state_dir, source_sha=head,
             environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(out)["runtime_parity"], "not_claimed")
+        self.assertEqual(host.mutations(), [])
+
+    def test_empty_global_range_still_finds_service_backlog_from_delivery_ledger(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": base}}), encoding="utf-8")
+        code, out, host = self.run_auto(
+            repo, state_dir, source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        report = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(list(report["services"]), ["mantic-mcp"])
+        self.assertEqual(report["unverified_service_baselines"], [])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_delivery_ledger_refuses_to_claim_idleness(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        report = json.loads(out)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(report["result"], "pending_release_evidence")
+        self.assertEqual(report["awaiting_release_evidence"], ["mantic-mcp"])
+        self.assertEqual(report["unverified_service_baselines"], ["mantic-mcp"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_forged_delivery_ledger_source_sha_denies_before_mutation(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": "not-a-sha"}}), encoding="utf-8")
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_invalid_sha:mantic-mcp", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
