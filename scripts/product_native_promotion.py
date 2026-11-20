@@ -553,6 +553,11 @@ VERIFIED_MAINTENANCE_MERGES = {
             ("modified", "ops/coolify/CI_GATED_RELEASE.md"),
         ),
     },
+    "c38e011a8df91ec910534928ee26d90e3435247a": {
+        "parent": "9974009ed208e3586892a3839d57704424f70f51",
+        "pr": 187,
+        "files": (("modified", "README.md"),),
+    },
 }
 
 
