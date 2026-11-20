@@ -734,7 +734,9 @@ def main(argv=None):
                 report["prepared"][service] = {"tag": tag, "image_digest": digest}
         elif args.mode == "deploy":
             report["deployed"] = run_promotion(
-                manifest, paths, lambda service: bundles[service], Transport(host),
+                manifest,
+                [path for changed in attributed.values() for path in changed],
+                lambda service: bundles[service], Transport(host),
                 now=now,
                 lock_path=str(Path(args.state_dir) / "delivery.lock"),
                 state_path=str(Path(args.state_dir) / "delivery.json"),
