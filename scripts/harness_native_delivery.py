@@ -54,6 +54,7 @@ field is ever executed: the only commands this module runs are its own fixed
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import stat
@@ -71,6 +72,13 @@ from harness_release_parity import ParityFailure, check_source as check_upstream
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
+# Trusted-main GHCR publishing is owned by mcp-images-ghcr.yml (PR #186).
+# AUTO deployment consumes that immutable digest, NEVER builds a second image.
+GHCR = "ghcr.io/miloszspyrka-code"
+GHCR_SOURCE_SERVICES = frozenset({
+    "emailens-mcp", "mantic-mcp", "plasmic-mcp",
+    "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
+})
 COOLIFY = "http://127.0.0.1:8001/api/v1"
 COOLIFY_TOKEN = Path("/root/coolify-secrets/coolify_api_token")
 STATE_ROOT = Path("/var/lib/harness-image-delivery")
@@ -188,7 +196,11 @@ def verify_source(repo, source_sha):
 def image_pattern(service, spec, registry=REGISTRY):
     """Match the previously pinned image or this registry's image already deployed."""
     current = f"{registry}/harness-{service}"
-    prefixes = sorted({spec["image_prefix"], current}, key=len, reverse=True)
+    prefixes = sorted({
+        spec["image_prefix"], current,
+        f"{REGISTRY}/harness-{service}",
+        f"{GHCR}/harness-{service}",
+    }, key=len, reverse=True)
     alternation = "|".join(re.escape(prefix) for prefix in prefixes)
     return re.compile(r"(?m)^(\s*image:\s*)(['\"]?)(?:" + alternation + r")[^'\"\s]*\2")
 
@@ -265,9 +277,12 @@ class Transport:
     a deploy must ship exactly the image the root attester observed.
     """
 
-    def __init__(self, host, registry=REGISTRY):
+    def __init__(self, host, registry=REGISTRY, expected_digests=None):
         self.host = host
         self.registry = registry
+        # Approved digest comes from independently reviewed root-owned request;
+        # never infer a release identity from mutable GHCR SHA-looking tags.
+        self.expected_digests = dict(expected_digests or {})
         # Transaction-scoped snapshots: never guess using the newest glob on
         # disk, which can belong to another release or Coolify service UUID.
         self._rollback_snapshots = {}
@@ -295,6 +310,23 @@ class Transport:
 
     def build(self, service, source_sha):
         self._known(service)
+        if self.registry == GHCR:
+            if service not in GHCR_SOURCE_SERVICES:
+                raise RuntimeError("auto_ghcr_source_unavailable")
+            expected = self.expected_digests.get(service)
+            if not isinstance(expected, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+                raise RuntimeError("auto_ghcr_digest_unavailable")
+            pinned = image_reference(service, expected, self.registry)
+            # Pull only the operator-approved digest. A retargeted mutable tag
+            # can never change which image the controller promotes.
+            self.host.docker("pull", pinned)
+            reference = self.host.docker(
+                "image", "inspect", "--format", "{{index .RepoDigests 0}}", pinned)
+            if reference != pinned:
+                raise RuntimeError("auto_ghcr_repo_digest_mismatch")
+            if running_revision(self.host, service, expected, self.registry) != source_sha:
+                raise RuntimeError("auto_ghcr_source_revision_mismatch")
+            return expected
         tag = image_tag(service, source_sha, self.registry)
         reference = self.host.docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", tag)
         if "@" not in reference:
@@ -410,6 +442,62 @@ def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
     if "@" not in reference:
         raise RuntimeError(f"{service}: pushed image has no repository digest")
     return tag, reference.split("@", 1)[1]
+
+
+def auto_ci_policy(service, repo, attestation_key):
+    """Reject missing or wrong root-owned CI policy before any Docker build."""
+    import harness_local_ci_attest as ci
+
+    if os.geteuid() != 0:
+        raise Denied("auto_ci_requires_root")
+    if not attestation_key:
+        raise Denied("attestation_key_missing")
+    raw = ci.read_trusted_file(ci.DEFAULT_POLICY, "policy", require_root=True)
+    policy = ci.validate_policy(json.loads(raw))
+    if service not in GHCR_SOURCE_SERVICES:
+        raise Denied("auto_ghcr_source_unavailable")
+    ci.policy_commands(policy, service)
+    if Path(policy["repo_root"]).resolve() != Path(repo).resolve():
+        raise Denied("auto_ci_repo_mismatch")
+    if Path(policy["key_file"]).resolve() != Path(attestation_key).resolve():
+        raise Denied("auto_ci_key_mismatch")
+    # Preflight the root-owned private signing key BEFORE GHCR Docker pull,
+    # even when the current request has no attestation artifact yet.
+    key = ci.read_trusted_file(attestation_key, "signing_key", require_root=True)
+    if len(key) < 32:
+        raise Denied("signing_key_weak")
+    # Existing signed attestations must match the CURRENT root-owned policy;
+    # an older valid HMAC does not authorize a service after policy revocation.
+    policy["_verified_digest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    return policy
+
+
+def auto_prepare_and_attest(host, repo, base_sha, source_sha, service,
+                            bundle, attestation_key, *, policy):
+    """Pull the GHCR-published immutable image and sign local CI; never rebuild."""
+    import harness_local_ci_attest as ci
+    from harness_release_admission import read_trusted_bytes, verified_attestation
+
+    verify_source(repo, source_sha)
+    digest = bundle["request"].get("image_digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise Denied("auto_ghcr_digest_missing")
+    pinned = image_reference(service, digest, GHCR)
+    host.docker("pull", pinned)
+    actual = host.docker("image", "inspect", "--format",
+                         "{{index .RepoDigests 0}}", pinned)
+    if actual != pinned:
+        raise Denied("auto_ghcr_repo_digest_mismatch")
+    if running_revision(host, service, digest, GHCR) != source_sha:
+        raise Denied("auto_ghcr_source_revision_mismatch")
+    code = ci.main(["--service", service, "--base-sha", base_sha,
+                    "--source-sha", source_sha, "--image-digest", digest])
+    if code != 0:
+        raise Denied("auto_ci_tests_failed")
+    artifact_path = ci.attestation_path(policy["out_dir"], service, source_sha)
+    artifact = load_gate_file(artifact_path, "attestation", require_root=True)
+    key = read_trusted_bytes(attestation_key, "attestation_key", require_root=True)
+    return verified_attestation(artifact, key), digest
 
 
 def resolve_source_range(args, environ=None):
@@ -811,6 +899,8 @@ def main(argv=None):
         # production release. Plan mode checks the same real evidence as deploy
         # (including an HMAC-verified attestation), without touching the host.
         bundles = {}
+        auto_missing = []
+        policies = {}
         for service in sorted(attributed):
             if not entries.get(service):
                 report["denied"][service] = "unknown_service"
@@ -819,19 +909,35 @@ def main(argv=None):
             if args.artifact_dir:
                 try:
                     bundle = load_artifacts(args.artifact_dir, service, args.attestation_key,
-                                            allow_missing_attestation=args.mode == "prepare")
+                                            allow_missing_attestation=(args.mode == "prepare" or
+                                                (args.auto and args.mode == "deploy")))
                 except Denied as exc:
                     report["denied"][service] = str(exc)
                     continue
             bundles[service] = bundle
             try:
-                if args.mode == "prepare":
+                if args.mode == "prepare" or (args.auto and args.mode == "deploy"
+                        and bundle.get("attestation") is None):
                     evaluate_build(manifest, bundle.get("request"), grant=bundle.get("grant"),
                                    now=now, expected_source_sha=source_sha)
+                    if args.auto and args.mode == "deploy":
+                        policies[service] = auto_ci_policy(
+                            service, args.repo, args.attestation_key)
+                        auto_missing.append(service)
                 else:
                     evaluate(manifest, bundle.get("request"), grant=bundle.get("grant"),
                              attestation=bundle.get("attestation"), now=now,
                              expected_source_sha=source_sha)
+                    if args.auto and args.mode == "deploy":
+                        # The HMAC verifies integrity, not freshness of host CI
+                        # policy. Fail closed before any Docker/Coolify call if
+                        # a policy or key is revoked, absent, or changed.
+                        policy = auto_ci_policy(service, args.repo, args.attestation_key)
+                        policies[service] = policy
+                        existing = bundle.get("attestation")
+                        if (not isinstance(existing, dict)
+                                or existing.get("policy_digest") != policy["_verified_digest"]):
+                            raise Denied("auto_ci_policy_digest_mismatch")
                 report["admitted"].append(service)
             except Denied as exc:
                 report["denied"][service] = str(exc)
@@ -844,15 +950,45 @@ def main(argv=None):
         # Phase 2: mutate only after complete admission. In particular, an
         # automation runner must never interpret an admission refusal as a
         # successful exit status (the old code returned 0 for held lanes).
+        if args.mode == "deploy" and auto_missing:
+            # Preflight ALL changed services first. Build only once every
+            # review, exact-SHA grant, and CI policy has passed.
+            for service in auto_missing:
+                try:
+                    attested, digest = auto_prepare_and_attest(
+                        host, args.repo, base_sha, source_sha, service,
+                        bundles[service], args.attestation_key,
+                        policy=policies[service])
+                    bundles[service]["attestation"] = attested
+                    evaluate(manifest, bundles[service].get("request"),
+                             grant=bundles[service].get("grant"),
+                             attestation=attested, now=now,
+                             expected_source_sha=source_sha)
+                    report["prepared"][service] = {
+                        "image_digest": digest, "signed_local_ci": True}
+                except (Denied, OSError, RuntimeError, ValueError) as exc:
+                    report["denied"][service] = (
+                        str(exc) if isinstance(exc, Denied)
+                        else "auto_ci_or_prepare_failed")
+                    report["result"] = "denied"
+                    print(json.dumps(report, sort_keys=True))
+                    return 1
+
         if args.mode == "prepare":
             for service in report["admitted"]:
                 tag, digest = prepare(host, args.repo, service, source_sha)
                 report["prepared"][service] = {"tag": tag, "image_digest": digest}
         elif args.mode == "deploy":
+            transport = (Transport(host, registry=GHCR,
+                           expected_digests={
+                               name: value["request"]["image_digest"]
+                               for name, value in bundles.items()
+                               if isinstance(value.get("request"), dict)
+                           }) if args.auto else Transport(host))
             report["deployed"] = run_promotion(
                 manifest,
                 [path for changed in attributed.values() for path in changed],
-                lambda service: bundles[service], Transport(host),
+                lambda service: bundles[service], transport,
                 now=now,
                 lock_path=str(Path(args.state_dir) / "delivery.lock"),
                 state_path=str(Path(args.state_dir) / "delivery.json"),
