@@ -101,18 +101,50 @@ def task_agent(pid, unit, pidfile=None, allow_any_daemon=False):
     return None
 
 
-def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=False):
-    """Allow only trusted daemon-origin Git fetch/clone descendants to read repo data.
+def _cache_proc_executable(pid, kind):
+    """Use /proc executable identity; argv[0] is caller-controlled."""
+    approved = {
+        "python": {"/usr/bin/python3", "/usr/bin/python3.11",
+                   "/usr/bin/python3.12", "/usr/bin/python3.13",
+                   "/usr/bin/python3.14", "/usr/bin/python3.15"},
+        "git": {"/usr/bin/git", "/usr/lib/git-core/git"},
+        "remote": {"/usr/lib/git-core/git-remote-https",
+                   "/usr/lib/git-core/git-remote-http"},
+    }
+    try:
+        actual = os.path.realpath(os.readlink(f"/proc/{pid}/exe"))
+        return actual in {os.path.realpath(path) for path in approved[kind]}
+    except (OSError, KeyError):
+        return False
 
-    Never allow a generic daemon child or the agent itself to impersonate the
-    cache. The daemon process identity is already validated by daemon_pid.
-    A non-cache task is rejected; the cache uses only the read-content role.
+
+def _trusted_cache_git_args(argv):
+    """Find an actual Git subcommand, not an arbitrary argument containing fetch."""
+    if not argv or Path(argv[0]).name != "git":
+        return False
+    args = argv[1:]
+    index = 0
+    # Restrict daemon-cache Git to the simple documented -C PATH form.
+    # In particular, never allow arbitrary -c credential-helper overrides.
+    while index < len(args) and args[index] == "-C":
+        if index + 1 >= len(args) or not args[index + 1].startswith("/"):
+            return False
+        index += 2
+    return index < len(args) and args[index] in {"fetch", "clone", "ls-remote"}
+
+
+def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=False):
+    """Accept only helper -> HTTPS transport -> daemon Git read-only ancestry.
+
+    Fail closed for shells, argument stuffing, reordered ancestry, foreign
+    executables and arbitrary daemon descendants.
     """
     daemon = daemon_pid(unit, pidfile, allow_any_daemon)
+    chain = []
     current = pid
-    for _ in range(32):
-        status = proc_status(current)
+    for _ in range(3):
         try:
+            status = proc_status(current)
             parent = int(status.get("PPid", "0"))
             uid = int(status.get("Uid", "-1").split()[0])
             argv = [part.decode("utf-8", "replace") for part in
@@ -121,24 +153,33 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
             return False
         if uid != RUNTIME_UID or not argv:
             return False
-        executable = Path(argv[0]).name
+        chain.append((current, parent, argv))
         if parent == daemon:
-            # Direct daemon child must be the real, noninteractive Git cache op.
-            return executable == "git" and ("fetch" in argv or "clone" in argv or "ls-remote" in argv)
-        if executable in {"git", "git-remote-https", "git-remote-http"}:
-            pass
-        elif executable in {"python3", "python3.11", "python3.12", "python3.13", "python3.14", "python3.15"}:
-            if not any(part == "/usr/local/libexec/multica-zar-git-credential" for part in argv[1:]):
-                return False
-        elif executable in {"sh", "dash"}:
-            if not any("/usr/local/libexec/multica-zar-git-credential" in part for part in argv[1:]):
-                return False
-        else:
-            return False
+            break
         if parent <= 1:
             return False
         current = parent
-    return False
+    if len(chain) != 3 or chain[2][1] != daemon:
+        return False
+    helper_pid, helper_parent, helper_argv = chain[0]
+    remote_pid, remote_parent, remote_argv = chain[1]
+    git_pid, _, git_argv = chain[2]
+    if helper_parent != remote_pid or remote_parent != git_pid:
+        return False
+    helper = "/usr/local/libexec/multica-zar-git-credential"
+    if (len(helper_argv) != 3 or
+        Path(helper_argv[0]).name not in {"python3", "python3.11",
+             "python3.12", "python3.13", "python3.14", "python3.15"} or
+        helper_argv[1:] != [helper, "get"] or
+        not _cache_proc_executable(helper_pid, "python")):
+        return False
+    if (Path(remote_argv[0]).name not in {"git-remote-http", "git-remote-https"} or
+        not _cache_proc_executable(remote_pid, "remote")):
+        return False
+    if (not _trusted_cache_git_args(git_argv) or
+        not _cache_proc_executable(git_pid, "git")):
+        return False
+    return True
 
 
 def parse_expiry(value):
@@ -207,6 +248,7 @@ class Handler(socketserver.StreamRequestHandler):
                 # Cache sync from the trusted daemon can only read repository
                 # contents; never borrow an implementer/release token.
                 role = "reviewer"
+                agent_id = "daemon-cache"
             else:
                 agent_id, task_id = identity
                 roles = json.loads(self.server.roles_file.read_text(encoding="utf-8"))
