@@ -747,6 +747,14 @@ def sync_checkout_to_main(repo):
         raise Denied("upstream_main_unverifiable")
     source_sha = lines[0].split("\t", 1)[0]
     try:
+        # A shallow operator checkout cannot diff an older deployed baseline.
+        # Unshallow once; this repo is small and full history is required for
+        # exact per-service change detection.
+        if _git(repo, "rev-parse", "--is-shallow-repository").stdout.strip() == "true":
+            unshallow = _git(repo, "fetch", "--quiet", "--unshallow", "origin", "main",
+                             timeout=300)
+            if unshallow.returncode != 0:
+                raise Denied("checkout_unshallow_failed")
         fetch = _git(repo, "fetch", "--quiet", "origin", "main")
         status = _git(repo, "status", "--porcelain", "--untracked-files=all")
     except (OSError, subprocess.TimeoutExpired):
@@ -809,6 +817,12 @@ def auto_main_cycle(args, manifest, host):
     digest, live health/source readback and one rollback remain mandatory.
     """
     source_sha = sync_checkout_to_main(args.repo)
+    # The caller loaded the manifest before the checkout advanced. Reload it
+    # from the exact tree this cycle is about to build, never from stale HEAD.
+    manifest_path = Path(args.manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = Path(args.repo) / manifest_path
+    manifest = load_gate_file(str(manifest_path), "manifest", require_root=False)
     transport = Transport(host)
     ledger = read_private_delivery_ledger(args.state_dir)
     entries = {entry.get("id"): entry
@@ -843,19 +857,30 @@ def auto_main_cycle(args, manifest, host):
             plan.append({"service": service, "decision": "current",
                          "source_sha": previous})
             continue
+        bootstrap = False
         try:
             paths = [path for path in git_changed_paths(args.repo, previous, source_sha)
                      if path == spec["folder"] or path.startswith(spec["folder"] + "/")]
         except Exception as exc:
-            plan.append({"service": service, "decision": "denied",
-                         "reason": "diff_failed:" + type(exc).__name__})
-            continue
+            # A legacy image label may name a commit that is not in this
+            # repository (pre-history rewrite or foreign build). One bounded
+            # bootstrap rebuild at exact main is allowed; the ledger then
+            # records a verifiable baseline for every later diff.
+            known = _git(args.repo, "cat-file", "-e", previous).returncode == 0
+            if known:
+                plan.append({"service": service, "decision": "denied",
+                             "reason": "diff_failed:" + type(exc).__name__})
+                continue
+            paths = [f"{spec['folder']}/{spec['dockerfile']}"]
+            bootstrap = True
         if not paths:
             plan.append({"service": service, "decision": "source_unchanged",
                          "source_sha": previous})
             continue
         item = {"service": service, "decision": "would_deploy",
                 "baseline": previous, "changed_paths": sorted(paths)}
+        if bootstrap:
+            item["bootstrap"] = "unverifiable_baseline"
         plan.append(item)
         if args.mode == "plan":
             continue
