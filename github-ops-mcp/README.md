@@ -33,9 +33,9 @@ The current native Multica ZARI-213 isolation HOLD applies: do **not** grant a h
 
 ## Live Cloudflare staging state (2026-11-20)
 
-- URL: \`https://github-ops-mcp.zariszlif.pl/mcp\`, behind an owner-only Cloudflare Access app with Managed OAuth.
-- Cloudflare Access forwards \`Cf-Access-Jwt-Assertion\`; the origin validates RS256 signature, issuer, AUD, expiration and exact owner identity against Cloudflare's JWKS. Docker network access does **not** skip JWT checks.
+- URL: `https://github-ops-mcp.zariszlif.pl/mcp`, behind an owner-only Cloudflare Access app with Managed OAuth.
+- Cloudflare Access forwards `Cf-Access-Jwt-Assertion`; the origin validates RS256 signature, issuer, AUD, expiration and exact owner identity against Cloudflare's JWKS. Docker network access does **not** skip JWT checks.
 - GitHub Ops MCP is registered in the Multica workspace MCP library but **not assigned to any agent** while ZARI-213 isolation and independent review remain blocked.
 - Coolify staging auto-deploy is disabled. Existing main and production containers are unchanged.
-- **Status is not ready:** no scoped GitHub API credential has been provisioned; \`/health.ready=false\`. The server only provides OAuth/MCP discovery and safe structured errors without it.
+- **Status is not ready:** no scoped GitHub API credential has been provisioned; `/health.ready=false`. The server only provides OAuth/MCP discovery and safe structured errors without it.
 - Full external OAuth authorization-code login and a real GitHub provider E2E remain unverified; do not report source-only tests or Docker health as operational readiness.
