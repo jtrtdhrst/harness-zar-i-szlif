@@ -895,10 +895,20 @@ def auto_main_cycle(args, manifest, host):
         changed_paths.extend(paths)
         item.update(decision="built", image_digest=digest)
     report = {"mode": args.mode, "source_sha": source_sha, "services": plan}
-    if args.mode == "plan" or not pre:
-        report["result"] = "plan" if args.mode == "plan" else "no_service_change"
+    # A skipped/failed admission or build must never look like a clean no-op.
+    # In a mixed batch, keep the successful promotion evidence but fail the
+    # cycle so the failed service is retried and monitoring remains truthful.
+    failures = any(item.get("decision") in {
+        "denied", "invalid_uuid", "unsupported_kind", "build_failed"
+    } for item in plan)
+    if args.mode == "plan":
+        report["result"] = "plan"
         print(json.dumps(report, sort_keys=True))
         return 0
+    if not pre:
+        report["result"] = "build_failed" if failures else "no_service_change"
+        print(json.dumps(report, sort_keys=True))
+        return 1 if failures else 0
     promotion = run_promotion(
         manifest, changed_paths, lambda service: {}, transport,
         state_path=str(Path(args.state_dir) / "delivery.json"),
@@ -907,10 +917,10 @@ def auto_main_cycle(args, manifest, host):
     report["promotion"] = promotion
     good = {"promoted", "already_delivered"}
     decisions = promotion.get("decisions", [])
-    ok = (len(decisions) == len(pre)
+    ok = (len(decisions) == len(pre) and not failures
           and all(decision.get("decision") in good for decision in decisions)
           and promotion.get("result") != "denied")
-    report["result"] = "ok" if ok else "denied"
+    report["result"] = "ok" if ok else "partial_failure" if failures else "denied"
     print(json.dumps(report, sort_keys=True))
     return 0 if ok else 1
 
