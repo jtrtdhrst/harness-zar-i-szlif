@@ -139,7 +139,15 @@ export function makeServer(config={}) {
       const submission=await api('POST',`${root}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,{ref:'main'});
       const runId=submission?.workflow_run_id;
       if(!Number.isSafeInteger(runId)||runId<1)throw error('DISPATCH_UNVERIFIED','Dispatch response has no run ID; submission may have occurred; do not retry blindly');
-      const run=await api('GET',`${root}/actions/runs/${runId}`);
+      // GitHub Actions can return 404 briefly after accepting a dispatch.
+      // Poll only this exact run ID; NEVER submit the dispatch again.
+      let run=null;
+      for(let attempt=0;attempt<6;attempt++){
+        if(attempt)await new Promise(resolve=>setTimeout(resolve,(config.dispatchPollDelayMs??350)*attempt));
+        try{run=await api('GET',`${root}/actions/runs/${runId}`);break;}
+        catch(e){if(e.code!=='GITHUB_HTTP_404')throw e;}
+      }
+      if(!run)throw error('DISPATCH_UNVERIFIED',`Workflow run ${runId} submitted but its SHA is not yet readable; do not retry dispatch`);
       if(run.id!==runId||run.head_sha?.toLowerCase()!==sha.toLowerCase()||run.event!=='workflow_dispatch'
         ||run.path?.split('/').pop()!==workflow)
         throw error('DISPATCH_SHA_MISMATCH',`Dispatched run ${runId} does not verify against requested workflow and SHA; inspect/cancel the run`);
