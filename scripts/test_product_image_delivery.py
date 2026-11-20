@@ -319,6 +319,18 @@ class ReadbackRegressionTests(unittest.TestCase):
                 delivery.open_owned_state_file(link,append=True)
             self.assertEqual(victim.read_text(),"UNCHANGED")
 
+    def test_partial_download_does_not_leave_root_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (mock.patch.object(delivery, "STATE_DIR", root),
+                  mock.patch.object(delivery, "SOURCE_DIR", root / "src"),
+                  mock.patch.object(delivery, "github_token", return_value="synthetic"),
+                  mock.patch.object(delivery.urllib.request, "urlopen",
+                                    side_effect=OSError("test network interrupted"))):
+                with self.assertRaisesRegex(OSError, "network interrupted"):
+                    delivery.download_source(SHA)
+                self.assertEqual(list((root / "src").glob("*.tar.gz")), [])
+
     def test_exact_manual_approved_sha_can_be_planned_without_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
