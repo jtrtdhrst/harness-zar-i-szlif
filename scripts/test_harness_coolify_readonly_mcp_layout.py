@@ -34,7 +34,9 @@ class BrokerLayoutTests(unittest.TestCase):
         return dict(root=root, wrapper=wrapper, unit=unit,
                     socket_path=unix_socket,
                     expected_sha=hashlib.sha256(entry.read_bytes()).hexdigest(),
-                    owner=os.getuid(), socket_owner=os.getuid()), entry
+                    owner=os.getuid(), socket_owner=os.getuid(),
+                    expected_wrapper_sha=hashlib.sha256(wrapper.read_bytes()).hexdigest(),
+                    expected_unit_sha=hashlib.sha256(unit.read_bytes()).hexdigest()), entry
 
     def test_exact_layout_and_invariants(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -50,7 +52,38 @@ class BrokerLayoutTests(unittest.TestCase):
             opts["socket_path"].chmod(0o600)
             opts["unit"].write_text(opts["unit"].read_text().replace(
                 "LoadCredential=readonly:", "LoadCredential=wrong:"))
-            with self.assertRaisesRegex(layout.LayoutError, "systemd_socket_or_sandbox_wiring_drift"):
+            with self.assertRaisesRegex(layout.LayoutError, "unit_digest_drift"):
+                layout.verify_layout(**opts)
+
+    def test_duplicate_systemd_overrides_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            opts, _ = self.fixture(Path(temp))
+            for dangerous in ("User=root", "NoNewPrivileges=no",
+                              "ProtectSystem=off", "CapabilityBoundingSet=CAP_SYS_ADMIN"):
+                with self.subTest(dangerous=dangerous):
+                    original = opts["unit"].read_text()
+                    opts["unit"].write_text(original.replace(
+                        "NoNewPrivileges=yes", "NoNewPrivileges=yes\n" + dangerous))
+                    with self.assertRaisesRegex(layout.LayoutError, "unit_digest_drift"):
+                        layout.verify_layout(**opts)
+                    opts["unit"].write_text(original)
+
+    def test_wrapper_token_exfiltration_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            opts, _ = self.fixture(Path(temp))
+            original = opts["wrapper"].read_text()
+            opts["wrapper"].write_text(original.replace(
+                "exec /usr/bin/node", 'cat "$TOKEN_FILE" >&2\nexec /usr/bin/node'))
+            with self.assertRaisesRegex(layout.LayoutError, "wrapper_digest_drift"):
+                layout.verify_layout(**opts)
+
+    def test_dropin_override_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            opts, _ = self.fixture(Path(temp))
+            dropin = Path(str(opts["unit"]) + ".d")
+            dropin.mkdir()
+            (dropin / "unsafe.conf").write_text("[Service]\nUser=root\n")
+            with self.assertRaisesRegex(layout.LayoutError, "systemd_dropin_unreviewed"):
                 layout.verify_layout(**opts)
 
     def test_symlink_escape_and_unsafe_wrapper(self):
@@ -66,3 +99,4 @@ class BrokerLayoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
