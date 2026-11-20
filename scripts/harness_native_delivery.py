@@ -442,7 +442,7 @@ def resolve_source_range(args, environ=None):
 
 
 
-def pending_per_service_source_paths(repo, source_sha, state_dir):
+def pending_per_service_source_paths(repo, source_sha, state_dir, manifest):
     """Reconcile against the *existing* digest-verified delivery ledger.
 
     The global operator source range is not a release cursor. A moved
@@ -461,10 +461,19 @@ def pending_per_service_source_paths(repo, source_sha, state_dir):
     if not isinstance(ledger, dict):
         raise Denied("delivery_ledger_invalid")
 
+    entries = {entry.get("id"): entry
+               for entry in (manifest.get("lanes") or []) +
+                            (manifest.get("other_resources") or [])
+               if isinstance(entry, dict)}
     pending = set()
     unknown_baselines = []
     diff_cache = {}
     for service, spec in sorted(SERVICES.items()):
+        route = entries.get(service)
+        if not route or route.get("coolify_kind") != "service" or not route.get("coolify_uuid"):
+            # Not an approved live route; a source folder alone cannot
+            # authorize a production deployment (for example, orphan adapters).
+            continue
         folder = spec["folder"]
         source_dir = Path(repo) / folder
         if not source_dir.is_dir():
@@ -564,7 +573,7 @@ def main(argv=None):
             # source SHA; advancing an operator checkout never consumes its
             # pending release. No new cursor or state store is introduced.
             backlog, unknown_baselines = pending_per_service_source_paths(
-                args.repo, source_sha, args.state_dir)
+                args.repo, source_sha, args.state_dir, manifest)
             owned = tuple(spec["folder"] + "/" for spec in SERVICES.values())
             global_paths = sorted({path for path in global_paths
                                    if not path.startswith(owned)} | set(backlog))
