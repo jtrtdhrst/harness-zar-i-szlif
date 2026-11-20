@@ -18,7 +18,7 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("paperclip-core-review-recovery.yml", "validate"),
     ("mcp-images-ghcr.yml", "build-and-push"),
 }
-DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@")
+DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@|buildah\s+bud\b")
 
 def image_build_jobs(content):
     if "\njobs:\n" not in "\n" + content:
@@ -41,13 +41,17 @@ def compliant(workflow_name, job):
     if workflow_name in AUTO_MCP_IMAGE_WORKFLOWS:
         return True
     if workflow_name == "mcp-images-ghcr.yml":
-        # Docker executes on disposable GitHub-hosted workers, never on the
-        # persistent local-build runner; only the job with package-write access
-        # may push OCI artifacts (this does NOT grant Coolify promotion).
-        return ("    runs-on: ubuntu-latest" in job
+        # Trusted main builds inside a private rootless user namespace on the
+        # existing local-build runner. The job must never reach a host or guest
+        # Docker socket, and only the package-write job may push OCI artifacts
+        # (this does NOT grant Coolify promotion).
+        return ("    runs-on: [self-hosted, linux, x64, local-build]" in job
                 and "      packages: write" in job
-                and "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8" in job
-                and "ghcr.io/" in job)
+                and "buildah bud" in job
+                and "buildah push" in job
+                and "ghcr.io/" in job
+                and "! test -w /var/run/docker.sock" in job
+                and "! test -w /run/zis-ci-guest/docker.sock" in job)
     return (re.search(r"(?m)^    if: .*workflow_dispatch.*refs/heads/main", job) is not None
             and re.search(r"(?m)^    runs-on: \[self-hosted,.*local-build.*\]", job) is not None)
 
@@ -62,24 +66,28 @@ class NonMcpBuildGuardTests(unittest.TestCase):
         self.assertEqual(observed, EXPECTED_DOCKER_BUILD_JOBS,
                          "Docker build workflow inventory changed without explicit review")
 
-    def test_mcp_image_workflow_uses_unprivileged_ephemeral_runner(self):
+    def test_mcp_image_workflow_uses_unprivileged_rootless_runner(self):
         text = (WORKFLOWS / "mcp-images-ghcr.yml").read_text(encoding="utf8")
-        self.assertIn("    runs-on: ubuntu-latest", text)
-        self.assertNotIn("runs-on: [self-hosted", text)
+        self.assertIn("runs-on: [self-hosted, linux, x64, local-build]", text)
+        self.assertNotIn("runs-on: ubuntu-latest", text)
         self.assertIn("github.ref == 'refs/heads/main'", text)
         self.assertIn("      packages: write", text)
         self.assertIn("scripts/select_mcp_builds.py", text)
         # Protect SHA-bound package publication and prevent lost push events.
         self.assertNotIn("\nconcurrency:", text)
-        pins = {
-            "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
-            "docker/setup-buildx-action": "8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
-            "docker/login-action": "c94ce9fb468520275223c153574b00df6fe4bcc9",
-            "docker/build-push-action": "10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
-        }
+        pins = {"actions/checkout": "11d5960a326750d5838078e36cf38b85af677262"}
         for action, commit in pins.items():
             self.assertIn("uses: " + action + "@" + commit, text)
             self.assertNotRegex(text, r"uses: " + re.escape(action) + r"@v\d")
+        # Rootless Buildah only: no privileged Docker actions, no host/guest socket.
+        for forbidden in ("docker/setup-buildx-action", "docker/login-action",
+                          "docker/build-push-action"):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("buildah bud --isolation=chroot", text)
+        self.assertIn("--digestfile", text)
+        self.assertIn('test "$(id -un)" = actions-zis', text)
+        self.assertIn("! test -w /var/run/docker.sock", text)
+        self.assertIn("! test -w /run/zis-ci-guest/docker.sock", text)
         self.assertNotIn("curl -X PATCH", text)
         self.assertNotIn("/api/v1/deploy", text.lower())
 
