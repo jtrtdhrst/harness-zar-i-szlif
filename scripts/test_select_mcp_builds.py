@@ -16,6 +16,20 @@ class McpBuildSelectionTests(unittest.TestCase):
              "paperclip-mcp/Dockerfile", "comfyui-mcp/patch-v1.mjs"],
             event_name="push"), [])
 
+    def test_consecutive_pushes_do_not_lose_other_service_builds(self):
+        # Every separate push must remain queued, even if an earlier build runs.
+        # GitHub workflow-level concurrency has only one replaceable pending slot.
+        from pathlib import Path
+        workflow = (Path(__file__).resolve().parent.parent /
+                    ".github" / "workflows" / "mcp-images-ghcr.yml"
+                    ).read_text(encoding="utf8")
+        self.assertNotIn("\nconcurrency:", workflow)
+        first = images.select(["mantic-mcp/src/server.ts"], event_name="push")
+        second = images.select(["playwright-mcp/idle-proxy.cjs"], event_name="push")
+        self.assertEqual([item["service"] for item in first], ["mantic-mcp"])
+        self.assertEqual([item["service"] for item in second], ["playwright-mcp"])
+        self.assertNotEqual(first, second)
+
     def test_workflow_or_selection_change_builds_full_reviewed_set(self):
         selected = images.select(
             [".github/workflows/mcp-images-ghcr.yml"],
