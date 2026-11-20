@@ -460,6 +460,17 @@ def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
     tip = result.stdout.strip()
     if result.returncode != 0 or not SHA.fullmatch(tip):
         raise Denied("auto_checkout_unverifiable")
+    try:
+        worktree = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain",
+             "--untracked-files=all"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("auto_checkout_unverifiable") from None
+    if worktree.returncode != 0:
+        raise Denied("auto_checkout_unverifiable")
+    if worktree.stdout.strip():
+        raise Denied("auto_checkout_dirty")
     for ancestor in (pinned_sha, base_sha):
         if ancestor == tip:
             continue
