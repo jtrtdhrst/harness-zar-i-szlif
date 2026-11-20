@@ -780,6 +780,39 @@ def sync_checkout_to_main(repo):
     return source_sha
 
 
+CI_TOKEN = Path("/etc/multica-git-credential/roles/runner.json")
+CI_WORKFLOW = "MCP OCI images - trusted source builds"
+
+
+def ci_run_success(source_sha):
+    """Require the trusted-main OCI workflow to be green for this exact SHA.
+
+    The timer is the last line of defence: a red or missing CI run must never
+    become a production deployment just because the merge landed on main.
+    """
+    try:
+        payload = json.loads(CI_TOKEN.read_text(encoding="utf-8"))
+        token = payload.get("token")
+    except (OSError, ValueError, TypeError):
+        raise Denied("ci_token_unavailable") from None
+    if not isinstance(token, str) or not token:
+        raise Denied("ci_token_unavailable")
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/actions/runs?head_sha={source_sha}&per_page=50",
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.load(response)
+    except Exception:
+        raise Denied("ci_status_unavailable") from None
+    return any(isinstance(run, dict)
+               and run.get("name") == CI_WORKFLOW
+               and run.get("conclusion") == "success"
+               for run in data.get("workflow_runs", []))
+
+
 def deployed_source_sha(host, transport, repo, service, uuid):
     """Resolve the source SHA actually running for one service.
 
@@ -885,6 +918,13 @@ def auto_main_cycle(args, manifest, host):
         if args.mode == "plan":
             continue
         try:
+            if not ci_run_success(source_sha):
+                item.update(decision="ci_not_green")
+                continue
+        except Denied as exc:
+            item.update(decision="ci_check_failed", reason=str(exc))
+            continue
+        try:
             _, digest = prepare(host, args.repo, service, source_sha)
         except Exception as exc:
             item.update(decision="build_failed", reason=type(exc).__name__)
@@ -899,7 +939,8 @@ def auto_main_cycle(args, manifest, host):
     # In a mixed batch, keep the successful promotion evidence but fail the
     # cycle so the failed service is retried and monitoring remains truthful.
     failures = any(item.get("decision") in {
-        "denied", "invalid_uuid", "unsupported_kind", "build_failed"
+        "denied", "invalid_uuid", "unsupported_kind", "build_failed",
+        "ci_not_green", "ci_check_failed"
     } for item in plan)
     if args.mode == "plan":
         report["result"] = "plan"

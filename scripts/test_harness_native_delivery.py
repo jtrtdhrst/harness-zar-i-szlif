@@ -1501,7 +1501,7 @@ class AutoMainCycleTests(unittest.TestCase):
             "coolify_uuid": UUID, "auto_deploy_expected": True,
         }]}
 
-    def cycle(self, mode, *, build_fails=False):
+    def cycle(self, mode, *, build_fails=False, ci_green=True):
         from contextlib import redirect_stdout
         from types import SimpleNamespace
         args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state",
@@ -1509,6 +1509,7 @@ class AutoMainCycleTests(unittest.TestCase):
         out = io.StringIO()
         with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE), \
                 patch.object(delivery, "load_gate_file", return_value=self.manifest()), \
+                patch.object(delivery, "ci_run_success", return_value=ci_green), \
                 patch.object(delivery, "read_private_delivery_ledger",
                              return_value={"mantic-mcp": {"source_sha": self.BASE}}), \
                 patch.object(delivery, "git_changed_paths",
@@ -1534,6 +1535,14 @@ class AutoMainCycleTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(report["services"][0]["decision"], "would_deploy")
         self.assertEqual(report["result"], "plan")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_red_ci_never_builds(self):
+        code, report, prepare, promote = self.cycle("deploy", ci_green=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(report["result"], "build_failed")
+        self.assertEqual(report["services"][0]["decision"], "ci_not_green")
         prepare.assert_not_called()
         promote.assert_not_called()
 
