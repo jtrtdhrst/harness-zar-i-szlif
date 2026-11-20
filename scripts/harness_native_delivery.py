@@ -495,7 +495,8 @@ def main(argv=None):
         if base_sha == source_sha:
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
                               "result": "source_range_unchanged",
-                              "runtime_parity": "not_claimed"}, sort_keys=True))
+                              "runtime_parity": "not_claimed",
+                              "release_complete": False}, sort_keys=True))
             return 0
         # A scoped release is operator-explicit, never silently chosen by the
         # unattended timer. Every included service still needs the exact SHA,
@@ -563,13 +564,14 @@ def main(argv=None):
                   "pending_paths": pending_paths,
                   "held_outside_transport": held,
                   "retired_source_pending": retired,
+                  "release_complete": False,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
         if not attributed:
             report["result"] = "held_manual_pending" if held or retired else "no_service_change"
             print(json.dumps(report, sort_keys=True))
-            return 0
+            return 1 if held or retired else 0
         # Phase 1: admit EVERY changed service before ANY preparation or
         # deployment. A partial set of valid grants must not cause a partial
         # production release. Plan mode checks the same real evidence as deploy
@@ -632,6 +634,12 @@ def main(argv=None):
         # range. Keep the global success marker exclusive to unscoped batches.
         report["result"] = ("ok_scoped" if args.service else
                             "partial_manual_pending" if held or retired else "ok")
+        # Positive plan/prepare is only release admission. Never mark a full
+        # release without a real deployed digest/health readback and no pending
+        # paths; scoped releases also cannot certify unrelated changes.
+        report["release_complete"] = bool(args.mode == "deploy"
+            and not args.service and not pending_paths and report.get("deployed")
+            and report["deployed"].get("promoted"))
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
