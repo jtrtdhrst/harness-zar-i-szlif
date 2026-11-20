@@ -9,6 +9,7 @@ import ctypes
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 
 TARGET = "/opt/hermes/.venv/bin/hermes"
@@ -56,12 +57,20 @@ def checked_syscall(num, *args):
         raise OSError(ctypes.get_errno(), "landlock syscall denied")
     return value
 
-def grant(ruleset, path, rights):
+def grant(ruleset, path, rights, *, require_regular_nofollow=False):
     path = Path(path)
     if not path.exists():
+        if require_regular_nofollow:
+            raise FileNotFoundError(path)
         return
-    fd = os.open(str(path), os.O_PATH | os.O_CLOEXEC)
+    flags = os.O_PATH | os.O_CLOEXEC
+    if require_regular_nofollow:
+        # O_PATH|O_NOFOLLOW pins the symlink itself, never its secret target.
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(path), flags)
     try:
+        if require_regular_nofollow and not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("refusing non-regular/symlinked Git configuration")
         attr = PathBeneath(rights, fd)
         checked_syscall(445, ruleset, 1, ctypes.byref(attr), 0)
     finally:
@@ -109,7 +118,7 @@ def restrict(task, tmpdir):
         grant(ruleset, "/run/systemd/resolve/stub-resolv.conf", READ_FILE)
         # Git needs the non-secret credential-helper configuration in the daemon home.
         # Expose just this file as read-only; never the home tree or broker tokens.
-        grant(ruleset, "/srv/multica-zar/.gitconfig", READ_FILE)
+        grant(ruleset, "/srv/multica-zar/.gitconfig", READ_FILE, require_regular_nofollow=True)
         # Specific role credential only, not the union of all role keys.
         role = re.sub(r"[^a-z0-9]+", "-", os.environ.get("MULTICA_AGENT_NAME", "").lower()).strip("-")
         if UID_NAME.fullmatch(role):
