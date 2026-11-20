@@ -403,13 +403,13 @@ class ControllerPromotionTests(unittest.TestCase):
         # promoted, and must not escape as an OSError.
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
         with tempfile.TemporaryDirectory() as tmp:
-            readonly = Path(tmp) / "readonly"
-            readonly.mkdir()
-            os.chmod(readonly, 0o500)
-            try:
-                report = self.authorized(transport, state_path=str(readonly / "state.json"))
-            finally:
-                os.chmod(readonly, 0o700)
+            # Root can write into chmod 0500 folders. Inject the actual
+            # state-persistence failure so this rollback regression runs
+            # identically on root operators and unprivileged CI runners.
+            with patch.object(controller, "_write_state",
+                              side_effect=PermissionError("state unwritable")):
+                report = self.authorized(
+                    transport, state_path=str(Path(tmp) / "state.json"))
         decision = report["decisions"][0]
         self.assertEqual(decision["reason"], "promotion_state_unwritable")
         self.assertEqual(decision["decision"], "rolled_back")
