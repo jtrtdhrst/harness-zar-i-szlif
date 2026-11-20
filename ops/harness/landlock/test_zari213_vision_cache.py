@@ -27,6 +27,7 @@ class VisionCacheTest(unittest.TestCase):
         (self.home/"cache"/"vision").symlink_to(self.shared/"cache")
         with self.assertRaises(OSError):M.localize_private_vision_cache(self.home,self.shared)
     def test_bad_cache_mode_denied(self):
-        (self.home/"cache").mkdir(mode=0o755)
+        (self.home/"cache").mkdir(mode=0o700)
+        os.chmod(self.home/"cache", 0o755)  # fixed world-readable fixture despite umask 0077
         with self.assertRaises(ValueError):M.localize_private_vision_cache(self.home,self.shared)
 if __name__=="__main__":unittest.main()
