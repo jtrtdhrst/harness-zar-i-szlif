@@ -628,7 +628,7 @@ class MainWiringTests(unittest.TestCase):
 
     def run_main(self, mode, host, *, documents=None, changed=("mantic-mcp/src/server.ts",),
                  extra=(), source_sha=SOURCE, attestation_key=True,
-                 manifest_override=None, extra=()):
+                 manifest_override=None):
         documents = documents if documents is not None else {
             "request": request(), "grant": grant(), "attestation": signed_attestation()}
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
@@ -998,7 +998,7 @@ class AutoModeTests(unittest.TestCase):
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
                  source_sha=SOURCE, environ=None, parity_error=None, source_error=None,
-                 manifest_override=None):
+                 manifest_override=None, extra=()):
         host = host or FakeHost()
         explicit_documents = documents is not None
         documents = documents if documents is not None else self.documents_for(source_sha)
