@@ -70,6 +70,13 @@ from harness_release_parity import ParityFailure, check_source as check_upstream
 
 REPO = "miloszspyrka-code/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
+# Trusted-main GHCR publishing is owned by mcp-images-ghcr.yml (PR #186).
+# AUTO deployment consumes that immutable digest, NEVER builds a second image.
+GHCR = "ghcr.io/miloszspyrka-code"
+GHCR_SOURCE_SERVICES = frozenset({
+    "emailens-mcp", "mantic-mcp", "plasmic-mcp",
+    "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
+})
 COOLIFY = "http://127.0.0.1:8001/api/v1"
 COOLIFY_TOKEN = Path("/root/coolify-secrets/coolify_api_token")
 STATE_ROOT = Path("/var/lib/harness-image-delivery")
@@ -187,7 +194,11 @@ def verify_source(repo, source_sha):
 def image_pattern(service, spec, registry=REGISTRY):
     """Match the previously pinned image or this registry's image already deployed."""
     current = f"{registry}/harness-{service}"
-    prefixes = sorted({spec["image_prefix"], current}, key=len, reverse=True)
+    prefixes = sorted({
+        spec["image_prefix"], current,
+        f"{REGISTRY}/harness-{service}",
+        f"{GHCR}/harness-{service}",
+    }, key=len, reverse=True)
     alternation = "|".join(re.escape(prefix) for prefix in prefixes)
     return re.compile(r"(?m)^(\s*image:\s*)(['\"]?)(?:" + alternation + r")[^'\"\s]*\2")
 
@@ -264,9 +275,12 @@ class Transport:
     a deploy must ship exactly the image the root attester observed.
     """
 
-    def __init__(self, host, registry=REGISTRY):
+    def __init__(self, host, registry=REGISTRY, expected_digests=None):
         self.host = host
         self.registry = registry
+        # Approved digest comes from independently reviewed root-owned request;
+        # never infer a release identity from mutable GHCR SHA-looking tags.
+        self.expected_digests = dict(expected_digests or {})
         # Transaction-scoped snapshots: never guess using the newest glob on
         # disk, which can belong to another release or Coolify service UUID.
         self._rollback_snapshots = {}
@@ -294,6 +308,23 @@ class Transport:
 
     def build(self, service, source_sha):
         self._known(service)
+        if self.registry == GHCR:
+            if service not in GHCR_SOURCE_SERVICES:
+                raise RuntimeError("auto_ghcr_source_unavailable")
+            expected = self.expected_digests.get(service)
+            if not isinstance(expected, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+                raise RuntimeError("auto_ghcr_digest_unavailable")
+            pinned = image_reference(service, expected, self.registry)
+            # Pull only the operator-approved digest. A retargeted mutable tag
+            # can never change which image the controller promotes.
+            self.host.docker("pull", pinned)
+            reference = self.host.docker(
+                "image", "inspect", "--format", "{{index .RepoDigests 0}}", pinned)
+            if reference != pinned:
+                raise RuntimeError("auto_ghcr_repo_digest_mismatch")
+            if running_revision(self.host, service, expected, self.registry) != source_sha:
+                raise RuntimeError("auto_ghcr_source_revision_mismatch")
+            return expected
         tag = image_tag(service, source_sha, self.registry)
         reference = self.host.docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", tag)
         if "@" not in reference:
@@ -421,6 +452,8 @@ def auto_ci_policy(service, repo, attestation_key):
         raise Denied("attestation_key_missing")
     raw = ci.read_trusted_file(ci.DEFAULT_POLICY, "policy", require_root=True)
     policy = ci.validate_policy(json.loads(raw))
+    if service not in GHCR_SOURCE_SERVICES:
+        raise Denied("auto_ghcr_source_unavailable")
     ci.policy_commands(policy, service)
     if Path(policy["repo_root"]).resolve() != Path(repo).resolve():
         raise Denied("auto_ci_repo_mismatch")
@@ -431,13 +464,22 @@ def auto_ci_policy(service, repo, attestation_key):
 
 def auto_prepare_and_attest(host, repo, base_sha, source_sha, service,
                             bundle, attestation_key, *, policy):
-    """Build and attest only an independently approved exact-SHA UUID release."""
+    """Pull the GHCR-published immutable image and sign local CI; never rebuild."""
     import harness_local_ci_attest as ci
     from harness_release_admission import read_trusted_bytes, verified_attestation
 
-    _tag, digest = prepare(host, repo, service, source_sha)
-    if digest != bundle["request"].get("image_digest"):
-        raise Denied("auto_prepared_digest_mismatch")
+    verify_source(repo, source_sha)
+    digest = bundle["request"].get("image_digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise Denied("auto_ghcr_digest_missing")
+    pinned = image_reference(service, digest, GHCR)
+    host.docker("pull", pinned)
+    actual = host.docker("image", "inspect", "--format",
+                         "{{index .RepoDigests 0}}", pinned)
+    if actual != pinned:
+        raise Denied("auto_ghcr_repo_digest_mismatch")
+    if running_revision(host, service, digest, GHCR) != source_sha:
+        raise Denied("auto_ghcr_source_revision_mismatch")
     code = ci.main(["--service", service, "--base-sha", base_sha,
                     "--source-sha", source_sha, "--image-digest", digest])
     if code != 0:
@@ -697,8 +739,14 @@ def main(argv=None):
                 tag, digest = prepare(host, args.repo, service, source_sha)
                 report["prepared"][service] = {"tag": tag, "image_digest": digest}
         elif args.mode == "deploy":
+            transport = (Transport(host, registry=GHCR,
+                           expected_digests={
+                               name: value["request"]["image_digest"]
+                               for name, value in bundles.items()
+                               if isinstance(value.get("request"), dict)
+                           }) if args.auto else Transport(host))
             report["deployed"] = run_promotion(
-                manifest, paths, lambda service: bundles[service], Transport(host),
+                manifest, paths, lambda service: bundles[service], transport,
                 now=now,
                 lock_path=str(Path(args.state_dir) / "delivery.lock"),
                 state_path=str(Path(args.state_dir) / "delivery.json"),
