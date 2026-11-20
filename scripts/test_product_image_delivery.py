@@ -40,7 +40,9 @@ class ReadbackRegressionTests(unittest.TestCase):
         self.html = b"<html><body>approved release fixture</body></html>"
         self.public_html = self.html
         self.public_sha = SHA
-        self.runtime_digest = DIGEST
+        self.runtime_digest = "sha256:" + "b" * 64
+        self.image_id = self.runtime_digest
+        self.manifest_digest = DIGEST
         self.runtime_image = f"{delivery.REGISTRY}/{delivery.IMAGE}:{SHA}"
         self.runtime_state = "running"
         self.containers = [delivery.APP_UUID + "-fixture"]
@@ -55,12 +57,10 @@ class ReadbackRegressionTests(unittest.TestCase):
             "digest": DIGEST,
         }
         self.marker = mock.Mock()
-        self.marker.stat.return_value = SimpleNamespace(
-            st_uid=0, st_mode=stat.S_IFREG | 0o600, st_nlink=1)
-        self.marker.read_text.side_effect = lambda: json.dumps(self.marker_data)
         self.subprocess_calls = []
         self.patches = [
-            mock.patch.object(delivery, "MARKER", self.marker),
+            mock.patch.object(delivery, "read_marker_protected",
+                              side_effect=lambda _: self.marker_data),
             mock.patch.object(delivery.subprocess, "run", side_effect=self.fake_run),
             mock.patch.object(delivery.urllib.request, "urlopen", side_effect=self.fake_urlopen),
         ]
@@ -77,6 +77,9 @@ class ReadbackRegressionTests(unittest.TestCase):
             output = "\n".join(self.containers) + "\n"
         elif argv[:3] == ["docker", "inspect", "--format"]:
             output = f"{self.runtime_digest}|{self.runtime_image}|{self.runtime_state}\n"
+        elif argv[:4] == ["docker", "image", "inspect", "--format"]:
+            output = self.image_id + "|" + json.dumps(
+                [f"{delivery.REGISTRY}/{delivery.IMAGE}@{self.manifest_digest}"]) + "\n"
         elif argv[:3] == ["docker", "exec", self.containers[0]]:
             if argv[3] == "cat":
                 output = json.dumps({"commit": SHA, "source": "zar-i-szlif/main"})
@@ -97,6 +100,77 @@ class ReadbackRegressionTests(unittest.TestCase):
         if url == delivery.PUBLIC_HEALTH:
             return FakeResponse(b"ok")
         raise AssertionError("unexpected URL")
+
+    def test_symlinked_build_marker_rejected(self):
+        with mock.patch.object(delivery, "read_marker_protected",
+                               side_effect=RuntimeError("not trusted")):
+            self.assertEqual(delivery.target_readback(SHA)["reason"],
+                             "untrusted_build_attestation")
+
+    def test_manifest_digest_and_image_id_are_distinct_and_verified(self):
+        self.assertNotEqual(self.runtime_digest, DIGEST)
+        self.assertTrue(delivery.target_readback(SHA)["ok"])
+        self.manifest_digest = "sha256:" + "c" * 64
+        self.assertEqual(delivery.target_readback(SHA)["reason"],
+                         "repository_digest_mismatch")
+        self.manifest_digest = DIGEST
+        self.runtime_digest = "sha256:" + "d" * 64
+        self.assertEqual(delivery.target_readback(SHA)["reason"],
+                         "target_runtime_image_id_mismatch")
+
+    def test_real_marker_open_fd_rejects_symlinks_and_insecure_parent(self):
+        actual_reader = delivery.read_marker_protected
+        # setUp mocks read_marker_protected, so obtain the original function
+        # from its saved wrapped side effect? Use importlib reload in test below.
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            marker = parent / "marker.json"
+            marker.write_text(json.dumps(self.marker_data))
+            marker.chmod(0o600)
+            # Fetch original helper before the mock installed by setUp.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("image_delivery_fdcheck", delivery.__file__)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self.assertEqual(module.read_marker_protected(marker), self.marker_data)
+            marker.unlink()
+            target = parent / "target.json"
+            target.write_text(json.dumps(self.marker_data))
+            target.chmod(0o600)
+            marker.symlink_to(target)
+            with self.assertRaises(OSError):
+                module.read_marker_protected(marker)
+            marker.unlink()
+            marker.write_text(json.dumps(self.marker_data))
+            marker.chmod(0o600)
+            parent.chmod(0o777)
+            with self.assertRaisesRegex(RuntimeError, "untrusted_release_directory"):
+                module.read_marker_protected(marker)
+            parent.chmod(0o700)
+
+    def test_release_state_directory_requires_private_ownership(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)
+            with mock.patch.object(delivery, "STATE_DIR", p):
+                delivery.trusted_directory(p, private=True)
+                p.chmod(0o777)
+                with self.assertRaisesRegex(RuntimeError, "untrusted_release_directory"):
+                    delivery.trusted_directory(p, private=True)
+                p.chmod(0o700)
+
+    def test_preplanted_state_tmp_symlink_cannot_overwrite_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)
+            victim = p / "victim.txt"
+            victim.write_text("original")
+            state = p / "state.json"
+            (p / "state.tmp").symlink_to(victim)
+            with mock.patch.object(delivery, "STATE_DIR", p), \
+                 mock.patch.object(delivery, "STATE", state):
+                with self.assertRaises(FileExistsError):
+                    delivery.save({"safe": True})
+            self.assertEqual(victim.read_text(), "original")
+            self.assertTrue((p / "state.tmp").is_symlink())
 
     def test_exact_image_and_public_html_allow_verified_noop(self):
         proof = delivery.target_readback(SHA)
@@ -119,9 +193,9 @@ class ReadbackRegressionTests(unittest.TestCase):
         self.assertFalse(delivery.target_readback(SHA)["ok"])
 
     def test_untrusted_marker_permissions_rejected(self):
-        self.marker.stat.return_value = SimpleNamespace(
-            st_uid=1000, st_mode=stat.S_IFREG | 0o666, st_nlink=1)
-        proof = delivery.target_readback(SHA)
+        with mock.patch.object(delivery, "read_marker_protected",
+                               side_effect=RuntimeError("untrusted_build_attestation")):
+            proof = delivery.target_readback(SHA)
         self.assertFalse(proof["ok"])
         self.assertEqual(proof["reason"], "untrusted_build_attestation")
 
@@ -131,7 +205,7 @@ class ReadbackRegressionTests(unittest.TestCase):
                          "target_runtime_digest_or_ref_mismatch")
 
     def test_wrong_runtime_digest_rejected(self):
-        self.runtime_digest = "sha256:" + "b" * 64
+        self.runtime_digest = "sha256:" + "d" * 64
         self.assertFalse(delivery.target_readback(SHA)["ok"])
 
     def test_nonrunning_runtime_rejected(self):

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -40,6 +41,66 @@ COMMIT_SHA_RE = re.compile(r"[a-f0-9]{40}")
 
 def valid_commit_sha(value):
     return isinstance(value, str) and COMMIT_SHA_RE.fullmatch(value) is not None
+
+
+def trusted_directory(path, *, private=False):
+    """Refuse symlinked, foreign-owned or writable-by-others release state."""
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or (private and mode != 0o700)
+            or (not private and bool(mode & 0o022))):
+        raise RuntimeError("untrusted_release_directory")
+
+
+def trusted_directory_fd(path, *, private=True):
+    """Hold a non-symlink directory descriptor and verify this exact inode."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    info = os.fstat(fd)
+    mode = stat.S_IMODE(info.st_mode)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or (private and mode != 0o700)
+            or (not private and bool(mode & 0o022))):
+        os.close(fd)
+        raise RuntimeError("untrusted_release_directory")
+    return fd
+
+
+def read_marker_protected(path):
+    """Same opened inode is checked and decoded; never follow a marker symlink."""
+    dfd = trusted_directory_fd(path.parent)
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+        with os.fdopen(fd, "r", encoding="utf-8") as reader:
+            info = os.fstat(reader.fileno())
+            if (info.st_uid != os.geteuid() or not stat.S_ISREG(info.st_mode)
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                raise RuntimeError("untrusted_build_attestation")
+            return json.load(reader)
+    finally:
+        os.close(dfd)
+
+
+def atomic_json_replace(path, payload):
+    """Write exclusively under a verified dirfd, never through stale symlinks."""
+    dfd = trusted_directory_fd(path.parent)
+    temp_name = path.with_suffix(".tmp").name
+    created = False
+    try:
+        fd = os.open(temp_name, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                     os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+        created = True
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path.name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        created = False
+    finally:
+        if created:
+            os.unlink(temp_name, dir_fd=dfd)
+        os.close(dfd)
 
 
 def github_token():
@@ -79,11 +140,10 @@ def target_readback(sha):
     if not isinstance(sha,str) or not re.fullmatch(r"[a-f0-9]{40}",sha):
         return deny("invalid_sha")
     try:
-        info=MARKER.stat()
-        if (info.st_uid!=0 or not stat.S_ISREG(info.st_mode)
-                or stat.S_IMODE(info.st_mode)!=0o600 or info.st_nlink!=1):
+        try:
+            proof = read_marker_protected(MARKER)
+        except (OSError, RuntimeError, ValueError):
             return deny("untrusted_build_attestation")
-        proof=json.loads(MARKER.read_text())
         image=f"{REGISTRY}/{IMAGE}:{sha}"
         digest=proof.get("digest")
         if (proof.get("schema_version")!=1 or proof.get("verified") is not True
@@ -102,8 +162,19 @@ def target_readback(sha):
         raw=subprocess.run(["docker","inspect","--format",
                 "{{.Image}}|{{.Config.Image}}|{{.State.Status}}",name],
                 capture_output=True,text=True,timeout=12,check=True).stdout.strip().split("|")
-        if len(raw)!=3 or raw!=[digest,image,"running"]:
+        if len(raw)!=3 or raw[1:] != [image, "running"]:
             return deny("target_runtime_digest_or_ref_mismatch")
+        # Docker's config image ID and registry manifest digest are distinct
+        # identifiers; compare each to its authoritative source separately.
+        meta=subprocess.run(["docker","image","inspect","--format",
+                "{{.Id}}|{{json .RepoDigests}}",image],
+                capture_output=True,text=True,timeout=12,check=True).stdout.strip().split("|",1)
+        if len(meta)!=2 or meta[0]!=raw[0] or not re.fullmatch(r"sha256:[a-f0-9]{64}",meta[0]):
+            return deny("target_runtime_image_id_mismatch")
+        repositories=json.loads(meta[1])
+        if (not isinstance(repositories,list)
+                or f"{REGISTRY}/{IMAGE}@{digest}" not in repositories):
+            return deny("repository_digest_mismatch")
         release=subprocess.run(["docker","exec",name,"cat",
                 "/usr/share/nginx/html/__release.json"],
                 capture_output=True,text=True,timeout=12,check=True)
@@ -150,14 +221,18 @@ def download_source(sha):
     # validation. Refuse path traversal before any download or filesystem write.
     if not valid_commit_sha(sha):
         raise ValueError("invalid_source_sha")
-    SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    trusted_directory(STATE_DIR, private=True)
+    SOURCE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    trusted_directory(SOURCE_DIR)
     tarball = SOURCE_DIR / f"src-{sha}.tar.gz"
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPO}/tarball/{sha}",
         headers={"Authorization": "token " + github_token(), "Accept": "application/vnd.github+json",
                  "User-Agent": "multica-image-delivery"},
     )
-    with urllib.request.urlopen(request, timeout=120) as response, open(tarball, "wb") as out:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+    with urllib.request.urlopen(request, timeout=120) as response, \
+         os.fdopen(os.open(tarball, flags, 0o600), "wb") as out:
         shutil.copyfileobj(response, out)
     work = SOURCE_DIR / sha
     shutil.rmtree(work, ignore_errors=True)
@@ -174,7 +249,12 @@ def download_source(sha):
 def build_and_push(sha, log):
     context = download_source(sha)
     image = f"{REGISTRY}/{IMAGE}:{sha}"
-    with open(log, "ab") as output:
+    fd = os.open(log, os.O_CREAT | os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "ab") as output:
+        info = os.fstat(output.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+            raise RuntimeError("untrusted_build_log")
         result = subprocess.run(
             ["docker", "build", "--file", "ops/coolify/Dockerfile", "--tag", image, "."],
             cwd=context, stdout=output, stderr=subprocess.STDOUT, check=False,
@@ -199,10 +279,8 @@ def update_marker(sha, image, digest):
         "image": image, "digest": digest, "sha": sha,
         "verified_at": time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime()),
     }
-    tmp = MARKER.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload) + "\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, MARKER)
+    trusted_directory(MARKER.parent, private=True)
+    atomic_json_replace(MARKER, json.dumps(payload) + "\n")
 
 
 def deploy(sha):
@@ -225,10 +303,8 @@ def wait_live(sha, attempts=90, interval=10):
 
 
 def save(state):
-    tmp = STATE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, sort_keys=True) + "\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, STATE)
+    trusted_directory(STATE_DIR, private=True)
+    atomic_json_replace(STATE, json.dumps(state, sort_keys=True) + "\n")
 
 
 def main():
@@ -238,7 +314,10 @@ def main():
     parser.add_argument("--plan", action="store_true")
     args = parser.parse_args()
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (STATE_DIR / "docker").mkdir(parents=True, exist_ok=True, mode=0o700)
+    trusted_directory(STATE_DIR, private=True)
+    docker_dir = STATE_DIR / "docker"
+    docker_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    trusted_directory(docker_dir, private=True)
     with open(LOCK, "a+") as lock:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
