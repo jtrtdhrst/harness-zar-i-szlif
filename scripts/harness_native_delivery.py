@@ -441,6 +441,70 @@ def resolve_source_range(args, environ=None):
     return base_sha, source_sha
 
 
+
+def pending_per_service_source_paths(repo, source_sha, state_dir):
+    """Reconcile against the *existing* digest-verified delivery ledger.
+
+    The global operator source range is not a release cursor. A moved
+    HARNESS_BASE_SHA must not erase a service's unmet production delivery.
+    No state is written here. An unknown baseline is eligible for *admission*
+    but never asserted to be deployed; it still needs exact-SHA review,
+    a per-UUID release grant and signed CI before build or deployment.
+    """
+    state_file = Path(state_dir) / "delivery.json"
+    try:
+        ledger = json.loads(state_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        ledger = {}
+    except (OSError, ValueError):
+        raise Denied("delivery_ledger_unreadable") from None
+    if not isinstance(ledger, dict):
+        raise Denied("delivery_ledger_invalid")
+
+    pending = set()
+    unknown_baselines = []
+    diff_cache = {}
+    for service, spec in sorted(SERVICES.items()):
+        folder = spec["folder"]
+        source_dir = Path(repo) / folder
+        if not source_dir.is_dir():
+            # Removed source remains governed by the existing retired-source
+            # policy and its explicit/manual release lane, not a phantom build.
+            continue
+        entry = ledger.get(service)
+        if entry is None:
+            previous = None
+        elif isinstance(entry, dict):
+            previous = entry.get("source_sha")
+        else:
+            raise Denied("delivery_ledger_invalid:" + service)
+        if previous is None:
+            unknown_baselines.append(service)
+            # The tracked Dockerfile is an admission sentinel, NOT proof of a
+            # changed file or proof that the running image is current. No
+            # deployment can occur without the original strict gates.
+            sentinel = source_dir / spec["dockerfile"]
+            if sentinel.is_file():
+                pending.add(f"{folder}/{spec['dockerfile']}")
+            else:
+                raise Denied("missing_build_context:" + service)
+            continue
+        if not isinstance(previous, str) or not SHA.fullmatch(previous):
+            raise Denied("delivery_ledger_invalid_sha:" + service)
+        if previous == source_sha:
+            continue
+        if previous not in diff_cache:
+            ancestry = subprocess.run(
+                ["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                 previous, source_sha], capture_output=True, timeout=30)
+            if ancestry.returncode != 0:
+                raise Denied("delivery_ledger_not_ancestor:" + service)
+            diff_cache[previous] = git_changed_paths(repo, previous, source_sha)
+        pending.update(path for path in diff_cache[previous]
+                       if path == folder or path.startswith(folder + "/"))
+    return sorted(pending), sorted(unknown_baselines)
+
+
 def build_parser():
     """The adapter's only CLI surface.
 
@@ -492,16 +556,29 @@ def main(argv=None):
                 check_upstream_source(args.repo, source_sha)
             except ParityFailure as exc:
                 raise Denied("source_parity:" + str(exc)) from exc
-        if base_sha == source_sha:
+        global_paths = (git_changed_paths(args.repo, base_sha, source_sha)
+                        if base_sha != source_sha else [])
+        unknown_baselines = []
+        if args.auto:
+            # Compare every modeled service with its last *actually delivered*
+            # source SHA; advancing an operator checkout never consumes its
+            # pending release. No new cursor or state store is introduced.
+            backlog, unknown_baselines = pending_per_service_source_paths(
+                args.repo, source_sha, args.state_dir)
+            owned = tuple(spec["folder"] + "/" for spec in SERVICES.values())
+            global_paths = sorted({path for path in global_paths
+                                   if not path.startswith(owned)} | set(backlog))
+        if not global_paths:
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
                               "result": "source_range_unchanged",
                               "runtime_parity": "not_claimed",
+                              "unverified_service_baselines": unknown_baselines,
                               "release_complete": False}, sort_keys=True))
             return 0
         # A scoped release is operator-explicit, never silently chosen by the
         # unattended timer. Every included service still needs the exact SHA,
         # independent review, per-UUID grant, and signed digest attestation.
-        all_paths = git_changed_paths(args.repo, base_sha, source_sha)
+        all_paths = global_paths
         if args.service:
             folder = SERVICES[args.service]["folder"]
             paths = [p for p in all_paths if p == folder or p.startswith(folder + "/")]
@@ -577,14 +654,33 @@ def main(argv=None):
                   "pending_paths": pending_paths,
                   "held_outside_transport": held,
                   "retired_source_pending": retired,
+                  "unverified_service_baselines": unknown_baselines,
                   "release_complete": False,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
+        # Unattended releases are per-service: a held or unrequested service
+        # remains visible as pending, but must not block a separate *approved*
+        # service. Never make a blanket approval or trust a missing request.
+        awaiting_evidence = []
+        if args.auto and args.mode in ("prepare", "deploy"):
+            for service in sorted(list(attributed)):
+                request_path = Path(args.artifact_dir or "") / f"{service}-request.json"
+                if not args.artifact_dir or not request_path.is_file():
+                    awaiting_evidence.append(service)
+                    pending_paths.extend(attributed.pop(service))
+            report["pending_paths"] = sorted(set(pending_paths))
+            report["services"] = {
+                service: {"changed_paths": sorted(changed)}
+                for service, changed in sorted(attributed.items())}
+            report["awaiting_release_evidence"] = awaiting_evidence
         if not attributed:
-            report["result"] = "held_manual_pending" if held or retired else "no_service_change"
+            if awaiting_evidence:
+                report["result"] = "pending_release_evidence"
+            else:
+                report["result"] = "held_manual_pending" if held or retired else "no_service_change"
             print(json.dumps(report, sort_keys=True))
-            return 1 if held or retired else 0
+            return 1 if awaiting_evidence or held or retired else 0
         # Phase 1: admit EVERY changed service before ANY preparation or
         # deployment. A partial set of valid grants must not cause a partial
         # production release. Plan mode checks the same real evidence as deploy
