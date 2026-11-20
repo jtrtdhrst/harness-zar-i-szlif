@@ -1,0 +1,38 @@
+name: Harness controller PR checks
+
+on:
+  pull_request:
+    paths:
+      - "scripts/harness_native_delivery.py"
+      - "scripts/harness_delivery_controller.py"
+      - "scripts/harness_release_parity.py"
+      - "scripts/harness_release_admission.py"
+      - "scripts/test_harness_*.py"
+      - ".github/workflows/harness-controller-pr.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-controller-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  controller-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax and source checks
+        run: |
+          python3 -m py_compile scripts/harness_native_delivery.py scripts/harness_delivery_controller.py scripts/harness_release_parity.py scripts/harness_release_admission.py
+      - name: Unprivileged controller regressions
+        env:
+          PYTHONPATH: scripts
+        run: |
+          python3 -m unittest -q scripts.test_harness_native_delivery scripts.test_harness_delivery_controller scripts.test_harness_release_parity
