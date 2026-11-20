@@ -555,7 +555,19 @@ def main(argv=None):
                 raise Denied("selected_source_unavailable:" + service)
             pending_paths.extend(attributed.pop(service))
             retired.append(service)
-        pending_paths = sorted(set(pending_paths))
+        # A changed build definition outside the reviewed transport must never
+        # be silently treated as shipped with an admitted MCP service.
+        # Other unclassified paths remain pending, rather than being included
+        # in an unscoped release_complete claim.
+        accounted = {path for changed in attributed.values() for path in changed}
+        unclassified_paths = sorted(set(paths) - accounted - set(pending_paths))
+        unexpected_builds = sorted({path.split("/", 1)[0] for path in unclassified_paths
+            if Path(path).name.startswith("Dockerfile")
+            or Path(path).name in ("docker-compose.yml", "docker-compose.yaml",
+                                   "compose.yml", "compose.yaml")})
+        if unexpected_builds:
+            raise Denied("unclassified_build_source:" + ",".join(unexpected_builds))
+        pending_paths = sorted(set(pending_paths) | set(unclassified_paths))
         report: dict = {"mode": args.mode, "source_sha": source_sha,
                   "scope": args.service or "all",
                   # Never report a scoped service release as delivery of the
@@ -643,7 +655,8 @@ def main(argv=None):
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
-        print(json.dumps({"result": "denied", "reason": str(exc)}), file=sys.stderr)
+        print(json.dumps({"result": "denied", "reason": str(exc),
+                          "release_complete": False}), file=sys.stderr)
         return 1
     except (OSError, RuntimeError, ValueError) as exc:
         print(json.dumps({"result": "error", "reason": str(exc)[:300]}), file=sys.stderr)
