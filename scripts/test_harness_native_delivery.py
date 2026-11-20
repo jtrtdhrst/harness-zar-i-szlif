@@ -675,6 +675,67 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(host.mutations(), [])
         auto.assert_not_called()
 
+    def test_auto_signed_attestation_still_requires_live_ci_policy(self):
+        # A valid old HMAC must NOT bypass the current root-owned policy.
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy",
+                             side_effect=Denied("policy_unavailable")):
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(),
+                           "attestation": signed_attestation()},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("policy_unavailable", out)
+        self.assertEqual(host.mutations(), [])
+        self.assertEqual(host.calls, [])
+
+    def test_auto_signed_attestation_rejects_revoked_policy_digest(self):
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy",
+                             return_value={"out_dir": "/tmp",
+                                           "_verified_digest": "sha256:" + "f" * 64}):
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(),
+                           "attestation": signed_attestation()},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("auto_ci_policy_digest_mismatch", out)
+        self.assertEqual(host.mutations(), [])
+        self.assertEqual(host.calls, [])
+
+    def test_auto_ci_preflights_root_private_key_before_docker(self):
+        import harness_local_ci_attest as ci
+
+        host = FakeHost()
+        root_policy = {"repo_root": "/tmp/approved-repo",
+                       "key_file": "/tmp/root-owned-key", "out_dir": "/tmp"}
+        with patch.object(delivery.os, "geteuid", return_value=0), \
+                patch.object(ci, "read_trusted_file",
+                             side_effect=[b"{}", Denied("signing_key_unavailable")]), \
+                patch.object(ci, "validate_policy", return_value=root_policy), \
+                patch.object(ci, "policy_commands", return_value=[["/bin/true"]]):
+            with self.assertRaisesRegex(Denied, "signing_key_unavailable"):
+                delivery.auto_ci_policy("mantic-mcp", "/tmp/approved-repo",
+                                        "/tmp/root-owned-key")
+        self.assertEqual(host.mutations(), [])
+        self.assertEqual(host.calls, [])
+
+    def test_auto_ci_preflights_weak_signing_key(self):
+        import harness_local_ci_attest as ci
+
+        root_policy = {"repo_root": "/tmp/approved-repo",
+                       "key_file": "/tmp/root-owned-key", "out_dir": "/tmp"}
+        with patch.object(delivery.os, "geteuid", return_value=0), \
+                patch.object(ci, "read_trusted_file",
+                             side_effect=[b"{}", b"short"]), \
+                patch.object(ci, "validate_policy", return_value=root_policy), \
+                patch.object(ci, "policy_commands", return_value=[["/bin/true"]]):
+            with self.assertRaisesRegex(Denied, "signing_key_weak"):
+                delivery.auto_ci_policy("mantic-mcp", "/tmp/approved-repo",
+                                        "/tmp/root-owned-key")
+
     def test_auto_approved_release_builds_and_attests_before_promotion(self):
         host = FakeHost(images={
             f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}": DIGEST})
@@ -1322,10 +1383,14 @@ class AutoModeTests(unittest.TestCase):
         policy["other_resources"].append(other)
         host = FakeHost(revision=head, images={
             f"127.0.0.1:5000/harness-mantic-mcp:{head[:12]}": DIGEST})
-        code, out, host = self.run_auto(
-            repo, state_dir, mode="deploy", source_sha=head,
-            documents=self.documents_for(head), host=host, manifest_override=policy,
-            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        # The old signed fixture is paired with the current trusted policy.
+        with patch.object(delivery, "auto_ci_policy",
+                          return_value={"out_dir": state_dir,
+                                        "_verified_digest": "sha256:" + "e" * 64}):
+            code, out, host = self.run_auto(
+                repo, state_dir, mode="deploy", source_sha=head,
+                documents=self.documents_for(head), host=host, manifest_override=policy,
+                environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
         report = json.loads(out)
         self.assertEqual(code, 0, out)
         self.assertEqual(report["result"], "partial_release_pending")
