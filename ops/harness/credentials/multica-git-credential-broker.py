@@ -192,6 +192,10 @@ def read_role_token(tokens_dir, role):
         raise ValueError("role token malformed")
     if set(data.get("repositories", [])) != ALLOWED_REPOS:
         raise ValueError("role token repository scope mismatch")
+    if role == "cache-reader":
+        if (data.get("role") != "cache-reader" or
+            data.get("permissions") != {"contents": "read", "metadata": "read"}):
+            raise ValueError("daemon cache token permissions mismatch")
     if parse_expiry(data["expires_at"]) <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2):
         raise ValueError("role token stale")
     return data
@@ -247,7 +251,7 @@ class Handler(socketserver.StreamRequestHandler):
                     return
                 # Cache sync from the trusted daemon can only read repository
                 # contents; never borrow an implementer/release token.
-                role = "reviewer"
+                role = "cache-reader"
                 agent_id = "daemon-cache"
             else:
                 agent_id, task_id = identity
