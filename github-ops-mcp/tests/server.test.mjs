@@ -56,6 +56,33 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
     assert.equal((await y.json()).result.tools.length,8);
   }finally{await f.close()}
 });
+test('tool metadata requires OAuth for all eight tools',async()=>{
+ const f=await fixture();try{
+  const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+  const tools=(await response.json()).result.tools;
+  assert.equal(tools.length,8);
+  for(const tool of tools){
+    assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
+    assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
+  }
+ }finally{await f.close()}
+});
+test('missing bearer returns protected resource OAuth challenge and no provider traffic',async()=>{
+ const f=await fixture();try{
+  const response=await fetch(f.root+'/mcp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+  assert.equal(response.status,401);
+  assert.match(response.headers.get('www-authenticate'),/^Bearer resource_metadata="https:\/\/github-ops-mcp\.zariszlif\.pl\/\.well-known\/oauth-protected-resource\/mcp"/);
+  assert.equal((await response.json()).error,'invalid_token');
+  assert.equal(f.calls.length,0);
+ }finally{await f.close()}
+});
+test('GET /mcp has protocol-appropriate 405 rather than misleading 404',async()=>{
+ const f=await fixture();try{
+  const response=await fetch(f.root+'/mcp');
+  assert.equal(response.status,405);
+  assert.equal(response.headers.get('allow'),'POST');
+ }finally{await f.close()}
+});
 test('repo allowlist and live read',async()=>{
   const f=await fixture();try{
     assert.equal((await f.request('github_repo_info',{repo:REPO})).body.result.structuredContent.full_name,REPO);
