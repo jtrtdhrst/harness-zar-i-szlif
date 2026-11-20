@@ -285,19 +285,21 @@ def download_source(sha):
         headers={"Authorization": "token " + github_token(), "Accept": "application/vnd.github+json",
                  "User-Agent": "multica-image-delivery"},
     )
-    with os.fdopen(tarfd, "wb") as out:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            shutil.copyfileobj(response, out)
-    work = SOURCE_DIR / sha
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True)
-    with tarfile.open(tarball) as archive:
-        archive.extractall(work, filter="data")
-    roots = [item for item in work.iterdir() if item.is_dir()]
-    if len(roots) != 1:
-        raise RuntimeError("unexpected source archive layout")
-    tarball.unlink()
-    return roots[0]
+    try:
+        with os.fdopen(tarfd, "wb") as out:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                shutil.copyfileobj(response, out)
+        work = SOURCE_DIR / sha
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True)
+        with tarfile.open(tarball) as archive:
+            archive.extractall(work, filter="data")
+        roots = [item for item in work.iterdir() if item.is_dir()]
+        if len(roots) != 1:
+            raise RuntimeError("unexpected source archive layout")
+        return roots[0]
+    finally:
+        tarball.unlink(missing_ok=True)
 
 
 def build_and_push(sha, log):
