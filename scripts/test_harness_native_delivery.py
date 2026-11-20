@@ -572,6 +572,81 @@ class TransportMapTests(unittest.TestCase):
                 call()
         self.assertEqual(host.calls, [])
 
+    def test_manual_held_resource_is_pending_without_weakening_modelled_admission(self):
+        host = FakeHost()
+        man = manifest("hold")
+        man["other_resources"].append({
+            "id": "plasmic", "coolify_kind": "service", "coolify_uuid": "z" * 24,
+            "promotion_state": "hold", "release_route": "coolify_reviewed_digest_manual"})
+        with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
+                patch.object(delivery, "Host", lambda *a, **k: host), \
+                patch.object(delivery, "git_changed_paths", lambda *a, **k:
+                             ["plasmic/studio/nginx.conf", "mantic-mcp/src/server.ts"]), \
+                patch.object(delivery, "load_gate_file",
+                             side_effect=lambda path, label, require_root=False: man), \
+                patch.object(controller, "load_gate_file",
+                             side_effect=lambda path, label, require_root=True: None):
+            out = io.StringIO()
+            with patch.object(sys, "stdout", out):
+                code = delivery.main(["--mode", "plan", "--repo", ".", "--base-sha", "0" * 40,
+                                      "--source-sha", SOURCE, "--artifact-dir", tmp])
+        report = json.loads(out.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(report["result"], "denied")
+        self.assertEqual(report["denied"], {"mantic-mcp": "request_invalid"})
+        self.assertEqual(report["manual_pending_services"], ["plasmic"])
+        self.assertEqual(report["pending_paths"], ["plasmic/studio/nginx.conf"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_approved_mcp_can_be_planned_with_unreleased_manual_paths(self):
+        host = FakeHost()
+        man = manifest("approved")
+        man["other_resources"].append({
+            "id": "plasmic", "coolify_kind": "service", "coolify_uuid": "z" * 24,
+            "promotion_state": "hold", "release_route": "coolify_reviewed_digest_manual"})
+        documents = {"request": request(), "grant": grant(),
+                     "attestation": gate.verified_attestation(signed_attestation(), KEY)}
+        with patch.object(delivery, "Host", lambda *a, **k: host), \
+                patch.object(delivery, "git_changed_paths", lambda *a, **k:
+                             ["plasmic/studio/nginx.conf", "mantic-mcp/src/server.ts"]), \
+                patch.object(delivery, "load_gate_file",
+                             side_effect=lambda path, label, require_root=False: man), \
+                patch.object(delivery, "load_artifacts", return_value=documents):
+            out = io.StringIO()
+            with patch.object(sys, "stdout", out):
+                code = delivery.main(["--mode", "plan", "--base-sha", "0" * 40,
+                                      "--source-sha", SOURCE, "--now", NOW.isoformat(),
+                                      "--artifact-dir", "/test-gate-dir"])
+        report = json.loads(out.getvalue())
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["result"], "ok_with_manual_pending")
+        self.assertEqual(report["admitted"], ["mantic-mcp"])
+        self.assertEqual(report["pending_paths"], ["plasmic/studio/nginx.conf"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_manual_only_range_is_not_reported_as_success(self):
+        host = FakeHost()
+        man = manifest("approved")
+        man["other_resources"].append({
+            "id": "qdrant", "coolify_kind": "service", "coolify_uuid": "z" * 24,
+            "promotion_state": "hold", "release_route": "coolify_reviewed_digest_manual"})
+        with patch.object(delivery, "Host", lambda *a, **k: host), \
+                patch.object(delivery, "git_changed_paths", lambda *a, **k: ["qdrant/project.yml"]), \
+                patch.object(delivery, "load_gate_file",
+                             side_effect=lambda path, label, require_root=False: man):
+            out = io.StringIO()
+            with patch.object(sys, "stdout", out):
+                code = delivery.main(["--mode", "plan", "--base-sha", "0" * 40,
+                                      "--source-sha", SOURCE])
+        report = json.loads(out.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(report["result"], "manual_release_pending")
+        self.assertEqual(report["manual_pending_services"], ["qdrant"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.calls, [])
+
     def test_deploy_run_refuses_a_manifest_service_outside_the_transport(self):
         host = FakeHost()
         man = manifest("approved")
