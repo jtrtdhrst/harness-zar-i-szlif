@@ -56,6 +56,7 @@ import argparse
 import base64
 import json
 import os
+import stat
 import re
 import secrets
 import subprocess
@@ -520,6 +521,186 @@ def resolve_source_range(args, environ=None):
     return base_sha, source_sha
 
 
+
+
+# This value is never sourced from environment, a request, or the CLI. Tests
+# substitute their own non-root fixture UID only through unittest.mock.patch.
+DELIVERY_LEDGER_OWNER_UID = 0
+
+
+def read_private_delivery_ledger(state_dir):
+    """Load the existing release ledger with root-owned no-follow descriptors.
+
+    The ledger can suppress a release, so treating user-writable or symlinked
+    state as trustworthy would be a fail-open deployment control. Hold the
+    private directory fd while opening its entry via dir_fd: no path-based
+    lstat/open race is possible. The actual descriptors are checked before
+    and after reading. Missing file is allowed *only inside* a trusted dir.
+    """
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise Denied("delivery_ledger_no_secure_open")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(str(state_dir), directory_flags)
+    except OSError:
+        raise Denied("delivery_ledger_directory_untrusted") from None
+    try:
+        directory = os.fstat(directory_fd)
+        if (not stat.S_ISDIR(directory.st_mode)
+                or directory.st_uid != DELIVERY_LEDGER_OWNER_UID
+                or directory.st_mode & 0o077):
+            raise Denied("delivery_ledger_directory_untrusted")
+        try:
+            file_fd = os.open("delivery.json",
+                              os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                              dir_fd=directory_fd)
+        except FileNotFoundError:
+            return {}
+        except OSError:
+            raise Denied("delivery_ledger_file_untrusted") from None
+        try:
+            original = os.fstat(file_fd)
+            if (not stat.S_ISREG(original.st_mode)
+                    or original.st_uid != DELIVERY_LEDGER_OWNER_UID
+                    or original.st_mode & 0o077
+                    or original.st_nlink != 1
+                    or original.st_size <= 0 or original.st_size > 262144):
+                raise Denied("delivery_ledger_file_untrusted")
+            try:
+                raw = bytearray()
+                while len(raw) <= 262144:
+                    chunk = os.read(file_fd, min(65536, 262145 - len(raw)))
+                    if not chunk:
+                        break
+                    raw.extend(chunk)
+            except OSError:
+                raise Denied("delivery_ledger_unreadable") from None
+            after = os.fstat(file_fd)
+            if (len(raw) != original.st_size or
+                    (original.st_dev, original.st_ino, original.st_size, original.st_mtime_ns)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
+                raise Denied("delivery_ledger_changed_during_read")
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
+    try:
+        ledger = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise Denied("delivery_ledger_invalid") from None
+    if not isinstance(ledger, dict):
+        raise Denied("delivery_ledger_invalid")
+    return ledger
+
+
+def pending_per_service_source_paths(repo, source_sha, state_dir, manifest):
+    """Reconcile against the *existing* digest-verified delivery ledger.
+
+    The global operator source range is not a release cursor. A moved
+    HARNESS_BASE_SHA must not erase a service's unmet production delivery.
+    No state is written here. An unknown baseline is eligible for *admission*
+    but never asserted to be deployed; it still needs exact-SHA review,
+    a per-UUID release grant and signed CI before build or deployment.
+    """
+    ledger = read_private_delivery_ledger(state_dir)
+
+    entries = {entry.get("id"): entry
+               for entry in (manifest.get("lanes") or []) +
+                            (manifest.get("other_resources") or [])
+               if isinstance(entry, dict)}
+    pending = set()
+    unknown_baselines = []
+    diff_cache = {}
+    for service, spec in sorted(SERVICES.items()):
+        route = entries.get(service)
+        if not route or route.get("coolify_kind") != "service" or not route.get("coolify_uuid"):
+            # Not an approved live route; a source folder alone cannot
+            # authorize a production deployment (for example, orphan adapters).
+            continue
+        folder = spec["folder"]
+        source_dir = Path(repo) / folder
+        if not source_dir.is_dir():
+            # Removed source remains governed by the existing retired-source
+            # policy and its explicit/manual release lane, not a phantom build.
+            continue
+        entry = ledger.get(service)
+        if entry is None:
+            previous = None
+        elif isinstance(entry, dict):
+            previous = entry.get("source_sha")
+        else:
+            raise Denied("delivery_ledger_invalid:" + service)
+        if previous is None:
+            unknown_baselines.append(service)
+            # The tracked Dockerfile is an admission sentinel, NOT proof of a
+            # changed file or proof that the running image is current. No
+            # deployment can occur without the original strict gates.
+            sentinel = source_dir / spec["dockerfile"]
+            if sentinel.is_file():
+                pending.add(f"{folder}/{spec['dockerfile']}")
+            else:
+                raise Denied("missing_build_context:" + service)
+            continue
+        if not isinstance(previous, str) or not SHA.fullmatch(previous):
+            raise Denied("delivery_ledger_invalid_sha:" + service)
+        if previous == source_sha:
+            continue
+        if previous not in diff_cache:
+            ancestry = subprocess.run(
+                ["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                 previous, source_sha], capture_output=True, timeout=30)
+            if ancestry.returncode != 0:
+                raise Denied("delivery_ledger_not_ancestor:" + service)
+            diff_cache[previous] = git_changed_paths(repo, previous, source_sha)
+        pending.update(path for path in diff_cache[previous]
+                       if path == folder or path.startswith(folder + "/"))
+    return sorted(pending), sorted(unknown_baselines)
+
+
+def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
+    """Use a fast-forward checkout tip in AUTO; never change the source tree.
+
+    A timer can observe a newer, externally advanced main checkout after its
+    root-owned EnvironmentFile was pinned. This read-only bridge eliminates a
+    stale pin without making a release decision. The caller still independently
+    verifies that the tip is CURRENT GitHub main, and the ordinary signed,
+    per-UUID admission gate remains mandatory before any Docker/Coolify write.
+    Neither the pinned baseline nor release-state evidence is updated here.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("auto_checkout_unverifiable") from None
+    tip = result.stdout.strip()
+    if result.returncode != 0 or not SHA.fullmatch(tip):
+        raise Denied("auto_checkout_unverifiable")
+    try:
+        worktree = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain",
+             "--untracked-files=all"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("auto_checkout_unverifiable") from None
+    if worktree.returncode != 0:
+        raise Denied("auto_checkout_unverifiable")
+    if worktree.stdout.strip():
+        raise Denied("auto_checkout_dirty")
+    for ancestor in (pinned_sha, base_sha):
+        if ancestor == tip:
+            continue
+        try:
+            probe = subprocess.run(
+                ["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                 ancestor, tip], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            raise Denied("auto_source_not_fast_forward") from None
+        if probe.returncode != 0:
+            raise Denied("auto_source_not_fast_forward")
+    return tip
+
+
 def build_parser():
     """The adapter's only CLI surface.
 
@@ -559,6 +740,14 @@ def main(argv=None):
 
         now = parse_time(args.now) if args.now else None
         base_sha, source_sha = resolve_source_range(args)
+        if args.auto and not args.source_sha:
+            # Explicit --source-sha is an operator pin and must never be
+            # silently promoted to a newer checkout tip.
+            # Source SHA may follow an already advanced, clean checkout; the
+            # operator's last-delivered BASE must never be advanced on a tick.
+            # check_upstream_source below verifies exact live GitHub main and
+            # refuses a dirty or stale checkout before ANY build/deploy call.
+            source_sha = resolve_verified_checkout_tip(args.repo, source_sha, base_sha)
         if args.service and args.auto:
             raise Denied("scoped_auto_not_allowed")
         if args.service and args.mode != "plan" and os.geteuid() != 0:
@@ -571,16 +760,29 @@ def main(argv=None):
                 check_upstream_source(args.repo, source_sha)
             except ParityFailure as exc:
                 raise Denied("source_parity:" + str(exc)) from exc
-        if base_sha == source_sha:
+        global_paths = (git_changed_paths(args.repo, base_sha, source_sha)
+                        if base_sha != source_sha else [])
+        unknown_baselines = []
+        if args.auto:
+            # Compare every modeled service with its last *actually delivered*
+            # source SHA; advancing an operator checkout never consumes its
+            # pending release. No new cursor or state store is introduced.
+            backlog, unknown_baselines = pending_per_service_source_paths(
+                args.repo, source_sha, args.state_dir, manifest)
+            owned = tuple(spec["folder"] + "/" for spec in SERVICES.values())
+            global_paths = sorted({path for path in global_paths
+                                   if not path.startswith(owned)} | set(backlog))
+        if not global_paths:
             print(json.dumps({"mode": args.mode, "source_sha": source_sha,
                               "result": "source_range_unchanged",
                               "runtime_parity": "not_claimed",
+                              "unverified_service_baselines": unknown_baselines,
                               "release_complete": False}, sort_keys=True))
             return 0
         # A scoped release is operator-explicit, never silently chosen by the
         # unattended timer. Every included service still needs the exact SHA,
         # independent review, per-UUID grant, and signed digest attestation.
-        all_paths = git_changed_paths(args.repo, base_sha, source_sha)
+        all_paths = global_paths
         if args.service:
             folder = SERVICES[args.service]["folder"]
             paths = [p for p in all_paths if p == folder or p.startswith(folder + "/")]
@@ -656,14 +858,33 @@ def main(argv=None):
                   "pending_paths": pending_paths,
                   "held_outside_transport": held,
                   "retired_source_pending": retired,
+                  "unverified_service_baselines": unknown_baselines,
                   "release_complete": False,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
+        # Unattended releases are per-service: a held or unrequested service
+        # remains visible as pending, but must not block a separate *approved*
+        # service. Never make a blanket approval or trust a missing request.
+        awaiting_evidence = []
+        if args.auto and args.mode in ("prepare", "deploy"):
+            for service in sorted(list(attributed)):
+                request_path = Path(args.artifact_dir or "") / f"{service}-request.json"
+                if not args.artifact_dir or not request_path.is_file():
+                    awaiting_evidence.append(service)
+                    pending_paths.extend(attributed.pop(service))
+            report["pending_paths"] = sorted(set(pending_paths))
+            report["services"] = {
+                service: {"changed_paths": sorted(changed)}
+                for service, changed in sorted(attributed.items())}
+            report["awaiting_release_evidence"] = awaiting_evidence
         if not attributed:
-            report["result"] = "held_manual_pending" if held or retired else "no_service_change"
+            if awaiting_evidence:
+                report["result"] = "pending_release_evidence"
+            else:
+                report["result"] = "held_manual_pending" if held or retired else "no_service_change"
             print(json.dumps(report, sort_keys=True))
-            return 1 if held or retired else 0
+            return 1 if awaiting_evidence or held or retired else 0
         # Phase 1: admit EVERY changed service before ANY preparation or
         # deployment. A partial set of valid grants must not cause a partial
         # production release. Plan mode checks the same real evidence as deploy
@@ -746,7 +967,9 @@ def main(argv=None):
                                if isinstance(value.get("request"), dict)
                            }) if args.auto else Transport(host))
             report["deployed"] = run_promotion(
-                manifest, paths, lambda service: bundles[service], transport,
+                manifest,
+                [path for changed in attributed.values() for path in changed],
+                lambda service: bundles[service], transport,
                 now=now,
                 lock_path=str(Path(args.state_dir) / "delivery.lock"),
                 state_path=str(Path(args.state_dir) / "delivery.json"),
@@ -763,7 +986,8 @@ def main(argv=None):
         # A successful per-lane release is NOT delivery of the complete main
         # range. Keep the global success marker exclusive to unscoped batches.
         report["result"] = ("ok_scoped" if args.service else
-                            "partial_manual_pending" if held or retired else "ok")
+                            "partial_manual_pending" if held or retired else
+                            "partial_release_pending" if pending_paths else "ok")
         # Positive plan/prepare is only release admission. Never mark a full
         # release without a real deployed digest/health readback and no pending
         # paths; scoped releases also cannot certify unrelated changes.
