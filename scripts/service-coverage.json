@@ -1,10 +1,6 @@
 {
   "schema_version": 1,
   "entries": {
-    "_archive": {
-      "mode": "manual_only",
-      "reason": "Archived sources are retained for reference and are not built or released."
-    },
     ".github": {
       "mode": "manual_only",
       "reason": "Workflow definitions are validated by the workflow that invokes this checker."
@@ -76,7 +72,7 @@
       ],
       "required_test_step": {
         "job": "validate-release-lanes",
-        "name": "Test Multica MCP adapter (required on every PR)",
+        "name": "Test Multica MCP adapter on trusted main",
         "working_directory": "multica-mcp",
         "run": "npm test"
       }
@@ -114,10 +110,6 @@
     "playwright-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
-    },
-    "repowise-mcp": {
-      "mode": "manual_only",
-      "reason": "Git-owned RepoWise MCP build; release is gated by exact-SHA review, isolated index and manual Coolify promotion."
     },
     "scripts": {
       "mode": "workflow",
