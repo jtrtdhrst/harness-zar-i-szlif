@@ -56,6 +56,7 @@ import argparse
 import base64
 import json
 import os
+import stat
 import re
 import secrets
 import subprocess
@@ -442,6 +443,77 @@ def resolve_source_range(args, environ=None):
 
 
 
+
+# This value is never sourced from environment, a request, or the CLI. Tests
+# substitute their own non-root fixture UID only through unittest.mock.patch.
+DELIVERY_LEDGER_OWNER_UID = 0
+
+
+def read_private_delivery_ledger(state_dir):
+    """Load the existing release ledger with root-owned no-follow descriptors.
+
+    The ledger can suppress a release, so treating user-writable or symlinked
+    state as trustworthy would be a fail-open deployment control. Hold the
+    private directory fd while opening its entry via dir_fd: no path-based
+    lstat/open race is possible. The actual descriptors are checked before
+    and after reading. Missing file is allowed *only inside* a trusted dir.
+    """
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise Denied("delivery_ledger_no_secure_open")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(str(state_dir), directory_flags)
+    except OSError:
+        raise Denied("delivery_ledger_directory_untrusted") from None
+    try:
+        directory = os.fstat(directory_fd)
+        if (not stat.S_ISDIR(directory.st_mode)
+                or directory.st_uid != DELIVERY_LEDGER_OWNER_UID
+                or directory.st_mode & 0o077):
+            raise Denied("delivery_ledger_directory_untrusted")
+        try:
+            file_fd = os.open("delivery.json",
+                              os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                              dir_fd=directory_fd)
+        except FileNotFoundError:
+            return {}
+        except OSError:
+            raise Denied("delivery_ledger_file_untrusted") from None
+        try:
+            original = os.fstat(file_fd)
+            if (not stat.S_ISREG(original.st_mode)
+                    or original.st_uid != DELIVERY_LEDGER_OWNER_UID
+                    or original.st_mode & 0o077
+                    or original.st_nlink != 1
+                    or original.st_size <= 0 or original.st_size > 262144):
+                raise Denied("delivery_ledger_file_untrusted")
+            try:
+                raw = bytearray()
+                while len(raw) <= 262144:
+                    chunk = os.read(file_fd, min(65536, 262145 - len(raw)))
+                    if not chunk:
+                        break
+                    raw.extend(chunk)
+            except OSError:
+                raise Denied("delivery_ledger_unreadable") from None
+            after = os.fstat(file_fd)
+            if (len(raw) != original.st_size or
+                    (original.st_dev, original.st_ino, original.st_size, original.st_mtime_ns)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
+                raise Denied("delivery_ledger_changed_during_read")
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
+    try:
+        ledger = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise Denied("delivery_ledger_invalid") from None
+    if not isinstance(ledger, dict):
+        raise Denied("delivery_ledger_invalid")
+    return ledger
+
+
 def pending_per_service_source_paths(repo, source_sha, state_dir, manifest):
     """Reconcile against the *existing* digest-verified delivery ledger.
 
@@ -451,15 +523,7 @@ def pending_per_service_source_paths(repo, source_sha, state_dir, manifest):
     but never asserted to be deployed; it still needs exact-SHA review,
     a per-UUID release grant and signed CI before build or deployment.
     """
-    state_file = Path(state_dir) / "delivery.json"
-    try:
-        ledger = json.loads(state_file.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        ledger = {}
-    except (OSError, ValueError):
-        raise Denied("delivery_ledger_unreadable") from None
-    if not isinstance(ledger, dict):
-        raise Denied("delivery_ledger_invalid")
+    ledger = read_private_delivery_ledger(state_dir)
 
     entries = {entry.get("id"): entry
                for entry in (manifest.get("lanes") or []) +
