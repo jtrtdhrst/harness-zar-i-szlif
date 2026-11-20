@@ -167,14 +167,21 @@ export function makeServer(config={}) {
     }
     throw error('TOOL_UNKNOWN','Unknown tool');
   }
+  const resourceUrl=config.resourceUrl??process.env.GITHUB_OPS_RESOURCE_URL??'https://github-ops-mcp.zariszlif.pl/mcp';
+  const resourceMetadata=resourceUrl.replace(/\/mcp$/,'')+'/.well-known/oauth-protected-resource/mcp';
+  const authChallenge='Bearer resource_metadata="'+resourceMetadata+'", error="invalid_token", error_description="Authenticate with Cloudflare Access OAuth"';
   const server=http.createServer(async(req,res)=>{
     const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
     if(req.method==='GET'&&req.url==='/health')return json(200,{alive:true,ready:Boolean(callerToken&&githubToken),writes_enabled:Boolean(writesEnabled),github_configured:Boolean(githubToken)});
+    if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
     const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1]??'';
     const bearerAuthorized=Boolean(callerToken&&secureEqual(bearer,callerToken));
     const accessAuthorized=bearerAuthorized?false:await access(req.headers['cf-access-jwt-assertion']);
-    if(!bearerAuthorized&&!accessAuthorized)return json(401,{error:'unauthorized'});
+    if(!bearerAuthorized&&!accessAuthorized){
+      res.writeHead(401,{'content-type':'application/json','cache-control':'no-store','www-authenticate':authChallenge});
+      return res.end(JSON.stringify({error:'invalid_token',error_description:'OAuth authentication required'}));
+    }
     let messageId=null;
     try{
       let raw='';for await(const part of req){raw+=part;if(raw.length>65536)throw error('INPUT_LIMIT','Request exceeds size limit');}
@@ -182,7 +189,7 @@ export function makeServer(config={}) {
       if(v.jsonrpc!=='2.0'||typeof v.method!=='string')throw error('INVALID_REQUEST','Invalid JSON-RPC');
       if(v.method==='notifications/initialized')return json(202,{});
       if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.0.0'}}});
-      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},workflow:{type:'string'},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
+      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},workflow:{type:'string'},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
       if(v.method==='tools/call'){
         const name=v.params?.name;
         if(!TOOLS.some(x=>x[0]===name))throw error('TOOL_UNKNOWN','Tool not registered');
