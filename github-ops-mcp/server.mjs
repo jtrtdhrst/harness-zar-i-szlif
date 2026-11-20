@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createPublicKey, verify as verifySignature } from 'node:crypto';
 
 const REPOS = new Set(['miloszspyrka-code/harness-zar-i-szlif', 'miloszspyrka-code/zar-i-szlif']);
 const SHA = /^[a-f0-9]{40}$/i;
@@ -20,6 +20,49 @@ function secureEqual(a,b) {
   return aa.length===bb.length && aa.length>0 && timingSafeEqual(aa,bb);
 }
 const error = (code,msg)=>Object.assign(new Error(msg),{code});
+
+ // Cloudflare verifies user identity at the edge, but the origin MUST verify
+ // Cf-Access-Jwt-Assertion too: Docker peers can bypass the edge.
+ // The JWKS URL is configured and never derived from untrusted JWT claims.
+ function cloudflareJwtVerifier({ issuer, audience, ownerEmail, fetchImpl=fetch }) {
+   if (!issuer || !audience || !ownerEmail) return async()=>false;
+   const fixedIssuer=issuer.replace(/\/$/, '');
+   if (!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/i.test(fixedIssuer))
+     throw error('ACCESS_CONFIG_INVALID','Access issuer must be a Cloudflare Access HTTPS team domain');
+   let cache={keys:[],until:0};
+   const decode=(part)=>JSON.parse(Buffer.from(part,'base64url').toString('utf8'));
+   return async(token)=>{
+     if(typeof token!=='string' || token.length>8192) return false;
+     const parts=token.split('.');
+     if(parts.length!==3) return false;
+     try {
+       const hdr=decode(parts[0]), body=decode(parts[1]);
+       if(hdr.alg!=='RS256' || typeof hdr.kid!=='string' || hdr.kid.length>256) return false;
+       const now=Math.floor(Date.now()/1000);
+       if(body.iss!==fixedIssuer || !([body.aud].flat().includes(audience)) ||
+          typeof body.exp!=='number' || body.exp<=now ||
+          (typeof body.nbf==='number' && body.nbf>now) ||
+          (typeof body.iat==='number' && body.iat>now+60) ||
+          typeof body.email!=='string' || body.email.toLowerCase()!==ownerEmail.toLowerCase()) return false;
+       let key=cache.until>Date.now()?cache.keys.find(k=>k.kid===hdr.kid):undefined;
+       if(!key){
+         const r=await fetchImpl(fixedIssuer+'/cdn-cgi/access/certs',{
+           headers:{accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(3000)
+         });
+         if(!r.ok) return false;
+         const data=await r.json();
+         if(!Array.isArray(data.keys) || data.keys.length>16) return false;
+         const keys=data.keys.filter(k=>k.kty==='RSA' && k.alg==='RS256' &&
+           k.use==='sig' && typeof k.kid==='string' && typeof k.n==='string' && typeof k.e==='string');
+         cache={keys,until:Date.now()+300000};
+         key=keys.find(k=>k.kid===hdr.kid);
+       }
+       if(!key)return false;
+       return verifySignature('RSA-SHA256',Buffer.from(parts[0]+'.'+parts[1]),
+         createPublicKey({key,format:'jwk'}),Buffer.from(parts[2],'base64url'));
+     } catch { return false; }
+   };
+ }
 function assertRepo(repo){ if(!REPOS.has(repo))throw error('REPO_DENIED','Repository is not explicitly allowlisted');return repo; }
 function assertSHA(sha){if(typeof sha!=='string'||!SHA.test(sha))throw error('SHA_INVALID','Exact 40-character SHA required');return sha;}
 function assertBranch(branch){
@@ -44,6 +87,12 @@ export function makeServer(config={}) {
   const deletionAllowlist=new Set(config.deletionAllowlist??(process.env.GITHUB_OPS_DELETE_ALLOWLIST??'').split(',').map(x=>x.trim()).filter(Boolean));
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
   const api=githubClient({token:githubToken,fetchImpl:config.fetchImpl});
+  const access=cloudflareJwtVerifier({
+    issuer:config.accessIssuer??process.env.CF_ACCESS_ISSUER??'',
+    audience:config.accessAudience??process.env.CF_ACCESS_AUD??'',
+    ownerEmail:config.accessOwnerEmail??process.env.CF_ACCESS_OWNER_EMAIL??'',
+    fetchImpl:config.accessFetchImpl
+  });
   async function execute(name,p={}){
     const repo=assertRepo(p.repo);
     const root=`/repos/${repo}`;
@@ -119,10 +168,14 @@ export function makeServer(config={}) {
     const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
     if(req.method==='GET'&&req.url==='/health')return json(200,{alive:true,ready:Boolean(callerToken&&githubToken),writes_enabled:Boolean(writesEnabled),github_configured:Boolean(githubToken)});
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
-    if(!callerToken||!secureEqual(req.headers.authorization?.replace(/^Bearer /,''),callerToken))return json(401,{error:'unauthorized'});
+    const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1]??'';
+    const bearerAuthorized=Boolean(callerToken&&secureEqual(bearer,callerToken));
+    const accessAuthorized=bearerAuthorized?false:await access(req.headers['cf-access-jwt-assertion']);
+    if(!bearerAuthorized&&!accessAuthorized)return json(401,{error:'unauthorized'});
+    let messageId=null;
     try{
       let raw='';for await(const part of req){raw+=part;if(raw.length>65536)throw error('INPUT_LIMIT','Request exceeds size limit');}
-      const v=JSON.parse(raw),id=v.id;
+      const v=JSON.parse(raw),id=v.id;messageId=id??null;
       if(v.jsonrpc!=='2.0'||typeof v.method!=='string')throw error('INVALID_REQUEST','Invalid JSON-RPC');
       if(v.method==='notifications/initialized')return json(202,{});
       if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.0.0'}}});
@@ -134,7 +187,7 @@ export function makeServer(config={}) {
         return json(200,{jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(answer)}],structuredContent:answer}});
       }
       return json(200,{jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}});
-    }catch(e){return json(200,{jsonrpc:'2.0',id:null,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:e.code??'BAD_REQUEST',message:e.message??'Request failed'})}]}});}
+    }catch(e){return json(200,{jsonrpc:'2.0',id:messageId,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:e.code??'BAD_REQUEST',message:e.message??'Request failed'})}]}});}
   });
   return server;
 }
