@@ -74,7 +74,7 @@ class ProductPromotionTests(unittest.TestCase):
 
 
     def test_exact_merged_maintenance_history_is_not_a_runtime_release(self):
-        """Exact Product 185/186/153 are metadata; current-main CI is required."""
+        """Exact Product 185/186/153/187 are metadata; current-main CI is required."""
         records = p.VERIFIED_MAINTENANCE_MERGES
         nodes = {sha: {
             "sha": sha, "parents": [{"sha": spec["parent"]}],
@@ -82,7 +82,7 @@ class ProductPromotionTests(unittest.TestCase):
                       for status, path in spec["files"]],
         } for sha, spec in records.items()}
         prior = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
-        latest = "9974009ed208e3586892a3839d57704424f70f51"
+        latest = "c38e011a8df91ec910534928ee26d90e3435247a"
         pr_by_sha = {sha: (spec["pr"], "e" * 40) for sha, spec in records.items()}
         with patch.object(p, "commit", side_effect=lambda sha: nodes[sha]), \
              patch.object(p, "provenance", side_effect=lambda sha: pr_by_sha[sha]), \
@@ -90,7 +90,7 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p, "premerge_head_checks", side_effect=AssertionError("no runtime head needed")), \
              patch.object(p, "native_approval", side_effect=AssertionError("no runtime review needed")):
             self.assertEqual(p.candidate_history(prior, latest), [])
-            self.assertEqual(ci.call_count, 3)
+            self.assertEqual(ci.call_count, 4)
             ci.assert_any_call(latest)
 
     def test_maintenance_skip_denies_mutated_parent_pr_or_file_inventory(self):
@@ -116,7 +116,7 @@ class ProductPromotionTests(unittest.TestCase):
             "f" * 40, {"sha": "f" * 40}, "a" * 40, 185))
 
     def test_maintenance_skip_requires_current_main_ci(self):
-        latest = "9974009ed208e3586892a3839d57704424f70f51"
+        latest = "c38e011a8df91ec910534928ee26d90e3435247a"
         spec = p.VERIFIED_MAINTENANCE_MERGES[latest]
         node = {"sha": latest, "parents": [{"sha": spec["parent"]}],
                 "files": [{"status": status, "filename": path}
