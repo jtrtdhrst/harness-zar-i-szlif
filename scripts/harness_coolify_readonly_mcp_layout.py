@@ -19,6 +19,9 @@ import sys
 ROOT = Path("/opt/multica-tools/coolify-harness-ro")
 ENTRY = Path("node_modules/@masonator/coolify-mcp/dist/index.js")
 ENTRY_SHA256 = "6dc1c71c03a5b6160647d6063750bfc4072923fc47f10d8cf3f5ea15a06de2bf"
+# Pinned exact root-owned installed objects. Any modification requires new review.
+WRAPPER_SHA256 = "a912d95cdaa55ec3d92eecf6fe528d3beb2b36a15ee2b1ed9bc7fd3e126a66e8"
+UNIT_SHA256 = "15088adae4d66d5022c29ce4e184c9d0020675771d324a9c84ec777890a05cc3"
 WRAPPER = Path("/usr/local/libexec/coolify-harness-readonly-mcp.sh")
 UNIT = Path("/etc/systemd/system/coolify-harness-readonly-mcp.service")
 SOCKET = Path("/srv/multica-zar/.hermes/profiles/harness-engineer/coolify-mcp-readonly.sock")
@@ -39,7 +42,8 @@ def regular(path, owner, *, exact_mode=None):
         insist(mode == exact_mode, "file_mode_mismatch")
 
 def verify_layout(root=ROOT, wrapper=WRAPPER, unit=UNIT, socket_path=SOCKET,
-                  expected_sha=ENTRY_SHA256, owner=0, socket_owner=None):
+                  expected_sha=ENTRY_SHA256, owner=0, socket_owner=None,
+                  expected_wrapper_sha=WRAPPER_SHA256, expected_unit_sha=UNIT_SHA256):
     if socket_owner is None:
         socket_owner = pwd.getpwnam("multica-zar").pw_uid
     root, wrapper, unit, socket_path = map(Path, (root, wrapper, unit, socket_path))
@@ -63,6 +67,8 @@ def verify_layout(root=ROOT, wrapper=WRAPPER, unit=UNIT, socket_path=SOCKET,
     insist(hashlib.sha256(entry.read_bytes()).hexdigest() == expected_sha,
            "package_entry_digest_drift")
     regular(wrapper, owner, exact_mode=0o755)
+    insist(hashlib.sha256(wrapper.read_bytes()).hexdigest() == expected_wrapper_sha,
+           "wrapper_digest_drift")
     body = wrapper.read_text()
     insist(body.count(f"exec /usr/bin/node {entry}") == 1,
            "wrapper_executable_drift")
@@ -72,6 +78,13 @@ def verify_layout(root=ROOT, wrapper=WRAPPER, unit=UNIT, socket_path=SOCKET,
     insist(match is not None, "token_not_loaded_via_systemd_credential")
     cred_name = match.group(1)
     regular(unit, owner)
+    insist(hashlib.sha256(unit.read_bytes()).hexdigest() == expected_unit_sha,
+           "unit_digest_drift")
+    # Reject local drop-ins even before systemctl readback; a .conf can override
+    # security directives without modifying the reviewed fragment.
+    dropins = Path(str(unit) + ".d")
+    insist(not (dropins.is_dir() and any(dropins.glob("*.conf"))),
+           "systemd_dropin_unreviewed")
     config = unit.read_text()
     requirements = [
         "User=multica-zar", "Group=multica-zar",
@@ -99,6 +112,17 @@ def main():
             capture_output=True, text=True, timeout=8)
         insist(service.returncode == 0 and service.stdout.strip() == "active",
                "socket_broker_service_inactive")
+        # systemd can overlay /run or /usr drop-ins not visible beside the
+        # root-owned fragment. Reject any effective alternate fragment/drop-in.
+        effective = subprocess.run(
+            ["/usr/bin/systemctl", "show", "coolify-harness-readonly-mcp.service",
+             "-p", "FragmentPath", "-p", "DropInPaths"],
+            capture_output=True, text=True, timeout=8)
+        insist(effective.returncode == 0, "systemd_effective_config_unavailable")
+        lines = dict(line.split("=", 1) for line in effective.stdout.splitlines()
+                     if "=" in line)
+        insist(lines.get("FragmentPath") == str(UNIT)
+               and lines.get("DropInPaths") == "", "systemd_effective_unit_drift")
         print(json.dumps(result, sort_keys=True))
         return 0
     except (OSError, ValueError, LayoutError, subprocess.TimeoutExpired, KeyError) as exc:
@@ -108,3 +132,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
