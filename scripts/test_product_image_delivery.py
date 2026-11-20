@@ -189,6 +189,74 @@ class ReadbackRegressionTests(unittest.TestCase):
                 build.assert_not_called()
                 deploy.assert_not_called()
 
+    def test_manual_sha_must_be_exact_ci_approved_before_any_build(self):
+        for supplied, expected in [
+            ("../outside/build", "invalid_source_sha"),
+            ("b" * 40, "sha_not_ci_approved"),
+            ("A" * 40, "invalid_source_sha"),
+            ("", "invalid_source_sha"),
+        ]:
+            with self.subTest(supplied=supplied), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with (mock.patch.object(delivery, "STATE_DIR", root),
+                      mock.patch.object(delivery, "LOCK", root / "delivery.lock"),
+                      mock.patch.object(delivery, "ref_sha", return_value=SHA),
+                      mock.patch.object(delivery, "live_sha") as live,
+                      mock.patch.object(delivery, "build_and_push") as build,
+                      mock.patch.object(delivery, "deploy") as deploy,
+                      mock.patch.object(sys, "argv",
+                                        ["delivery", "--sha", supplied, "--plan"])):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        code = delivery.main()
+                    self.assertEqual(code, 1)
+                    self.assertIn(expected, err.getvalue())
+                    live.assert_not_called()
+                    build.assert_not_called()
+                    deploy.assert_not_called()
+
+    def test_malformed_ci_approved_sha_is_denied_before_live_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (mock.patch.object(delivery, "STATE_DIR", root),
+                  mock.patch.object(delivery, "LOCK", root / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha", return_value="../bad"),
+                  mock.patch.object(delivery, "live_sha") as live,
+                  mock.patch.object(delivery, "build_and_push") as build,
+                  mock.patch.object(sys, "argv", ["delivery", "--plan"])):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(delivery.main(), 1)
+                self.assertIn("invalid_ci_approved_sha", err.getvalue())
+                live.assert_not_called()
+                build.assert_not_called()
+
+    def test_download_source_rejects_path_traversal_before_network_or_delete(self):
+        with (mock.patch.object(delivery, "SOURCE_DIR", Path("/tmp/never-touch-this")),
+              mock.patch.object(delivery.urllib.request, "urlopen") as network,
+              mock.patch.object(delivery.shutil, "rmtree") as remove):
+            with self.assertRaisesRegex(ValueError, "invalid_source_sha"):
+                delivery.download_source("../../outside")
+            network.assert_not_called()
+            remove.assert_not_called()
+
+    def test_exact_manual_approved_sha_can_be_planned_without_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (mock.patch.object(delivery, "STATE_DIR", root),
+                  mock.patch.object(delivery, "LOCK", root / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha", return_value=SHA),
+                  mock.patch.object(delivery, "live_sha", return_value=OLD_SHA),
+                  mock.patch.object(delivery, "build_and_push") as build,
+                  mock.patch.object(sys, "argv", ["delivery", "--sha", SHA, "--plan"])):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = delivery.main()
+                self.assertEqual(code, 0)
+                self.assertIn('"result": "would_deliver"', out.getvalue())
+                build.assert_not_called()
+
+
 
 if __name__ == "__main__":
     unittest.main()
