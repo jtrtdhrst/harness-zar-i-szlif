@@ -561,10 +561,15 @@ def main(argv=None):
         # in an unscoped release_complete claim.
         accounted = {path for changed in attributed.values() for path in changed}
         unclassified_paths = sorted(set(paths) - accounted - set(pending_paths))
+        # Infrastructure/build-policy roots are not deployable MCP services
+        # owned by this transport; keep them pending, never globally complete.
+        # An unregistered top-level service with its own Dockerfile is denied.
+        infrastructure_roots = {"ops", ".github", "scripts", "docs", "_archive"}
         unexpected_builds = sorted({path.split("/", 1)[0] for path in unclassified_paths
-            if Path(path).name.startswith("Dockerfile")
-            or Path(path).name in ("docker-compose.yml", "docker-compose.yaml",
-                                   "compose.yml", "compose.yaml")})
+            if path.split("/", 1)[0] not in infrastructure_roots
+            and (Path(path).name.startswith("Dockerfile")
+                 or Path(path).name in ("docker-compose.yml", "docker-compose.yaml",
+                                        "compose.yml", "compose.yaml"))})
         if unexpected_builds:
             raise Denied("unclassified_build_source:" + ",".join(unexpected_builds))
         pending_paths = sorted(set(pending_paths) | set(unclassified_paths))
