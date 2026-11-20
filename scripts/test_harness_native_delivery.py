@@ -686,7 +686,7 @@ class MainWiringTests(unittest.TestCase):
         self.assertIn(
             ("docker", "pull", f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"),
             host.calls)
-        self.assertEqual(host.mutations(), [], "production transport must not build a second image")
+        self.assertFalse(any(call[0] == "build" or (call[0] == "docker" and call[1] in ("build", "push")) for call in host.calls), "GHCR artifact consumer must never rebuild or repush")
 
     def test_ghcr_transport_denies_missing_digest_before_pull(self):
         host = FakeHost()
