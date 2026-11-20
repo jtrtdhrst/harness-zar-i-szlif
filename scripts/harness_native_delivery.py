@@ -895,10 +895,16 @@ def auto_main_cycle(args, manifest, host):
         changed_paths.extend(paths)
         item.update(decision="built", image_digest=digest)
     report = {"mode": args.mode, "source_sha": source_sha, "services": plan}
+    failed = [item["service"] for item in plan
+              if item["decision"] in ("build_failed", "denied",
+                                      "unsupported_kind", "invalid_uuid")]
     if args.mode == "plan" or not pre:
-        report["result"] = "plan" if args.mode == "plan" else "no_service_change"
+        report["result"] = ("plan" if args.mode == "plan"
+                            else "release_failed" if failed else "no_service_change")
+        if failed:
+            report["failed_services"] = failed
         print(json.dumps(report, sort_keys=True))
-        return 0
+        return 1 if failed and args.mode != "plan" else 0
     promotion = run_promotion(
         manifest, changed_paths, lambda service: {}, transport,
         state_path=str(Path(args.state_dir) / "delivery.json"),
@@ -910,9 +916,12 @@ def auto_main_cycle(args, manifest, host):
     ok = (len(decisions) == len(pre)
           and all(decision.get("decision") in good for decision in decisions)
           and promotion.get("result") != "denied")
-    report["result"] = "ok" if ok else "denied"
+    report["result"] = ("ok" if ok and not failed
+                        else "partial_release_failed" if failed else "denied")
+    if failed:
+        report["failed_services"] = failed
     print(json.dumps(report, sort_keys=True))
-    return 0 if ok else 1
+    return 0 if ok and not failed else 1
 
 
 def build_parser():
