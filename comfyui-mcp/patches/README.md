@@ -1,9 +1,11 @@
-# `mcp/comfyui/patches/` — durable custom-node + MCP patches
+# `comfyui-mcp/patches/` — canonical custom-node + MCP patches
 
 All patches are idempotent (safe to re-run). MCP `dist` patches apply at
-`comfyui-mcp` image build time via `Dockerfile.mcp`; custom-node patches target
+`comfyui-mcp` image build time via `Dockerfile` (the identical `Dockerfile.mcp` build alias); custom-node patches target
 the persistent `comfy-custom` volume and are applied live + re-appliable via
 `/opt/comfy/patches/apply.sh` after any volume restore.
+
+The former root-level `comfyui-mcp/patch-v1.mjs` and `comfyui-mcp/patch-color.mjs` were byte-for-byte duplicates; `Dockerfile` copies the canonical versions from `patches/`. Keep one editable implementation here.
 
 | File | Target | What it fixes |
 |---|---|---|
