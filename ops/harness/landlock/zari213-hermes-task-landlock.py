@@ -107,6 +107,9 @@ def restrict(task, tmpdir):
         # Without it, Landlock isolates the resolver's target and every model
         # provider request fails with EAI_AGAIN. No access to other /run paths.
         grant(ruleset, "/run/systemd/resolve/stub-resolv.conf", READ_FILE)
+        # Git needs the non-secret credential-helper configuration in the daemon home.
+        # Expose just this file as read-only; never the home tree or broker tokens.
+        grant(ruleset, "/srv/multica-zar/.gitconfig", READ_FILE)
         # Specific role credential only, not the union of all role keys.
         role = re.sub(r"[^a-z0-9]+", "-", os.environ.get("MULTICA_AGENT_NAME", "").lower()).strip("-")
         if UID_NAME.fullmatch(role):
