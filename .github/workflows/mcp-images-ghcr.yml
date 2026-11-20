@@ -73,12 +73,13 @@ jobs:
       - name: Verify exact source and build context
         env:
           BUILD_ROOT: ${{ matrix.directory }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test -f "$BUILD_ROOT/Dockerfile"
+          test -f "$BUILD_ROOT/$DOCKERFILE"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # pinned v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # pinned v3
         with:
@@ -90,7 +91,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # pinned v6
         with:
           context: ./${{ matrix.directory }}
-          file: ./${{ matrix.directory }}/Dockerfile
+          file: ./${{ matrix.directory }}/${{ matrix.dockerfile }}
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/harness-${{ matrix.service }}:sha-${{ github.sha }}
           labels: |
