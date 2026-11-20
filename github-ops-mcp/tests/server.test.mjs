@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { makeServer } from '../server.mjs';
 const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
-  branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0}={}){
+  branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
+  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false}={}){
   const calls=[];
   let branchDeleted=false;
   let runReadsToMiss=run404Count;
@@ -37,6 +38,9 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     if(opts.method==='POST'&&u.pathname.endsWith('/dispatches'))
       return new Response(dispatchRunId?JSON.stringify({workflow_run_id:321}):null,
         {status:dispatchRunId?200:204,headers:{'content-type':'application/json'}});
+    if(u.pathname.endsWith('/deployments'))v=deploymentsInvalid?{}:deployments;
+    else if(u.pathname.endsWith('/rulesets'))v=rulesetsInvalid?{}:rulesets;
+    else if(u.pathname.endsWith('/actions/permissions'))v={enabled:true,allowed_actions:'all'};
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
   const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
@@ -201,4 +205,90 @@ test('Cloudflare Access RS256 JWT accepts owner but rejects forgery and wrong cl
    }
    assert.equal(reads,1,'invalid requests never reach GitHub');
  }finally{await new Promise(resolve=>server.close(resolve))}
+});
+
+// Regression: PR #169 live defect. GitHub REST returns a bare array (empty when no
+// deployment exists at that SHA). MCP structuredContent MUST be an object, otherwise
+// the connector rejects the result with "structuredContent expects dictionary, got []".
+const isPlainObject=v=>Boolean(v)&&typeof v==='object'&&!Array.isArray(v);
+async function toolsListed(root){
+  const res=await fetch(root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
+  return (await res.json()).result.tools;
+}
+test('empty deployment list returns object structuredContent over HTTP',async()=>{
+  const f=await fixture({deployments:[]});
+  try{
+    const out=await f.request('github_get_deployments',{repo:REPO,sha:SHA});
+    assert.equal(out.http,200);
+    const result=out.body.result;
+    assert.equal(result.isError,undefined);
+    assert.equal(isPlainObject(result.structuredContent),true,'structuredContent must be a dictionary');
+    assert.deepEqual(result.structuredContent,{repo:REPO,sha:SHA,count:0,deployments:[]});
+    assert.deepEqual(JSON.parse(result.content[0].text),result.structuredContent);
+    const deploymentsCall=f.calls.find(([,path])=>path.includes('/deployments'));
+    assert.ok(deploymentsCall[1].includes(`sha=${SHA}`),'exact SHA is forwarded lowercased');
+  }finally{await f.close()}
+});
+test('non-empty deployment list keeps the same object envelope',async()=>{
+  const f=await fixture({deployments:[{id:7,sha:SHA,environment:'production'}]});
+  try{
+    const out=await f.request('github_get_deployments',{repo:REPO,sha:SHA.toUpperCase()});
+    assert.equal(isPlainObject(out.body.result.structuredContent),true);
+    assert.equal(out.body.result.structuredContent.count,1);
+    assert.equal(out.body.result.structuredContent.deployments[0].id,7);
+  }finally{await f.close()}
+});
+test('empty ruleset list is also wrapped in an object',async()=>{
+  const f=await fixture({rulesets:[]});
+  try{
+    const out=await f.request('github_get_rulesets',{repo:REPO});
+    assert.equal(isPlainObject(out.body.result.structuredContent),true);
+    assert.deepEqual(out.body.result.structuredContent,{repo:REPO,rulesets:[],count:0});
+  }finally{await f.close()}
+});
+test('invalid provider list shape fails closed instead of emitting a bare array',async()=>{
+  for(const opt of [{deploymentsInvalid:true,name:'github_get_deployments',args:{repo:REPO,sha:SHA},code:'DEPLOYMENTS_INVALID'},
+                    {rulesetsInvalid:true,name:'github_get_rulesets',args:{repo:REPO},code:'RULESETS_INVALID'}]){
+    const f=await fixture(opt);
+    try{
+      const out=await f.request(opt.name,opt.args);
+      assert.equal(out.body.result.isError,true);
+      assert.match(out.body.result.content[0].text,new RegExp(opt.code));
+      assert.equal(out.body.result.structuredContent,undefined);
+    }finally{await f.close()}
+  }
+});
+test('every advertised tool returns object structuredContent, never a bare array',async()=>{
+  const f=await fixture({writesEnabled:true,deployments:[],rulesets:[]});
+  try{
+    const tools=await toolsListed(f.root);
+    assert.equal(tools.length,7);
+    assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false,'removed dispatch must stay unadvertised');
+    const args={github_repo_info:{repo:REPO},github_get_rulesets:{repo:REPO},
+      github_get_actions_permissions:{repo:REPO},github_get_branch_protection:{repo:REPO},
+      github_get_deployments:{repo:REPO,sha:SHA},
+      github_preview_branch_delete:{repo:REPO,branch:'fix/old',expected_sha:SHA},
+      github_cancel_workflow_run:{repo:REPO,run_id:123,expected_sha:SHA}};
+    for(const tool of tools){
+      const out=await f.request(tool.name,args[tool.name]);
+      assert.equal(out.http,200,tool.name);
+      assert.equal(out.body.result.isError,undefined,tool.name+' must not error');
+      assert.equal(isPlainObject(out.body.result.structuredContent),true,tool.name+' structuredContent must be a dictionary');
+      assert.deepEqual(JSON.parse(out.body.result.content[0].text),out.body.result.structuredContent,tool.name+' text and structured content agree');
+    }
+  }finally{await f.close()}
+});
+test('legacy dispatch tool call is rejected over HTTP and advertises no dispatch input',async()=>{
+  const f=await fixture({writesEnabled:true});
+  try{
+    const tools=await toolsListed(f.root);
+    for(const tool of tools)assert.equal(Object.hasOwn(tool.inputSchema.properties,'workflow'),false,tool.name+' exposes no dispatch argument');
+    const out=await f.request('github_dispatch_workflow',{repo:REPO,workflow:'release-lanes-policy.yml',expected_sha:SHA});
+    assert.equal(out.http,200);
+    assert.equal(out.body.result.isError,true);
+    assert.match(out.body.result.content[0].text,/TOOL_UNKNOWN/);
+    assert.match(out.body.result.content[0].text,/Re-initialize the client tool list/);
+    assert.equal(f.calls.some(([,path])=>path.includes('/dispatches')),false,'no provider dispatch traffic');
+  }finally{await f.close()}
 });

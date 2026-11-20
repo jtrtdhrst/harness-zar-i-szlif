@@ -94,10 +94,19 @@ export function makeServer(config={}) {
     if(name==='github_repo_info'){
       const r=await api('GET',root);return {full_name:r.full_name,default_branch:r.default_branch,permissions:r.permissions,allow_auto_merge:r.allow_auto_merge};
     }
-    if(name==='github_get_rulesets')return api('GET',`${root}/rulesets`);
+    if(name==='github_get_rulesets'){
+      const list=await api('GET',`${root}/rulesets`);
+      if(!Array.isArray(list))throw error('RULESETS_INVALID','GitHub ruleset listing returned invalid data');
+      return {repo,rulesets:list,count:list.length};
+    }
     if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
     if(name==='github_get_branch_protection')return api('GET',`${root}/branches/main/protection`);
-    if(name==='github_get_deployments')return api('GET',`${root}/deployments?sha=${assertSHA(p.sha)}&per_page=30`);
+    if(name==='github_get_deployments'){
+      const sha=assertSHA(p.sha).toLowerCase();
+      const list=await api('GET',`${root}/deployments?sha=${sha}&per_page=30`);
+      if(!Array.isArray(list))throw error('DEPLOYMENTS_INVALID','GitHub deployment listing returned invalid data');
+      return {repo,sha,count:list.length,deployments:list};
+    }
     if(name==='github_preview_branch_delete'){
       const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase(),q=branch.split('/').map(encodeURIComponent).join('/');
       const listPulls=async(state)=>{
@@ -163,12 +172,15 @@ export function makeServer(config={}) {
       if(v.jsonrpc!=='2.0'||typeof v.method!=='string')throw error('INVALID_REQUEST','Invalid JSON-RPC');
       if(v.method==='notifications/initialized')return json(202,{});
       if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.0.0'}}});
-      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},workflow:{type:'string'},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
+      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
       if(v.method==='tools/call'){
         const name=v.params?.name;
-        if(!TOOLS.some(x=>x[0]===name))throw error('TOOL_UNKNOWN','Tool not registered');
+        if(!TOOLS.some(x=>x[0]===name))
+          throw error('TOOL_UNKNOWN','Tool not registered; removed tools stay disabled. Re-initialize the client tool list to reconcile a stale tool cache');
         const answer=await execute(name,v.params?.arguments??{});
-        return json(200,{jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(answer)}],structuredContent:answer}});
+        // MCP requires structuredContent to be an object. A bare array (an empty GitHub list) is invalid.
+        const structured=answer&&typeof answer==='object'&&!Array.isArray(answer)?answer:{result:answer??null};
+        return json(200,{jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(structured)}],structuredContent:structured}});
       }
       return json(200,{jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}});
     }catch(e){return json(200,{jsonrpc:'2.0',id:messageId,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:e.code??'BAD_REQUEST',message:e.message??'Request failed'})}]}});}
