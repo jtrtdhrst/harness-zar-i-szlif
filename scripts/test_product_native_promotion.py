@@ -72,6 +72,226 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertEqual(save.call_args[0][0]["previous_sha"],OLD)
 
 
+
+    def test_exact_merged_maintenance_history_is_not_a_runtime_release(self):
+        """Exact Product 185/186/153/187 are metadata; current-main CI is required."""
+        records = p.VERIFIED_MAINTENANCE_MERGES
+        nodes = {sha: {
+            "sha": sha, "parents": [{"sha": spec["parent"]}],
+            "files": [{"status": status, "filename": path}
+                      for status, path in spec["files"]],
+        } for sha, spec in records.items()}
+        prior = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        latest = "c38e011a8df91ec910534928ee26d90e3435247a"
+        pr_by_sha = {sha: (spec["pr"], "e" * 40) for sha, spec in records.items()}
+        with patch.object(p, "commit", side_effect=lambda sha: nodes[sha]), \
+             patch.object(p, "provenance", side_effect=lambda sha: pr_by_sha[sha]), \
+             patch.object(p, "checks", return_value={"billing_blocked": False}) as ci, \
+             patch.object(p, "premerge_head_checks", side_effect=AssertionError("no runtime head needed")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("no runtime review needed")):
+            self.assertEqual(p.candidate_history(prior, latest), [])
+            self.assertEqual(ci.call_count, 4)
+            ci.assert_any_call(latest)
+
+    def test_maintenance_skip_denies_mutated_parent_pr_or_file_inventory(self):
+        for sha, spec in p.VERIFIED_MAINTENANCE_MERGES.items():
+            original = {"sha": sha, "files": [
+                {"status": status, "filename": path} for status, path in spec["files"]]}
+            self.assertTrue(p.verified_maintenance_merge(
+                sha, original, spec["parent"], spec["pr"]))
+            bad = [
+                ({**original, "sha": "f" * 40}, spec["parent"], spec["pr"]),
+                (original, "f" * 40, spec["pr"]),
+                (original, spec["parent"], spec["pr"] + 1),
+                ({**original, "files": original["files"] +
+                  [{"status": "modified", "filename": "app/web/src/index.ts"}]},
+                 spec["parent"], spec["pr"]),
+                ({**original, "files": original["files"][:-1]}, spec["parent"], spec["pr"]),
+            ]
+            for node, parent, pr in bad:
+                with self.subTest(sha=sha, node=node, parent=parent, pr=pr):
+                    with self.assertRaisesRegex(p.Denied, "maintenance_"):
+                        p.verified_maintenance_merge(sha, node, parent, pr)
+        self.assertFalse(p.verified_maintenance_merge(
+            "f" * 40, {"sha": "f" * 40}, "a" * 40, 185))
+
+    def test_maintenance_skip_requires_current_main_ci(self):
+        latest = "c38e011a8df91ec910534928ee26d90e3435247a"
+        spec = p.VERIFIED_MAINTENANCE_MERGES[latest]
+        node = {"sha": latest, "parents": [{"sha": spec["parent"]}],
+                "files": [{"status": status, "filename": path}
+                          for status, path in spec["files"]]}
+        with patch.object(p, "commit", return_value=node), \
+             patch.object(p, "provenance", return_value=(spec["pr"], "d" * 40)), \
+             patch.object(p, "checks", return_value={"billing_blocked": True}), \
+             patch.object(p, "native_approval", side_effect=AssertionError("must fail before review")):
+            with self.assertRaisesRegex(p.Denied, "maintenance_current_main_ci_not_green"):
+                p.candidate_history(spec["parent"], latest)
+
+    def test_exact_pr183_unrelated_cloudflare_failure_does_not_veto_green_product_ci(self):
+        sha = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        product = {"name": "validate-product", "head_sha": sha, "status": "completed",
+                   "conclusion": "success", "app": {"id": 15368, "slug": "github-actions"}}
+        foreign = {"id": 136273095146, "name": "Workers Builds: stronaglowna",
+                   "head_sha": sha, "status": "completed", "conclusion": "failure",
+                   "app": {"id": 85455, "slug": "cloudflare-workers-and-pages"}}
+        with patch.object(p, "github_api", return_value={"check_runs": [product, foreign], "total_count": 2}), \
+             patch.object(p, "verified_product_workflow", return_value=True):
+            self.assertEqual(p.checks(sha), {"billing_blocked": False})
+        for wrong in [
+            {**foreign, "id": 2},
+            {**foreign, "name": "validate-other"},
+            {**foreign, "app": {"id": 15368, "slug": "github-actions"}},
+            {**foreign, "app": {"id": 85456, "slug": "cloudflare-workers-and-pages"}},
+            {**foreign, "head_sha": "f" * 40},
+        ]:
+            with self.subTest(wrong=wrong), patch.object(
+                    p, "github_api",
+                    return_value={"check_runs": [product, wrong], "total_count": 2}), \
+                 patch.object(p, "verified_product_workflow", return_value=True):
+                with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+                    p.checks(sha)
+        with patch.object(p, "github_api",
+                          return_value={"check_runs": [product, foreign], "total_count": 2}):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.checks("a" * 40)
+        failed_product = {**product, "conclusion": "failure"}
+        with patch.object(p, "github_api",
+                          return_value={"check_runs": [failed_product, foreign], "total_count": 2}), patch.object(
+                                  p, "never_started_billing_blocked", return_value=False):
+            with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                p.checks(sha)
+
+    def test_product_ci_identity_binding_must_match_requested_sha_and_github_app(self):
+        sha = "a" * 40
+        valid = {"name":"validate-product", "status":"completed", "conclusion":"success",
+                 "head_sha":sha, "app":{"id":15368,"slug":"github-actions"}}
+        with patch.object(p,"github_api",return_value={"check_runs":[valid],"total_count":1}), \
+             patch.object(p,"verified_product_workflow",return_value=True):
+            self.assertEqual(p.checks(sha),{"billing_blocked":False})
+        for wrong in [
+            {**valid,"head_sha":"b"*40},
+            {**valid,"app":{"id":85455,"slug":"cloudflare-workers-and-pages"}},
+            {**valid,"app":{"id":15369,"slug":"github-actions"}},
+            {**valid,"app":{"id":15368,"slug":"other"}},
+            {k:v for k,v in valid.items() if k!="app"},
+        ]:
+            with self.subTest(wrong=wrong), patch.object(p,"github_api",return_value={"check_runs":[wrong],"total_count":1}):
+                with self.assertRaisesRegex(p.Denied,"product_ci_not_green"):
+                    p.checks(sha)
+
+    def test_trusted_product_ci_workflow_provenance_and_pr_spoof_denied(self):
+        sha = "a" * 40
+        jobid, runid, suiteid = 136307753674, 44742011754, 121104227071
+        product = {"id":jobid, "name":"validate-product", "head_sha":sha,
+                   "status":"completed", "conclusion":"success",
+                   "app":{"id":15368, "slug":"github-actions"},
+                   "details_url":f"https://github.com/{p.REPO}/actions/runs/{runid}/job/{jobid}",
+                   "check_suite":{"id":suiteid}}
+        workflow = {"id":runid, "workflow_id":405924339,
+                    "path":".github/workflows/product-ci.yml",
+                    "name":"Product CI", "head_sha":sha, "head_branch":"main",
+                    "event":"workflow_dispatch", "status":"completed",
+                    "conclusion":"success", "check_suite_id":suiteid,
+                    "repository":{"full_name":p.REPO}, "run_attempt":1}
+        job = {"id":jobid, "run_id":runid, "run_attempt":1,
+               "head_sha":sha, "name":"validate-product", "workflow_name":"Product CI",
+               "status":"completed", "conclusion":"success",
+               "html_url":product["details_url"],
+               "check_run_url":f"https://api.github.com/repos/{p.REPO}/check-runs/{jobid}"}
+        def github(path):
+            if path.endswith("/check-runs"):
+                return {"total_count":1,"check_runs":[product]}
+            if path.endswith("/actions/runs/" + str(runid)):
+                return workflow
+            if path.endswith("/actions/jobs/" + str(jobid)):
+                return job
+            raise AssertionError(path)
+        with patch.object(p,"github_api",side_effect=github):
+            self.assertEqual(p.checks(sha),{"billing_blocked":False})
+        for wrong in [
+            {**workflow, "workflow_id":111},
+            {**workflow, "path":".github/workflows/fake.yml"},
+            {**workflow, "event":"pull_request"},
+            {**workflow, "head_branch":"feature"},
+            {**workflow, "head_sha":"b"*40},
+            {**workflow, "conclusion":"failure"},
+            {**workflow, "check_suite_id":222},
+            {**workflow, "repository":{"full_name":"attacker/fake"}},
+        ]:
+            def fake(path, wrong=wrong):
+                if path.endswith("/check-runs"):
+                    return {"total_count":1, "check_runs":[product]}
+                if path.endswith("/actions/runs/" + str(runid)):
+                    return wrong
+                return job
+            with self.subTest(wrong=wrong), patch.object(p,"github_api",side_effect=fake):
+                with self.assertRaisesRegex(p.Denied,"product_ci_untrusted_workflow"):
+                    p.checks(sha)
+        for changed in [
+            {**product, "id":999},
+            {**product, "details_url":"https://github.com/"+p.REPO+"/actions/runs/123/job/"+str(jobid)},
+            {**product, "details_url":"https://github.com/attacker/fake/actions/runs/"+str(runid)+"/job/"+str(jobid)},
+            {**product, "check_suite":{"id":888}},
+            {**product, "details_url":None},
+        ]:
+            def fake(path, changed=changed):
+                if path.endswith("/check-runs"):
+                    return {"total_count":1, "check_runs":[changed]}
+                if path.endswith("/actions/runs/" + str(runid)):
+                    return workflow
+                return job
+            with self.subTest(changed=changed), patch.object(p,"github_api",side_effect=fake):
+                with self.assertRaisesRegex(p.Denied,"product_ci_untrusted_workflow"):
+                    p.checks(sha)
+
+    def test_forged_check_row_claiming_trusted_workflow_but_wrong_job_is_denied(self):
+        sha = "a" * 40
+        jobid, runid, suiteid = 136307753674, 44742011754, 121104227071
+        row = {"id":jobid, "name":"validate-product", "head_sha":sha,
+               "app":{"id":15368,"slug":"github-actions"}, "status":"completed",
+               "conclusion":"success", "check_suite":{"id":suiteid},
+               "details_url":f"https://github.com/{p.REPO}/actions/runs/{runid}/job/{jobid}"}
+        workflow = {"id":runid, "run_attempt":1, "workflow_id":405924339,
+                    "path":".github/workflows/product-ci.yml", "name":"Product CI",
+                    "head_sha":sha, "head_branch":"main", "event":"push",
+                    "status":"completed", "conclusion":"success", "check_suite_id":suiteid,
+                    "repository":{"full_name":p.REPO}}
+        valid_job = {"id":jobid, "run_id":runid, "run_attempt":1,
+                     "head_sha":sha, "name":"validate-product", "workflow_name":"Product CI",
+                     "status":"completed", "conclusion":"success",
+                     "html_url":row["details_url"],
+                     "check_run_url":f"https://api.github.com/repos/{p.REPO}/check-runs/{jobid}"}
+        for fake_job in [
+            {**valid_job,"id":999},
+            {**valid_job,"run_id":777},
+            {**valid_job,"run_attempt":2},
+            {**valid_job,"head_sha":"b"*40},
+            {**valid_job,"name":"validate-product-fake"},
+            {**valid_job,"workflow_name":"PR fake"},
+            {**valid_job,"status":"in_progress"},
+            {**valid_job,"conclusion":"failure"},
+            {**valid_job,"html_url":"https://example.com"},
+            {**valid_job,"check_run_url":"https://example.com"},
+        ]:
+            def github(path, fake_job=fake_job):
+                if path.endswith("/check-runs"):
+                    return {"total_count":1,"check_runs":[row]}
+                if path.endswith("/actions/runs/" + str(runid)):
+                    return workflow
+                return fake_job
+            with self.subTest(fake_job=fake_job), patch.object(p,"github_api",side_effect=github):
+                with self.assertRaisesRegex(p.Denied,"product_ci_untrusted_job"):
+                    p.checks(sha)
+        def good(path):
+            if path.endswith("/check-runs"):
+                return {"total_count":1,"check_runs":[row]}
+            if path.endswith("/actions/runs/" + str(runid)):
+                return workflow
+            return valid_job
+        with patch.object(p,"github_api",side_effect=good):
+            self.assertEqual(p.checks(sha),{"billing_blocked":False})
+
     def test_three_exact_historic_metadata_direct_commits_are_noop(self):
         rows = p.HISTORIC_METADATA_ONLY
         nodes = {
@@ -285,9 +505,10 @@ class ProductPromotionTests(unittest.TestCase):
             p.github_api("/repos/foreign/repo/commits/"+SOURCE)
 
     def test_failed_secondary_check_denies_promotion(self):
-        checks=[{"name":"validate-product","status":"completed","conclusion":"success"},
-                {"name":"security-scan","status":"completed","conclusion":"failure"}]
-        with patch.object(p,"github_api",return_value={"check_runs":checks,"total_count":2}):
+        checks=[{"name":"validate-product","head_sha":SOURCE,"app":{"id":15368,"slug":"github-actions"},"status":"completed","conclusion":"success"},
+                {"name":"security-scan","head_sha":SOURCE,"status":"completed","conclusion":"failure"}]
+        with patch.object(p,"github_api",return_value={"check_runs":checks,"total_count":2}), \
+             patch.object(p,"verified_product_workflow",return_value=True):
             with self.assertRaisesRegex(p.Denied,"nonpassing_checks"):
                 p.checks(SOURCE)
 
@@ -606,7 +827,8 @@ class ProductPromotionTests(unittest.TestCase):
                     p.github_api(path)
 
     def test_checks_reports_billing_block_never_as_pass(self):
-        run = {"id": 7, "name": "validate-product", "status": "completed", "conclusion": "failure",
+        run = {"id": 7, "name": "validate-product", "head_sha":SOURCE,
+               "app":{"id":15368,"slug":"github-actions"}, "status": "completed", "conclusion": "failure",
                "started_at": "2026-11-16T14:55:09Z", "completed_at": "2026-11-16T14:55:11Z"}
         with patch.object(p, "never_started_billing_blocked", return_value=True), \
              patch.object(p, "github_api", return_value={"check_runs": [run], "total_count": 1}):
@@ -615,8 +837,10 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p, "github_api", return_value={"check_runs": [run], "total_count": 1}):
             with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
                 p.checks(SOURCE)
-        green = {"id": 8, "name": "validate-product", "status": "completed", "conclusion": "success"}
-        with patch.object(p, "github_api", return_value={"check_runs": [green], "total_count": 1}):
+        green = {"id": 8, "name": "validate-product", "head_sha":SOURCE,
+                 "app":{"id":15368,"slug":"github-actions"}, "status": "completed", "conclusion": "success"}
+        with patch.object(p, "github_api", return_value={"check_runs": [green], "total_count": 1}), \
+             patch.object(p,"verified_product_workflow",return_value=True):
             self.assertEqual(p.checks(SOURCE), {"billing_blocked": False})
 
     def history_nodes(self, head_tree, merge_tree):

@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -626,21 +627,23 @@ class MainWiringTests(unittest.TestCase):
     """main() must route prepare through evaluate_build and deploy through run_promotion."""
 
     def run_main(self, mode, host, *, documents=None, changed=("mantic-mcp/src/server.ts",),
-                 extra=(), source_sha=SOURCE, attestation_key=True):
+                 extra=(), source_sha=SOURCE, attestation_key=True,
+                 manifest_override=None):
         documents = documents if documents is not None else {
             "request": request(), "grant": grant(), "attestation": signed_attestation()}
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "git_changed_paths", lambda *a, **k: list(changed)), \
                 patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: manifest()), \
+                             side_effect=lambda path, label, require_root=False:
+                             manifest_override if manifest_override is not None else manifest()), \
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY):
+            (Path(tmp) / "mantic-mcp").mkdir()
             if mode == "prepare":
-                (Path(tmp) / "mantic-mcp").mkdir()
                 (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
-            argv = ["--mode", mode, "--repo", ".", "--base-sha", "0" * 40,
+            argv = ["--mode", mode, "--repo", tmp, "--base-sha", "0" * 40,
                     "--source-sha", source_sha, "--artifact-dir", tmp]
             if attestation_key:
                 argv += ["--attestation-key", str(Path(tmp) / "key")]
@@ -689,6 +692,141 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "plan")
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertIsNone(payload["deployed"])
+
+    def test_held_unmodelled_resource_does_not_block_managed_plan(self):
+        # An explicitly held upstream resource is not this transport's deploy
+        # target; its files remain reported as pending, with no host mutation.
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "plasmic", "promotion_state": "hold",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "plasmic/studio/Dockerfile"),
+            extra=["--now", NOW.isoformat()], manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["held_outside_transport"], ["plasmic"])
+        self.assertEqual(payload["pending_paths"], ["plasmic/studio/Dockerfile"])
+        self.assertEqual(list(payload["services"]), ["mantic-mcp"])
+        self.assertEqual(payload["result"], "partial_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_manual_only_held_external_is_not_false_success(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "qdrant", "promotion_state": "hold",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("qdrant/README.md",), manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(payload["pending_paths"], ["qdrant/README.md"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_unclassified_build_source_denied_before_any_promotion(self):
+        # A release of a known service must never claim that an unregistered
+        # runtime Dockerfile in the same source range was delivered.
+        for mode in ("plan", "deploy"):
+            host = FakeHost()
+            code, out = self.run_main(mode, host,
+                changed=("mantic-mcp/src/server.ts", "rogue-service/Dockerfile"),
+                extra=["--now", NOW.isoformat()])
+            self.assertEqual(code, 1, (mode, out))
+            self.assertEqual(host.mutations(), [])
+            self.assertEqual(out, "")
+
+    def test_unclassified_build_denial_explicitly_reports_incomplete(self):
+        host = FakeHost()
+        err = io.StringIO()
+        with patch.object(delivery, "Host", return_value=host), \
+             patch.object(delivery, "load_gate_file", return_value=manifest()), \
+             patch.object(delivery, "git_changed_paths", return_value=[
+                 "mantic-mcp/src/server.ts", "rogue-service/Dockerfile"]), \
+             patch.object(sys, "stderr", err):
+            code = delivery.main([
+                "--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
+                "--source-sha", SOURCE])
+        self.assertEqual(code, 1)
+        response = json.loads(err.getvalue())
+        self.assertEqual(response["reason"],
+                         "unclassified_build_source:rogue-service")
+        self.assertFalse(response["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_unclassified_nonbuild_change_remains_pending_and_not_complete(self):
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "docs/README.md"),
+            extra=["--now", NOW.isoformat()])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["pending_paths"], ["docs/README.md"])
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_ops_infrastructure_dockerfile_is_pending_not_an_unknown_service(self):
+        # Regression from live production plan on merged PR #180:
+        # ops/repowise/Dockerfile.publisher is infrastructure, not a new
+        # runtime service root; it must remain pending and never count as delivered.
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts",
+                     "ops/repowise/Dockerfile.publisher"),
+            extra=["--now", NOW.isoformat()])
+        self.assertEqual(code, 0, out)
+        report = json.loads(out)
+        self.assertEqual(report["pending_paths"],
+                         ["ops/repowise/Dockerfile.publisher"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_manual_source_remains_pending_without_build(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "paperclip-mcp", "mode": "manual_pinned",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("paperclip-mcp/Dockerfile",),
+            manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["retired_source_pending"], ["paperclip-mcp"])
+        self.assertEqual(payload["pending_paths"], ["paperclip-mcp/Dockerfile"])
+        self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(payload["admitted"], [])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_expected_build_source_is_refused(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "paperclip-mcp", "auto_deploy_expected": True,
+            "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("paperclip-mcp/Dockerfile",),
+            manifest_override=data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.mutations(), [])
+
+    def test_held_unreviewed_resource_is_not_silently_skipped(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "plasmic", "promotion_state": "hold",
+            "auto_deploy_expected": True, "review_required": False})
+        code, out = self.run_main("plan", host,
+            changed=("plasmic/README.md",), manifest_override=data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.mutations(), [])
 
     def test_scoped_plan_admits_one_service_and_preserves_pending_paths(self):
         # Root-owned, per-UUID gates still apply; an explicitly scoped release
@@ -859,19 +997,26 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
+                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None,
+                 manifest_override=None, extra=()):
         host = host or FakeHost()
+        explicit_documents = documents is not None
         documents = documents if documents is not None else self.documents_for(source_sha)
+        if explicit_documents:
+            # Only the real root gate writer creates request artifacts; this
+            # marker models an existing request, never a new release grant.
+            Path(state_dir).mkdir(parents=True, exist_ok=True)
+            (Path(state_dir) / "mantic-mcp-request.json").write_text("{}", encoding="utf-8")
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
-                patch.object(delivery, "check_release_parity",
-                             side_effect=parity_error, return_value={"result": "parity_ok"}), \
+                patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid()), \
                 patch.object(delivery, "check_upstream_source",
                              side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "load_gate_file",
-                             side_effect=lambda path, label, require_root=False: manifest()), \
+                             side_effect=lambda path, label, require_root=False:
+                             manifest_override if manifest_override is not None else manifest()), \
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY), \
@@ -881,7 +1026,7 @@ class AutoModeTests(unittest.TestCase):
                                         if k not in environment}):
             argv = ["--mode", mode, "--auto", "--repo", repo, "--state-dir", state_dir,
                     "--artifact-dir", state_dir, "--attestation-key", str(Path(state_dir) / "key"),
-                    "--now", NOW.isoformat()]
+                    "--now", NOW.isoformat(), *extra]
             stdout, stderr = io.StringIO(), io.StringIO()
             with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
                 code = delivery.main(argv)
@@ -902,6 +1047,73 @@ class AutoModeTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(payload["source_sha"], head)
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_follows_verified_fast_forward_checkout_not_stale_pin(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        self.assertNotEqual(previous, head)
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous})
+        payload = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(payload["source_sha"], head)
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_does_not_invent_base_or_allow_source_rewind(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        for candidate_base, candidate_pin in (
+            ("f" * 40, previous), (base, "0" * 40)):
+            code, out, host = self.run_auto(
+                repo, tempfile.mkdtemp(), source_sha=head,
+                environ={"HARNESS_BASE_SHA": candidate_base,
+                         "HARNESS_SOURCE_SHA": candidate_pin})
+            self.assertEqual(code, 1, out)
+            self.assertIn("auto_source_not_fast_forward", out)
+            self.assertEqual(host.mutations(), [])
+
+    def test_auto_does_not_override_explicit_operator_source_pin(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=previous,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous},
+            extra=["--source-sha", previous])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(payload["source_sha"], previous)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_rejects_untracked_build_source_before_any_mutation(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        rogue = Path(repo) / "rogue-service"
+        rogue.mkdir()
+        (rogue / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous})
+        self.assertEqual(code, 1, out)
+        self.assertIn("auto_checkout_dirty", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_checkout_tip_always_needs_live_upstream_parity(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous},
+            source_error=delivery.ParityFailure("source_range_stale"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("source_parity:source_range_stale", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_without_an_operator_range_fails_closed(self):
@@ -925,7 +1137,7 @@ class AutoModeTests(unittest.TestCase):
         # later run could mistake for a delivery baseline.
         repo, base, head = self.repo()
         state_dir = tempfile.mkdtemp()
-        code, out, host = self.run_auto(repo, state_dir, mode="prepare", source_sha=head,
+        code, out, host = self.run_auto(repo, state_dir, mode="plan", source_sha=head,
                                         environ={"HARNESS_BASE_SHA": base,
                                                  "HARNESS_SOURCE_SHA": head})
         self.assertEqual(code, 0, out)
@@ -935,22 +1147,167 @@ class AutoModeTests(unittest.TestCase):
 
     def test_auto_reports_no_change_when_the_range_is_empty(self):
         repo, base, head = self.repo()
-        code, out, host = self.run_auto(repo, tempfile.mkdtemp(), source_sha=head,
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
+        code, out, host = self.run_auto(repo, state_dir, source_sha=head,
                                         environ={"HARNESS_BASE_SHA": head,
                                                  "HARNESS_SOURCE_SHA": head})
         payload = json.loads(out)
         self.assertEqual(code, 0)
-        self.assertEqual(payload["result"], "no_change")
+        self.assertEqual(payload["result"], "source_range_unchanged")
+        self.assertEqual(payload["runtime_parity"], "not_claimed")
         self.assertEqual(host.mutations(), [])
 
-    def test_auto_no_change_denies_stale_runtime(self):
+    def test_idle_tick_never_claims_running_service_parity(self):
         repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
         code, out, host = self.run_auto(
-            repo, tempfile.mkdtemp(), source_sha=head,
-            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head},
-            parity_error=delivery.ParityFailure("service_changes_not_deployed"))
+            repo, state_dir, source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["runtime_parity"], "not_claimed")
+        self.assertEqual(host.mutations(), [])
+
+    def test_empty_global_range_still_finds_service_backlog_from_delivery_ledger(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": base}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
+        code, out, host = self.run_auto(
+            repo, state_dir, source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        report = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(list(report["services"]), ["mantic-mcp"])
+        self.assertEqual(report["unverified_service_baselines"], [])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_delivery_ledger_refuses_to_claim_idleness(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        report = json.loads(out)
         self.assertEqual(code, 1, out)
-        self.assertIn("runtime_parity:service_changes_not_deployed", out)
+        self.assertEqual(report["result"], "pending_release_evidence")
+        self.assertEqual(report["awaiting_release_evidence"], ["mantic-mcp"])
+        self.assertEqual(report["unverified_service_baselines"], ["mantic-mcp"])
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_forged_delivery_ledger_source_sha_denies_before_mutation(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        (Path(state_dir) / "delivery.json").write_text(
+            json.dumps({"mantic-mcp": {"source_sha": "not-a-sha"}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_invalid_sha:mantic-mcp", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_unmapped_dockerfile_is_not_automatically_a_live_release_target(self):
+        repo, base, head = self.repo()
+        # Unit fixture's directory is owned by the unprivileged test runner.
+        # Production's required ledger UID remains hard-coded to root.
+        with patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid()):
+            paths, unknown = delivery.pending_per_service_source_paths(
+                repo, head, tempfile.mkdtemp(), {"lanes": [], "other_resources": []})
+        self.assertEqual(paths, [])
+        self.assertEqual(unknown, [])
+
+    def test_auto_promotes_only_granted_service_and_preserves_other_backlog(self):
+        repo, base, head = self.repo(commits=1)
+        second = Path(repo) / "playwright-mcp"
+        second.mkdir()
+        (second / "Dockerfile").write_text("FROM scratch\\n", encoding="utf-8")
+        subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", repo, "commit", "-qm", "add second MCP"], check=True)
+        head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+        state_dir = tempfile.mkdtemp()
+        other = {"id": "playwright-mcp", "coolify_kind": "service",
+                 "coolify_uuid": "9e4fzsodixl4qzzap4zg0ntp",
+                 "promotion_state": "hold", "review_required": True}
+        policy = manifest()
+        policy["other_resources"].append(other)
+        host = FakeHost(revision=head, images={
+            f"127.0.0.1:5000/harness-mantic-mcp:{head[:12]}": DIGEST})
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            documents=self.documents_for(head), host=host, manifest_override=policy,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        report = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(report["result"], "partial_release_pending")
+        self.assertFalse(report["release_complete"])
+        self.assertEqual(report["awaiting_release_evidence"], ["playwright-mcp"])
+        self.assertEqual(len(report["deployed"]["decisions"]), 1)
+        self.assertEqual(report["deployed"]["decisions"][0]["service"], "mantic-mcp")
+        self.assertEqual(report["deployed"]["decisions"][0]["decision"], "promoted")
+        self.assertTrue(all("9e4fzsodixl4qzzap4zg0ntp" not in str(call)
+                            for call in host.mutations()), "unapproved service must stay untouched")
+        ledger = json.loads((Path(state_dir) / "delivery.json").read_text())
+        self.assertEqual(ledger["mantic-mcp"]["source_sha"], head)
+        self.assertNotIn("playwright-mcp", ledger)
+
+    def test_ledger_valid_sha_from_untrusted_owner_cannot_suppress_a_release(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        ledger = Path(state_dir) / "delivery.json"
+        ledger.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        ledger.chmod(0o600)
+        # Simulate a trusted UID different from the fixture owner even when
+        # this suite is run by root. Production still requires fixed UID 0.
+        with patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid() + 1):
+            with self.assertRaises(Denied) as caught:
+                delivery.pending_per_service_source_paths(repo, head, state_dir, manifest())
+        self.assertEqual(str(caught.exception), "delivery_ledger_directory_untrusted")
+
+    def test_symlinked_delivery_ledger_fails_closed_with_zero_mutations(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        outside = Path(tempfile.mkdtemp()) / "source.json"
+        outside.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}))
+        (Path(state_dir) / "delivery.json").symlink_to(outside)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_file_untrusted", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_unprivate_delivery_directory_denied_before_release(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        Path(state_dir).chmod(0o755)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_directory_untrusted", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_world_readable_ledger_with_valid_sha_denied(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        ledger = Path(state_dir) / "delivery.json"
+        ledger.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}))
+        ledger.chmod(0o644)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_file_untrusted", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
@@ -960,7 +1317,7 @@ class AutoModeTests(unittest.TestCase):
             environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": head},
             source_error=delivery.ParityFailure("source_range_stale"))
         self.assertEqual(code, 1, out)
-        self.assertIn("runtime_parity:source_range_stale", out)
+        self.assertIn("source_parity:source_range_stale", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_denies_a_held_lane_without_touching_the_host(self):
