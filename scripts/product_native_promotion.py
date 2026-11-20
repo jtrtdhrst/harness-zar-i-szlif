@@ -300,6 +300,26 @@ def never_started_billing_blocked(run):
     return all(BILLING_BLOCKED.search(str(x.get("message", ""))) for x in failures)
 
 
+# A check name alone is not release evidence: another GitHub App can publish
+# the same name on a different commit. Bind each accepted CI result to the
+# requested exact commit and the official GitHub Actions App identity.
+GITHUB_ACTIONS_APP_ID = 15368
+CLOUDFLARE_APP_ID = 85455
+
+
+def check_identity(sha, row, app_id, app_slug):
+    app = row.get("app") if isinstance(row, dict) else None
+    suite = row.get("check_suite") if isinstance(row, dict) else None
+    return (
+        isinstance(row, dict) and row.get("head_sha") == sha
+        and isinstance(app, dict)
+        and type(app.get("id")) is int and app["id"] == app_id
+        and app.get("slug") == app_slug
+        and isinstance(suite, dict)
+        and type(suite.get("id")) is int and suite["id"] > 0
+    )
+
+
 # One historically failed Cloudflare Workers build on the CI-only Product PR
 # #183 squash must not veto the independently green Product CI test.  This
 # exception is immutable (commit, run ID, provider identity and status) and
@@ -313,8 +333,8 @@ def historical_foreign_check(sha, row):
         and row.get("name") == "Workers Builds: stronaglowna"
         and row.get("status") == "completed"
         and row.get("conclusion") == "failure"
-        and isinstance(row.get("app"), dict)
-        and row["app"].get("slug") == "cloudflare-workers-and-pages"
+        and check_identity(sha, row, CLOUDFLARE_APP_ID, "cloudflare-workers-and-pages")
+        and row["check_suite"]["id"] == 120787495020
     )
 
 
@@ -334,12 +354,16 @@ def checks(sha):
     if len(matches) != 1 or matches[0].get("status") != "completed":
         raise Denied("product_ci_not_green")
     product = matches[0]
+    if not check_identity(sha, product, GITHUB_ACTIONS_APP_ID, "github-actions"):
+        raise Denied("product_ci_provenance_untrusted")
     billed = False
     if product.get("conclusion") != "success":
         if not never_started_billing_blocked(product):
             raise Denied("product_ci_not_green")
         billed = True
     for check in checks:
+        if not isinstance(check, dict) or check.get("head_sha") != sha:
+            raise Denied("nonpassing_checks")
         if check is product:
             continue
         if historical_foreign_check(sha, check):

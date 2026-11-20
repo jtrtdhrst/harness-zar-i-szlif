@@ -131,10 +131,13 @@ class ProductPromotionTests(unittest.TestCase):
     def test_exact_pr183_unrelated_cloudflare_failure_does_not_veto_green_product_ci(self):
         sha = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
         product = {"name": "validate-product", "status": "completed",
-                   "conclusion": "success", "app": {"slug": "github-actions"}}
+                   "conclusion": "success", "head_sha": sha,
+                   "app": {"id": p.GITHUB_ACTIONS_APP_ID, "slug": "github-actions"},
+                   "check_suite": {"id": 120787500917}}
         foreign = {"id": 136273095146, "name": "Workers Builds: stronaglowna",
-                   "status": "completed", "conclusion": "failure",
-                   "app": {"slug": "cloudflare-workers-and-pages"}}
+                   "status": "completed", "conclusion": "failure", "head_sha": sha,
+                   "app": {"id": p.CLOUDFLARE_APP_ID, "slug": "cloudflare-workers-and-pages"},
+                   "check_suite": {"id": 120787495020}}
         with patch.object(p, "github_api", return_value={"check_runs": [product, foreign], "total_count": 2}):
             self.assertEqual(p.checks(sha), {"billing_blocked": False})
         for wrong in [
@@ -149,7 +152,7 @@ class ProductPromotionTests(unittest.TestCase):
                     p.checks(sha)
         with patch.object(p, "github_api",
                           return_value={"check_runs": [product, foreign], "total_count": 2}):
-            with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+            with self.assertRaisesRegex(p.Denied, "product_ci_provenance_untrusted"):
                 p.checks("a" * 40)
         failed_product = {**product, "conclusion": "failure"}
         with patch.object(p, "github_api",
@@ -157,6 +160,40 @@ class ProductPromotionTests(unittest.TestCase):
                                   p, "never_started_billing_blocked", return_value=False):
             with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
                 p.checks(sha)
+
+    def test_ci_identity_rejects_wrong_provider_and_head_sha(self):
+        sha = "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        product = {"id": 135903562285, "name": "validate-product",
+                   "head_sha": sha, "status": "completed", "conclusion": "success",
+                   "app": {"slug": "github-actions", "id": p.GITHUB_ACTIONS_APP_ID},
+                   "check_suite": {"id": 120787500917}}
+        foreign = {"id": 136273095146, "name": "Workers Builds: stronaglowna",
+                   "head_sha": sha, "status": "completed", "conclusion": "failure",
+                   "app": {"slug": "cloudflare-workers-and-pages", "id": p.CLOUDFLARE_APP_ID},
+                   "check_suite": {"id": 120787495020}}
+        with patch.object(p, "github_api", return_value={"check_runs": [product, foreign], "total_count": 2}):
+            self.assertEqual(p.checks(sha), {"billing_blocked": False})
+        for altered in (
+            {**product, "head_sha": "f" * 40},
+            {**product, "app": {"id": 999, "slug": "github-actions"}},
+            {**product, "app": {"id": p.GITHUB_ACTIONS_APP_ID, "slug": "evil-app"}},
+            {**product, "check_suite": {"id": False}},
+        ):
+            with self.subTest(altered=altered), patch.object(
+                p, "github_api", return_value={"check_runs": [altered], "total_count": 1}
+            ):
+                with self.assertRaisesRegex(p.Denied, "product_ci_provenance_untrusted"):
+                    p.checks(sha)
+        for altered in (
+            {**foreign, "head_sha": "f" * 40},
+            {**foreign, "app": {"id": 999, "slug": "cloudflare-workers-and-pages"}},
+            {**foreign, "check_suite": {"id": 1}},
+        ):
+            with self.subTest(altered=altered), patch.object(
+                p, "github_api", return_value={"check_runs": [product, altered], "total_count": 2}
+            ):
+                with self.assertRaisesRegex(p.Denied, "nonpassing_checks"):
+                    p.checks(sha)
 
     def test_three_exact_historic_metadata_direct_commits_are_noop(self):
         rows = p.HISTORIC_METADATA_ONLY
@@ -371,8 +408,11 @@ class ProductPromotionTests(unittest.TestCase):
             p.github_api("/repos/foreign/repo/commits/"+SOURCE)
 
     def test_failed_secondary_check_denies_promotion(self):
-        checks=[{"name":"validate-product","status":"completed","conclusion":"success"},
-                {"name":"security-scan","status":"completed","conclusion":"failure"}]
+        checks=[{"name":"validate-product","status":"completed","conclusion":"success",
+                 "head_sha": SOURCE, "app": {"id": p.GITHUB_ACTIONS_APP_ID, "slug": "github-actions"},
+                 "check_suite": {"id": 1}},
+                {"name":"security-scan","status":"completed","conclusion":"failure",
+                 "head_sha": SOURCE}]
         with patch.object(p,"github_api",return_value={"check_runs":checks,"total_count":2}):
             with self.assertRaisesRegex(p.Denied,"nonpassing_checks"):
                 p.checks(SOURCE)
@@ -693,6 +733,8 @@ class ProductPromotionTests(unittest.TestCase):
 
     def test_checks_reports_billing_block_never_as_pass(self):
         run = {"id": 7, "name": "validate-product", "status": "completed", "conclusion": "failure",
+               "head_sha": SOURCE, "app": {"id": p.GITHUB_ACTIONS_APP_ID, "slug": "github-actions"},
+               "check_suite": {"id": 1},
                "started_at": "2026-11-16T14:55:09Z", "completed_at": "2026-11-16T14:55:11Z"}
         with patch.object(p, "never_started_billing_blocked", return_value=True), \
              patch.object(p, "github_api", return_value={"check_runs": [run], "total_count": 1}):
@@ -701,7 +743,9 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p, "github_api", return_value={"check_runs": [run], "total_count": 1}):
             with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
                 p.checks(SOURCE)
-        green = {"id": 8, "name": "validate-product", "status": "completed", "conclusion": "success"}
+        green = {"id": 8, "name": "validate-product", "status": "completed", "conclusion": "success",
+                 "head_sha": SOURCE, "app": {"id": p.GITHUB_ACTIONS_APP_ID, "slug": "github-actions"},
+                 "check_suite": {"id": 1}}
         with patch.object(p, "github_api", return_value={"check_runs": [green], "total_count": 1}):
             self.assertEqual(p.checks(SOURCE), {"billing_blocked": False})
 
