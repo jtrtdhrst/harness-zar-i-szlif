@@ -639,10 +639,10 @@ class MainWiringTests(unittest.TestCase):
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY):
+            (Path(tmp) / "mantic-mcp").mkdir()
             if mode == "prepare":
-                (Path(tmp) / "mantic-mcp").mkdir()
                 (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
-            argv = ["--mode", mode, "--repo", ".", "--base-sha", "0" * 40,
+            argv = ["--mode", mode, "--repo", tmp, "--base-sha", "0" * 40,
                     "--source-sha", source_sha, "--artifact-dir", tmp]
             if attestation_key:
                 argv += ["--attestation-key", str(Path(tmp) / "key")]
@@ -697,7 +697,9 @@ class MainWiringTests(unittest.TestCase):
         # target; its files remain reported as pending, with no host mutation.
         host = FakeHost()
         data = manifest()
-        data["other_resources"].append({"id": "plasmic", "promotion_state": "hold"})
+        data["other_resources"].append({
+            "id": "plasmic", "promotion_state": "hold",
+            "auto_deploy_expected": False, "review_required": True})
         code, out = self.run_main("plan", host,
             changed=("mantic-mcp/src/server.ts", "plasmic/studio/Dockerfile"),
             extra=["--now", NOW.isoformat()], manifest_override=data)
@@ -707,6 +709,48 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(payload["pending_paths"], ["plasmic/studio/Dockerfile"])
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertEqual(payload["result"], "partial_manual_pending")
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_manual_source_remains_pending_without_build(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "paperclip-mcp", "mode": "manual_pinned",
+            "auto_deploy_expected": False, "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("paperclip-mcp/Dockerfile",),
+            manifest_override=data)
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["retired_source_pending"], ["paperclip-mcp"])
+        self.assertEqual(payload["pending_paths"], ["paperclip-mcp/Dockerfile"])
+        self.assertEqual(payload["result"], "held_manual_pending")
+        self.assertEqual(payload["admitted"], [])
+        self.assertEqual(host.mutations(), [])
+
+    def test_missing_expected_build_source_is_refused(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "paperclip-mcp", "auto_deploy_expected": True,
+            "review_required": True})
+        code, out = self.run_main("plan", host,
+            changed=("paperclip-mcp/Dockerfile",),
+            manifest_override=data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(host.mutations(), [])
+
+    def test_held_unreviewed_resource_is_not_silently_skipped(self):
+        host = FakeHost()
+        data = manifest()
+        data["other_resources"].append({
+            "id": "plasmic", "promotion_state": "hold",
+            "auto_deploy_expected": True, "review_required": False})
+        code, out = self.run_main("plan", host,
+            changed=("plasmic/README.md",), manifest_override=data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
         self.assertEqual(host.mutations(), [])
 
     def test_scoped_plan_admits_one_service_and_preserves_pending_paths(self):
