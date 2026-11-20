@@ -124,10 +124,30 @@ def write_token(role, payload):
 def main():
     if os.geteuid() != 0:
         raise RuntimeError("Root service account required")
-    DEST.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(DEST, 0o700)
+    # The root-only parent and token directory must be real, pinned directories.
+    # Never chmod a symlink target or follow attacker-controlled destinations.
+    import stat
+    def checked_directory(path):
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or
+                info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
+                raise RuntimeError("Untrusted root-only token directory")
+        finally:
+            os.close(fd)
+
+    checked_directory(DEST.parent)
+    DEST.mkdir(mode=0o700, exist_ok=True)
+    checked_directory(DEST)
     lockpath = DEST / ".refresh.lock"
-    fd = os.open(lockpath, os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    info = os.fstat(fd)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+        info.st_gid != 0 or info.st_nlink != 1 or
+        stat.S_IMODE(info.st_mode) != 0o600):
+        os.close(fd)
+        raise RuntimeError("Untrusted refresh lock file")
     with os.fdopen(fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         summary = {}
