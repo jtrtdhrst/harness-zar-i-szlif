@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -996,7 +997,8 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
+                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None,
+                 extra=()):
         host = host or FakeHost()
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
@@ -1016,7 +1018,7 @@ class AutoModeTests(unittest.TestCase):
                                         if k not in environment}):
             argv = ["--mode", mode, "--auto", "--repo", repo, "--state-dir", state_dir,
                     "--artifact-dir", state_dir, "--attestation-key", str(Path(state_dir) / "key"),
-                    "--now", NOW.isoformat()]
+                    "--now", NOW.isoformat(), *extra]
             stdout, stderr = io.StringIO(), io.StringIO()
             with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
                 code = delivery.main(argv)
@@ -1037,6 +1039,73 @@ class AutoModeTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(payload["source_sha"], head)
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_follows_verified_fast_forward_checkout_not_stale_pin(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        self.assertNotEqual(previous, head)
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous})
+        payload = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(payload["source_sha"], head)
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_does_not_invent_base_or_allow_source_rewind(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        for candidate_base, candidate_pin in (
+            ("f" * 40, previous), (base, "0" * 40)):
+            code, out, host = self.run_auto(
+                repo, tempfile.mkdtemp(), source_sha=head,
+                environ={"HARNESS_BASE_SHA": candidate_base,
+                         "HARNESS_SOURCE_SHA": candidate_pin})
+            self.assertEqual(code, 1, out)
+            self.assertIn("auto_source_not_fast_forward", out)
+            self.assertEqual(host.mutations(), [])
+
+    def test_auto_does_not_override_explicit_operator_source_pin(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=previous,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous},
+            extra=["--source-sha", previous])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(payload["source_sha"], previous)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_rejects_untracked_build_source_before_any_mutation(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        rogue = Path(repo) / "rogue-service"
+        rogue.mkdir()
+        (rogue / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous})
+        self.assertEqual(code, 1, out)
+        self.assertIn("auto_checkout_dirty", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_auto_checkout_tip_always_needs_live_upstream_parity(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=head,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous},
+            source_error=delivery.ParityFailure("source_range_stale"))
+        self.assertEqual(code, 1, out)
+        self.assertIn("source_parity:source_range_stale", out)
         self.assertEqual(host.mutations(), [])
 
     def test_auto_without_an_operator_range_fails_closed(self):
