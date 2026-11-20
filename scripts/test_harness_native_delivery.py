@@ -997,7 +997,8 @@ class AutoModeTests(unittest.TestCase):
                 "attestation": signed_attestation(source_sha=source_sha)}
 
     def run_auto(self, repo, state_dir, mode="plan", host=None, documents=None,
-                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None):
+                 source_sha=SOURCE, environ=None, parity_error=None, source_error=None,
+                 extra=()):
         host = host or FakeHost()
         documents = documents if documents is not None else self.documents_for(source_sha)
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
@@ -1017,7 +1018,7 @@ class AutoModeTests(unittest.TestCase):
                                         if k not in environment}):
             argv = ["--mode", mode, "--auto", "--repo", repo, "--state-dir", state_dir,
                     "--artifact-dir", state_dir, "--attestation-key", str(Path(state_dir) / "key"),
-                    "--now", NOW.isoformat()]
+                    "--now", NOW.isoformat(), *extra]
             stdout, stderr = io.StringIO(), io.StringIO()
             with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
                 code = delivery.main(argv)
@@ -1067,6 +1068,19 @@ class AutoModeTests(unittest.TestCase):
             self.assertEqual(code, 1, out)
             self.assertIn("auto_source_not_fast_forward", out)
             self.assertEqual(host.mutations(), [])
+
+    def test_auto_does_not_override_explicit_operator_source_pin(self):
+        repo, base, head = self.repo(commits=3)
+        previous = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=repo,
+                                  check=True, capture_output=True, text=True).stdout.strip()
+        code, out, host = self.run_auto(
+            repo, tempfile.mkdtemp(), source_sha=previous,
+            environ={"HARNESS_BASE_SHA": base, "HARNESS_SOURCE_SHA": previous},
+            extra=["--source-sha", previous])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(payload["source_sha"], previous)
+        self.assertEqual(host.mutations(), [])
 
     def test_auto_rejects_untracked_build_source_before_any_mutation(self):
         repo, base, head = self.repo(commits=3)
