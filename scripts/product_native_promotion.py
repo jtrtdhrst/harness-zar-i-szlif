@@ -526,6 +526,64 @@ def native_approval(pr, head_sha, merge_sha):
         raise Denied("native_approval_unverified")
 
 
+
+# Immutable, merged Product main commits with zero application runtime changes.
+# Their GitHub SHA, first parent, exact mapped PR and complete file inventory
+# must match. This does NOT advance ci-approved or bypass runtime approval.
+# The final current-main Product CI must be green before they may be skipped.
+VERIFIED_MAINTENANCE_MERGES = {
+    "1b211f95d4d67659fa06ca8fede7e87bc260c7b9": {
+        "parent": "e21fb799a4360f8becb5b5e0a5fcc62881813782",
+        "pr": 185,
+        "files": (("added", ".github/workflows/prune-verified-merged-branches.yml"),),
+    },
+    "6de38738a285fce42a4401fedd16848bfc62ba83": {
+        "parent": "1b211f95d4d67659fa06ca8fede7e87bc260c7b9",
+        "pr": 186,
+        "files": (
+            ("removed", ".github/workflows/prune-verified-merged-branches.yml"),
+            ("modified", ".gitignore"),
+        ),
+    },
+    "9974009ed208e3586892a3839d57704424f70f51": {
+        "parent": "6de38738a285fce42a4401fedd16848bfc62ba83",
+        "pr": 153,
+        "files": (
+            ("modified", "README.md"),
+            ("modified", "ops/coolify/CI_GATED_RELEASE.md"),
+        ),
+    },
+}
+
+
+def verified_maintenance_merge(sha, node, first_parent, pr):
+    """Match only three immutable non-runtime main squashes; fail closed on drift.
+
+    These are history-only skips: no ci-approved move, no deployment, and no
+    relaxation for unknown cleanup workflow edits or application source.
+    """
+    spec = VERIFIED_MAINTENANCE_MERGES.get(sha)
+    if spec is None:
+        return False
+    if (node.get("sha") != sha or first_parent != spec["parent"]
+            or pr != spec["pr"]):
+        raise Denied("maintenance_commit_identity_mismatch")
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(spec["files"]):
+        raise Denied("maintenance_file_inventory_mismatch")
+    actual = []
+    for item in files:
+        if (not isinstance(item, dict)
+                or item.get("status") not in ("added", "modified", "removed")
+                or not isinstance(item.get("filename"), str)
+                or item.get("previous_filename") is not None):
+            raise Denied("maintenance_file_inventory_mismatch")
+        actual.append((item["status"], item["filename"]))
+    if sorted(actual) != sorted(spec["files"]):
+        raise Denied("maintenance_file_inventory_mismatch")
+    return True
+
+
 def non_runtime_files_only(pr_number, commit_sha, node):
     """True only when all PR files are non-runtime docs/metadata changes.
 
@@ -602,6 +660,16 @@ def candidate_history(release_sha, main_sha):
             current = first
             continue
         pr, head = provenance(current)
+        # Source-only maintenance is not a deployable Product artifact. Its
+        # specific merged SHA/parent/PR/files are immutable-allowlisted; do not
+        # require a PR-head tree to equal a later squash-merge main tree.
+        # Still demand actual trusted Product CI on the CURRENT main tip.
+        if len(parents) == 1 and verified_maintenance_merge(current, node, first, pr):
+            final_ci = checks(main_sha)
+            if final_ci["billing_blocked"]:
+                raise Denied("maintenance_current_main_ci_not_green")
+            current = first
+            continue
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
         # Exact reviewed CI-only PR183 must never cause an unnecessary
