@@ -1009,6 +1009,7 @@ class AutoModeTests(unittest.TestCase):
             (Path(state_dir) / "mantic-mcp-request.json").write_text("{}", encoding="utf-8")
         environment = {k: v for k, v in (environ or {}).items() if v is not None}
         with patch.object(delivery, "STATE_ROOT", Path(state_dir)), \
+                patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid()), \
                 patch.object(delivery, "check_upstream_source",
                              side_effect=source_error, return_value=SOURCE), \
                 patch.object(delivery, "POLL_SECONDS", 0), \
@@ -1149,6 +1150,7 @@ class AutoModeTests(unittest.TestCase):
         state_dir = tempfile.mkdtemp()
         (Path(state_dir) / "delivery.json").write_text(
             json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
         code, out, host = self.run_auto(repo, state_dir, source_sha=head,
                                         environ={"HARNESS_BASE_SHA": head,
                                                  "HARNESS_SOURCE_SHA": head})
@@ -1163,6 +1165,7 @@ class AutoModeTests(unittest.TestCase):
         state_dir = tempfile.mkdtemp()
         (Path(state_dir) / "delivery.json").write_text(
             json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
         code, out, host = self.run_auto(
             repo, state_dir, source_sha=head,
             environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
@@ -1175,6 +1178,7 @@ class AutoModeTests(unittest.TestCase):
         state_dir = tempfile.mkdtemp()
         (Path(state_dir) / "delivery.json").write_text(
             json.dumps({"mantic-mcp": {"source_sha": base}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
         code, out, host = self.run_auto(
             repo, state_dir, source_sha=head,
             environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
@@ -1204,6 +1208,7 @@ class AutoModeTests(unittest.TestCase):
         state_dir = tempfile.mkdtemp()
         (Path(state_dir) / "delivery.json").write_text(
             json.dumps({"mantic-mcp": {"source_sha": "not-a-sha"}}), encoding="utf-8")
+        (Path(state_dir) / "delivery.json").chmod(0o600)
         code, out, host = self.run_auto(
             repo, state_dir, mode="deploy", source_sha=head,
             environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
@@ -1251,6 +1256,55 @@ class AutoModeTests(unittest.TestCase):
         ledger = json.loads((Path(state_dir) / "delivery.json").read_text())
         self.assertEqual(ledger["mantic-mcp"]["source_sha"], head)
         self.assertNotIn("playwright-mcp", ledger)
+
+    def test_ledger_valid_sha_from_untrusted_owner_cannot_suppress_a_release(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        ledger = Path(state_dir) / "delivery.json"
+        ledger.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
+        ledger.chmod(0o600)
+        # The runtime loader always requires UID 0. The fixture belongs to
+        # the unprivileged runner and has plausible SHA and private mode.
+        with self.assertRaises(Denied) as caught:
+            delivery.pending_per_service_source_paths(repo, head, state_dir, manifest())
+        self.assertEqual(str(caught.exception), "delivery_ledger_directory_untrusted")
+
+    def test_symlinked_delivery_ledger_fails_closed_with_zero_mutations(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        outside = Path(tempfile.mkdtemp()) / "source.json"
+        outside.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}))
+        (Path(state_dir) / "delivery.json").symlink_to(outside)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_file_untrusted", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_unprivate_delivery_directory_denied_before_release(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        Path(state_dir).chmod(0o755)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_directory_untrusted", out)
+        self.assertEqual(host.mutations(), [])
+
+    def test_world_readable_ledger_with_valid_sha_denied(self):
+        repo, base, head = self.repo()
+        state_dir = tempfile.mkdtemp()
+        ledger = Path(state_dir) / "delivery.json"
+        ledger.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}))
+        ledger.chmod(0o644)
+        code, out, host = self.run_auto(
+            repo, state_dir, mode="deploy", source_sha=head,
+            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        self.assertEqual(code, 1, out)
+        self.assertIn("delivery_ledger_file_untrusted", out)
+        self.assertEqual(host.mutations(), [])
 
     def test_auto_nonempty_range_rejects_stale_upstream_without_host_mutation(self):
         repo, base, head = self.repo()
