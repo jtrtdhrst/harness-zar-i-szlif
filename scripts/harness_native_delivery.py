@@ -753,7 +753,8 @@ def main(argv=None):
         # A successful per-lane release is NOT delivery of the complete main
         # range. Keep the global success marker exclusive to unscoped batches.
         report["result"] = ("ok_scoped" if args.service else
-                            "partial_manual_pending" if held or retired else "ok")
+                            "partial_manual_pending" if held or retired else
+                            "partial_release_pending" if pending_paths else "ok")
         # Positive plan/prepare is only release admission. Never mark a full
         # release without a real deployed digest/health readback and no pending
         # paths; scoped releases also cannot certify unrelated changes.
