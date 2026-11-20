@@ -58,6 +58,21 @@ class RotationGateTests(unittest.TestCase):
       p.write_text('from pathlib import Path\nCOOLIFY_TOKEN = Path("'+str(candidate)+'")\n')
       self.assertEqual(g.source_flags(p, candidate),
                        {"legacy_ref": False, "dedicated_ref": True})
+  def test_extra_legacy_alias_denied_even_with_clean_primary(self):
+    with tempfile.TemporaryDirectory() as tmp:
+      src = Path(tmp) / "controller.py"
+      candidate = Path("/root/coolify-secrets/harness_delivery_api_token")
+      src.write_text('from pathlib import Path\n'
+                     'COOLIFY_TOKEN = Path("' + str(candidate) + '")\n'
+                     'OTHER_TOKEN = Path("' + str(g.OLD) + '")\n')
+      self.assertEqual(g.source_flags(src, candidate),
+                       {"legacy_ref": True, "dedicated_ref": False})
+      src.write_text('from pathlib import Path\n'
+                     'COOLIFY_TOKEN = Path("' + str(candidate) + '")\n'
+                     'OTHER_TOKEN = Path("/root/coolify-secrets") / "coolify_api_token"\n')
+      self.assertEqual(g.source_flags(src, candidate),
+                       {"legacy_ref": True, "dedicated_ref": False})
+
   def test_invalid_uuid_denied_before_http(self):
     with self.assertRaises(g.Denied):g.get_status("secret","../etc/passwd")
 
@@ -104,3 +119,4 @@ class RotationGateTests(unittest.TestCase):
 
 if __name__=="__main__":
   unittest.main(verbosity=2)
+
