@@ -517,7 +517,9 @@ def main(argv=None):
                             if service not in SERVICES
                             and any(path == service or path.startswith(service + "/") for path in paths))
         held = [service for service in unmodelled
-                if entries[service].get("promotion_state") == "hold"]
+                if (entries[service].get("promotion_state") == "hold"
+                    and entries[service].get("auto_deploy_expected") is False
+                    and entries[service].get("review_required") is True)]
         unsupported = sorted(set(unmodelled) - set(held))
         if unsupported:
             raise Denied("service_not_in_transport:" + ",".join(unsupported))
@@ -531,6 +533,28 @@ def main(argv=None):
             for service, spec in SERVICES.items():
                 if path == spec["folder"] or path.startswith(spec["folder"] + "/"):
                     attributed.setdefault(service, []).append(path)
+        # A removed source directory cannot be built. Defer only explicitly
+        # manual/reviewed retirements; otherwise refuse rather than silently
+        # skipping a service that is expected to deploy.
+        retired = []
+        for service in sorted(attributed):
+            if (Path(args.repo) / SERVICES[service]["folder"]).is_dir():
+                continue
+            entry = entries.get(service)
+            if entry is None:
+                # Unknown modeled services are denied by the existing admission
+                # gate, not converted into a supposed retirement.
+                continue
+            if not (entry.get("auto_deploy_expected") is False
+                    and entry.get("review_required") is True
+                    and (entry.get("promotion_state") == "hold"
+                         or entry.get("mode") == "manual_pinned")):
+                raise Denied("missing_build_context:" + service)
+            if args.service:
+                raise Denied("selected_source_unavailable:" + service)
+            pending_paths.extend(attributed.pop(service))
+            retired.append(service)
+        pending_paths = sorted(set(pending_paths))
         report: dict = {"mode": args.mode, "source_sha": source_sha,
                   "scope": args.service or "all",
                   # Never report a scoped service release as delivery of the
@@ -538,11 +562,12 @@ def main(argv=None):
                   # Done/E2E checking and for the next per-lane release.
                   "pending_paths": pending_paths,
                   "held_outside_transport": held,
+                  "retired_source_pending": retired,
                   "services": {service: {"changed_paths": sorted(changed)}
                                for service, changed in sorted(attributed.items())},
                   "admitted": [], "denied": {}, "prepared": {}, "deployed": None}
         if not attributed:
-            report["result"] = "held_manual_pending" if held else "no_service_change"
+            report["result"] = "held_manual_pending" if held or retired else "no_service_change"
             print(json.dumps(report, sort_keys=True))
             return 0
         # Phase 1: admit EVERY changed service before ANY preparation or
@@ -606,7 +631,7 @@ def main(argv=None):
         # A successful per-lane release is NOT delivery of the complete main
         # range. Keep the global success marker exclusive to unscoped batches.
         report["result"] = ("ok_scoped" if args.service else
-                            "partial_manual_pending" if held else "ok")
+                            "partial_manual_pending" if held or retired else "ok")
         print(json.dumps(report, sort_keys=True))
         return 0
     except Denied as exc:
