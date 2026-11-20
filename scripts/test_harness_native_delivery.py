@@ -1501,12 +1501,15 @@ class AutoMainCycleTests(unittest.TestCase):
             "coolify_uuid": UUID, "auto_deploy_expected": True,
         }]}
 
-    def cycle(self, mode):
+    def cycle(self, mode, *, prepare_error=None):
         from contextlib import redirect_stdout
         from types import SimpleNamespace
-        args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state")
+        args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state",
+                               manifest="ops/release-lanes.json")
         out = io.StringIO()
         with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE), \
+                patch.object(delivery, "load_gate_file",
+                             return_value=self.manifest()) as load_manifest, \
                 patch.object(delivery, "read_private_delivery_ledger",
                              return_value={"mantic-mcp": {"source_sha": self.BASE}}), \
                 patch.object(delivery, "git_changed_paths",
@@ -1515,7 +1518,7 @@ class AutoMainCycleTests(unittest.TestCase):
                     "folder": "mantic-mcp", "dockerfile": "Dockerfile",
                     "image_prefix": "local/mantic-mcp", "health_url": None}}), \
                 patch.object(delivery, "Transport", return_value=object()), \
-                patch.object(delivery, "prepare",
+                patch.object(delivery, "prepare", side_effect=prepare_error,
                              return_value=("tag", self.DEPLOY_DIGEST)) as prepare, \
                 patch.object(delivery, "run_promotion",
                              return_value={"result": "promoted",
@@ -1523,7 +1526,19 @@ class AutoMainCycleTests(unittest.TestCase):
                                                           "decision": "promoted"}]}) as promote:
             with redirect_stdout(out):
                 code = delivery.auto_main_cycle(args, self.manifest(), object())
+        load_manifest.assert_called_once_with(
+            "/repo/ops/release-lanes.json", "manifest", require_root=False)
         return code, json.loads(out.getvalue()), prepare, promote
+
+    def test_deploy_build_failure_is_an_error_not_no_change(self):
+        code, report, prepare, promote = self.cycle(
+            "deploy", prepare_error=RuntimeError("build did not complete"))
+        self.assertEqual(code, 1)
+        self.assertEqual(report["result"], "release_failed")
+        self.assertEqual(report["failed_services"], ["mantic-mcp"])
+        self.assertEqual(report["services"][0]["decision"], "build_failed")
+        prepare.assert_called_once()
+        promote.assert_not_called()
 
     def test_plan_reports_change_and_never_builds(self):
         code, report, prepare, promote = self.cycle("plan")
