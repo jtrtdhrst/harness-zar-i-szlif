@@ -86,3 +86,9 @@ These are **configured Coolify service image references**, not an authenticated 
 | `repowise-mcp-runtime` | `lecwi3emh9hjxir7gphmalie` | `fciqzgceop7mqtqickkfomd7:HEAD` |
 
 **Runtime-provenance next check per row:** current effective image ID/digest from Docker, exact built source SHA + CI attestation where applicable, release authorization, Coolify deployment ID, and functional live E2E. Nothing in this table supplies those missing proofs.
+
+## RepoWise retrieval negative control (verified 2026-11-20)
+
+At indexed Harness source SHA `2b1794e00d7fc17568b18b3fcc371a1bc7152bfd`, `get_answer` failed to retrieve the `github-ops-mcp` branch from this markdown file. This is a **retrieval gap**, not missing source. A live `search_codebase(mode="hybrid", query="github-ops-mcp")` returned zero `lines`, while **`query="`github-ops-mcp`"`** returned this file, line 23, with `feat/github-ops-mcp-20261120`. The equivalent backtick-quoted queries for `zar-i-szlif-web` and `multica-mcp` also returned relevant source lines. Querying the exact Coolify UUID `t09dqe2eppn2eiqmhzlf8xzp` likewise returned line 23. `get_context` for this markdown path returns a triage/preview, **not the complete source bytes**.
+
+Agents with authorized access: prefer one **backtick-quoted exact identifier** in `search_codebase`, then check the source's `lines` and indexed SHA; if absent, query the exact current Coolify UUID or read this file from the authorized GitHub exact commit. Never promote a `get_answer` LOW-confidence guess into a branch fact. See existing native Multica skill `repowise-evidence-gate`, section 2a; a skill instruction is not a guaranteed server-side retrieval fix.
