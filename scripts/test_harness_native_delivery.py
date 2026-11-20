@@ -1266,10 +1266,11 @@ class AutoModeTests(unittest.TestCase):
         ledger = Path(state_dir) / "delivery.json"
         ledger.write_text(json.dumps({"mantic-mcp": {"source_sha": head}}), encoding="utf-8")
         ledger.chmod(0o600)
-        # The runtime loader always requires UID 0. The fixture belongs to
-        # the unprivileged runner and has plausible SHA and private mode.
-        with self.assertRaises(Denied) as caught:
-            delivery.pending_per_service_source_paths(repo, head, state_dir, manifest())
+        # Simulate a trusted UID different from the fixture owner even when
+        # this suite is run by root. Production still requires fixed UID 0.
+        with patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid() + 1):
+            with self.assertRaises(Denied) as caught:
+                delivery.pending_per_service_source_paths(repo, head, state_dir, manifest())
         self.assertEqual(str(caught.exception), "delivery_ledger_directory_untrusted")
 
     def test_symlinked_delivery_ledger_fails_closed_with_zero_mutations(self):
