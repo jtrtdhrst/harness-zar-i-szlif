@@ -10,13 +10,13 @@ A separate, minimal GitHub MCP endpoint for operations absent from the regular G
 - `GET /health` is a liveness endpoint; `ready=false` explicitly means **not operational**, even if Coolify reports the container healthy.
 - No generic shell, no arbitrary GitHub URL, no self-approval, branch protection mutation, auto-merge, token provisioning, Coolify deploy, HOLD bypass or implicit user delegation.
 - `github_preview_branch_delete` verifies exact source SHA, a merged PR, a reachable merge commit and no open PR references. It NEVER deletes. GitHub REST `DELETE /git/refs/...` has no expected-SHA conditional delete, so a concurrent push cannot be excluded. The old `github_delete_merged_branch` tool was removed and its legacy call fails closed.
-- `github_dispatch_workflow` uses GitHub REST API version `2026-03-10`, requires a returned `workflow_run_id`, and reads that exact run back to verify workflow, event and actual `head_sha`. A main-branch move that changes the run SHA fails with `DISPATCH_SHA_MISMATCH`; a legacy/no-ID response fails with `DISPATCH_UNVERIFIED` (submission may already have occurred, so do not retry blindly). This is observation/verification, not an atomic dispatch or guarantee against a wrongly-versioned run starting; never use unverified results to release software.
+- `github_dispatch_workflow` uses GitHub REST API version `2026-03-10`, requires a returned `workflow_run_id`, and retries GitHub's briefly eventual-consistent GET of that exact run (without retrying POST) to verify workflow, event and actual `head_sha`. A main-branch move that changes the run SHA fails with `DISPATCH_SHA_MISMATCH`; a legacy/no-ID response fails with `DISPATCH_UNVERIFIED` (submission may already have occurred, so do not retry blindly). This is observation/verification, not an atomic dispatch or guarantee against a wrongly-versioned run starting; never use unverified results to release software.
 - Branch protection/ruleset endpoints may reply HTTP 403 due to GitHub App scopes or private-repository plan limitations. Never treat that as protection enabled.
 - All writes must satisfy the separate existing CTO review, release HOLD, CI and operator access boundaries. This service does not enforce the complete GitHub→Coolify promotion policy.
 
 ## Run and check
 
-`npm test` — 14 HTTP-level mocked-provider positive/negative tests (verified 14/14 using exact updated GitHub files on Ubuntu with Node 24, fake GitHub API, no real provider writes). These include main-move-between-check-and-dispatch regression, legacy 204 response, missing authentication and non-atomic branch deletion rejection.
+`npm test` — 16 HTTP-level mocked-provider positive/negative tests (verified 16/16 using exact updated GitHub files on Ubuntu with Node 24, fake GitHub API, no real provider writes). These include main-move-between-check-and-dispatch regression, legacy 204 response, transient GET 404/retry without redispatch, persistent 404/ambiguous outcome, missing authentication and non-atomic branch deletion rejection.
 
 `PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_TOKEN=<scoped-secret> node server.mjs`
 
