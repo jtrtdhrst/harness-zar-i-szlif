@@ -1,0 +1,54 @@
+# RepoWise — Git branch → build → Coolify runtime routing (operator-verified snapshot)
+
+**Scope:** Żar i Szlif / Harness. **Observed:** 2026-11-20 19:24 UTC through authenticated Coolify application/service readback and GitHub repository metadata. **Status:** navigation evidence, **not** a release approval or continuous runtime attestation.
+
+## Rules for every agent (MUST)
+
+1. A **GitHub default branch** is for development/navigation. It is **not** evidence of what production builds. Resolve the actual configured `git_repository`, `git_branch`, `base_directory`, `dockerfile_location`, `build_pack`, `watch_paths`, and `settings.is_auto_deploy_enabled` from the **current Coolify application UUID**.
+2. **Git-backed application:** Coolify's configured ref is the **build selector**, not an immutable runtime commit. Resolve its GitHub commit SHA separately, inspect the exact deployment record, and compare with the running container's source revision / image digest. A green healthcheck is not SHA parity.
+3. **Compose service / image-pinned lane:** the Docker Compose `image:` reference or immutable digest is the build input. **Do not assign any Git branch** just because a Docker image, service name, Dockerfile or `ops/release-lanes.json` mentions a repository. For a source-built image, require provenance `source_sha → CI/build → digest → Coolify UUID → running digest`; absent evidence => `UNVERIFIED`.
+4. **Release policy and inventory differ.** `ops/release-lanes.json` is an authorization / historical inventory manifest (its `scope_snapshot.observed_at` was 2026-11-04). Never use its historical Coolify totals, `observed_baseline`, branch names or `auto_deploy_expected` as a present-day Coolify readback. The validator `scripts/check-release-lanes.py` is a *policy gate*, not a runtime discovery service.
+5. **Product integration vs release:** `miloszspyrka-code/zar-i-szlif:main` is the reviewed integration history. `ci-approved` is the separately promoted production release ref. The app `zar-i-szlif-web` **builds from `ci-approved`**, not directly from `main`. Check `/__release.json` + Coolify deployment + running digest before asserting what is live. Product release gate: `scripts/product_native_promotion.py`.
+6. **Harness:** `miloszspyrka-code/harness-zar-i-szlif:main` is the primary integration branch. Some applications can intentionally point to a feature branch with a manual HOLD. This does not make that feature branch the canonical source for other services. Harness release controls: `scripts/harness_release_admission.py`, `scripts/harness_delivery_controller.py`, `scripts/harness_native_delivery.py`.
+7. **No guessing:** if an agent cannot read an exact Coolify UUID/ref, deployment SHA, image digest or webhook event, say `UNKNOWN / NOT VERIFIED`, identify the missing readback, and do **not** say built, merged, deployed, E2E or auto-deploy completed. Report a current UTC `observed_at` and provenance/source for all assertions.
+8. **Freshness:** RepoWise's two indexed code repositories come from GitHub `main` via `repowise-github-sync.timer`. `repowise list_repos` can verify indexed commits. It **cannot** answer live deployment questions by itself. Before a release decision query authenticated Coolify and GitHub; for source-built Compose, verify the running Docker image labels/digest on Ubuntu. A stale or unavailable readback must not be silently replaced with a remembered answer.
+
+## Verified Coolify application routing at observation time
+
+| Coolify application / UUID | Configured Git source | Configured branch | Meaning / caveat |
+| --- | --- | --- | --- |
+| `zar-i-szlif-web` / `k0vwdsjazxguvgmh4qixjgxn` | `miloszspyrka-code/zar-i-szlif` | `ci-approved` | PROD; promotion from reviewed `main`; web release marker `/__release.json` |
+| `zar-i-szlif-mcp-host` / `xevk2uwgf7lgbnflyvwkaoqp` | `miloszspyrka-code/zar-i-szlif` | `ci-approved` | Git-configured; live ingress/runtime identity still needs separate proof |
+| `zar-i-szlif-mascot-worker` / `e8rnh91jkim7cladg7lqdmfu` | `miloszspyrka-code/zar-i-szlif` | `ci-approved` | Git-configured worker; requires deployment/digest evidence |
+| `github-ops-mcp` / `t09dqe2eppn2eiqmhzlf8xzp` | `miloszspyrka-code/harness-zar-i-szlif` | `feat/github-ops-mcp-20261120` | **Restricted manual HOLD**; not automatically `main` and not authorized to write |
+| `hermes-gateway` / `2sganhxhhnioiqh4an9g2f4k` | `miloszspyrka-code/harness-zar-i-szlif` | `main` | Git-configured; whether changes auto-deploy is a separate Coolify setting |
+| `multica-mcp` / `5o4edyfjo0wftfg08mtkknir` | `miloszspyrka-code/harness-zar-i-szlif` | `main` | Git-configured; require exact running SHA before success claim |
+| `repowise-deployment-publisher-staging` / `gl8bvfjtw2af8hkox4mguzzr` | `miloszspyrka-code/harness-zar-i-szlif` | `main` | Separate staging writer; never confuse with production read-only index |
+| `repowise` / `oea9obpkhzbgkmipxwqmz2hj` | `repowise-dev/repowise.git` | `v0.60.1` | Vendor software version; 2 mounted indexed repos are independent |
+| `local-build-registry` / `g0xdkztpmjnhgwms7qelzxqd` | Coolify reports `coollabsio/coolify` | `main` | **Metadata only**; verify actual image/Compose before inferring a Git build |
+| `zar-i-szlif-image-canary` / `cs847jiwtuq5rlm8ntjeohgf` | Coolify reports `coollabsio/coolify` | `main` | **Image-backed canary**; NOT proof of build from that repo branch |
+| `zar-i-szlif-mcp-host-image` / `z4ikllc2j5zvhjr2tyloovmg` | Coolify reports `coollabsio/coolify` | `main` | **Image-backed host**; NOT proof of build from that repo branch |
+
+**Compose services:** On this same readback Coolify returned **25 services**, for example `plasmic-mcp`, `ubuntu-mcp`, `comfy-mcp`, `qdrant-mcp`, `opik-mcp`, `repowise-mcp-runtime`. Their builds cannot be accurately attributed to GitHub `main` or any other branch using application metadata. Inspect each service's effective Compose `image:`, resolved image digest, container revision label and signed build attestation; missing = `UNVERIFIED`. A 200 / healthy is only a process-health observation.
+
+## Practical source-of-truth decision flow
+
+1. Given a user-facing name, **resolve one Coolify UUID** (current `list_applications` or `list_services`), never name-match two resources into one result.
+2. If type=`application`, read `get_application(uuid)`. Take `git_repository` and `git_branch` from **that** record; read `settings.is_auto_deploy_enabled` and `watch_paths` separately. Compare the Git ref SHA with the specific deployment's recorded source SHA.
+3. If type=`service`, read `get_service(uuid)` and parse exact `image:` entries; verify Docker `Image`, `RepoDigests`, `org.opencontainers.image.revision` / required attestation. Do not invent a Git branch.
+4. Look up actual Coolify deployment ID, result, trigger (`webhook` vs `api` vs manual) and running container digest. For `zar-i-szlif-web`, compare `https://panel.zariszlif.pl/__release.json` with promoted SHA.
+5. Compare to GitHub `main`, `ci-approved` or chosen feature ref (as applicable), review/checks and release-gate policy. Distinguish `CONFIGURED`, `BUILT`, `DEPLOYED`, `RUNTIME_VERIFIED`, `PRODUCTION_E2E_PASS`.
+6. When facts conflict, **Coolify runtime + GitHub immutable refs** supersede this dated routing snapshot; record the mismatch and fix the corresponding source manifest through reviewed code rather than concealing drift.
+
+**RepoWise MCP query examples**: “Where is the product promotion contract between `main` and `ci-approved`?” can be answered from indexed code. “What exact branch/digest is running in `plasmic-mcp` right now?” needs live Coolify + Docker checks and cannot be answered from RepoWise search alone.
+
+## Related ownership; do not duplicate control planes
+
+- Current historical release policy: `ops/release-lanes.json` and `scripts/check-release-lanes.py`.
+- Existing runtime inventory reconciliation: Harness PR **#158** (not automatically merged or live).
+- Existing exact Compose MCP routing verification: Harness PR **#182** (check current PR status / head before using).
+- Existing RepoWise freshness fix: Harness PR **#130** (check current PR status / head before installing).
+- Existing secure index sync: `ops/repowise/repowise_github_sync.sh`, `ops/repowise/README.md`. Do not add a second timer/index writer.
+- Build / signed CI / per-service authorization: `scripts/harness_native_delivery.py` and the current reviewed admission mechanism.
+
+**Not established by this document:** deployed source SHAs for all services, CI completeness, automatic build execution, any production test E2E, or permission to merge, delete branches, release services or bypass HOLD. These require live checks.
