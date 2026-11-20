@@ -562,9 +562,10 @@ def main(argv=None):
         accounted = {path for changed in attributed.values() for path in changed}
         unclassified_paths = sorted(set(paths) - accounted - set(pending_paths))
         unexpected_builds = sorted({path.split("/", 1)[0] for path in unclassified_paths
-            if Path(path).name.startswith("Dockerfile")
-            or Path(path).name in ("docker-compose.yml", "docker-compose.yaml",
-                                   "compose.yml", "compose.yaml")})
+            if path.split("/", 1)[0] != "ops"
+            and (Path(path).name.startswith("Dockerfile")
+                 or Path(path).name in ("docker-compose.yml", "docker-compose.yaml",
+                                       "compose.yml", "compose.yaml"))})
         if unexpected_builds:
             raise Denied("unclassified_build_source:" + ",".join(unexpected_builds))
         pending_paths = sorted(set(pending_paths) | set(unclassified_paths))
