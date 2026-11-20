@@ -757,6 +757,19 @@ class MainWiringTests(unittest.TestCase):
         self.assertFalse(response["release_complete"])
         self.assertEqual(host.mutations(), [])
 
+    def test_infrastructure_dockerfile_is_pending_not_global_blocker(self):
+        # A Dockerfile in ops/ is not a new top-level MCP service. It is
+        # tracked as pending but does not block a separately admitted service.
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "ops/repowise/Dockerfile.publisher"),
+            extra=["--now", NOW.isoformat()])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["pending_paths"], ["ops/repowise/Dockerfile.publisher"])
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
     def test_unclassified_nonbuild_change_remains_pending_and_not_complete(self):
         host = FakeHost()
         code, out = self.run_main("plan", host,
