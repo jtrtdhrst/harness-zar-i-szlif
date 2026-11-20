@@ -1,0 +1,110 @@
+name: MCP OCI images - trusted source builds
+
+# Artifact build only; Coolify promotion still requires signed independent gates.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'emailens-mcp/**'
+      - 'mantic-mcp/**'
+      - 'plasmic-mcp/**'
+      - 'playwright-mcp/**'
+      - 'supabase-mcp/**'
+      - 'ubuntu-mcp/**'
+      - 'scripts/select_mcp_builds.py'
+      - '.github/workflows/mcp-images-ghcr.yml'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Explicit source-owned MCP image to build'
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - emailens-mcp
+          - mantic-mcp
+          - plasmic-mcp
+          - playwright-mcp
+          - supabase-mcp
+          - ubuntu-mcp
+
+permissions:
+  contents: read
+
+# No workflow-level concurrency group: GitHub keeps only one pending run
+# per group. A newer push must never replace a pending build for another MCP.
+
+jobs:
+  select:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify trusted commit and select source-owned MCP roots
+        id: detect
+        env:
+          INPUT_SERVICE: ${{ inputs.service || 'all' }}
+        run: python3 scripts/select_mcp_builds.py
+
+  build-and-push:
+    needs: select
+    if: needs.select.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned v4
+        with:
+          persist-credentials: false
+      - name: Verify exact source and build context
+        env:
+          BUILD_ROOT: ${{ matrix.directory }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f "$BUILD_ROOT/$DOCKERFILE"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # pinned v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # pinned v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish image bound to exact main SHA
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # pinned v6
+        with:
+          context: ./${{ matrix.directory }}
+          file: ./${{ matrix.directory }}/${{ matrix.dockerfile }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/harness-${{ matrix.service }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=min
+      - name: Record immutable digest (artifact, not production release)
+        env:
+          SERVICE: ${{ matrix.service }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DIGEST"
+          [[ "$DIGEST" == sha256:* ]]
+          printf '%s %s %s\n' "$SERVICE" "$GITHUB_SHA" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
