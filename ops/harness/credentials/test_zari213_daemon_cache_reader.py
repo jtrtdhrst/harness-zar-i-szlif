@@ -24,7 +24,10 @@ class DaemonCacheAuthTests(unittest.TestCase):
                 return b""
             return b"\0".join(v.encode() for v in chain[pid][1]) + b"\0"
 
+        original_readlink = broker.os.readlink
         def actual_exe(path):
+            if not str(path).startswith("/proc/"):
+                return original_readlink(path)
             pid = int(str(path).split("/")[2])
             argv = chain[pid][1]
             exe = pathlib.Path(argv[0]).name
@@ -139,10 +142,15 @@ class DaemonCacheAuthTests(unittest.TestCase):
             return {"PPid": str(chain[pid][0]), "Uid": "997 997 997 997"}
         def cmdline(path):
             return b"\0".join(x.encode() for x in chain[int(str(path).split("/")[2])][1]) + b"\0"
+        original_readlink = broker.os.readlink
+        def bad_exe(path):
+            if str(path).startswith("/proc/"):
+                return "/tmp/fake-python"
+            return original_readlink(path)
         with patch.object(broker, "daemon_pid", return_value=100), \
              patch.object(broker, "proc_status", side_effect=status), \
              patch.object(pathlib.Path, "read_bytes", cmdline), \
-             patch.object(broker.os, "readlink", return_value="/tmp/fake-python"):
+             patch.object(broker.os, "readlink", side_effect=bad_exe):
             self.assertFalse(broker.is_authorized_daemon_cache_fetch(900, "test"))
 
 
