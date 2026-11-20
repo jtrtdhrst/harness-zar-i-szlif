@@ -9,6 +9,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,12 @@ PUBLIC_RELEASE = "https://panel.zariszlif.pl/__release.json"
 PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 LOCK = STATE_DIR / "delivery.lock"
 STATE = STATE_DIR / "state.json"
+
+COMMIT_SHA_RE = re.compile(r"[a-f0-9]{40}")
+
+
+def valid_commit_sha(value):
+    return isinstance(value, str) and COMMIT_SHA_RE.fullmatch(value) is not None
 
 
 def github_token():
@@ -139,6 +146,10 @@ def coolify(method, path, body=None):
 
 
 def download_source(sha):
+    # A user-provided --sha must never become a path component without
+    # validation. Refuse path traversal before any download or filesystem write.
+    if not valid_commit_sha(sha):
+        raise ValueError("invalid_source_sha")
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     tarball = SOURCE_DIR / f"src-{sha}.tar.gz"
     request = urllib.request.Request(
@@ -234,7 +245,18 @@ def main():
         except BlockingIOError:
             print(json.dumps({"result": "busy"}))
             return 0
-        target = args.sha or ref_sha("ci-approved")
+        approved = ref_sha("ci-approved")
+        if not valid_commit_sha(approved):
+            print(json.dumps({"result": "invalid_ci_approved_sha"}), file=sys.stderr)
+            return 1
+        if args.sha is not None:
+            if not valid_commit_sha(args.sha):
+                print(json.dumps({"result": "invalid_source_sha"}), file=sys.stderr)
+                return 1
+            if args.sha != approved:
+                print(json.dumps({"result": "sha_not_ci_approved"}), file=sys.stderr)
+                return 1
+        target = approved
         current = live_sha()
         if target == current and not args.force:
             proof=target_readback(target)
