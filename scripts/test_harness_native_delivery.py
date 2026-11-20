@@ -727,6 +727,47 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(payload["pending_paths"], ["qdrant/README.md"])
         self.assertEqual(host.mutations(), [])
 
+    def test_unclassified_build_source_denied_before_any_promotion(self):
+        # A release of a known service must never claim that an unregistered
+        # runtime Dockerfile in the same source range was delivered.
+        for mode in ("plan", "deploy"):
+            host = FakeHost()
+            code, out = self.run_main(mode, host,
+                changed=("mantic-mcp/src/server.ts", "rogue-service/Dockerfile"),
+                extra=["--now", NOW.isoformat()])
+            self.assertEqual(code, 1, (mode, out))
+            self.assertEqual(host.mutations(), [])
+            self.assertEqual(out, "")
+
+    def test_unclassified_build_denial_explicitly_reports_incomplete(self):
+        host = FakeHost()
+        err = io.StringIO()
+        with patch.object(delivery, "Host", return_value=host), \
+             patch.object(delivery, "load_gate_file", return_value=manifest()), \
+             patch.object(delivery, "git_changed_paths", return_value=[
+                 "mantic-mcp/src/server.ts", "rogue-service/Dockerfile"]), \
+             patch.object(sys, "stderr", err):
+            code = delivery.main([
+                "--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
+                "--source-sha", SOURCE])
+        self.assertEqual(code, 1)
+        response = json.loads(err.getvalue())
+        self.assertEqual(response["reason"],
+                         "unclassified_build_source:rogue-service")
+        self.assertFalse(response["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
+    def test_unclassified_nonbuild_change_remains_pending_and_not_complete(self):
+        host = FakeHost()
+        code, out = self.run_main("plan", host,
+            changed=("mantic-mcp/src/server.ts", "docs/README.md"),
+            extra=["--now", NOW.isoformat()])
+        payload = json.loads(out)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["pending_paths"], ["docs/README.md"])
+        self.assertFalse(payload["release_complete"])
+        self.assertEqual(host.mutations(), [])
+
     def test_missing_manual_source_remains_pending_without_build(self):
         host = FakeHost()
         data = manifest()
