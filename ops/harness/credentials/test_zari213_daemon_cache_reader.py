@@ -184,13 +184,67 @@ class BrokerHandlerTests(unittest.TestCase):
         result, get_token = self.make_request("credential")
         self.assertEqual(len(result), 1)
         self.assertTrue(result[0]["ok"], result)
-        self.assertEqual(result[0]["role"], "reviewer")
+        self.assertEqual(result[0]["role"], "cache-reader")
         get_token.assert_called_once()
 
     def test_daemon_cache_never_gets_raw_token_operation(self):
         result, get_token = self.make_request("token")
         self.assertEqual(result, [{"ok": False, "error": "no_active_multica_task"}])
         get_token.assert_not_called()
+
+
+class CacheTokenScopeTests(unittest.TestCase):
+    def test_cache_token_accepts_exact_contents_read(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            payload = {
+                "token": "ghs_" + "synthetic-do-not-use",
+                "role": "cache-reader",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "repositories": sorted(broker.ALLOWED_REPOS),
+                "permissions": {"contents": "read", "metadata": "read"},
+            }
+            (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
+            read = broker.read_role_token(pathlib.Path(directory), "cache-reader")
+            self.assertEqual(read["permissions"], payload["permissions"])
+
+    def test_cache_token_rejects_pr_write_and_wrong_role(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            payload = {
+                "token": "ghs_" + "synthetic-do-not-use",
+                "role": "cache-reader",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "repositories": sorted(broker.ALLOWED_REPOS),
+                "permissions": {"contents": "read", "metadata": "read",
+                                "pull_requests": "write"},
+            }
+            path = pathlib.Path(directory) / "cache-reader.json"
+            path.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, "permissions mismatch"):
+                broker.read_role_token(pathlib.Path(directory), "cache-reader")
+            del payload["permissions"]["pull_requests"]
+            payload["role"] = "reviewer"
+            path.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, "permissions mismatch"):
+                broker.read_role_token(pathlib.Path(directory), "cache-reader")
+
+    def test_cache_token_rejects_unapproved_repo_scope(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            payload = {
+                "token": "ghs_" + "synthetic-do-not-use",
+                "role": "cache-reader",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "repositories": ["miloszspyrka-code/zar-i-szlif"],
+                "permissions": {"contents": "read", "metadata": "read"},
+            }
+            (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, "repository scope mismatch"):
+                broker.read_role_token(pathlib.Path(directory), "cache-reader")
 
 
 if __name__ == "__main__":
