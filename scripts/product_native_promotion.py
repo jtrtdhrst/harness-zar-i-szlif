@@ -321,6 +321,47 @@ def historical_foreign_check(sha, row):
     )
 
 
+# Check run name and Actions app identity are insufficient: a separate, PR-
+# controlled workflow can reuse both. Bind the check job to the one trusted,
+# main-only Product CI workflow via its authoritative GitHub Actions run.
+TRUSTED_PRODUCT_WORKFLOW_ID = 405924339
+TRUSTED_PRODUCT_WORKFLOW = ".github/workflows/product-ci.yml"
+PRODUCT_JOB_URL = re.compile(
+    r"^https://github\.com/miloszspyrka-code/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
+)
+
+
+def verified_product_workflow(sha, check):
+    details = check.get("details_url")
+    found = PRODUCT_JOB_URL.fullmatch(details) if isinstance(details, str) else None
+    suite = check.get("check_suite")
+    if (found is None or type(check.get("id")) is not int
+            or int(found.group(2)) != check["id"]
+            or not isinstance(suite, dict) or type(suite.get("id")) is not int):
+        raise Denied("product_ci_untrusted_workflow")
+    run_id = int(found.group(1))
+    if run_id <= 0:
+        raise Denied("product_ci_untrusted_workflow")
+    doc = github_api("/repos/" + REPO + "/actions/runs/" + str(run_id))
+    if (not isinstance(doc, dict)
+            or type(doc.get("id")) is not int or doc["id"] != run_id
+            or type(doc.get("workflow_id")) is not int
+            or doc["workflow_id"] != TRUSTED_PRODUCT_WORKFLOW_ID
+            or doc.get("path") != TRUSTED_PRODUCT_WORKFLOW
+            or doc.get("name") != "Product CI"
+            or doc.get("head_sha") != sha
+            or doc.get("head_branch") != "main"
+            or doc.get("event") not in ("push", "workflow_dispatch")
+            or doc.get("status") != "completed"
+            or doc.get("conclusion") != "success"
+            or type(doc.get("check_suite_id")) is not int
+            or doc["check_suite_id"] != suite["id"]
+            or not isinstance(doc.get("repository"), dict)
+            or doc["repository"].get("full_name") != REPO):
+        raise Denied("product_ci_untrusted_workflow")
+    return True
+
+
 def checks(sha):
     """Every check must pass; a billing-blocked job is "CI never executed".
 
@@ -347,6 +388,8 @@ def checks(sha):
         if not never_started_billing_blocked(product):
             raise Denied("product_ci_not_green")
         billed = True
+    else:
+        verified_product_workflow(sha, product)
     for check in checks:
         if check is product:
             continue
