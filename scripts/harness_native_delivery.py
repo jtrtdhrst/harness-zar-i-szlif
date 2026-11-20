@@ -411,6 +411,43 @@ def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
     return tag, reference.split("@", 1)[1]
 
 
+def auto_ci_policy(service, repo, attestation_key):
+    """Reject missing or wrong root-owned CI policy before any Docker build."""
+    import harness_local_ci_attest as ci
+
+    if os.geteuid() != 0:
+        raise Denied("auto_ci_requires_root")
+    if not attestation_key:
+        raise Denied("attestation_key_missing")
+    raw = ci.read_trusted_file(ci.DEFAULT_POLICY, "policy", require_root=True)
+    policy = ci.validate_policy(json.loads(raw))
+    ci.policy_commands(policy, service)
+    if Path(policy["repo_root"]).resolve() != Path(repo).resolve():
+        raise Denied("auto_ci_repo_mismatch")
+    if Path(policy["key_file"]).resolve() != Path(attestation_key).resolve():
+        raise Denied("auto_ci_key_mismatch")
+    return policy
+
+
+def auto_prepare_and_attest(host, repo, base_sha, source_sha, service,
+                            bundle, attestation_key, *, policy):
+    """Build and attest only an independently approved exact-SHA UUID release."""
+    import harness_local_ci_attest as ci
+    from harness_release_admission import read_trusted_bytes, verified_attestation
+
+    _tag, digest = prepare(host, repo, service, source_sha)
+    if digest != bundle["request"].get("image_digest"):
+        raise Denied("auto_prepared_digest_mismatch")
+    code = ci.main(["--service", service, "--base-sha", base_sha,
+                    "--source-sha", source_sha, "--image-digest", digest])
+    if code != 0:
+        raise Denied("auto_ci_tests_failed")
+    artifact_path = ci.attestation_path(policy["out_dir"], service, source_sha)
+    artifact = load_gate_file(artifact_path, "attestation", require_root=True)
+    key = read_trusted_bytes(attestation_key, "attestation_key", require_root=True)
+    return verified_attestation(artifact, key), digest
+
+
 def resolve_source_range(args, environ=None):
     """Return ``(base_sha, source_sha)`` - supplied, never reconstructed.
 
@@ -590,6 +627,8 @@ def main(argv=None):
         # production release. Plan mode checks the same real evidence as deploy
         # (including an HMAC-verified attestation), without touching the host.
         bundles = {}
+        auto_missing = []
+        policies = {}
         for service in sorted(attributed):
             if not entries.get(service):
                 report["denied"][service] = "unknown_service"
@@ -598,15 +637,21 @@ def main(argv=None):
             if args.artifact_dir:
                 try:
                     bundle = load_artifacts(args.artifact_dir, service, args.attestation_key,
-                                            allow_missing_attestation=args.mode == "prepare")
+                                            allow_missing_attestation=(args.mode == "prepare" or
+                                                (args.auto and args.mode == "deploy")))
                 except Denied as exc:
                     report["denied"][service] = str(exc)
                     continue
             bundles[service] = bundle
             try:
-                if args.mode == "prepare":
+                if args.mode == "prepare" or (args.auto and args.mode == "deploy"
+                        and bundle.get("attestation") is None):
                     evaluate_build(manifest, bundle.get("request"), grant=bundle.get("grant"),
                                    now=now, expected_source_sha=source_sha)
+                    if args.auto and args.mode == "deploy":
+                        policies[service] = auto_ci_policy(
+                            service, args.repo, args.attestation_key)
+                        auto_missing.append(service)
                 else:
                     evaluate(manifest, bundle.get("request"), grant=bundle.get("grant"),
                              attestation=bundle.get("attestation"), now=now,
@@ -623,6 +668,30 @@ def main(argv=None):
         # Phase 2: mutate only after complete admission. In particular, an
         # automation runner must never interpret an admission refusal as a
         # successful exit status (the old code returned 0 for held lanes).
+        if args.mode == "deploy" and auto_missing:
+            # Preflight ALL changed services first. Build only once every
+            # review, exact-SHA grant, and CI policy has passed.
+            for service in auto_missing:
+                try:
+                    attested, digest = auto_prepare_and_attest(
+                        host, args.repo, base_sha, source_sha, service,
+                        bundles[service], args.attestation_key,
+                        policy=policies[service])
+                    bundles[service]["attestation"] = attested
+                    evaluate(manifest, bundles[service].get("request"),
+                             grant=bundles[service].get("grant"),
+                             attestation=attested, now=now,
+                             expected_source_sha=source_sha)
+                    report["prepared"][service] = {
+                        "image_digest": digest, "signed_local_ci": True}
+                except (Denied, OSError, RuntimeError, ValueError) as exc:
+                    report["denied"][service] = (
+                        str(exc) if isinstance(exc, Denied)
+                        else "auto_ci_or_prepare_failed")
+                    report["result"] = "denied"
+                    print(json.dumps(report, sort_keys=True))
+                    return 1
+
         if args.mode == "prepare":
             for service in report["admitted"]:
                 tag, digest = prepare(host, args.repo, service, source_sha)
