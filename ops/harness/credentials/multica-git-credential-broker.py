@@ -110,6 +110,7 @@ def _cache_proc_executable(pid, kind):
         "git": {"/usr/bin/git", "/usr/lib/git-core/git"},
         "remote": {"/usr/lib/git-core/git-remote-https",
                    "/usr/lib/git-core/git-remote-http"},
+        "shell": {"/bin/sh", "/bin/dash", "/usr/bin/dash"},
     }
     try:
         actual = os.path.realpath(os.readlink(f"/proc/{pid}/exe"))
@@ -142,7 +143,7 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
     daemon = daemon_pid(unit, pidfile, allow_any_daemon)
     chain = []
     current = pid
-    for _ in range(3):
+    for _ in range(4):
         try:
             status = proc_status(current)
             parent = int(status.get("PPid", "0"))
@@ -159,12 +160,29 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
         if parent <= 1:
             return False
         current = parent
-    if len(chain) != 3 or chain[2][1] != daemon:
-        return False
-    helper_pid, helper_parent, helper_argv = chain[0]
-    remote_pid, remote_parent, remote_argv = chain[1]
-    git_pid, _, git_argv = chain[2]
-    if helper_parent != remote_pid or remote_parent != git_pid:
+
+    # Git executes credential helpers through "sh -c"; this exact, trusted
+    # intermediary is present in the real process tree. Do not accept a
+    # generic shell, arbitrary command, or an extra process ancestor.
+    helper = "/usr/local/libexec/multica-zar-git-credential"
+    if len(chain) == 3 and chain[2][1] == daemon:
+        helper_pid, helper_parent, helper_argv = chain[0]
+        remote_pid, remote_parent, remote_argv = chain[1]
+        git_pid, _, git_argv = chain[2]
+        if helper_parent != remote_pid or remote_parent != git_pid:
+            return False
+    elif len(chain) == 4 and chain[3][1] == daemon:
+        helper_pid, helper_parent, helper_argv = chain[0]
+        shell_pid, shell_parent, shell_argv = chain[1]
+        remote_pid, remote_parent, remote_argv = chain[2]
+        git_pid, _, git_argv = chain[3]
+        exact = helper + " get"
+        if (helper_parent != shell_pid or shell_parent != remote_pid or
+            remote_parent != git_pid or
+            shell_argv != ["/bin/sh", "-c", exact, exact] or
+            not _cache_proc_executable(shell_pid, "shell")):
+            return False
+    else:
         return False
     helper = "/usr/local/libexec/multica-zar-git-credential"
     if (len(helper_argv) != 3 or
