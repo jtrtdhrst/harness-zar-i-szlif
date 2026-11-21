@@ -60,7 +60,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
   };
   const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
     pushToken,pinnedBranches,pushRemoteFor,gitBin,
-    deletionAllowlist:approved?[`${REPO}:fix/old@${liveSHA()??SHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
+    deletionAllowlist:approved?[`${REPO}:fix/old@${liveSHA()??branchSHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
   const request=async(name,args={},auth=true)=>{
