@@ -7,6 +7,7 @@ root-owned. These tests use a fake probe; nothing here touches a real unit.
 """
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -28,15 +29,18 @@ REAL_BLOB = preflight.blob_sha256(REPO, SHA, "scripts/harness_release_admission.
 EXPECTED = {name: (REAL_BLOB if name == "harness_release_admission.py" else "d" * 64)
             for name in preflight.MODULES}
 EXPECTED[preflight.REVIEWED_UNIT] = "e" * 64
+EXPECTED[preflight.LEGACY_ENTRYPOINT] = "f" * 64
 
-ADAPTER = str(Path(REPO) / "scripts" / "harness_native_delivery.py")
+ADAPTER = str(preflight.LIBEXEC / preflight.ADAPTER)
 REVIEWED_UNIT_TEXT = f"""[Unit]
 Description=test unit
 # ExecStart is what the timer really runs
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 {ADAPTER} --mode deploy --auto \
-  --artifact-dir /var/lib/harness-image-delivery/gates
+  --artifact-dir /var/lib/harness-image-delivery/gates \
+  --attestation-key /etc/paperclip-gitops/harness-attestation.key \
+  --state-dir /var/lib/harness-image-delivery/delivery
 Nice=10
 """
 
@@ -77,7 +81,7 @@ def installed_files(**overrides):
     for name, digest in EXPECTED.items():
         files[str(preflight.LIBEXEC / name)] = {"uid": 0, "mode": 0o644, "sha256": digest}
     files[str(preflight.LIBEXEC / "harness_image_delivery.py")] = {"uid": 0, "mode": 0o755,
-                                                                   "sha256": "a" * 64}
+                                                                   "sha256": EXPECTED[preflight.LEGACY_ENTRYPOINT]}
     files[str(preflight.POLICY)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.KEY)] = {"uid": 0, "mode": 0o600}
     files[str(preflight.STATE)] = {"uid": 0, "mode": 0o755}
@@ -97,7 +101,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_expected_hashes_bind_the_approved_sha(self):
         self.assertEqual(sorted(EXPECTED),
-                         sorted(preflight.MODULES + preflight.UNITS))
+                         sorted(preflight.MODULES + preflight.UNITS + (preflight.LEGACY_ENTRYPOINT,)))
         for digest in EXPECTED.values():
             self.assertRegex(digest, r"^[a-f0-9]{64}$")
         self.assertEqual(len(REAL_BLOB), 64)
@@ -139,16 +143,72 @@ class PreflightTests(unittest.TestCase):
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
         self.assertIn("harness_release_admission.py_matches_approved_sha", blockers)
 
+    def test_missing_parity_module_is_pending_and_never_ready(self):
+        files = installed_files()
+        files.pop(str(preflight.LIBEXEC / "harness_release_parity.py"))
+        probe = FakeProbe(files=files)
+        checks, blockers, installed, _, pending = preflight.check(probe, REPO, SHA)
+        self.assertNotIn("harness_release_parity.py_present", blockers)
+        self.assertIn("harness_release_parity.py_present", pending)
+        self.assertFalse(checks["harness_release_parity.py_present"]["ok"])
+        self.assertFalse(installed["harness_release_parity.py"]["exists"])
+        with patch.object(preflight, "Probe", lambda: probe):
+            with patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()) as out:
+                code = preflight.main(["--repo", REPO, "--sha", SHA, "--plan"])
+        self.assertEqual(code, 0)
+        self.assertFalse(json.loads(out.getvalue())["ready"])
+
     def test_non_root_owned_installed_module_is_a_blocker(self):
         files = installed_files()
         files[str(preflight.LIBEXEC / "harness_delivery_controller.py")]["uid"] = 997
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
         self.assertIn("harness_delivery_controller.py_root_owned", blockers)
 
+    def test_world_writable_controller_source_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_native_delivery.py")]["mode"] = 0o666
+        _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("harness_native_delivery.py_root_owned", blockers)
+
+    def test_world_writable_systemd_unit_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.UNIT)]["mode"] = 0o666
+        _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("delivery_unit_root_owned", blockers)
+
+    def test_world_writable_legacy_shim_is_a_blocker(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_image_delivery.py")]["mode"] = 0o777
+        _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("legacy_controller_disabled", blockers)
+
     def test_world_readable_policy_is_a_blocker(self):
         files = installed_files(**{str(preflight.POLICY): {"mode": 0o644}})
         _, blockers, _, _, _ = preflight.check(FakeProbe(files=files), REPO, SHA)
         self.assertIn("policy_root_private", blockers)
+
+    def test_original_hold_blind_controller_cannot_count_as_installed(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_image_delivery.py")]["sha256"] = "a" * 64
+        checks, blockers, _, _, pending = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertIn("legacy_controller_disabled", blockers)
+        self.assertNotIn("legacy_controller_disabled", pending)
+        self.assertFalse(checks["legacy_controller_disabled"]["ok"])
+
+    def test_original_legacy_controller_is_pending_during_safe_install(self):
+        files = installed_files()
+        files[str(preflight.LIBEXEC / "harness_image_delivery.py")]["sha256"] = "a" * 64
+        files[str(preflight.UNIT)]["text"] = LEGACY_UNIT_TEXT
+        _, blockers, _, _, pending = preflight.check(FakeProbe(files=files), REPO, SHA)
+        self.assertNotIn("legacy_controller_disabled", blockers)
+        self.assertIn("legacy_controller_disabled", pending)
+
+    def test_legacy_shim_has_no_provider_action_and_denies_auto(self):
+        script = Path(REPO) / preflight.LEGACY_SHIM_SOURCE
+        completed = subprocess.run(["python3", str(script), "--auto"],
+                                   capture_output=True, text=True, timeout=10)
+        self.assertEqual(completed.returncode, 78)
+        self.assertIn("legacy_hold_blind_controller_disabled", completed.stderr)
 
     def test_missing_legacy_controller_blocks_the_backup_step(self):
         files = installed_files()
@@ -171,8 +231,8 @@ class PreflightTests(unittest.TestCase):
         canary = [step for step in steps if step[0].startswith("07_")][0]
         self.assertTrue(any("denied" in line for line in canary[1]))
         verify = [step for step in steps if step[0].startswith("04_")][0]
-        self.assertEqual(len(verify[1]), len(preflight.MODULES),
-                         "only staged modules may be verified before unit installation")
+        self.assertEqual(len(verify[1]), len(preflight.MODULES) + 1,
+                         "staged modules AND legacy denial shim must be verified")
         unit_step = [step for step in steps if step[0].startswith("06_")][0]
         self.assertTrue(any("daemon-reload" in line for line in unit_step[1]))
         self.assertTrue(any(str(preflight.UNIT) in line for line in unit_step[1]))
@@ -184,6 +244,9 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(any("systemctl start" in line for line in rollback),
                          "rollback must never restart the HOLD-blind controller")
         self.assertTrue(any("systemctl stop" in line for line in rollback))
+        self.assertFalse(any("harness_image_delivery-" in line and " -m 0755 " in line
+                             for line in rollback),
+                         "rollback must not restore executable HOLD-blind controller")
 
     def test_missing_installable_artifacts_are_pending_not_plan_blockers(self):
         files = installed_files()
@@ -257,6 +320,25 @@ class UnitWiringTests(unittest.TestCase):
     def test_the_reviewed_unit_passes_the_adapter_parser(self):
         argv = preflight.parse_execstart(REVIEWED_UNIT_TEXT)
         self.assertIsNone(preflight.execstart_problem(argv))
+
+    def test_unverified_adapter_top_level_code_is_never_executed(self):
+        with tempfile.TemporaryDirectory() as root:
+            marker = Path(root) / "SHOULD_NOT_EXIST"
+            foreign = Path(root) / preflight.ADAPTER
+            foreign.write_text(
+                "from pathlib import Path\n"
+                + "Path(" + repr(str(marker)) + ").write_text('executed')\n")
+            argv = list(preflight.APPROVED_EXECSTART)
+            argv[1] = str(foreign)
+            self.assertEqual(preflight.execstart_problem(argv),
+                             "adapter_rejects_execstart_arguments")
+            self.assertFalse(marker.exists())
+
+    def test_incomplete_adapter_execstart_is_not_accepted(self):
+        argv = list(preflight.APPROVED_EXECSTART)
+        del argv[-2:]  # missing signed attestation state-directory binding
+        self.assertEqual(preflight.execstart_problem(argv),
+                         "adapter_rejects_execstart_arguments")
 
     def test_an_argument_the_adapter_rejects_is_detected(self):
         # This is exactly the d3f4055 defect: the timer's invocation was not an

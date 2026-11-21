@@ -254,6 +254,7 @@ class AttesterTests(unittest.TestCase):
                                    ".", os.geteuid(), os.getegid())
         self.assertEqual([r["exit"] for r in results], [0, 3])
 
+    @unittest.skipIf(os.geteuid() == 0, "root can explicitly drop to the requested UID")
     def test_run_tests_fails_closed_when_uid_cannot_be_assumed(self):
         other = 65534 if os.geteuid() != 65534 else 65533
         with self.assertRaisesRegex(attest.Denied, "test_runner_uid_unavailable"):
