@@ -108,6 +108,7 @@ def _cache_proc_executable(pid, kind):
                    "/usr/bin/python3.12", "/usr/bin/python3.13",
                    "/usr/bin/python3.14", "/usr/bin/python3.15"},
         "git": {"/usr/bin/git", "/usr/lib/git-core/git"},
+        "git-core": {"/usr/lib/git-core/git"},
         "remote": {"/usr/lib/git-core/git-remote-https",
                    "/usr/lib/git-core/git-remote-http"},
         "shell": {"/bin/sh", "/bin/dash", "/usr/bin/dash"},
@@ -198,7 +199,7 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
                 remote_transport not in {"remote-http", "remote-https"} or
                 dispatcher_argv[1] != remote_transport or
                 dispatcher_argv[2:] != remote_argv[1:] or
-                not _cache_proc_executable(dispatcher_pid, "git")):
+                not _cache_proc_executable(dispatcher_pid, "git-core")):
                 return False
     else:
         return False
