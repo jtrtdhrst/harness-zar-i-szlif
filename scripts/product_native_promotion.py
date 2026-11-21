@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-REPO = "miloszspyrka-code/zar-i-szlif"
+REPO = "jtrtdhrst/zar-i-szlif"
 APP_ID = 5398752
 INSTALL_ID = 173456397
 RELEASE_REF = "ci-approved"
@@ -153,10 +153,10 @@ def run(argv, timeout=30, allow_fail=False):
 
 
 GITHUB_PATH = re.compile(
-    r"^/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
+    r"^/repos/jtrtdhrst/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
 # Pagination query is allowed only on the check-run annotations resource.
 GITHUB_ANNOTATIONS_PATH = re.compile(
-    r"^/repos/miloszspyrka-code/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
+    r"^/repos/jtrtdhrst/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
     r"(\?per_page=[0-9]{1,3}(&page=[0-9]{1,5})?)?$")
 ANNOTATIONS_PAGE_SIZE = 100
 ANNOTATIONS_MAX_PAGES = 20
@@ -333,7 +333,7 @@ def historical_foreign_check(sha, row):
 TRUSTED_PRODUCT_WORKFLOW_ID = 405924339
 TRUSTED_PRODUCT_WORKFLOW = ".github/workflows/product-ci.yml"
 PRODUCT_JOB_URL = re.compile(
-    r"^https://github\.com/miloszspyrka-code/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
+    r"^https://github\.com/jtrtdhrst/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
 )
 
 
