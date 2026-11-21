@@ -29,6 +29,24 @@ RUNTIME_UID = 997
 RUNTIME_GID = 981
 REFRESH = "/usr/local/libexec/multica-zar-github-app-refresh.py"
 AGENT_ROLES = {"implementer", "reviewer", "release"}
+ROLE_SCOPED_REPOS = {}
+for _base in ("implementer", "reviewer", "release"):
+    for _suffix, _repo in (("harness", "jtrtdhrst/harness-zar-i-szlif"),
+                           ("product", "jtrtdhrst/zar-i-szlif")):
+        _role = f"{_base}-{_suffix}"
+        AGENT_ROLES.add(_role)
+        ROLE_SCOPED_REPOS[_role] = {_repo}
+ROLE_PERMISSIONS = {
+    "implementer": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "reviewer": {"contents": "read", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "release": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "cache-reader": {"contents": "read", "metadata": "read"},
+}
+
+
+def role_repo_allowed(role, repo):
+    return repo in ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+
 DEFAULT_ROOT = "/etc/multica-git-credential"
 DAEMON_UNIT = "multica-zar-daemon.service"
 
@@ -227,12 +245,14 @@ def read_role_token(tokens_dir, role):
     data = json.loads((tokens_dir / f"{role}.json").read_text(encoding="utf-8"))
     if not isinstance(data.get("token"), str) or not data["token"].startswith("ghs_"):
         raise ValueError("role token malformed")
-    if set(data.get("repositories", [])) != ALLOWED_REPOS:
+    if role not in AGENT_ROLES and role != "cache-reader":
+        raise ValueError("role not authorized for broker")
+    expected_repos = ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+    if set(data.get("repositories", [])) != expected_repos:
         raise ValueError("role token repository scope mismatch")
-    if role == "cache-reader":
-        if (data.get("role") != "cache-reader" or
-            data.get("permissions") != {"contents": "read", "metadata": "read"}):
-            raise ValueError("daemon cache token permissions mismatch")
+    base_role = role.split("-", 1)[0]
+    if data.get("role") != role or data.get("permissions") != ROLE_PERMISSIONS[base_role]:
+        raise ValueError("role token permissions mismatch")
     if parse_expiry(data["expires_at"]) <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2):
         raise ValueError("role token stale")
     return data
@@ -302,7 +322,7 @@ class Handler(socketserver.StreamRequestHandler):
                     self.reply({"ok": False, "error": "unsupported_transport"})
                     return
                 repo = str(request.get("path", "")).removesuffix(".git").strip("/")
-                if repo not in ALLOWED_REPOS:
+                if not role_repo_allowed(role, repo):
                     self.reply({"ok": False, "error": "repository_not_allowed"})
                     return
                 log.info("credential pid=%s agent=%s role=%s repo=%s", pid, agent_id, role, repo)
