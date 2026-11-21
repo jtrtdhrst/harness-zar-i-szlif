@@ -11,6 +11,62 @@ broker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(broker)
 
 
+class TaskCredentialAncestryTests(unittest.TestCase):
+    """No real processes, secrets, credential sockets or network used."""
+
+    def resolve(self, parents, envs):
+        def status(pid):
+            return {"PPid": str(parents.get(pid, 1))}
+        with patch.object(broker, "daemon_pid", return_value=100), \
+             patch.object(broker, "proc_status", side_effect=status), \
+             patch.object(broker, "proc_environ",
+                          side_effect=lambda pid: envs.get(pid, {})):
+            return broker.task_agent(900, "test-daemon")
+
+    def task_env(self):
+        return {
+            "MULTICA_AGENT_ID": "agent-harness",
+            "MULTICA_TASK_ID": "task-harness",
+            "MULTICA_TOKEN": "synthetic-task-token",
+            "MULTICA_WORKSPACE_ID": broker.EXPECTED_WORKSPACE,
+        }
+
+    def test_hermes_gateway_with_task_identity_in_shell(self):
+        self.assertEqual(
+            self.resolve({900: 850, 850: 800, 800: 100},
+                         {850: self.task_env()}),
+            ("agent-harness", "task-harness", "synthetic-task-token"),
+        )
+
+    def test_task_identity_in_helper(self):
+        self.assertEqual(
+            self.resolve({900: 850, 850: 800, 800: 100},
+                         {900: self.task_env()}),
+            ("agent-harness", "task-harness", "synthetic-task-token"),
+        )
+
+    def test_outside_daemon_cannot_spoof_task(self):
+        self.assertIsNone(self.resolve({900: 850, 850: 1},
+                                       {900: self.task_env()}))
+
+    def test_wrong_workspace_rejected_without_ancestor_fallback(self):
+        forged = dict(self.task_env())
+        forged["MULTICA_WORKSPACE_ID"] = "foreign-workspace"
+        self.assertIsNone(
+            self.resolve({900: 850, 850: 800, 800: 100},
+                         {900: forged, 850: self.task_env()}))
+
+    def test_partial_nearest_identity_is_not_upgraded(self):
+        self.assertIsNone(
+            self.resolve({900: 850, 850: 800, 800: 100},
+                         {900: {"MULTICA_TASK_ID": "spoof"},
+                          850: self.task_env()}))
+
+    def test_daemon_cache_has_no_task_identity(self):
+        self.assertIsNone(
+            self.resolve({900: 850, 850: 800, 800: 100}, {}))
+
+
 class DaemonCacheAuthTests(unittest.TestCase):
     def verify(self, chain, expected):
         def status(pid):
