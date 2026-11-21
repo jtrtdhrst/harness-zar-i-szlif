@@ -185,7 +185,7 @@ test('workflow dispatch is unavailable even with write flag enabled',async()=>{
 });
 
 test('run cancellation exact SHA and allowlisted flow',async()=>{
- const f=await fixture({writesEnabled:true});try{
+ const f=await fixture({writesEnabled:true,writerToken:'writer-test'});try{
     assert.match((await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:'b'.repeat(40)})).body.result.content[0].text,/STALE_SHA/);
     assert.equal((await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:SHA})).body.result.structuredContent.cancel_requested,true);
  }finally{await f.close()}
@@ -286,7 +286,7 @@ test('invalid provider list shape fails closed instead of emitting a bare array'
 });
 test('every advertised tool returns object structuredContent, never a bare array',async()=>{
   const b=await bareWithBranch();
-  const f=await fixture({writesEnabled:true,deployments:[],rulesets:[],branchSHA:b.sha,
+  const f=await fixture({writesEnabled:true,writerToken:'writer-test',deployments:[],rulesets:[],branchSHA:b.sha,
     liveRef:b.bare,liveBranch:'fix/old',pushToken:'test-push-token',pushRemoteFor:()=>b.url});
   try{
     const tools=await toolsListed(f.root);
