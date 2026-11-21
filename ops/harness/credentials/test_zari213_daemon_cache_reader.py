@@ -62,7 +62,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_real_git_remote_https_dispatcher_ancestry(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -74,7 +74,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_git_remote_dispatcher_rejects_mismatched_transport(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -86,7 +86,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_git_remote_dispatcher_rejects_protocol_mismatch(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -98,7 +98,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_git_remote_dispatcher_rejects_usr_bin_git(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -262,7 +262,7 @@ class BrokerHandlerTests(unittest.TestCase):
         h.request.getsockopt.return_value = struct.pack("3i", 900, 997, 981)
         h.rfile = io.BytesIO(json.dumps({
             "op": op, "protocol": "https", "host": "github.com",
-            "path": "miloszspyrka-code/zar-i-szlif.git"
+            "path": "jtrtdhrst/zar-i-szlif.git"
         }).encode() + b"\n")
         h.server = SimpleNamespace(daemon_unit="unit", pidfile=None,
                                    allow_any_daemon=False, tokens=pathlib.Path("/no/tokens"))
@@ -335,7 +335,7 @@ class CacheTokenScopeTests(unittest.TestCase):
                 "token": "ghs_" + "synthetic-do-not-use",
                 "role": "cache-reader",
                 "expires_at": "2099-01-01T00:00:00Z",
-                "repositories": ["miloszspyrka-code/zar-i-szlif"],
+                "repositories": ["jtrtdhrst/zar-i-szlif"],
                 "permissions": {"contents": "read", "metadata": "read"},
             }
             (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
