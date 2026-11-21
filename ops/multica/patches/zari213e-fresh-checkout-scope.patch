@@ -255,6 +255,50 @@ index c391abe..aaa838a 100644
 -		// Non-fatal: preserve cached state and continue. The agent will
 -		// receive an older snapshot than the remote head, so the result
 -		// carries the error back to the CLI as well as the daemon log.
-+		// A fresh checkout is an explicit request for the remote s
-
-... [1832 characters truncated]
++		// A fresh checkout is an explicit request for the remote state. Never
++		// turn a failed fetch into a successful checkout from the cached copy.
++		if params.Fresh {
++			return nil, fmt.Errorf("fresh checkout requires a successful remote fetch: %w", err)
++		}
++		// Non-fatal for reused checkouts: preserve cached state and continue.
++		// The agent will receive an older snapshot than the remote head, so the
++		// result carries the error back to the CLI as well as the daemon log.
+ 		fetchErr = redact.Text(err.Error())
+ 		c.logger.Warn("repo checkout: fetch failed, agent will see possibly stale code",
+ 			"url", params.RepoURL,
+diff --git a/server/internal/daemon/repocache/cache_test.go b/server/internal/daemon/repocache/cache_test.go
+index 1e105f1..7128698 100644
+--- a/server/internal/daemon/repocache/cache_test.go
++++ b/server/internal/daemon/repocache/cache_test.go
+@@ -841,6 +841,31 @@ func TestCreateWorktreeReportsFailedFetch(t *testing.T) {
+ 	}
+ }
+ 
++func TestCreateWorktreeFreshFailsWhenFetchFails(t *testing.T) {
++	t.Parallel()
++	sourceRepo := createTestRepo(t)
++	cache := New(t.TempDir(), testLogger())
++	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
++		t.Fatalf("sync failed: %v", err)
++	}
++	if err := os.RemoveAll(sourceRepo); err != nil {
++		t.Fatalf("remove origin: %v", err)
++	}
++
++	params := WorktreeParams{
++		WorkspaceID: "ws-1",
++		RepoURL:     sourceRepo,
++		WorkDir:     t.TempDir(),
++		AgentName:   "QA",
++		TaskID:      "d4e5f6a7-b8c9-0123-def0-234567890123",
++		Fresh:       true,
++	}
++	if _, err := cache.CreateWorktree(params); err == nil ||
++		!strings.Contains(err.Error(), "fresh checkout requires a successful remote fetch") {
++		t.Fatalf("fresh checkout error = %v, want a failed-fetch error", err)
++	}
++}
++
+ func TestCreateWorktreeWithIsolatedGitMetadata(t *testing.T) {
+ 	t.Parallel()
+ 	sourceRepo := createTestRepo(t)
