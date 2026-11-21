@@ -47,6 +47,52 @@ class DaemonCacheAuthTests(unittest.TestCase):
                 broker.is_authorized_daemon_cache_fetch(900, "test"), expected
             )
 
+    def test_real_git_credential_shell_ancestry(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, True)
+
+    def test_shell_rejects_arbitrary_command(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        for sh_command in (exact + "; echo extra", "echo " + exact, exact + "  "):
+            with self.subTest(command=sh_command):
+                self.verify({
+                    900: (850, ["python3", helper, "get"]),
+                    850: (800, ["/bin/sh", "-c", sh_command, sh_command]),
+                    800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+                    700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+                }, False)
+
+    def test_shell_rejects_push_and_extra_ancestor(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        chain = {
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+            700: (100, ["git", "push", "origin", "main"]),
+        }
+        self.verify(chain, False)
+        chain[700] = (600, ["git", "-C", "/srv/cache", "fetch", "origin"])
+        chain[600] = (100, ["sh", "-c", "git fetch"])
+        self.verify(chain, False)
+
+    def test_shell_rejects_wrong_git_helper_argv(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        self.verify({
+            900: (850, ["python3", helper, "token"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
+
     def test_legitimate_daemon_fetch(self):
         self.verify({
             900: (800, ["python3", "/usr/local/libexec/multica-zar-git-credential", "get"]),
