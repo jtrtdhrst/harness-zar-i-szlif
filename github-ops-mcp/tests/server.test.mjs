@@ -533,3 +533,54 @@ test('GitHub Ops reader role requires deployments read and refuses legacy four-s
    assert.equal((await x.json()).github_configured,false);
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
+
+test('live MCP tools/list contains exact eight names; removed dispatch is never advertised',async()=>{
+ const f=await fixture();
+ try {
+   const tools=await toolsListed(f.root);
+   const names=tools.map(t=>t.name).sort();
+   assert.deepEqual(names,[
+    'github_cancel_workflow_run','github_delete_merged_branch','github_get_actions_permissions',
+    'github_get_branch_protection','github_get_deployments','github_get_rulesets',
+    'github_preview_branch_delete','github_repo_info'].sort());
+ }finally{await f.close()}
+});
+test('rotating GitHub App writer file governs only verified POST and fails closed',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-writer-')),file=join(dir,'writer.json');
+ const auths=[];
+ const role=(token,permissions={actions:'write',contents:'write',metadata:'read'})=>({
+   token,role:'github-ops-writer',app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],permissions});
+ const setRole=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
+ let s=null;
+ try{
+   setRole(role('w'.repeat(50)));
+   s=makeServer({callerToken:'test-owner',githubToken:'reader-only',writerTokenFile:file,writesEnabled:true,
+     fetchImpl:async(url,opts)=>{
+      auths.push({method:opts.method,token:opts.headers.Authorization});
+      const body=opts.method==='GET'?{head_sha:SHA,status:'in_progress',path:'.github/workflows/release-lanes-policy.yml'}:null;
+      return new Response(body?JSON.stringify(body):null,{status:body?200:204,headers:{'content-type':'application/json'}});
+     }});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const cancel=async()=>{
+    const x=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer test-owner','content-type':'application/json'},
+     body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'github_cancel_workflow_run',
+      arguments:{repo:REPO,run_id:123,expected_sha:SHA}}})});
+    return (await x.json()).result;
+   };
+   assert.equal((await (await fetch(base+'/health')).json()).writer_configured,true);
+   assert.equal((await cancel()).structuredContent.cancel_requested,true);
+   setRole(role('y'.repeat(50)));
+   assert.equal((await cancel()).structuredContent.cancel_requested,true);
+   assert.deepEqual(auths.map(x=>x.token),[
+    'Bearer reader-only','Bearer '+'w'.repeat(50),'Bearer reader-only','Bearer '+'y'.repeat(50)]);
+   setRole(role('z'.repeat(50),{actions:'read',contents:'write',metadata:'read'}));
+   assert.equal((await (await fetch(base+'/health')).json()).writer_configured,false);
+   assert.match((await cancel()).content[0].text,/AUTH_SCOPE_INVALID/);
+   assert.equal(auths.filter(x=>x.method==='POST').length,2,'invalid grant never reaches GitHub mutation');
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
