@@ -1,5 +1,9 @@
 import http from 'node:http';
 import { timingSafeEqual, createPublicKey, verify as verifySignature } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const REPOS = new Set(['miloszspyrka-code/harness-zar-i-szlif', 'miloszspyrka-code/zar-i-szlif']);
 const SHA = /^[a-f0-9]{40}$/i;
@@ -11,8 +15,73 @@ const TOOLS = [
   ['github_get_branch_protection', 'Read main branch protection; report missing administration permission', ['repo']],
   ['github_get_deployments', 'Read deployments for one exact source commit', ['repo', 'sha']],
   ['github_preview_branch_delete', 'Verify branch SHA, protection and merge status; no write', ['repo', 'branch', 'expected_sha']],
+  ['github_delete_merged_branch', 'Delete one merged-PR branch with a git protocol expected-SHA lease (CAS)', ['repo', 'branch', 'expected_sha']],
   ['github_cancel_workflow_run', 'Cancel an allowlisted in-flight run at its verified SHA', ['repo', 'run_id', 'expected_sha']],
 ];
+
+// Branches a live Coolify application tracks. Deletion is refused for any of
+// them even though the name passes assertBranch: the ref is a deployment pin,
+// not a leftover. Keep in sync with ops/release-lanes.json.
+const DEFAULT_PINNED_BRANCHES = ['feat/github-ops-mcp-20261120'];
+
+// A branch delete that is atomic with respect to concurrent pushes. GitHub's
+// REST DELETE /git/refs has no expected-SHA precondition, so a push landing
+// between the read and the delete silently loses work. The git receive-pack
+// protocol DOES take one: the delete command carries the old oid, and the
+// server rejects it unless the ref still points there. `git push
+// --force-with-lease=<ref>:<expect>` sends exactly that oid as the lease.
+export function casDeleteArgs({ remote, branch, expectedSha }) {
+  if (typeof remote !== 'string' || !/^(https:\/\/|file:\/\/\/)/.test(remote)) throw error('REMOTE_INVALID', 'Only literal https or file remotes are accepted');
+  return ['push', '--porcelain', `--force-with-lease=refs/heads/${branch}:${expectedSha}`, remote, `:refs/heads/${branch}`];
+}
+
+// The token never enters argv (visible in /proc): git gets it through an
+// environment variable read by an inline credential helper.
+function gitEnv(pushToken) {
+  return {
+    PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    HOME: process.env.HOME ?? '/tmp',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'credential.helper',
+    GIT_CONFIG_VALUE_0: '',
+    GIT_CONFIG_KEY_1: 'credential.helper',
+    GIT_CONFIG_VALUE_1: '!f() { echo "username=x-access-token"; echo "password=${GITHUB_OPS_PUSH_TOKEN}"; }; f',
+    GITHUB_OPS_PUSH_TOKEN: pushToken,
+  };
+}
+
+export async function deleteRefWithLease({ remote, branch, expectedSha, pushToken, gitBin = 'git', timeoutMs = 20000 }) {
+  const args = casDeleteArgs({ remote, branch, expectedSha });
+  const cwd = mkdtempSync(join(tmpdir(), 'ghops-'));
+  const run = gitArgs => new Promise(resolve => {
+    const child = spawn(gitBin, gitArgs, { cwd, env: gitEnv(pushToken), stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '', settled = false;
+    const finish = value => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish({ code: -1, out, err: 'timeout' }); }, timeoutMs);
+    child.stdout.on('data', chunk => { if (out.length < 4096) out += chunk; });
+    child.stderr.on('data', chunk => { if (err.length < 4096) err += chunk; });
+    child.on('error', () => finish({ code: -2, out, err: 'spawn_failed' }));
+    child.on('close', code => finish({ code, out, err }));
+  });
+  try {
+    // git refuses to push from outside any repository, so the throwaway
+    // directory is initialised as an empty bare repository first.
+    const init = await run(['init', '--bare', '-q', cwd]);
+    if (init.code !== 0) return { accepted: false, code: 'GIT_INIT_FAILED' };
+    const result = await run(args);
+    if (result.code === 0) return { accepted: true };
+    // git reports a refused lease as [rejected] ... (stale info) and never
+    // sends a delete command, so the ref is untouched. --porcelain writes the
+    // status line to stdout, so both streams are inspected.
+    const combined = result.out + result.err;
+    if (/stale info|\[rejected\]/i.test(combined)) return { accepted: false, code: 'STALE_LEASE_REJECTED' };
+    return { accepted: false, code: result.code === -1 ? 'DELETE_TIMEOUT' : 'DELETE_FAILED', exit: result.code };
+  } finally {
+    try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+  }
+}
 function secureEqual(a,b) {
   const aa=Buffer.from(a||''), bb=Buffer.from(b||'');
   return aa.length===bb.length && aa.length>0 && timingSafeEqual(aa,bb);
@@ -80,6 +149,10 @@ export function makeServer(config={}) {
   const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
+  const pushToken=config.pushToken??process.env.GITHUB_OPS_PUSH_TOKEN??'';
+  const pinnedBranches=new Set(config.pinnedBranches??(process.env.GITHUB_OPS_PINNED_BRANCHES??DEFAULT_PINNED_BRANCHES.join(',')).split(',').map(x=>x.trim()).filter(Boolean));
+  const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
+  const gitBin=config.gitBin??'git';
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
   const api=githubClient({token:githubToken,fetchImpl:config.fetchImpl});
   const access=cloudflareJwtVerifier({
@@ -88,6 +161,43 @@ export function makeServer(config={}) {
     ownerEmail:config.accessOwnerEmail??process.env.CF_ACCESS_OWNER_EMAIL??'',
     fetchImpl:config.accessFetchImpl
   });
+  const branchQ=branch=>branch.split('/').map(encodeURIComponent).join('/');
+  const listPulls=async(root,state)=>{
+    const items=[];
+    for(let page=1;page<=20;page++){
+      const batch=await api('GET',`${root}/pulls?state=${state}&per_page=100&page=${page}`);
+      if(!Array.isArray(batch))throw error('PR_LIST_INVALID','GitHub pull request listing returned invalid data');
+      items.push(...batch);
+      if(batch.length<100)return items;
+    }
+    throw error('PR_PAGE_LIMIT','Cannot verify all GitHub pull requests');
+  };
+  const openHasRef=(items,branch,repo)=>items.some(pr=>pr.base?.ref===branch||(pr.head?.ref===branch&&pr.head?.repo?.full_name===repo));
+  // Shared by preview and delete: exact SHA, unprotected, no open PR, and a
+  // merged PR whose head SHA is exactly this branch head.
+  async function branchDeleteEvidence(repo,root,branch,sha){
+    const current=await api('GET',`${root}/branches/${branchQ(branch)}`);
+    if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved');
+    if(current.protected)throw error('PROTECTED','GitHub reports branch protection');
+    if(openHasRef(await listPulls(root,'open'),branch,repo))throw error('OPEN_PR','An open pull request uses this branch');
+    const merged=(await listPulls(root,'closed')).find(pr=>pr.merged_at&&pr.base?.ref==='main'
+      &&pr.head?.ref===branch&&pr.head?.sha?.toLowerCase()===sha
+      &&pr.head?.repo?.full_name===repo&&SHA.test(pr.merge_commit_sha||''));
+    if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with this exact branch SHA');
+    const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
+    if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
+    return {current,merged};
+  }
+  // GitHub reports 403 for the rules endpoint on app/plan limitations. That is
+  // not "no rules": it means protection state is unknown, so deletion stops.
+  async function assertNoRules(repo,root,branch){
+    let rules;
+    try{ rules=await api('GET',`${root}/rules/branches/${branchQ(branch)}`); }
+    catch(e){ throw error('RULES_UNAVAILABLE',`Cannot verify repository rules (${e.code??'unknown'}); refusing to delete`); }
+    if(!Array.isArray(rules))throw error('RULES_UNAVAILABLE','Repository rules reply is not a list');
+    if(rules.length)throw error('RULES_PRESENT','Repository rules apply to this branch');
+    return rules.length;
+  }
   async function execute(name,p={}){
     const repo=assertRepo(p.repo);
     const root=`/repos/${repo}`;
@@ -108,33 +218,28 @@ export function makeServer(config={}) {
       return {repo,sha,count:list.length,deployments:list};
     }
     if(name==='github_preview_branch_delete'){
-      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase(),q=branch.split('/').map(encodeURIComponent).join('/');
-      const listPulls=async(state)=>{
-        const items=[];
-        for(let page=1;page<=20;page++){
-          const batch=await api('GET',`${root}/pulls?state=${state}&per_page=100&page=${page}`);
-          if(!Array.isArray(batch))throw error('PR_LIST_INVALID','GitHub pull request listing returned invalid data');
-          items.push(...batch);
-          if(batch.length<100)return items;
-        }
-        throw error('PR_PAGE_LIMIT','Cannot verify all GitHub pull requests');
-      };
-      const openHasRef=items=>items.some(pr=>pr.base?.ref===branch||(pr.head?.ref===branch&&pr.head?.repo?.full_name===repo));
-      const current=await api('GET',`${root}/branches/${q}`);
-      if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved');
-      if(current.protected)throw error('PROTECTED','GitHub reports branch protection');
-      if(openHasRef(await listPulls('open')))throw error('OPEN_PR','An open pull request uses this branch');
-      const merged=(await listPulls('closed')).find(pr=>pr.merged_at&&pr.base?.ref==='main'
-        &&pr.head?.ref===branch&&pr.head?.sha?.toLowerCase()===sha
-        &&pr.head?.repo?.full_name===repo&&SHA.test(pr.merge_commit_sha||''));
-      if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with this exact branch SHA');
-      const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
-      if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
+      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       return {eligible:true,repo,branch,sha,merged_pr:merged.number,
-        deletion_supported:false,note:'Preview only. GitHub DELETE has no atomic expected-SHA precondition; concurrent push can change the ref before deletion'};
+        deletion_supported:Boolean(writesEnabled&&pushToken),
+        note:'Deletion is available only through github_delete_merged_branch, which deletes with a git --force-with-lease=<ref>:<expected> lease: a concurrent push is rejected (stale lease), never overwritten'};
     }
-    // Explicit error for legacy callers; never issue a non-atomic DELETE.
-    if(name==='github_delete_merged_branch')throw error('DELETE_NONATOMIC','GitHub ref deletion cannot guarantee expected SHA under concurrent updates');
+    if(name==='github_delete_merged_branch'){
+      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      // Fail closed before any provider or git traffic.
+      if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
+      if(!pushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped push credential is required for CAS deletion');
+      if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
+      const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
+      await assertNoRules(repo,root,branch);
+      const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
+      if(!lease.accepted)throw error(lease.code,`CAS delete refused (${lease.code}); the ref was not removed`);
+      let stillThere=true;
+      try{ await api('GET',`${root}/branches/${branchQ(branch)}`); }
+      catch(e){ if(e.code==='GITHUB_HTTP_404')stillThere=false; else throw error('READBACK_UNAVAILABLE',`Deletion readback failed (${e.code??'unknown'})`); }
+      if(stillThere)throw error('DELETE_NOT_CONFIRMED','Branch is still readable after a CAS delete');
+      return {deleted:true,repo,branch,sha,merged_pr:merged.number,lease:'force-with-lease',readback:'429:not_found'};
+    }
     // Disabled: workflow_dispatch with ref:main cannot atomically bind the requested SHA.
     if(name==='github_cancel_workflow_run'){
       const sha=assertSHA(p.expected_sha),runid=p.run_id;

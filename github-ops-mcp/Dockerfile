@@ -1,5 +1,9 @@
 FROM node:22-alpine
 ENV NODE_ENV=production PORT=3000
+# git is required at runtime: branch deletion uses the receive-pack protocol
+# (`git push --force-with-lease=<ref>:<expected> ... :<ref>`) so the delete
+# carries an expected-SHA precondition. No GitHub REST DELETE is used.
+RUN apk add --no-cache git
 WORKDIR /app
 COPY server.mjs ./server.mjs
 USER node

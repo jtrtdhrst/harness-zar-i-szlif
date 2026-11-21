@@ -1,14 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeServer } from '../server.mjs';
+import { makeServer, deleteRefWithLease, casDeleteArgs } from '../server.mjs';
 const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
-  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false}={}){
+  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
+  rulesStatus=200,rulesList=[],pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
   const calls=[];
   let branchDeleted=false;
   let runReadsToMiss=run404Count;
   const mergeSHA='c'.repeat(40);
+  const {execFileSync}=await import('node:child_process');
+  const liveSHA=()=>{
+    if(!liveRef)return null;
+    try{return execFileSync('git',['--git-dir',liveRef,'rev-parse','--verify',`refs/heads/${liveBranch}`],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}
+    catch{return null;}
+  };
   const fake=async(url,opts)=>{
     const u=new URL(url);calls.push([opts.method,u.pathname+u.search]);
     let v={};
@@ -16,17 +23,25 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
       branchDeleted=true;
       return new Response(null,{status:204});
     }
-    if(u.pathname.endsWith('/branches/main'))v={commit:{sha:SHA}};
+    if(u.pathname.includes('/rules/branches/')){
+      if(rulesStatus!==200)return new Response(JSON.stringify({message:'Forbidden'}),{status:rulesStatus,headers:{'content-type':'application/json'}});
+      v=rulesList;
+    }
+    else if(u.pathname.endsWith('/branches/main'))v={commit:{sha:SHA}};
     else if(u.pathname.includes('/branches/')){
-      if(branchDeleted)return new Response(null,{status:404});
-      v={commit:{sha:branchSHA},protected:protectedBranch};
+      if(liveRef){
+        const sha=liveSHA();
+        if(!sha)return new Response(null,{status:404});
+        v={commit:{sha},protected:protectedBranch};
+      }else if(branchDeleted)return new Response(null,{status:404});
+      else v={commit:{sha:branchSHA},protected:protectedBranch};
     }
     else if(u.pathname.endsWith('/pulls')){
       if(u.searchParams.get('state')==='open')
         v=openPR?[{base:{ref:'fix/old'},head:{ref:'fix/old',repo:{full_name:REPO}}}]:[];
       else
         v=merged?[{number:987,merged_at:'2026-11-20T12:00:00Z',
-          head:{ref:'fix/old',sha:SHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
+          head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
     }
     else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable?0:1};
     else if(u.pathname.endsWith('/actions/runs/321')){
@@ -44,6 +59,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
   const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
+    pushToken,pinnedBranches,pushRemoteFor,gitBin,
     deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
@@ -57,14 +73,14 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,7);
+    assert.equal((await y.json()).result.tools.length,8);
   }finally{await f.close()}
 });
-test('tool metadata requires OAuth for all seven tools',async()=>{
+test('tool metadata requires OAuth for all eight tools',async()=>{
  const f=await fixture();try{
   const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   const tools=(await response.json()).result.tools;
-  assert.equal(tools.length,7);
+  assert.equal(tools.length,8);
   for(const tool of tools){
     assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
     assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
@@ -109,14 +125,22 @@ test('preview rejects nonmerged, stale and protected branches without DELETE',as
   }finally{await f.close()}
  }
 });
-test('non-atomic deletion is not advertised and legacy call cannot write',async()=>{
+test('deletion is advertised but fails closed before any traffic without writes or push credential',async()=>{
  const f=await fixture({writesEnabled:true,allowDeletion:true});
  try{
   const list=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},
     body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-  assert.equal((await list.json()).result.tools.some(t=>t.name==='github_delete_merged_branch'),false);
+  assert.equal((await list.json()).result.tools.some(t=>t.name==='github_delete_merged_branch'),true,'the CAS delete must be advertised');
   const x=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
-  assert.match(x.body.result.content[0].text,/TOOL_UNKNOWN/);
+  assert.match(x.body.result.content[0].text,/PUSH_CREDENTIAL_MISSING/);
+  assert.equal(f.calls.length,0,'no provider traffic before the credential gate');
+ }finally{await f.close()}
+});
+test('deletion never runs with writes disabled even when a push credential exists',async()=>{
+ const f=await fixture({writesEnabled:false,pushToken:'test-push-token'});
+ try{
+  const x=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+  assert.match(x.body.result.content[0].text,/WRITE_DISABLED/);
   assert.equal(f.calls.length,0);
  }finally{await f.close()}
 });
@@ -260,24 +284,27 @@ test('invalid provider list shape fails closed instead of emitting a bare array'
   }
 });
 test('every advertised tool returns object structuredContent, never a bare array',async()=>{
-  const f=await fixture({writesEnabled:true,deployments:[],rulesets:[]});
+  const b=await bareWithBranch();
+  const f=await fixture({writesEnabled:true,deployments:[],rulesets:[],branchSHA:b.sha,
+    liveRef:b.bare,liveBranch:'fix/old',pushToken:'test-push-token',pushRemoteFor:()=>b.url});
   try{
     const tools=await toolsListed(f.root);
-    assert.equal(tools.length,7);
+    assert.equal(tools.length,8);
     assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false,'removed dispatch must stay unadvertised');
     const args={github_repo_info:{repo:REPO},github_get_rulesets:{repo:REPO},
       github_get_actions_permissions:{repo:REPO},github_get_branch_protection:{repo:REPO},
       github_get_deployments:{repo:REPO,sha:SHA},
-      github_preview_branch_delete:{repo:REPO,branch:'fix/old',expected_sha:SHA},
+      github_preview_branch_delete:{repo:REPO,branch:'fix/old',expected_sha:b.sha},
+      github_delete_merged_branch:{repo:REPO,branch:'fix/old',expected_sha:b.sha},
       github_cancel_workflow_run:{repo:REPO,run_id:123,expected_sha:SHA}};
     for(const tool of tools){
       const out=await f.request(tool.name,args[tool.name]);
       assert.equal(out.http,200,tool.name);
-      assert.equal(out.body.result.isError,undefined,tool.name+' must not error');
+      assert.equal(out.body.result.isError,undefined,tool.name+' must not error: '+JSON.stringify(out.body.result).slice(0,300));
       assert.equal(isPlainObject(out.body.result.structuredContent),true,tool.name+' structuredContent must be a dictionary');
       assert.deepEqual(JSON.parse(out.body.result.content[0].text),out.body.result.structuredContent,tool.name+' text and structured content agree');
     }
-  }finally{await f.close()}
+  }finally{await f.close();b.cleanup()}
 });
 test('legacy dispatch tool call is rejected over HTTP and advertises no dispatch input',async()=>{
   const f=await fixture({writesEnabled:true});
@@ -291,4 +318,125 @@ test('legacy dispatch tool call is rejected over HTTP and advertises no dispatch
     assert.match(out.body.result.content[0].text,/Re-initialize the client tool list/);
     assert.equal(f.calls.some(([,path])=>path.includes('/dispatches')),false,'no provider dispatch traffic');
   }finally{await f.close()}
+});
+
+// --- CAS branch deletion (ZARI-263) -----------------------------------------
+// GitHub REST DELETE /git/refs has no expected-SHA precondition. The git
+// receive-pack protocol does: --force-with-lease sends the expected oid and the
+// server refuses the delete if the ref moved. These tests exercise that path
+// against a real, isolated bare remote — no network, no GitHub credential.
+
+async function bareWithBranch(branch = 'fix/old') {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'ghops-test-'));
+  const bare = join(root, 'remote.git'), work = join(root, 'work');
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid',
+    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const run = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
+  run(root, 'init', '--bare', '-q', bare);
+  run(root, 'init', '-q', work);
+  run(work, 'checkout', '-q', '-b', branch);
+  run(work, 'commit', '-q', '--allow-empty', '-m', 'first');
+  const sha = run(work, 'rev-parse', 'HEAD').trim();
+  run(work, 'push', '-q', bare, `HEAD:refs/heads/${branch}`);
+  return {
+    root, bare, work, branch, sha, url: `file://${bare}`,
+    advance() {
+      run(work, 'commit', '-q', '--allow-empty', '-m', 'second');
+      const next = run(work, 'rev-parse', 'HEAD').trim();
+      run(work, 'push', '-q', bare, `HEAD:refs/heads/${branch}`);
+      return next;
+    },
+    ref() {
+      try { return run(root, '--git-dir', bare, 'rev-parse', '--verify', `refs/heads/${branch}`).trim(); }
+      catch { return null; }
+    },
+    cleanup() { try { rmSync(root, { recursive: true, force: true }); } catch {} },
+  };
+}
+
+test('CAS argv pins the exact expected SHA and carries no secret', async () => {
+  const argv = casDeleteArgs({ remote: 'https://github.com/o/r.git', branch: 'fix/old', expectedSha: SHA });
+  assert.deepEqual(argv, ['push', '--porcelain', `--force-with-lease=refs/heads/fix/old:${SHA}`,
+    'https://github.com/o/r.git', ':refs/heads/fix/old']);
+  assert.equal(argv.some(a => a.includes('ghp_') || a.includes('token')), false);
+  assert.throws(() => casDeleteArgs({ remote: 'http://plaintext.example/r.git', branch: 'fix/old', expectedSha: SHA }),
+    e => e.code === 'REMOTE_INVALID');
+});
+
+test('git lease rejects a stale expected SHA and keeps the ref', async () => {
+  const b = await bareWithBranch();
+  try {
+    const stale = await deleteRefWithLease({ remote: b.url, branch: 'fix/old', expectedSha: 'b'.repeat(40), pushToken: 'unused' });
+    assert.equal(stale.accepted, false);
+    assert.equal(stale.code, 'STALE_LEASE_REJECTED');
+    assert.equal(b.ref(), b.sha, 'a refused lease must leave the ref untouched');
+    const ok = await deleteRefWithLease({ remote: b.url, branch: 'fix/old', expectedSha: b.sha, pushToken: 'unused' });
+    assert.equal(ok.accepted, true);
+    assert.equal(b.ref(), null, 'the exact-SHA lease deletes the ref');
+  } finally { b.cleanup(); }
+});
+
+test('deletion refuses stale SHA, protection, rules and unknown rule state without touching the ref', async () => {
+  const cases = [
+    { opt: { branchSHA: 'b'.repeat(40) }, err: 'STALE_SHA' },
+    { opt: { protectedBranch: true }, err: 'PROTECTED' },
+    { opt: { rulesList: [{ type: 'deletion' }] }, err: 'RULES_PRESENT' },
+    { opt: { rulesStatus: 403 }, err: 'RULES_UNAVAILABLE' },
+    { opt: { merged: false }, err: 'MERGE_NOT_VERIFIED' },
+    { opt: { openPR: true }, err: 'OPEN_PR' },
+  ];
+  for (const { opt, err } of cases) {
+    const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', gitBin: '/nonexistent/git', ...opt });
+    try {
+      const x = await f.request('github_delete_merged_branch', { repo: REPO, branch: 'fix/old', expected_sha: SHA });
+      assert.match(x.body.result.content[0].text, new RegExp(err));
+      assert.equal(x.body.result.isError, true);
+      assert.equal(f.calls.some(([method]) => method === 'DELETE'), false, 'no REST DELETE is ever issued');
+    } finally { await f.close(); }
+  }
+});
+
+test('a Coolify-pinned branch is refused even when every other gate would pass', async () => {
+  const b = await bareWithBranch('feat/github-ops-mcp-20261120');
+  const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', branchSHA: b.sha,
+    liveRef: b.bare, liveBranch: b.branch, pushRemoteFor: () => b.url });
+  try {
+    const x = await f.request('github_delete_merged_branch', { repo: REPO, branch: b.branch, expected_sha: b.sha });
+    assert.match(x.body.result.content[0].text, /BRANCH_PINNED/);
+    assert.equal(b.ref(), b.sha, 'the pinned ref survives');
+    assert.equal(f.calls.length, 0, 'refused before any provider traffic');
+  } finally { await f.close(); b.cleanup(); }
+});
+
+test('deletion reads back the removed ref instead of trusting the push', async () => {
+  const b = await bareWithBranch();
+  const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', branchSHA: b.sha,
+    liveRef: b.bare, liveBranch: 'fix/old', pushRemoteFor: () => b.url });
+  try {
+    const out = await f.request('github_delete_merged_branch', { repo: REPO, branch: 'fix/old', expected_sha: b.sha });
+    assert.equal(out.body.result.isError, undefined, JSON.stringify(out.body.result));
+    assert.equal(out.body.result.structuredContent.deleted, true);
+    assert.equal(out.body.result.structuredContent.lease, 'force-with-lease');
+    assert.equal(out.body.result.structuredContent.merged_pr, 987);
+    assert.equal(b.ref(), null);
+    assert.equal(f.calls.some(([method]) => method === 'DELETE'), false, 'deletion never goes through REST DELETE');
+  } finally { await f.close(); b.cleanup(); }
+});
+
+test('a push that lands between verification and delete is rejected by the lease', async () => {
+  const b = await bareWithBranch();
+  // The API view is pinned to the pre-race SHA, exactly as it would be if a
+  // push landed after the checks; the real ref has moved on.
+  const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', branchSHA: b.sha, pushRemoteFor: () => b.url });
+  try {
+    const movedTo = b.advance();
+    const out = await f.request('github_delete_merged_branch', { repo: REPO, branch: 'fix/old', expected_sha: b.sha });
+    assert.match(out.body.result.content[0].text, /STALE_LEASE_REJECTED/);
+    assert.equal(b.ref(), movedTo, 'the concurrent commit is preserved, never overwritten');
+  } finally { await f.close(); b.cleanup(); }
 });
