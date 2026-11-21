@@ -20,10 +20,11 @@ if (help && path.length === 1 && path[0] === 'project') { console.log('COMMANDS\
 if (help && path.join(' ') === 'project delete') { console.log('USAGE\\n  multica project delete <id> [flags]\\n\\nFLAGS\\n'); process.exit(0); }
 if (help && path.length === 1 && path[0] === 'daemon') { console.log('COMMANDS\\n  status: status\\n\\nFLAGS\\n'); process.exit(0); }
 if (help && path.join(' ') === 'daemon status') { console.log('FLAGS\\n  --output string     Output format\\n'); process.exit(0); }
-console.log(JSON.stringify({ argv: args, tokenPresent: Boolean(process.env.MULTICA_TOKEN), tokenMatches: process.env.MULTICA_TOKEN === 'mat_testtoken123456789abc', token: process.env.MULTICA_TOKEN || '' }));
+console.log(JSON.stringify({ argv: args, tokenPresent: Boolean(process.env.MULTICA_TOKEN), tokenMatches: process.env.MULTICA_TOKEN === 'mat_testtoken123456789abc', token: process.env.MULTICA_TOKEN || '', workspaceIdFromEnv: process.env.MULTICA_WORKSPACE_ID || null }));
 `);
 chmodSync(fakeCli, 0o755);
 process.env.MULTICA_CLI = fakeCli;
+process.env.MULTICA_WORKSPACE_ID = '28378cc8-2c3a-4f8e-af1c-63e308407b17';
 
 const { startHttpServer } = await import('../server.mjs');
 
@@ -51,6 +52,7 @@ test('HTTP transport authenticates, exposes the CLI catalog, and forwards caller
   }).then((r) => r.json());
   assert.equal(queryCall.result.isError, false);
   assert.equal(queryCall.result.structuredContent.tokenMatches, true);
+  assert.equal(queryCall.result.structuredContent.workspaceIdFromEnv, '28378cc8-2c3a-4f8e-af1c-63e308407b17');
 
   const headers = { authorization: 'Bearer mat_testtoken123456789abc', 'content-type': 'application/json' };
   const init = await fetch(`${base}/mcp`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2025-06-18' } }) }).then((r) => r.json());
@@ -69,6 +71,7 @@ test('HTTP transport authenticates, exposes the CLI catalog, and forwards caller
   assert.equal(result.result.isError, false);
   assert.equal(result.result.structuredContent.tokenPresent, true);
   assert.equal(result.result.structuredContent.tokenMatches, true);
+  assert.equal(result.result.structuredContent.workspaceIdFromEnv, '28378cc8-2c3a-4f8e-af1c-63e308407b17');
   assert(!JSON.stringify(result).includes('mat_testtoken'));
   assert.deepEqual(result.result.structuredContent.argv.slice(0, 4), ['--server-url', 'https://multica.zariszlif.pl', '--workspace-id', 'f45460f5-76a8-4c2f-b3eb-5d025a8f8726']);
   assert(result.result.structuredContent.argv.includes('--output'));
