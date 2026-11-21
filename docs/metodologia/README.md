@@ -10,9 +10,9 @@
 
 ### 2026-11-21 — początek
 
-- **Myśl / pytanie:** 
-- **Przykład z praktyki:** 
-- **Co chcę osiągnąć:** 
+- **Myśl / pytanie:**
+- **Przykład z praktyki:**
+- **Co chcę osiągnąć:**
 
 ## Tezy do sprawdzenia
 
