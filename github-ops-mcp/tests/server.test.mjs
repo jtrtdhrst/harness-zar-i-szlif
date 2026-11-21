@@ -2,11 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeServer, deleteRefWithLease, casDeleteArgs } from '../server.mjs';
 const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
-async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
+async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
   rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
   const calls=[];
+  const authorizations=[];
   let branchDeleted=false;
   let runReadsToMiss=run404Count;
   const mergeSHA='c'.repeat(40);
@@ -17,7 +18,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     catch{return null;}
   };
   const fake=async(url,opts)=>{
-    const u=new URL(url);calls.push([opts.method,u.pathname+u.search]);
+    const u=new URL(url);calls.push([opts.method,u.pathname+u.search]);authorizations.push(opts.headers.Authorization);
     let v={};
     if(opts.method==='DELETE'&&u.pathname.includes('/git/refs/heads/')){
       branchDeleted=true;
@@ -58,7 +59,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     else if(u.pathname.endsWith('/actions/permissions'))v={enabled:true,allowed_actions:'all'};
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
-  const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
+  const s=makeServer({fetchImpl:fake,githubToken,writerToken,callerToken,writesEnabled,allowDeletion,
     pushToken,pinnedBranches,pushRemoteFor,gitBin,
     deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
@@ -67,7 +68,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     const x=await fetch(root+'/mcp',{method:'POST',headers:{'content-type':'application/json',...(auth?{authorization:`Bearer ${callerToken}`}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})});
     return {http:x.status,body:await x.json()};
   };
-  return {s,root,calls,request,close:()=>new Promise(r=>s.close(r))};
+  return {s,root,calls,authorizations,request,close:()=>new Promise(r=>s.close(r))};
 }
 test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
@@ -464,7 +465,7 @@ test('GitHub App role token file is validated, rotated and fail-closed', async()
  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-role-')),file=join(dir,'reader.json');
  const seen=[];
- const role=(token,permissions={actions:'read',administration:'read',contents:'read',metadata:'read'})=>({
+ const role=(token,permissions={actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'})=>({
   token,role:'github-ops-reader',app_id:5398752,installation_id:173456397,
   expires_at:new Date(Date.now()+2400000).toISOString(),
   repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],permissions});
@@ -486,7 +487,7 @@ test('GitHub App role token file is validated, rotated and fail-closed', async()
   write(role('y'.repeat(50)));
   assert.equal((await send(base)).structuredContent.full_name,REPO);
   assert.deepEqual(seen,['Bearer '+'x'.repeat(50),'Bearer '+'y'.repeat(50)]);
-  write(role('z'.repeat(50),{actions:'write',administration:'read',contents:'read',metadata:'read'}));
+  write(role('z'.repeat(50),{actions:'write',administration:'read',contents:'read',deployments:'read',metadata:'read'}));
   assert.match((await send(base)).content[0].text,/AUTH_SCOPE_INVALID/);
   assert.equal((await (await fetch(base+'/health')).json()).ready,false);
   assert.equal(seen.length,2);
@@ -495,3 +496,40 @@ test('GitHub App role token file is validated, rotated and fail-closed', async()
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
+
+test('GH Ops read-only reader cannot substitute for a separate writer',async()=>{
+ const f=await fixture({writesEnabled:true,githubToken:'only-reader',writerToken:''});
+ try {
+   const out=await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:SHA});
+   assert.equal(out.body.result.isError,true);
+   assert.match(out.body.result.content[0].text,/WRITE_CREDENTIAL_MISSING/);
+   assert.equal(f.calls.length,0,'no provider request without a writer grant');
+ } finally { await f.close(); }
+});
+test('SHA-verified workflow cancellation uses separate writer token only for POST',async()=>{
+ const f=await fixture({writesEnabled:true,githubToken:'reader-grant',writerToken:'writer-grant'});
+ try {
+   const out=await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:SHA});
+   assert.equal(out.body.result.isError,undefined,JSON.stringify(out.body.result));
+   assert.equal(out.body.result.structuredContent.cancel_requested,true);
+   assert.deepEqual(f.calls.map(x=>x[0]),['GET','POST']);
+   assert.deepEqual(f.authorizations,['Bearer reader-grant','Bearer writer-grant']);
+ } finally { await f.close(); }
+});
+test('GitHub Ops reader role requires deployments read and refuses legacy four-scope grant',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-scope-')),file=join(dir,'reader.json');
+ let s=null;
+ try{
+   const role={role:'github-ops-reader',app_id:5398752,installation_id:173456397,
+    token:'r'.repeat(50),expires_at:new Date(Date.now()+2400000).toISOString(),
+    repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],
+    permissions:{actions:'read',administration:'read',contents:'read',metadata:'read'}};
+   writeFileSync(file,JSON.stringify(role),{mode:0o600});chmodSync(file,0o600);
+   s=makeServer({callerToken:'bearer',githubToken:'',tokenFile:file});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const x=await fetch('http://127.0.0.1:'+s.address().port+'/health');
+   assert.equal((await x.json()).github_configured,false);
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
