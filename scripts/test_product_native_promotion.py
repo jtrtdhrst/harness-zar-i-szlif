@@ -16,6 +16,25 @@ MID="c"*40
 SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
+    def test_canonical_github_owner_is_current_and_old_owner_is_denied(self):
+        self.assertEqual(p.REPO, "jtrtdhrst/zar-i-szlif")
+        current = "/repos/jtrtdhrst/zar-i-szlif"
+        legacy = "/repos/miloszspyrka-code/zar-i-szlif"
+        self.assertTrue(p.GITHUB_PATH.fullmatch(current + "/commits/" + OLD))
+        self.assertFalse(p.GITHUB_PATH.fullmatch(legacy + "/commits/" + OLD))
+        self.assertTrue(p.GITHUB_ANNOTATIONS_PATH.fullmatch(
+            current + "/check-runs/123/annotations?per_page=100&page=2"
+        ))
+        self.assertFalse(p.GITHUB_ANNOTATIONS_PATH.fullmatch(
+            legacy + "/check-runs/123/annotations"
+        ))
+        self.assertTrue(p.PRODUCT_JOB_URL.fullmatch(
+            "https://github.com/jtrtdhrst/zar-i-szlif/actions/runs/123/job/456"
+        ))
+        self.assertFalse(p.PRODUCT_JOB_URL.fullmatch(
+            "https://github.com/miloszspyrka-code/zar-i-szlif/actions/runs/123/job/456"
+        ))
+
     def test_noop_when_main_already_deployed(self):
         with patch.object(p,"ref",side_effect=[OLD,OLD,OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
