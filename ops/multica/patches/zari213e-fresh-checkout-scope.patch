@@ -1,5 +1,14 @@
 --- a/server/internal/daemon/daemon.go
 +++ b/server/internal/daemon/daemon.go
+@@ -137,7 +137,7 @@
+ // sandbox config is known, one workdir is reused across tasks whose policies
+ // can differ, and task-local metadata is correct under either policy.
+ func repoCheckoutModeFor(provider, goos string) string {
+-	if provider != "codex" {
++	if provider != "codex" && provider != "hermes" {
+ 		return ""
+ 	}
+ 	switch goos {
 @@ -9428,6 +9428,7 @@
  		WorkspaceID: task.WorkspaceID,
  		TaskID:      task.ID,
@@ -8,6 +17,18 @@
  		AgentID:     task.AgentID,
  		AgentName:   task.Agent.Name,
  		WorkDir:     env.WorkDir,
+--- a/server/internal/daemon/daemon_test.go
++++ b/server/internal/daemon/daemon_test.go
+@@ -329,6 +329,9 @@
+ 		{name: "Linux Codex isolates Git metadata", provider: "codex", goos: "linux", want: repoCheckoutModeIsolated},
+ 		{name: "Windows Codex isolates Git metadata", provider: "codex", goos: "windows", want: repoCheckoutModeIsolated},
+ 		{name: "macOS Codex keeps worktree", provider: "codex", goos: "darwin"},
++		{name: "Linux Hermes isolates Git metadata", provider: "hermes", goos: "linux", want: repoCheckoutModeIsolated},
++		{name: "Windows Hermes isolates Git metadata", provider: "hermes", goos: "windows", want: repoCheckoutModeIsolated},
++		{name: "macOS Hermes keeps worktree", provider: "hermes", goos: "darwin"},
+ 		{name: "Linux Claude keeps worktree", provider: "claude", goos: "linux"},
+ 		{name: "Windows Claude keeps worktree", provider: "claude", goos: "windows"},
+ 	}
 --- a/server/internal/daemon/health.go
 +++ b/server/internal/daemon/health.go
 @@ -127,6 +127,7 @@

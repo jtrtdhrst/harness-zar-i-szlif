@@ -33,4 +33,4 @@ cross-task leaks are impossible.
 Source expected before SHA256: `712d30ad25413d51e961fbce788f4ad6ee932be54eac8c7680aef5e80d3e225d`.
 
 Candidate source SHA256 MUST be computed and recorded from the exact CTO-approved PR HEAD at install time; the earlier 3123e250 candidate is obsolete.\n
-Offline validation: `python3 -m unittest discover -s ops/harness/credentials -p 'test_zari213_daemon_cache_reader.py' -v`. The original root broker must remain in use until independent exact-HEAD approval and a permitted root-controlled install with rollback. Do not disable the ZARI-213 security HOLD or mount a shared token into a task.
+Offline validation (non-root): `python3 -B -m unittest discover -s ops/harness/credentials -p 'test_zari213_*.py' -v`. The original root broker must remain in use until independent exact-HEAD approval and a permitted root-controlled install with rollback. Do not disable the ZARI-213 security HOLD or mount a shared token into a task.

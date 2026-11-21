@@ -18,6 +18,9 @@ tests only:
   remote fetch fails; the cached copy is never returned as a successful fresh
   checkout. Non-fresh reused checkouts keep their existing `fetch_error`
   behaviour.
+- Hermes tasks use isolated Git metadata (`MULTICA_REPO_CHECKOUT_MODE=isolated`),
+  so the task-local `.git` is readable under Landlock instead of pointing into
+  the denied shared `.repos` mirror.
 - the active checkout claim carries `ProjectID`, and `GET /repo/scope` returns
   the token-bound `workspace_id`, `task_id`, `project_id`, `agent_id` and
   `repo_urls` to the local root broker. It is authenticated by the same task
