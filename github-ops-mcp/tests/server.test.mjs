@@ -61,7 +61,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
   };
   const s=makeServer({fetchImpl:fake,githubToken,writerToken,callerToken,writesEnabled,allowDeletion,
     pushToken,pinnedBranches,pushRemoteFor,gitBin,
-    deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
+    deletionAllowlist:approved?[`${REPO}:fix/old@${branchSHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
   const request=async(name,args={},auth=true)=>{
@@ -583,4 +583,33 @@ test('rotating GitHub App writer file governs only verified POST and fails close
    assert.match((await cancel()).content[0].text,/AUTH_SCOPE_INVALID/);
    assert.equal(auths.filter(x=>x.method==='POST').length,2,'invalid grant never reaches GitHub mutation');
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
+test('branch delete requires exact repository, branch and SHA grant before provider calls',async()=>{
+  const f=await fixture({writesEnabled:true,pushToken:'test-push-token',approved:false});
+  try {
+    const x=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.match(x.body.result.content[0].text,/DELETE_NOT_APPROVED/);
+    assert.equal(f.calls.length,0,'no provider request before operator grant');
+  }finally{await f.close()}
+});
+test('preview checks GitHub branch rules and reports no deletion capability without a grant',async()=>{
+  for(const opt of [
+    {rulesList:[{id:123}],expected:'RULES_PRESENT'},
+    {rulesStatus:403,rulesMessage:'Forbidden',expected:'RULES_UNAVAILABLE'},
+    {rulesStatus:200,rulesList:[],approved:false,expected:null}
+  ]){
+    const f=await fixture(opt);
+    try{
+      const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+      if(opt.expected){
+        assert.equal(out.body.result.isError,true);
+        assert.match(out.body.result.content[0].text,new RegExp(opt.expected));
+      }else{
+        assert.equal(out.body.result.structuredContent.rules,'none');
+        assert.equal(out.body.result.structuredContent.deletion_supported,false);
+      }
+      assert.equal(f.calls.some(([method])=>method!=='GET'),false,'preview never mutates provider');
+    }finally{await f.close()}
+  }
 });
