@@ -457,3 +457,41 @@ test('a push that lands between verification and delete is rejected by the lease
     assert.equal(b.ref(), movedTo, 'the concurrent commit is preserved, never overwritten');
   } finally { await f.close(); b.cleanup(); }
 });
+
+
+test('GitHub App role token file is validated, rotated and fail-closed', async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-role-')),file=join(dir,'reader.json');
+ const seen=[];
+ const role=(token,permissions={actions:'read',administration:'read',contents:'read',metadata:'read'})=>({
+  token,role:'github-ops-reader',app_id:5398752,installation_id:173456397,
+  expires_at:new Date(Date.now()+2400000).toISOString(),
+  repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],permissions});
+ const write=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
+ const send=async(base)=>{
+  const x=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer role-test', 'content-type':'application/json'},
+  body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'github_repo_info',arguments:{repo:REPO}}})});
+  return (await x.json()).result;
+ };
+ let s=null;
+ try{
+  write(role('x'.repeat(50)));
+  s=makeServer({callerToken:'role-test',githubToken:'',tokenFile:file,
+   fetchImpl:async(url,opts)=>{seen.push(opts.headers.Authorization);return new Response(JSON.stringify({full_name:REPO,default_branch:'main'}),{status:200,headers:{'content-type':'application/json'}})}});
+  await new Promise(r=>s.listen(0,'127.0.0.1',r));
+  const base='http://127.0.0.1:'+s.address().port;
+  assert.equal((await (await fetch(base+'/health')).json()).ready,true);
+  assert.equal((await send(base)).structuredContent.full_name,REPO);
+  write(role('y'.repeat(50)));
+  assert.equal((await send(base)).structuredContent.full_name,REPO);
+  assert.deepEqual(seen,['Bearer '+'x'.repeat(50),'Bearer '+'y'.repeat(50)]);
+  write(role('z'.repeat(50),{actions:'write',administration:'read',contents:'read',metadata:'read'}));
+  assert.match((await send(base)).content[0].text,/AUTH_SCOPE_INVALID/);
+  assert.equal((await (await fetch(base+'/health')).json()).ready,false);
+  assert.equal(seen.length,2);
+  write({...role('a'.repeat(50)),expires_at:new Date(Date.now()-60000).toISOString()});
+  assert.match((await send(base)).content[0].text,/AUTH_FILE_EXPIRED/);
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
