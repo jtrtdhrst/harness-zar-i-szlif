@@ -9,12 +9,16 @@ on:
       - 'github-ops-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
       - 'ops/harness/credentials/github-ops-token-project.py'
+      - 'ops/harness/credentials/multica-git-credential-broker.py'
+      - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
       - '.github/workflows/github-ops-mcp-ci.yml'
   push:
     paths:
       - 'github-ops-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
       - 'ops/harness/credentials/github-ops-token-project.py'
+      - 'ops/harness/credentials/multica-git-credential-broker.py'
+      - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
       - '.github/workflows/github-ops-mcp-ci.yml'
 
 permissions:
@@ -39,6 +43,9 @@ jobs:
       - name: Validate GitHub App credential broker source
         run: |
           python3 -m py_compile ops/harness/credentials/multica-zar-github-app-refresh.py ops/harness/credentials/github-ops-token-project.py
+          python3 -m py_compile ops/harness/credentials/multica-git-credential-broker.py
+      - name: Git credential broker identity and isolation regressions
+        run: python3 ops/harness/credentials/test_zari213_daemon_cache_reader.py -q
       # The token-file tests intentionally require root-owned 0640 files.
       # Run inside the unprivileged BuildKit sandbox (root in the build stage),
       # not as host root or by relaxing production credential checks.
