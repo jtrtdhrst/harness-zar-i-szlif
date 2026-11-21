@@ -178,7 +178,7 @@ index 5ef71ab..2a926f7 100644
  			http.Error(w, "url is required", http.StatusBadRequest)
  			return
  		}
-+		if activeTask.ProjectID != "" && !repoURLInTaskScope(req.URL, activeTask.RepoURLs) {
++		if activeTask.ProjectID == "" || !repoURLInTaskScope(req.URL, activeTask.RepoURLs) {
 +			http.Error(w, "repository outside active task project", http.StatusForbidden)
 +			return
 +		}
