@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { timingSafeEqual, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -136,8 +136,30 @@ function assertBranch(branch){
   if(typeof branch!=='string'||!(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,120}$/).test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('.lock') || branch==='ZARI-155' || /(^|\/)(main|master|ci-approved|release|production|prod|hold|archive|staging|hotfix|deploy|operator)(\/|$)/i.test(branch))throw error('BRANCH_DENIED','Unsafe or protected branch name');
   return branch;
 }
-function githubClient({token,fetchImpl=fetch}){
+const READ_ONLY_REPOS=['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'];
+// Read a host-rotated, short-lived installation grant on each provider request.
+// Never copy the app private key or the grant into Coolify environment variables.
+function tokenFromScopedFile(file){
+  if(!file || typeof file!=='string' || !file.startsWith('/')) return '';
+  try{
+    const st=statSync(file);
+    if(!st.isFile() || (st.mode & 0o077)!==0 || st.size>8192) return '';
+    const v=JSON.parse(readFileSync(file,'utf8'));
+    const expected={contents:'read',metadata:'read'};
+    if(v.role!=='githubops-reader' || v.app_id!==5398752 || v.installation_id!==173456397) return '';
+    if(!Array.isArray(v.repositories) || v.repositories.length!==2 ||
+      !READ_ONLY_REPOS.every(repo=>v.repositories.includes(repo))) return '';
+    if(!v.permissions || Object.keys(v.permissions).length!==2 ||
+      !Object.entries(expected).every(([name,scope])=>v.permissions[name]===scope)) return '';
+    const expires=Date.parse(v.expires_at);
+    if(!Number.isFinite(expires) || expires<=Date.now()+120000) return '';
+    if(typeof v.token!=='string' || v.token.length<40 || /\s/.test(v.token)) return '';
+    return v.token;
+  }catch{return '';}
+}
+function githubClient({getToken,fetchImpl=fetch}){
   return async(method,path,body)=>{
+    const token=getToken();
     if(!token)throw error('AUTH_NOT_CONFIGURED','A scoped GitHub App or fine-grained credential is required');
     const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`,'X-GitHub-Api-Version':'2026-03-10','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
     if(!result.ok){
@@ -155,6 +177,8 @@ function githubClient({token,fetchImpl=fetch}){
 export function makeServer(config={}) {
   const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
+  const githubTokenFile=config.githubTokenFile??process.env.GITHUB_OPS_TOKEN_FILE??'';
+  const currentToken=()=>githubToken||tokenFromScopedFile(githubTokenFile);
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
   const pushToken=config.pushToken??process.env.GITHUB_OPS_PUSH_TOKEN??'';
   const pinnedBranches=new Set(config.pinnedBranches??(process.env.GITHUB_OPS_PINNED_BRANCHES??DEFAULT_PINNED_BRANCHES.join(',')).split(',').map(x=>x.trim()).filter(Boolean));
@@ -162,7 +186,7 @@ export function makeServer(config={}) {
   const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
   const gitBin=config.gitBin??'git';
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
-  const api=githubClient({token:githubToken,fetchImpl:config.fetchImpl});
+  const api=githubClient({getToken:currentToken,fetchImpl:config.fetchImpl});
   const access=cloudflareJwtVerifier({
     issuer:config.accessIssuer??process.env.CF_ACCESS_ISSUER??'',
     audience:config.accessAudience??process.env.CF_ACCESS_AUD??'',
@@ -279,7 +303,10 @@ export function makeServer(config={}) {
   const authChallenge='Bearer resource_metadata="'+resourceMetadata+'", error="invalid_token", error_description="Authenticate with Cloudflare Access OAuth"';
   const server=http.createServer(async(req,res)=>{
     const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
-    if(req.method==='GET'&&req.url==='/health')return json(200,{alive:true,ready:Boolean(callerToken&&githubToken),writes_enabled:Boolean(writesEnabled),github_configured:Boolean(githubToken)});
+    if(req.method==='GET'&&req.url==='/health'){
+      const valid=Boolean(currentToken());
+      return json(200,{alive:true,ready:Boolean(callerToken&&valid),writes_enabled:Boolean(writesEnabled),github_configured:valid});
+    }
     if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
     const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1]??'';
