@@ -1507,7 +1507,7 @@ class AutoMainCycleTests(unittest.TestCase):
         args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state",
                                manifest="ops/release-lanes.json")
         out = io.StringIO()
-        with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE), \
+        with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE) as sync, \
                 patch.object(delivery, "load_gate_file",
                              return_value=self.manifest()) as load_manifest, \
                 patch.object(delivery, "read_private_delivery_ledger",
@@ -1525,19 +1525,35 @@ class AutoMainCycleTests(unittest.TestCase):
                                            "decisions": [{"service": "mantic-mcp",
                                                           "decision": "promoted"}]}) as promote:
             with redirect_stdout(out):
-                code = delivery.auto_main_cycle(args, self.manifest(), object())
-        load_manifest.assert_called_once_with(
-            "/repo/ops/release-lanes.json", "manifest", require_root=False)
+                try:
+                    code = delivery.auto_main_cycle(args, self.manifest(), object())
+                except Denied as exc:
+                    code = 1
+                    print(json.dumps({"result": "denied", "reason": str(exc),
+                                      "mode": mode}))
+        if mode == "plan":
+            load_manifest.assert_called_once_with(
+                "/repo/ops/release-lanes.json", "manifest", require_root=False)
+            sync.assert_called_once_with("/repo")
+        else:
+            load_manifest.assert_not_called()
+            sync.assert_not_called()
         return code, json.loads(out.getvalue()), prepare, promote
 
-    def test_deploy_build_failure_is_an_error_not_no_change(self):
-        code, report, prepare, promote = self.cycle(
-            "deploy", prepare_error=RuntimeError("build did not complete"))
+    def test_auto_main_deploy_does_not_build_without_signed_release(self):
+        code, report, prepare, promote = self.cycle("deploy")
         self.assertEqual(code, 1)
-        self.assertEqual(report["result"], "release_failed")
-        self.assertEqual(report["failed_services"], ["mantic-mcp"])
-        self.assertEqual(report["services"][0]["decision"], "build_failed")
-        prepare.assert_called_once()
+        self.assertEqual(report["reason"],
+                         "auto_main_requires_signed_release_artifacts")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_auto_main_prepare_does_not_build_or_promote(self):
+        code, report, prepare, promote = self.cycle("prepare")
+        self.assertEqual(code, 1)
+        self.assertEqual(report["reason"],
+                         "auto_main_requires_signed_release_artifacts")
+        prepare.assert_not_called()
         promote.assert_not_called()
 
     def test_plan_reports_change_and_never_builds(self):
@@ -1548,14 +1564,9 @@ class AutoMainCycleTests(unittest.TestCase):
         prepare.assert_not_called()
         promote.assert_not_called()
 
-    def test_deploy_builds_exact_sha_and_pre_admits_digest(self):
-        code, report, prepare, promote = self.cycle("deploy")
+    def test_plan_does_not_create_a_pre_admitted_release(self):
+        code, report, prepare, promote = self.cycle("plan")
         self.assertEqual(code, 0)
-        prepare.assert_called_once_with(unittest.mock.ANY, "/repo",
-                                        "mantic-mcp", SOURCE)
-        kwargs = promote.call_args.kwargs
-        self.assertEqual(kwargs["source_sha"], SOURCE)
-        self.assertEqual(kwargs["pre_admitted"]["mantic-mcp"]["image_digest"],
-                         self.DEPLOY_DIGEST)
-        self.assertEqual(kwargs["pre_admitted"]["mantic-mcp"]["source_sha"], SOURCE)
-        self.assertEqual(report["result"], "ok")
+        self.assertEqual(report["result"], "plan")
+        prepare.assert_not_called()
+        promote.assert_not_called()
