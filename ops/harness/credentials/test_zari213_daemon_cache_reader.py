@@ -30,6 +30,8 @@ class DaemonCacheAuthTests(unittest.TestCase):
                 return original_readlink(path)
             pid = int(str(path).split("/")[2])
             argv = chain[pid][1]
+            if argv[0] == "/usr/lib/git-core/git":
+                return "/usr/lib/git-core/git"
             exe = pathlib.Path(argv[0]).name
             if exe.startswith("python3"):
                 return "/usr/bin/python3.11"
@@ -90,6 +92,18 @@ class DaemonCacheAuthTests(unittest.TestCase):
             850: (800, ["/bin/sh", "-c", exact, exact]),
             800: (750, ["git-remote-https", "origin", url]),
             750: (700, ["git", "remote-http", "origin", url]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
+
+    def test_git_remote_dispatcher_rejects_usr_bin_git(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["/usr/lib/git-core/git-remote-https", "origin", url]),
+            750: (700, ["/usr/bin/git", "remote-https", "origin", url]),
             700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
         }, False)
 
