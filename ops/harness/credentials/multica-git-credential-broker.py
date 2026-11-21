@@ -250,7 +250,7 @@ def read_role_token(tokens_dir, role):
     expected_repos = ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
     if set(data.get("repositories", [])) != expected_repos:
         raise ValueError("role token repository scope mismatch")
-    base_role = role.split("-", 1)[0]
+    base_role = role if role == "cache-reader" else role.split("-", 1)[0]
     if data.get("role") != role or data.get("permissions") != ROLE_PERMISSIONS[base_role]:
         raise ValueError("role token permissions mismatch")
     if parse_expiry(data["expires_at"]) <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2):
