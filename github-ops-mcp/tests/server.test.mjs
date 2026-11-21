@@ -4,7 +4,7 @@ import { makeServer, deleteRefWithLease, casDeleteArgs } from '../server.mjs';
 const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
-  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
+  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,classicProtectionMissing=false,
   rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
   const calls=[];
   const authorizations=[];
@@ -19,6 +19,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
   };
   const fake=async(url,opts)=>{
     const u=new URL(url);calls.push([opts.method,u.pathname+u.search]);authorizations.push(opts.headers.Authorization);
+    if(classicProtectionMissing && u.pathname.endsWith('/branches/main/protection')) return new Response(JSON.stringify({message:'Branch not protected'}),{status:404});
     let v={};
     if(opts.method==='DELETE'&&u.pathname.includes('/git/refs/heads/')){
       branchDeleted=true;
@@ -631,5 +632,18 @@ test('cached legacy MCP repo enums canonicalize to current GitHub owner, with no
     const denied=await f.request('github_repo_info',{repo:'someone/other'});
     assert.match(denied.body.result.content[0].text,/REPO_DENIED/);
     assert.equal(f.calls.length,prior);
+  }finally{await f.close()}
+});
+
+test('classic protection 404 is informative and never overrides active rulesets',async()=>{
+  const f=await fixture({classicProtectionMissing:true,rulesets:[{name:'main-protection',enforcement:'active'}]});
+  try {
+    const protection=await f.request('github_get_branch_protection',{repo:REPO});
+    assert.equal(protection.http,200);
+    assert.equal(protection.body.result.structuredContent.classic_protection,false);
+    assert.equal(protection.body.result.structuredContent.ruleset_protection,'not_checked');
+    const rules=await f.request('github_get_rulesets',{repo:REPO});
+    assert.equal(rules.body.result.structuredContent.count,1);
+    assert.equal(rules.body.result.structuredContent.rulesets[0].enforcement,'active');
   }finally{await f.close()}
 });
