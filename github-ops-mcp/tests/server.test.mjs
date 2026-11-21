@@ -457,3 +457,40 @@ test('a push that lands between verification and delete is rejected by the lease
     assert.equal(b.ref(), movedTo, 'the concurrent commit is preserved, never overwritten');
   } finally { await f.close(); b.cleanup(); }
 });
+
+test('preview refuses a Coolify-pinned branch before provider traffic',async()=>{
+ const f=await fixture({pinnedBranches:['fix/old']});
+ try{
+   const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+   assert.match(out.body.result.content[0].text,/BRANCH_PINNED/);
+   assert.equal(f.calls.length,0);
+ }finally{await f.close()}
+});
+test('preview refuses active rules and unknown rules permissions',async()=>{
+ for(const opt of [{rulesList:[{type:'restrict_updates'}],err:'RULES_PRESENT'},
+                   {rulesStatus:403,rulesMessage:'Forbidden',err:'RULES_UNAVAILABLE'}]){
+   const f=await fixture(opt);
+   try{
+     const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+     assert.match(out.body.result.content[0].text,new RegExp(opt.err));
+     assert.equal(f.calls.every(([method])=>method==='GET'),true);
+   }finally{await f.close()}
+ }
+});
+test('delete requires exact operator grant even with both write credentials',async()=>{
+ const f=await fixture({writesEnabled:true,pushToken:'test-only-token',approved:false});
+ try{
+   const out=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+   assert.match(out.body.result.content[0].text,/DELETE_NOT_APPROVED/);
+   assert.equal(f.calls.length,0);
+ }finally{await f.close()}
+});
+test('preview reports deletion_supported only with an exact grant',async()=>{
+ const f=await fixture({writesEnabled:true,pushToken:'test-only-token',approved:false});
+ try{
+   const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+   assert.equal(out.body.result.structuredContent.eligible,true);
+   assert.equal(out.body.result.structuredContent.deletion_supported,false);
+   assert.equal(out.body.result.structuredContent.rules,'none');
+ }finally{await f.close()}
+});
