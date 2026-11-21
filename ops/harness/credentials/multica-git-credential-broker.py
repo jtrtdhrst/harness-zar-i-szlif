@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 
 ALLOWED_REPOS = {
-    "miloszspyrka-code/zar-i-szlif",
-    "miloszspyrka-code/harness-zar-i-szlif",
+    "jtrtdhrst/zar-i-szlif",
+    "jtrtdhrst/harness-zar-i-szlif",
 }
 EXPECTED_WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
 RUNTIME_UID = 997
