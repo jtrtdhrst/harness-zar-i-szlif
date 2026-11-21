@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { readFile, lstat } from 'node:fs/promises';
 import { timingSafeEqual, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -136,10 +137,35 @@ function assertBranch(branch){
   if(typeof branch!=='string'||!(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,120}$/).test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('.lock') || branch==='ZARI-155' || /(^|\/)(main|master|ci-approved|release|production|prod|hold|archive|staging|hotfix|deploy|operator)(\/|$)/i.test(branch))throw error('BRANCH_DENIED','Unsafe or protected branch name');
   return branch;
 }
-function githubClient({token,fetchImpl=fetch}){
+async function scopedTokenFromFile(path){
+  try {
+    const st=await lstat(path);
+    if(!st.isFile() || st.isSymbolicLink() || st.uid!==0 || st.nlink!==1 || (st.mode & 0o007)!==0)
+      throw error('AUTH_FILE_UNTRUSTED','GitHub credential file is not root-owned and private');
+    const v=JSON.parse(await readFile(path,'utf8'));
+    if(!v || typeof v.token!=='string' || v.token.length<40 || /\s/.test(v.token))
+      throw error('AUTH_FILE_INVALID','GitHub installation token invalid');
+    if(!v.expires_at || !Number.isFinite(Date.parse(v.expires_at)) || Date.parse(v.expires_at)<=Date.now()+120000)
+      throw error('AUTH_FILE_EXPIRED','GitHub installation token expired');
+    if(v.app_id!==5398752 || v.installation_id!==173456397 || v.role!=='github-ops-reader')
+      throw error('AUTH_SCOPE_INVALID','GitHub installation token identity invalid');
+    const expected=['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'];
+    if(!Array.isArray(v.repositories) || v.repositories.length!==2 || expected.some(r=>!v.repositories.includes(r)))
+      throw error('AUTH_SCOPE_INVALID','GitHub installation repository scope invalid');
+    const required={actions:'read',administration:'read',contents:'read',metadata:'read'};
+    if(!v.permissions || Object.keys(v.permissions).length!==4 || Object.entries(required).some(([k,x])=>v.permissions[k]!==x))
+      throw error('AUTH_SCOPE_INVALID','GitHub installation permission scope invalid');
+    return v.token;
+  } catch(e) {
+    if(e.code?.startsWith('AUTH_'))throw e;
+    throw error('AUTH_NOT_CONFIGURED','GitHub installation credential file unavailable');
+  }
+}
+function githubClient({token,getToken,fetchImpl=fetch}){
   return async(method,path,body)=>{
-    if(!token)throw error('AUTH_NOT_CONFIGURED','A scoped GitHub App or fine-grained credential is required');
-    const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`,'X-GitHub-Api-Version':'2026-03-10','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
+    const resolvedToken=getToken?await getToken():token;
+    if(!resolvedToken)throw error('AUTH_NOT_CONFIGURED','A scoped GitHub App or fine-grained credential is required');
+    const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${resolvedToken}`,'X-GitHub-Api-Version':'2026-03-10','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
     if(!result.ok){
       let detail='';
       try{ detail=(await result.text()).slice(0,512); }catch{}
@@ -155,13 +181,14 @@ function githubClient({token,fetchImpl=fetch}){
 export function makeServer(config={}) {
   const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
+  const tokenFile=config.tokenFile??process.env.GITHUB_OPS_TOKEN_FILE??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
   const pushToken=config.pushToken??process.env.GITHUB_OPS_PUSH_TOKEN??'';
   const pinnedBranches=new Set(config.pinnedBranches??(process.env.GITHUB_OPS_PINNED_BRANCHES??DEFAULT_PINNED_BRANCHES.join(',')).split(',').map(x=>x.trim()).filter(Boolean));
   const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
   const gitBin=config.gitBin??'git';
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
-  const api=githubClient({token:githubToken,fetchImpl:config.fetchImpl});
+  const api=githubClient({token:githubToken,getToken:tokenFile?()=>scopedTokenFromFile(tokenFile):null,fetchImpl:config.fetchImpl});
   const access=cloudflareJwtVerifier({
     issuer:config.accessIssuer??process.env.CF_ACCESS_ISSUER??'',
     audience:config.accessAudience??process.env.CF_ACCESS_AUD??'',
@@ -275,7 +302,10 @@ export function makeServer(config={}) {
   const authChallenge='Bearer resource_metadata="'+resourceMetadata+'", error="invalid_token", error_description="Authenticate with Cloudflare Access OAuth"';
   const server=http.createServer(async(req,res)=>{
     const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
-    if(req.method==='GET'&&req.url==='/health')return json(200,{alive:true,ready:Boolean(callerToken&&githubToken),writes_enabled:Boolean(writesEnabled),github_configured:Boolean(githubToken)});
+    if(req.method==='GET'&&req.url==='/health'){
+      const configured=tokenFile?await scopedTokenFromFile(tokenFile).then(()=>true,()=>false):Boolean(githubToken);
+      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured});
+    }
     if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
     const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1]??'';
@@ -311,3 +341,4 @@ if(process.argv[1]&&import.meta.url.endsWith(process.argv[1])){
   const port=Number(process.env.PORT??3000);
   makeServer().listen(port,'0.0.0.0',()=>console.log(`github-ops-mcp listening on port ${port}; credential values never logged`));
 }
+

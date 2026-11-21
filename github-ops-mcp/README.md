@@ -5,7 +5,7 @@ A separate, minimal GitHub MCP endpoint for operations absent from the regular G
 ## Fail-closed defaults
 
 - Hard-coded repository ceiling: `miloszspyrka-code/harness-zar-i-szlif`, `miloszspyrka-code/zar-i-szlif`.
-- `POST /mcp` requires either a constant-time checked `GITHUB_OPS_CALLER_TOKEN` or a cryptographically verified Cloudflare Access JWT restricted to the configured issuer, application AUD and owner email. The Cloudflare path requires `CF_ACCESS_ISSUER`, `CF_ACCESS_AUD`, `CF_ACCESS_OWNER_EMAIL` and Cloudflare Managed OAuth on the Access application. `GITHUB_TOKEN` is still required to execute real GitHub operations. Never commit secrets, embed them in URLs, or put them in Multica CLI args.
+- `POST /mcp` requires either a constant-time checked `GITHUB_OPS_CALLER_TOKEN` or a cryptographically verified Cloudflare Access JWT restricted to the configured issuer, application AUD and owner email. The Cloudflare path requires `CF_ACCESS_ISSUER`, `CF_ACCESS_AUD`, `CF_ACCESS_OWNER_EMAIL` and Cloudflare Managed OAuth on the Access application. For GitHub API calls use the existing Coolify GitHub App: the independent host refresher mints a read-only installation token, and the `GITHUB_OPS_TOKEN_FILE` runtime path points to a private **read-only directory-mounted** `token.json`. A legacy `GITHUB_TOKEN` is accepted only when no token file is configured; a bad token file always fails closed. No PAT or private GitHub App key is injected into the container.
 - `GITHUB_OPS_WRITES_ENABLED` defaults to false. `GITHUB_OPS_WORKFLOWS` defaults to `release-lanes-policy.yml` only. `GITHUB_OPS_PUSH_TOKEN` is a separate, repo-scoped, short-lived credential used **only** by the branch-delete lease; without it deletion fails closed. `GITHUB_OPS_PINNED_BRANCHES` lists branches a live Coolify application tracks (default `feat/github-ops-mcp-20261120`); those are refused even when everything else passes. Keep it in sync with `ops/release-lanes.json`.
 - `GET /health` is a liveness endpoint; `ready=false` explicitly means **not operational**, even if Coolify reports the container healthy.
 - `tools/call` always returns `structuredContent` as a JSON **object**, never a bare array. GitHub list endpoints are wrapped with their own key and a `count` (`{deployments:[...],count}` / `{rulesets:[...],count}`), so an empty result is an empty list inside an object. A provider reply that is not a list fails closed (`DEPLOYMENTS_INVALID` / `RULESETS_INVALID`) instead of being emitted as a non-conforming payload.
@@ -18,9 +18,11 @@ A separate, minimal GitHub MCP endpoint for operations absent from the regular G
 
 ## Run and check
 
-`npm test` — 29 HTTP-level and local-git positive/negative tests. These include disabled workflow dispatch, missing authentication, fail-closed branch deletion (writes disabled, missing push credential, pinned branch, stale SHA, protection, repository rules, unknown rule state, no merged PR), and a schema-invariant regression that every advertised tool returns object `structuredContent` for empty and non-empty GitHub lists. The lease tests run against a throwaway local bare repository: a stale expected SHA is rejected and the ref survives; the exact SHA deletes it; a push that lands between verification and delete is refused by the lease. A rules endpoint that answers 403 "Upgrade to GitHub Pro" (private repo, no rulesets possible) is accepted only together with `protected: false`; any other 403 stays fail-closed. They make no real GitHub provider writes.
+`npm test` — 30 HTTP-level and local-git positive/negative tests. These include disabled workflow dispatch, missing authentication, fail-closed branch deletion (writes disabled, missing push credential, pinned branch, stale SHA, protection, repository rules, unknown rule state, no merged PR), and a schema-invariant regression that every advertised tool returns object `structuredContent` for empty and non-empty GitHub lists. The lease tests run against a throwaway local bare repository: a stale expected SHA is rejected and the ref survives; the exact SHA deletes it; a push that lands between verification and delete is refused by the lease. A rules endpoint that answers 403 "Upgrade to GitHub Pro" (private repo, no rulesets possible) is accepted only together with `protected: false`; any other 403 stays fail-closed. They make no real GitHub provider writes.
 
-`PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_TOKEN=<scoped-secret> node server.mjs`
+`PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_OPS_TOKEN_FILE=/run/secrets/github-ops/token.json node server.mjs`
+
+The host's existing `multica-zar-github-app-refresh.service` reads its existing Coolify GitHub App and mints an additional `github-ops-reader` token scoped to the two repositories and four read-only permissions (actions, administration, contents, metadata). `ops/harness/credentials/github-ops-token-project.py` projects only that role's JSON under `/etc/github-ops-mcp/reader/token.json` (root:1000, 0640) after refresh. Mount the whole `/etc/github-ops-mcp/reader/` directory read-only at `/run/secrets/github-ops` in the BGH container; mounting just the token file is incorrect because atomic rotation changes the inode. The private key remains in Coolify; the runtime reads the renewed token per provider request, verifies identity, repositories, permissions, expiry and file ownership. Keep all writes disabled.
 
 Deletion additionally needs the `git` binary in the image (the Dockerfile installs it) and a separate `GITHUB_OPS_PUSH_TOKEN`.
 
@@ -31,13 +33,13 @@ Use a Coolify **private, manual** staging application with `base_directory=/gith
 - `initialize` then `tools/list` (authenticated): eight tools.
 - `github_get_deployments` for an exact SHA with no deployments returns HTTP 200 and `{"repo":...,"sha":...,"count":0,"deployments":[]}` — an empty list must not break the client schema.
 - `tools/call` with repo outside ceiling: `REPO_DENIED` without provider traffic.
-- Without `GITHUB_TOKEN`: `AUTH_NOT_CONFIGURED` without provider traffic.
+- Without a configured valid `GITHUB_OPS_TOKEN_FILE` (or legacy `GITHUB_TOKEN` when no file is selected): `AUTH_NOT_CONFIGURED` or file/scope errors without provider traffic.
 - Without caller token or invalid token: 401.
 - With a scoped production credential: verify GitHub `repo_info`, `get_deployments` for a known exact SHA, and provider error handling before enabling any write. Independent QA must read back effect and correlate immutable image digest + authenticated live service QA via Coolify.
 
 The current native Multica ZARI-213 isolation HOLD applies: do **not** grant a high-privilege operator server to unisolated agents or move it into production until that trust boundary is independently proven.
 
-## Live Cloudflare staging state (2026-11-20)
+## Historical Cloudflare staging state (2026-11-20)
 
 - URL: `https://github-ops-mcp.zariszlif.pl/mcp`, behind an owner-only Cloudflare Access app with Managed OAuth.
 - Cloudflare Access forwards `Cf-Access-Jwt-Assertion`; the origin validates RS256 signature, issuer, AUD, expiration and exact owner identity against Cloudflare's JWKS. Docker network access does **not** skip JWT checks.
