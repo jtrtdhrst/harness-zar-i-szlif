@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import re
 import time
@@ -202,16 +203,41 @@ def stats(hindsight,bank):
   if isinstance(value,str) and re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:.+Z-]{8,35}",value):
    safe[field]=value
  return safe
+def read_log_safely(log):
+ # Parent symlink swaps cannot redirect file access: use no-follow directory fds.
+ root=log.parent.parent.parent
+ relative=log.relative_to(root).parts
+ if len(relative)!=3 or root.is_symlink():raise RuntimeError("unsafe_log_path")
+ flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+ fd=os.open(root,flags)
+ try:
+  for directory in relative[:2]:
+   nxt=os.open(directory,flags,dir_fd=fd)
+   os.close(fd);fd=nxt
+  leaf=os.open(relative[2],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd)
+ finally:
+  os.close(fd)
+ with os.fdopen(leaf,"rb") as stream:
+  info=os.fstat(stream.fileno())
+  if not stat.S_ISREG(info.st_mode) or info.st_size>MAX_BYTES:
+   raise RuntimeError("invalid_log_file")
+  data=stream.read(MAX_BYTES+1)
+ if len(data)>MAX_BYTES or len(data)!=info.st_size:raise RuntimeError("log_changed_during_read")
+ if data and not data.endswith(b"\n"):raise RuntimeError("unterminated_final_ndjson_line")
+ return data
+
 def enrich(log,agent,run,opik,hindsight,cache):
  trace=trace_for(opik,agent,run,cache)
  if trace is None:return 0
  project="paperclip-"+agent[:8]
  present=span_names(opik,project,trace["id"])
  added=0
+ # Reuse one no-follow snapshot for both optional safe telemetry spans.
+ raw=read_log_safely(log) if (
+  "paperclip.run.audit_summary" not in present or
+  "paperclip.run.safe_timeline" not in present or
+  "paperclip.run.retrieval_evidence" not in present) else None
  if "paperclip.run.audit_summary" not in present:
-  raw=log.read_bytes()
-  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
-   raise RuntimeError("log_changed")
   summary=parse_events(raw,run,agent)
   if summary["parsed_event_count"]>0:
    emit(opik,project,trace["id"],run,agent,"paperclip.run.audit_summary",summary,
@@ -221,9 +247,6 @@ def enrich(log,agent,run,opik,hindsight,cache):
     trace["start_time"],trace["end_time"])
    added+=1
  if "paperclip.run.safe_timeline" not in present:
-  raw=log.read_bytes()
-  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
-   raise RuntimeError("log_changed")
   timeline=safe_timeline(raw,run,agent)
   if timeline["event_count"]>0:
    emit(opik,project,trace["id"],run,agent,"paperclip.run.safe_timeline",timeline,
@@ -234,9 +257,6 @@ def enrich(log,agent,run,opik,hindsight,cache):
     trace["start_time"],trace["end_time"])
    added+=1
  if "paperclip.run.retrieval_evidence" not in present:
-  raw=log.read_bytes()
-  if len(raw)>MAX_BYTES or len(raw)!=log.stat().st_size:
-   raise RuntimeError("log_changed")
   evidence=retrieval_summary(raw,run,agent)
   if evidence["observed_retrieval_events"]:
    emit(opik,project,trace["id"],run,agent,
