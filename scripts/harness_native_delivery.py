@@ -816,6 +816,11 @@ def auto_main_cycle(args, manifest, host):
     ``auto_deploy_expected: true``. Exact source SHA, a locally built immutable
     digest, live health/source readback and one rollback remain mandatory.
     """
+    # This lane can inventory a release but cannot bypass the per-UUID
+    # operator grant, independent review, and root-signed CI attestation.
+    # Use the existing --auto release path for authorized promotion.
+    if args.mode != "plan":
+        raise Denied("auto_main_requires_signed_release_artifacts")
     source_sha = sync_checkout_to_main(args.repo)
     # The caller loaded the manifest before the checkout advanced. Reload it
     # from the exact tree this cycle is about to build, never from stale HEAD.
