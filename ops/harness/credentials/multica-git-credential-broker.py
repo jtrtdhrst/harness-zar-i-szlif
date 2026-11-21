@@ -18,19 +18,28 @@ import socketserver
 import struct
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
-ALLOWED_REPOS = {
-    "miloszspyrka-code/zar-i-szlif",
-    "miloszspyrka-code/harness-zar-i-szlif",
-}
+HARNESS_REPO = "miloszspyrka-code/harness-zar-i-szlif"
+PRODUCT_REPO = "miloszspyrka-code/zar-i-szlif"
+ALLOWED_REPOS = {PRODUCT_REPO, HARNESS_REPO}
+PROJECT_REPOS = {"harness": HARNESS_REPO, "product": PRODUCT_REPO}
 EXPECTED_WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
 RUNTIME_UID = 997
 RUNTIME_GID = 981
 REFRESH = "/usr/local/libexec/multica-zar-github-app-refresh.py"
-AGENT_ROLES = {"implementer", "reviewer", "release"}
+AGENT_ROLES = {"implementer", "reviewer", "release", "runner"}
+ROLE_PERMISSIONS = {
+    "implementer": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "reviewer": {"contents": "read", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "release": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "runner": {"actions": "write", "administration": "write", "contents": "read", "metadata": "read"},
+    "harness-reader": {"contents": "read", "metadata": "read"},
+}
 DEFAULT_ROOT = "/etc/multica-git-credential"
 DAEMON_UNIT = "multica-zar-daemon.service"
+DAEMON_PORT_FILE = Path("/srv/multica-zar/.multica/profiles/zar-prod/daemon.port")
 
 log = logging.getLogger("multica-git-credential-broker")
 
@@ -80,7 +89,7 @@ def daemon_pid(unit, pidfile=None, allow_any_daemon=False):
 
 
 def task_agent(pid, unit, pidfile=None, allow_any_daemon=False):
-    """Return (agent_id, task_id) only for a real daemon-spawned task child."""
+    """Return (agent_id, task_id, task_token) only for a real task child."""
     parent = daemon_pid(unit, pidfile, allow_any_daemon)
     current = pid
     for _ in range(64):
@@ -89,16 +98,81 @@ def task_agent(pid, unit, pidfile=None, allow_any_daemon=False):
             env = proc_environ(current)
             agent = env.get("MULTICA_AGENT_ID", "").strip()
             task = env.get("MULTICA_TASK_ID", "").strip()
+            token = env.get("MULTICA_TOKEN", "").strip()
             workspace = env.get("MULTICA_WORKSPACE_ID", "").strip()
-            if not agent or not task:
+            if not agent or not task or not token:
                 return None
             if workspace != EXPECTED_WORKSPACE:
                 return None
-            return agent, task
+            return agent, task, token
         if ppid <= 1:
             return None
         current = ppid
     return None
+
+
+def repo_slug(value):
+    """Normalize the GitHub repository identities used by Git and the daemon."""
+    value = str(value or "").strip()
+    if value.startswith("https://github.com/"):
+        value = value[len("https://github.com/"):]
+    elif value.startswith("git@github.com:"):
+        value = value[len("git@github.com:"):]
+    return value.removesuffix(".git").strip("/")
+
+
+def task_repo_scope(token):
+    """Resolve the active task's project claim from the daemon. Fail closed."""
+    try:
+        port = int(json.loads(DAEMON_PORT_FILE.read_text(encoding="utf-8"))["port"])
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/repo/scope",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            data = json.loads(response.read(65536))
+        if not isinstance(data, dict):
+            return None
+        if data.get("workspace_id") != EXPECTED_WORKSPACE:
+            return None
+        if not isinstance(data.get("task_id"), str) or not isinstance(data.get("repo_urls"), list):
+            return None
+        return data
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def scoped_role(base_role, scope, requested_repo=None):
+    """Pick a repository-scoped token role; never widen beyond the task claim."""
+    allowed = {repo_slug(url) for url in scope.get("repo_urls", []) if repo_slug(url)}
+    if not allowed or not allowed.issubset(ALLOWED_REPOS):
+        raise ValueError("task repository scope is empty or outside the allowlist")
+    if requested_repo is not None:
+        requested_repo = repo_slug(requested_repo)
+        if requested_repo not in allowed:
+            raise ValueError("repository outside task scope")
+    if len(allowed) == 1:
+        repo = next(iter(allowed))
+        for suffix, slug in PROJECT_REPOS.items():
+            if slug == repo:
+                return f"{base_role}-{suffix}"
+    return base_role
+
+
+def role_base(role):
+    for suffix in PROJECT_REPOS:
+        if role.endswith(f"-{suffix}"):
+            return role[: -(len(suffix) + 1)]
+    return role
+
+
+def role_repos(role):
+    if role == "harness-reader":
+        return {HARNESS_REPO}
+    for suffix, repo in PROJECT_REPOS.items():
+        if role.endswith(f"-{suffix}"):
+            return {repo}
+    return ALLOWED_REPOS
 
 
 def _cache_proc_executable(pid, kind):
@@ -227,9 +301,15 @@ def read_role_token(tokens_dir, role):
     data = json.loads((tokens_dir / f"{role}.json").read_text(encoding="utf-8"))
     if not isinstance(data.get("token"), str) or not data["token"].startswith("ghs_"):
         raise ValueError("role token malformed")
-    if set(data.get("repositories", [])) != ALLOWED_REPOS:
+    if set(data.get("repositories", [])) != role_repos(role):
         raise ValueError("role token repository scope mismatch")
-    if role == "cache-reader":
+    base = role_base(role)
+    if base in ROLE_PERMISSIONS and data.get("permissions") != ROLE_PERMISSIONS[base]:
+        raise ValueError("role token permissions mismatch")
+    if role.endswith(tuple(f"-{suffix}" for suffix in PROJECT_REPOS)):
+        if data.get("role") != role:
+            raise ValueError("role token scope label mismatch")
+    elif role == "cache-reader":
         if (data.get("role") != "cache-reader" or
             data.get("permissions") != {"contents": "read", "metadata": "read"}):
             raise ValueError("daemon cache token permissions mismatch")
@@ -243,7 +323,7 @@ def refresh_tokens():
         [sys.executable, REFRESH],
         capture_output=True,
         text=True,
-        timeout=110,
+        timeout=180,
         check=False,
     )
     if result.returncode != 0:
@@ -262,7 +342,7 @@ class Handler(socketserver.StreamRequestHandler):
     server_version = "multica-git-credential-broker/2"
 
     def handle(self):
-        self.request.settimeout(130)
+        self.request.settimeout(200)
         try:
             raw = self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
             pid, uid, _gid = struct.unpack("3i", raw)
@@ -290,12 +370,18 @@ class Handler(socketserver.StreamRequestHandler):
                 # contents; never borrow an implementer/release token.
                 role = "cache-reader"
                 agent_id = "daemon-cache"
+                scope = None
             else:
-                agent_id, task_id = identity
+                agent_id, task_id, task_token = identity
                 roles = json.loads(self.server.roles_file.read_text(encoding="utf-8"))
                 role = roles.get(agent_id)
                 if role not in AGENT_ROLES:
                     self.reply({"ok": False, "error": "agent_not_mapped"})
+                    return
+                scope = task_repo_scope(task_token)
+                if (scope is None or scope.get("task_id") != task_id or
+                        scope.get("agent_id") != agent_id):
+                    self.reply({"ok": False, "error": "no_active_multica_task"})
                     return
             if op == "credential":
                 if request.get("protocol") != "https" or request.get("host") != "github.com":
@@ -305,8 +391,20 @@ class Handler(socketserver.StreamRequestHandler):
                 if repo not in ALLOWED_REPOS:
                     self.reply({"ok": False, "error": "repository_not_allowed"})
                     return
+                if scope is not None:
+                    try:
+                        role = scoped_role(role, scope, repo)
+                    except ValueError:
+                        self.reply({"ok": False, "error": "repository_not_allowed"})
+                        return
                 log.info("credential pid=%s agent=%s role=%s repo=%s", pid, agent_id, role, repo)
             elif op == "token":
+                if scope is not None:
+                    try:
+                        role = scoped_role(role, scope)
+                    except ValueError:
+                        self.reply({"ok": False, "error": "repository_not_allowed"})
+                        return
                 log.info("token pid=%s agent=%s role=%s", pid, agent_id, role)
             else:
                 self.reply({"ok": False, "error": "unsupported_operation"})

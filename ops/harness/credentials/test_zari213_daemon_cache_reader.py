@@ -289,6 +289,124 @@ class BrokerHandlerTests(unittest.TestCase):
         get_token.assert_not_called()
 
 
+class ScopedRoleTests(unittest.TestCase):
+    def test_harness_project_uses_harness_only_role(self):
+        scope = {"repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif.git"]}
+        self.assertEqual(broker.scoped_role("implementer", scope), "implementer-harness")
+        self.assertEqual(
+            broker.scoped_role("reviewer", scope,
+                               "miloszspyrka-code/harness-zar-i-szlif"),
+            "reviewer-harness",
+        )
+
+    def test_product_project_uses_product_only_role(self):
+        scope = {"repo_urls": ["https://github.com/miloszspyrka-code/zar-i-szlif"]}
+        self.assertEqual(broker.scoped_role("implementer", scope, "miloszspyrka-code/zar-i-szlif"),
+                         "implementer-product")
+
+    def test_foreign_repository_denied_even_when_allowlisted(self):
+        scope = {"repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif"]}
+        with self.assertRaisesRegex(ValueError, "outside task scope"):
+            broker.scoped_role("implementer", scope, "miloszspyrka-code/zar-i-szlif")
+
+    def test_empty_or_unknown_scope_fails_closed(self):
+        for scope in ({"repo_urls": []},
+                      {"repo_urls": ["https://github.com/other/repo"]}):
+            with self.subTest(scope=scope):
+                with self.assertRaises(ValueError):
+                    broker.scoped_role("implementer", scope)
+
+    def test_project_token_scope_validation(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            payload = {
+                "token": "ghs_" + "synthetic-do-not-use",
+                "role": "implementer-harness",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "repositories": ["miloszspyrka-code/harness-zar-i-szlif"],
+                "permissions": broker.ROLE_PERMISSIONS["implementer"],
+            }
+            path = pathlib.Path(directory) / "implementer-harness.json"
+            path.write_text(json.dumps(payload))
+            self.assertEqual(
+                broker.read_role_token(pathlib.Path(directory), "implementer-harness")["role"],
+                "implementer-harness",
+            )
+            payload["repositories"] = sorted(broker.ALLOWED_REPOS)
+            path.write_text(json.dumps(payload))
+            with self.assertRaisesRegex(ValueError, "repository scope mismatch"):
+                broker.read_role_token(pathlib.Path(directory), "implementer-harness")
+
+
+class TaskScopeHandlerTests(unittest.TestCase):
+    def make_handler(self, requested_repo):
+        import io
+        import json
+        import struct
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        roles = pathlib.Path(directory.name) / "agent-roles.json"
+        roles.write_text(json.dumps({"agent-1": "implementer"}))
+        h = object.__new__(broker.Handler)
+        h.request = Mock()
+        h.request.getsockopt.return_value = struct.pack("3i", 900, 997, 981)
+        h.rfile = io.BytesIO(json.dumps({
+            "op": "credential", "protocol": "https", "host": "github.com",
+            "path": requested_repo,
+        }).encode() + b"\n")
+        h.server = SimpleNamespace(daemon_unit="unit", pidfile=None,
+                                   allow_any_daemon=False, tokens=pathlib.Path("/no/tokens"),
+                                   roles_file=roles)
+        result = []
+        h.reply = result.append
+        return h, result
+
+    def test_task_token_is_bound_to_daemon_project_scope(self):
+        h, result = self.make_handler("miloszspyrka-code/harness-zar-i-szlif.git")
+        with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
+             patch.object(broker, "task_repo_scope", return_value={
+                 "workspace_id": broker.EXPECTED_WORKSPACE,
+                 "task_id": "task-1",
+                 "agent_id": "agent-1",
+                 "repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif"],
+             }), \
+             patch.object(broker, "token_for_role", return_value={
+                 "token": "synthetic-test-only", "expires_at": "2099-01-01T00:00:00Z"
+             }) as get_token:
+            h.handle()
+        self.assertEqual(result[0]["role"], "implementer-harness")
+        get_token.assert_called_once_with(pathlib.Path("/no/tokens"), "implementer-harness")
+
+    def test_task_cannot_request_foreign_project_repo(self):
+        h, result = self.make_handler("miloszspyrka-code/zar-i-szlif.git")
+        with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
+             patch.object(broker, "task_repo_scope", return_value={
+                 "workspace_id": broker.EXPECTED_WORKSPACE,
+                 "task_id": "task-1",
+                 "agent_id": "agent-1",
+                 "repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif"],
+             }), \
+             patch.object(broker, "token_for_role") as get_token:
+            h.handle()
+        self.assertEqual(result, [{"ok": False, "error": "repository_not_allowed"}])
+        get_token.assert_not_called()
+
+    def test_task_scope_mismatch_denies_credentials(self):
+        h, result = self.make_handler("miloszspyrka-code/harness-zar-i-szlif.git")
+        with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
+             patch.object(broker, "task_repo_scope", return_value=None) as scope, \
+             patch.object(broker, "token_for_role") as get_token:
+            h.handle()
+        self.assertEqual(result, [{"ok": False, "error": "no_active_multica_task"}])
+        scope.assert_called_once_with("tok")
+        get_token.assert_not_called()
+
+
 class CacheTokenScopeTests(unittest.TestCase):
     def test_cache_token_accepts_exact_contents_read(self):
         import json

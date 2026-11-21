@@ -30,6 +30,12 @@ ROLE_PERMISSIONS = {
 }
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
 ROLE_REPOS = {"harness-reader": (REPOS[0],)}
+for _base in ("implementer", "reviewer", "release", "runner"):
+    for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
+                                  ("product", REPOS[1], REPO_NAMES[1])):
+        ROLE_PERMISSIONS[f"{_base}-{_suffix}"] = ROLE_PERMISSIONS[_base]
+        ROLE_REPOS[f"{_base}-{_suffix}"] = (_repo,)
+        ROLE_REPO_NAMES[f"{_base}-{_suffix}"] = (_name,)
 RUNTIME_GID = 981
 
 PHP_TEMPLATE = r'''
