@@ -1,24 +1,26 @@
 # Harness — active services only
 
-This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Every active infrastructure service owns a root folder.
+This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Infrastructure services are maintained in their own source folders.
 
-**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The metadata folders `kod-aplikacji/` and `kod-mcp/` are Coolify project inventories only, **not** alternate product-code locations. The Hermes Gateway receiver and adapter are under review in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
+**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The former `kod-aplikacji/` and `kod-mcp/` inventories, including their legacy Paperclip sources, were removed from this repository; Żar i Szlif product code remains in its separate product repository. The Hermes Gateway receiver and adapter source from [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36) was merged on 2026-11-06 (source merge alone does not establish live rollout), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
 
 ## Hermes adapter documentation (canonical)
 
-The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md), [candidate receiver API contract](integrations/hermes-paperclip/gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md), [Paperclip overlay specification](integrations/hermes-paperclip/paperclip-core-overlay/README.md) and [historical evidence index](integrations/hermes-paperclip/README.md) are maintained on `main`. For work involving Hermes, Paperclip Named MCP, per-run authorization, agent isolation or release, consult this runbook before action and verify the real issue/PR/runtime state. **Docs-only publication does not mean PR #36 code was merged or production is ready.**
+The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md), [candidate receiver API contract](integrations/hermes-paperclip/gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md), [Paperclip overlay specification](integrations/hermes-paperclip/paperclip-core-overlay/README.md) and [historical evidence index](integrations/hermes-paperclip/README.md) are maintained on `main`. For work involving Hermes, Paperclip Named MCP, per-run authorization, agent isolation or release, consult this runbook before action and verify the real issue/PR/runtime state. **PR #36 was merged, but this alone is not proof of runtime installation, authenticated E2E, independent release approval, or production readiness.**
+
+## Agent/operator contract for MCP delivery
+
+**Before changing a service, building an image or declaring a production release**, read [Harness MCP delivery — authoritative operator and agent contract](docs/architecture/HARNESS-DELIVERY-CONTRACT.md). It links the actual root controller, signed per-UUID admission, source range, Coolify readback, rollback and authenticated E2E. The live GitHub SHA and production digest, not RepoWise alone, decide whether a release succeeded. RepoWise agents should retrieve the `harness` repository at the **current** GitHub main SHA.
 
 ## Service folders
 
 - `plasmic/` — Plasmic self-hosted application
 - `plasmic-mcp/` — Plasmic MCP
-- `paperclip-mcp/` — Paperclip MCP
 - `integrations/hermes-paperclip/` — source-pinned Hermes Gateway receiver, Paperclip adapter and [runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md)
 - `comfyui-mcp/` — ComfyUI engine + MCP (independently versioned image builds; verify each active deployment)
 - `mantic-mcp/` — Mantic MCP
 - `emailens-mcp/` — Emailens MCP bridge
 - `playwright-mcp/` — Playwright MCP with idle HTTP proxy
-- `qdrant-mcp/` — Qdrant MCP
 - `supabase-mcp/` — Supabase MCP
 - `ubuntu-mcp/` — Ubuntu MCP
 - `mcp-edge/` — Edge gateway service (retain until deployment retirement is verified)
@@ -36,7 +38,7 @@ Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` 
 
 ## Source ownership and candidate build layout — not a production deployment claim
 
-**Source owner:** `miloszspyrka-code/harness-zar-i-szlif`. `main` is an integration branch, **not** a universal production release ref. Existing infrastructure MCP services include image-only/upstream-pinned Coolify resources. A folder, Dockerfile or green GitHub Action alone does not prove automatic deployment. Promote an exact reviewed image/ref per service only after its own Git-backed canary, health, authenticated MCP test, immutable digest, runtime readback and rollback. Current per-service policies and observed baselines are tracked in [release-lane PR #41](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/41); review/merge and live acceptance remain separate.
+**Source owner:** `miloszspyrka-code/harness-zar-i-szlif`. `main` is an integration branch, **not** a universal production release ref. Existing infrastructure MCP services include image-only/upstream-pinned Coolify resources. A folder, Dockerfile or green GitHub Action alone does not prove automatic deployment. Promote an exact reviewed image/ref per service only after its own Git-backed canary, health, authenticated MCP test, immutable digest, runtime readback and rollback. The source release-lane policy from [PR #41](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/41) was merged on 2026-11-04. The active source contracts live in `docs/RELEASE-POLICY.md`, `ops/release-lanes.json`, and `.github/workflows/release-lanes-policy.yml`; verify current Coolify deployment, immutable digest, independent review, and authenticated E2E separately.
 
 The **unified Paperclip Core + Hermes adapter candidate** deliberately uses the repository-root build context to apply pinned Core review-recovery and Hermes adapter overlays together. This special case does not imply a general rule to deploy other infrastructure MCPs from the repo root. Only a reviewed, tested source SHA may be promoted; the 14-agent migration remains gated by real Wiki/Skills, Hindsight, Opik and rollback validation.
 
@@ -44,13 +46,11 @@ The table below is a **candidate source layout** for independently verified serv
 
 | Service | Candidate build directory | Dockerfile / build source | Watch paths after verified Git binding |
 | --- | --- | --- | --- |
-| Paperclip MCP | `/paperclip-mcp` | Dockerfile `/Dockerfile` | `paperclip-mcp/**` |
 | Plasmic MCP | `/plasmic-mcp` | Dockerfile `/Dockerfile` | `plasmic-mcp/**` |
 | ComfyUI MCP | `/comfyui-mcp` | Dockerfile `/Dockerfile` | `comfyui-mcp/**` |
 | Mantic MCP (HTTP) | `/mantic-mcp` | Dockerfile `/Dockerfile.http` | `mantic-mcp/**` |
 | Emailens MCP | `/emailens-mcp` | Dockerfile `/Dockerfile` | `emailens-mcp/**` |
 | Playwright MCP | `/playwright-mcp` | Dockerfile `/Dockerfile` | `playwright-mcp/**` |
-| Qdrant MCP | `/qdrant-mcp` | Dockerfile `/Dockerfile` | `qdrant-mcp/**` |
 | Supabase MCP | `/supabase-mcp` | Dockerfile `/Dockerfile` | `supabase-mcp/**` |
 | Ubuntu MCP | `/ubuntu-mcp` | Dockerfile `/Dockerfile` | `ubuntu-mcp/**` |
 | MCP edge (temporary) | `/mcp-edge` | Dockerfile `/Dockerfile.coolify` | `mcp-edge/**` |
@@ -58,8 +58,6 @@ The table below is a **candidate source layout** for independently verified serv
 
 Plasmic Studio (non-MCP) uses `/plasmic` and Docker Compose `/docker-compose.yml`.
 The ComfyUI engine (non-MCP) is separately built from `comfyui-mcp/Dockerfile.comfyui`.
-
-**Never deploy the bundled Qdrant MCP local Compose stack into an existing production Qdrant project:** it starts a separate database. Deploy the MCP Dockerfile only and configure `QDRANT_URL` for the existing Qdrant service. Ensure required runtime env/secrets, storage and health checks are validated before switching traffic.
 
 The Coolify GitHub App can now read this private repository (verified 2026-11-02). Enable per-service path-based auto-deploy only after each app passes build + health + MCP tools/list and authorized tools/call tests. The migration-paused watch-path placeholder intentionally blocks auto-deploy until then.
 

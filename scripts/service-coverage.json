@@ -11,10 +11,6 @@
         ".github/workflows/release-lanes-policy.yml"
       ]
     },
-    "_archive": {
-      "mode": "manual_only",
-      "reason": "Archived sources are retained for reference and are not built or released."
-    },
     "cloudflare-ingress": {
       "mode": "manual_only",
       "reason": "Existing ingress is a protected runtime resource; no repository build or promotion workflow is authorized."
@@ -45,17 +41,15 @@
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
+    "github-ops-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/github-ops-mcp-ci.yml"
+      ]
+    },
     "integrations": {
       "mode": "manual_only",
       "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."
-    },
-    "kod-aplikacji": {
-      "mode": "manual_only",
-      "reason": "Coolify project inventory metadata only; product source belongs in zar-i-szlif."
-    },
-    "kod-mcp": {
-      "mode": "manual_only",
-      "reason": "Coolify project inventory metadata only; not deployable source."
     },
     "mantic-mcp": {
       "mode": "manual_only",
@@ -80,7 +74,7 @@
       ],
       "required_test_step": {
         "job": "validate-release-lanes",
-        "name": "Test Multica MCP adapter (required on every PR)",
+        "name": "Test Multica MCP adapter on trusted main",
         "working_directory": "multica-mcp",
         "run": "npm test"
       }
@@ -107,16 +101,6 @@
         ".github/workflows/release-lanes-policy.yml"
       ]
     },
-    "paperclip": {
-      "mode": "manual_only",
-      "reason": "Paperclip Core is upstream/overlay managed and has no repository service CI/release workflow."
-    },
-    "paperclip-mcp": {
-      "mode": "workflow",
-      "workflows": [
-        ".github/workflows/paperclip-mcp-ci.yml"
-      ]
-    },
     "plasmic": {
       "mode": "manual_only",
       "reason": "Multi-container WAB; reviewed component digests and dependency-aware rollback required."
@@ -126,14 +110,6 @@
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
     "playwright-mcp": {
-      "mode": "manual_only",
-      "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
-    },
-    "qdrant": {
-      "mode": "manual_only",
-      "reason": "Upstream database service; not built from this repository."
-    },
-    "qdrant-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },

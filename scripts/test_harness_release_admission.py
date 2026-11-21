@@ -238,16 +238,21 @@ class AdmissionTests(unittest.TestCase):
         foreign["other_resources"][0]["repository"] = "miloszspyrka-code/zar-i-szlif"
         self.deny("service_not_in_harness_repository", manifest=foreign)
 
-    def test_real_repo_manifest_holds_every_mcp_service(self):
+    def test_real_repo_manifest_holds_or_auto_deploys_every_mcp_service(self):
         data = json.loads(Path("ops/release-lanes.json").read_text(encoding="utf-8"))
         entries = {e["id"]: e for e in data["lanes"] + data["other_resources"]}
-        mcp = {"mantic-mcp", "plasmic-mcp", "playwright-mcp", "supabase-mcp", "paperclip-mcp"}
+        auto = {"emailens-mcp", "mantic-mcp", "plasmic-mcp",
+                "playwright-mcp", "supabase-mcp", "ubuntu-mcp"}
+        mcp = auto | {"paperclip-mcp"}
         self.assertTrue(mcp.issubset(entries), "MCP services must stay in the release manifest")
         for service in sorted(mcp):
             entry = entries[service]
-            # Hold-by-default: an explicit "hold" or an absent promotion_state.
-            self.assertIn(entry.get("promotion_state", "hold"), ("hold",),
-                          service + " must stay on hold in ops/release-lanes.json")
+            if service in auto:
+                self.assertEqual(entry.get("promotion_state"), "auto_main", service)
+                self.assertIs(entry.get("auto_deploy_expected"), True, service)
+                continue
+            self.assertEqual(entry.get("promotion_state", "hold"), "hold",
+                             service + " must stay on hold in ops/release-lanes.json")
             with self.assertRaises(gate.Denied) as caught:
                 gate.evaluate(data, request(service=service, coolify_uuid=entry["coolify_uuid"],
                                             coolify_kind=entry["coolify_kind"]),

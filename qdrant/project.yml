@@ -1,5 +1,0 @@
-name: qdrant
-description: Production project for Qdrant data service
-environment: production
-service: qdrant
-data: [qdrant-storage]

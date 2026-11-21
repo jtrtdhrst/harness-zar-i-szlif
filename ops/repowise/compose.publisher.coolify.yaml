@@ -1,0 +1,39 @@
+# ZARI-240: host-specific, source-tracked Coolify staging ONLY (server kzzojscye80ti6pqggm9jomm).
+# Coolify rejects shell interpolation in bind-mount sources. The paths below are
+# approved preflight host mount paths, never secret content. Recheck host mounts
+# before changing server; keep all volumes/path ownership and no public domain.
+# Generic portable compose.publisher.yaml remains for local tests.
+name: repowise-deployment-publisher-coolify-staging
+services:
+  publisher:
+    build:
+      context: ./ops/repowise
+      dockerfile: Dockerfile.publisher
+    image: "repowise-deployment-publisher:coolify-staging"
+    restart: unless-stopped
+    network_mode: host
+    user: "999:999"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    environment:
+      DEPLOY_EVIDENCE_ROOT: /workspace
+      DEPLOY_EVIDENCE_ALLOWED_REPO: product
+      DEPLOY_EVIDENCE_HTTP_HOST: 127.0.0.1
+      DEPLOY_EVIDENCE_HTTP_PORT: "7342"
+      DEPLOY_EVIDENCE_SYNC_LOCK: /run/lock/repowise-github-sync.lock
+      DEPLOY_EVIDENCE_TOKEN_FILE: /run/secrets/repowise-token
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /workspace/product
+    volumes:
+      - "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product:/workspace/product:ro"
+      - "/var/lib/docker/volumes/oea9obpkhzbgkmipxwqmz2hj-repowise-workspace/_data/product/.repowise/episodes:/workspace/product/.repowise/episodes:rw"
+      - "/run/lock/repowise-github-sync.lock:/run/lock/repowise-github-sync.lock:ro"
+      - "/etc/repowise-publisher/product.token:/run/secrets/repowise-token:ro"

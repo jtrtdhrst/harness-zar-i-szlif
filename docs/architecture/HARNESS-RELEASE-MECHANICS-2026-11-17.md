@@ -18,9 +18,9 @@ endpoints separately before asserting production readiness.
 - `scripts/harness_delivery_controller.py` consumes admission before any
   build/promotion/deploy, verifies digest, health and deployed source SHA;
   unsuccessful deployment/readback attempts trigger rollback.
-- The legacy `paperclip-mcp/gitops/paperclip-mcp-auto-release.py` describes a
-  **different service's historical delivery mechanism**. Do not use it as the
-  answer for the current Harness admission contract.
+- The legacy Paperclip MCP auto-release implementation was removed from this
+  repository. Do not use historical Paperclip release logic as the current
+  Harness admission contract.
 - `.github/workflows/release-lanes-policy.yml` covers GitHub CI policy; passing
   CI or merging a PR alone does **not** authorize production promotion.
 
