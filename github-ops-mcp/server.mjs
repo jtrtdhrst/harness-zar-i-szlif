@@ -18,6 +18,18 @@ const TOOLS = [
   ['github_preview_branch_delete', 'Verify branch SHA, protection and merge status; no write', ['repo', 'branch', 'expected_sha']],
   ['github_delete_merged_branch', 'Delete one merged-PR branch with a git protocol expected-SHA lease (CAS)', ['repo', 'branch', 'expected_sha']],
   ['github_cancel_workflow_run', 'Cancel an allowlisted in-flight run at its verified SHA', ['repo', 'run_id', 'expected_sha']],
+  ['github_get_file', 'Read exact repo source file and its Git blob SHA', ['repo', 'path']],
+  ['github_get_branch', 'Read branch SHA and protection state', ['repo', 'branch']],
+  ['github_list_branches', 'List first 100 branches with truncation signal', ['repo']],
+  ['github_list_pull_requests', 'List first 50 PRs including current source SHA', ['repo']],
+  ['github_get_pull_request', 'Read PR head/base SHAs and merge state', ['repo', 'pr_number']],
+  ['github_get_pr_files', 'Read PR changed files and bounded diff patches', ['repo', 'pr_number']],
+  ['github_get_check_runs', 'Read exact-SHA CI checks and conclusions', ['repo', 'sha']],
+  ['github_get_workflow_runs', 'Read exact-SHA GitHub Actions runs', ['repo', 'sha']],
+  ['github_create_branch', 'Create feature branch from verified current main SHA (write gate)', ['repo', 'branch', 'expected_sha']],
+  ['github_commit_file', 'Commit one file to verified unprotected branch with blob CAS (write gate)', ['repo', 'branch', 'path', 'content', 'commit_message', 'expected_sha']],
+  ['github_create_pull_request', 'Open PR against main from verified feature branch SHA (write gate)', ['repo', 'head', 'expected_sha', 'title']],
+  ['github_merge_pull_request', 'Merge SHA-verified PR after exact operator grant and GitHub native rules (write gate)', ['repo', 'pr_number', 'expected_sha']],
 ];
 
 // Branches a live Coolify application tracks. Deletion is refused for any of
@@ -155,6 +167,26 @@ function assertRepo(repo){
   if(!REPOS.has(canonical))throw error('REPO_DENIED','Repository is not explicitly allowlisted');
   return canonical;
 }
+function assertFilePath(path){
+  if(typeof path!=='string' || !/^[A-Za-z0-9._-][A-Za-z0-9._\/-]{0,239}$/.test(path) ||
+     path.includes('..') || path.includes('//') || path.endsWith('/') ||
+     path.split('/').some(s=>s==='.' || s==='..')) throw error('PATH_DENIED','Unsafe repository file path');
+  return path;
+}
+function assertPRNumber(n){
+  if(!Number.isSafeInteger(n) || n<=0)throw error('PR_INVALID','Positive PR number required');
+  return n;
+}
+function assertReadRef(ref){
+  if(ref===undefined || ref===null || ref==='')return 'main';
+  if(ref==='main')return ref;
+  return assertBranch(ref);
+}
+function assertMessage(value,field,limit){
+  if(typeof value!=='string' || !value.trim() || value.length>limit || /[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]/.test(value))
+    throw error('TEXT_INVALID',field+' must be nonempty bounded text');
+  return value;
+}
 function assertSHA(sha){if(typeof sha!=='string'||!SHA.test(sha))throw error('SHA_INVALID','Exact 40-character SHA required');return sha;}
 function assertBranch(branch){
   if(typeof branch!=='string'||!(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,120}$/).test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('.lock') || branch==='ZARI-155' || /(^|\/)(main|master|ci-approved|release|production|prod|hold|archive|staging|hotfix|deploy|operator)(\/|$)/i.test(branch))throw error('BRANCH_DENIED','Unsafe or protected branch name');
@@ -220,6 +252,16 @@ export function makeServer(config={}) {
   const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
   const gitBin=config.gitBin??'git';
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
+  const mergeAllowlist=new Set(config.mergeAllowlist??(process.env.GITHUB_OPS_MERGE_ALLOWLIST??'').split(',').map(x=>x.trim()).filter(Boolean));
+  const ensureWrite=()=>{
+    if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
+    if(!writerTokenFile&&!injectedWriterToken)throw error('WRITE_CREDENTIAL_MISSING','Separate rotating writer grant required');
+  };
+  const ensureBranchWritable=branch=>{
+    const b=assertBranch(branch);
+    if(pinnedBranches.has(b))throw error('BRANCH_PINNED','Deployed branch is read-only');
+    return b;
+  };
   const api=githubClient({token:githubToken,getToken:tokenFile?()=>scopedTokenFromFile(tokenFile):null,fetchImpl:config.fetchImpl});
   const readWriterToken=async()=>{
     if(writerTokenFile)return scopedTokenFromFile(writerTokenFile,'github-ops-writer');
@@ -308,6 +350,136 @@ export function makeServer(config={}) {
       if(!Array.isArray(list))throw error('DEPLOYMENTS_INVALID','GitHub deployment listing returned invalid data');
       return {repo,sha,count:list.length,deployments:list};
     }
+
+    if(name==='github_get_file'){
+      const path=assertFilePath(p.path);
+      const branch=assertReadRef(p.branch);
+      const item=await api('GET',`${root}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`);
+      if(item.type!=='file' || typeof item.content!=='string' || item.encoding!=='base64' || !SHA.test(item.sha||''))
+        throw error('FILE_INVALID','GitHub returned no supported text file');
+      if(item.size>131072)throw error('FILE_TOO_LARGE','Only text files <=128 KiB are supported');
+      const raw=Buffer.from(item.content.replace(/\\s/g,''),'base64');
+      if(raw.includes(0) || raw.toString('utf8').includes('\uFFFD'))throw error('FILE_BINARY','Binary files are not returned as text');
+      return {repo,path,branch,sha:item.sha,size:item.size,content:raw.toString('utf8')};
+    }
+    if(name==='github_get_branch'){
+      const branch=assertReadRef(p.branch);
+      const b=await api('GET',`${root}/branches/${branchQ(branch)}`);
+      return {repo,branch,sha:b.commit?.sha,protected:Boolean(b.protected)};
+    }
+    if(name==='github_list_branches'){
+      const rows=await api('GET',`${root}/branches?per_page=100`);
+      if(!Array.isArray(rows))throw error('BRANCHES_INVALID','GitHub branch list invalid');
+      return {repo,count:rows.length,truncated:rows.length===100,
+        branches:rows.map(b=>({name:b.name,sha:b.commit?.sha,protected:Boolean(b.protected)}))};
+    }
+    if(name==='github_list_pull_requests'){
+      const state=p.state??'open';
+      if(!['open','closed','all'].includes(state))throw error('STATE_INVALID','PR state invalid');
+      const rows=await api('GET',`${root}/pulls?state=${state}&per_page=50`);
+      if(!Array.isArray(rows))throw error('PR_LIST_INVALID','GitHub PR list invalid');
+      return {repo,state,count:rows.length,truncated:rows.length===50,
+        pull_requests:rows.map(pr=>({number:pr.number,title:pr.title,state:pr.state,draft:Boolean(pr.draft),
+          head:pr.head?.ref,head_sha:pr.head?.sha,base:pr.base?.ref,merged:Boolean(pr.merged_at),url:pr.html_url}))};
+    }
+    if(name==='github_get_pull_request'){
+      const number=assertPRNumber(p.pr_number);
+      const pr=await api('GET',`${root}/pulls/${number}`);
+      if(p.expected_sha && pr.head?.sha?.toLowerCase()!==assertSHA(p.expected_sha).toLowerCase())
+        throw error('STALE_SHA','PR head changed');
+      return {repo,number,title:pr.title,body:pr.body??'',state:pr.state,draft:Boolean(pr.draft),
+        head:pr.head?.ref,head_sha:pr.head?.sha,base:pr.base?.ref,base_sha:pr.base?.sha,
+        mergeable:pr.mergeable,mergeable_state:pr.mergeable_state,merged:Boolean(pr.merged),
+        merge_commit_sha:pr.merge_commit_sha,url:pr.html_url};
+    }
+    if(name==='github_get_pr_files'){
+      const number=assertPRNumber(p.pr_number);
+      const list=await api('GET',`${root}/pulls/${number}/files?per_page=100`);
+      if(!Array.isArray(list))throw error('PR_FILES_INVALID','GitHub PR files invalid');
+      return {repo,number,count:list.length,truncated:list.length===100,
+        files:list.map(f=>({path:f.filename,status:f.status,additions:f.additions,deletions:f.deletions,
+          blob_sha:f.sha,patch:typeof f.patch==='string'?f.patch.slice(0,5000):null}))};
+    }
+    if(name==='github_get_check_runs'){
+      const sha=assertSHA(p.sha).toLowerCase();
+      const response=await api('GET',`${root}/commits/${sha}/check-runs?per_page=100`);
+      if(!Array.isArray(response.check_runs))throw error('CHECKS_INVALID','GitHub checks invalid');
+      return {repo,sha,count:response.total_count,truncated:response.total_count>response.check_runs.length,
+        checks:response.check_runs.map(x=>({name:x.name,status:x.status,conclusion:x.conclusion,
+          app:x.app?.slug,url:x.details_url}))};
+    }
+    if(name==='github_get_workflow_runs'){
+      const sha=assertSHA(p.sha).toLowerCase();
+      const response=await api('GET',`${root}/actions/runs?head_sha=${sha}&per_page=30`);
+      if(!Array.isArray(response.workflow_runs))throw error('RUNS_INVALID','GitHub runs invalid');
+      return {repo,sha,count:response.total_count,truncated:response.total_count>response.workflow_runs.length,
+        runs:response.workflow_runs.map(x=>({id:x.id,name:x.name,head_sha:x.head_sha,status:x.status,
+          conclusion:x.conclusion,url:x.html_url,run_attempt:x.run_attempt}))};
+    }
+    if(name==='github_create_branch'){
+      const branch=ensureBranchWritable(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      ensureWrite();
+      const main=await api('GET',`${root}/branches/main`);
+      if(main.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Main moved before branch creation');
+      await writerApi('POST',`${root}/git/refs`,{ref:`refs/heads/${branch}`,sha});
+      const current=await api('GET',`${root}/branches/${branchQ(branch)}`);
+      if(current.commit?.sha?.toLowerCase()!==sha)throw error('READBACK_MISMATCH','Created ref does not match exact SHA');
+      return {created:true,repo,branch,sha};
+    }
+    if(name==='github_commit_file'){
+      const branch=ensureBranchWritable(p.branch),path=assertFilePath(p.path);
+      const sha=assertSHA(p.expected_sha).toLowerCase();
+      const content=assertMessage(p.content,'content',131072);
+      const message=assertMessage(p.commit_message,'commit_message',256);
+      ensureWrite();
+      const prior=await api('GET',`${root}/branches/${branchQ(branch)}`);
+      if(prior.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved before file commit');
+      let existing=null;
+      try{existing=await api('GET',`${root}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`);}
+      catch(e){if(e.code!=='GITHUB_HTTP_404')throw e;}
+      if(existing && (existing.type!=='file'||!SHA.test(existing.sha||'')))throw error('FILE_INVALID','Existing target is not a regular file');
+      if(existing && (!p.blob_sha||assertSHA(p.blob_sha).toLowerCase()!==existing.sha.toLowerCase()))
+        throw error('BLOB_SHA_REQUIRED','Exact current blob SHA required to update an existing file');
+      if(!existing && p.blob_sha)throw error('FILE_CHANGED','Expected blob is missing');
+      const payload={message,content:Buffer.from(content,'utf8').toString('base64'),branch,
+        ...(existing?{sha:existing.sha}:{})};
+      const write=await writerApi('PUT',`${root}/contents/${path.split('/').map(encodeURIComponent).join('/')}`,payload);
+      if(!SHA.test(write.commit?.sha||'')||!SHA.test(write.content?.sha||''))
+        throw error('WRITE_READBACK_INVALID','GitHub did not return committed source SHA and blob');
+      return {committed:true,repo,branch,path,commit_sha:write.commit.sha,blob_sha:write.content.sha,created:!existing};
+    }
+    if(name==='github_create_pull_request'){
+      const head=ensureBranchWritable(p.head),sha=assertSHA(p.expected_sha).toLowerCase();
+      if((p.base??'main')!=='main')throw error('BASE_DENIED','Only PRs into main supported');
+      const title=assertMessage(p.title,'title',200);
+      const body=p.body??'';
+      if(typeof body!=='string'||body.length>30000)throw error('TEXT_INVALID','PR body too long');
+      ensureWrite();
+      const b=await api('GET',`${root}/branches/${branchQ(head)}`);
+      if(b.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','PR head branch moved');
+      if((await listPulls(root,'open')).some(pr=>pr.head?.ref===head&&pr.head?.repo?.full_name===repo&&pr.base?.ref==='main'))
+        throw error('PR_EXISTS','Existing open PR for this branch; reuse it');
+      const created=await writerApi('POST',`${root}/pulls`,{title,head,base:'main',body,draft:false});
+      if(!Number.isSafeInteger(created.number) || created.head?.sha?.toLowerCase()!==sha)
+        throw error('PR_READBACK_MISMATCH','Created PR does not match exact branch SHA');
+      return {created:true,repo,number:created.number,head,head_sha:sha,base:'main',url:created.html_url};
+    }
+    if(name==='github_merge_pull_request'){
+      const number=assertPRNumber(p.pr_number),sha=assertSHA(p.expected_sha).toLowerCase();
+      const method=p.merge_method??'squash';
+      if(!['squash','merge','rebase'].includes(method))throw error('MERGE_METHOD_INVALID','Unsupported merge method');
+      ensureWrite();
+      if(!mergeAllowlist.has(`${repo}:${number}@${sha}`))throw error('MERGE_NOT_APPROVED','Exact PR and SHA must be operator-authorized');
+      const pr=await api('GET',`${root}/pulls/${number}`);
+      if(pr.state!=='open'||pr.base?.ref!=='main'||pr.head?.sha?.toLowerCase()!==sha)
+        throw error('STALE_SHA','PR missing or current head/base has moved');
+      const result=await writerApi('PUT',`${root}/pulls/${number}/merge`,{sha,merge_method:method});
+      if(result.merged!==true||!SHA.test(result.sha||''))throw error('MERGE_UNCONFIRMED','GitHub did not confirm merge');
+      const readback=await api('GET',`${root}/pulls/${number}`);
+      if(!readback.merged||readback.merge_commit_sha?.toLowerCase()!==result.sha.toLowerCase())
+        throw error('MERGE_READBACK_MISMATCH','Merged PR readback does not match GitHub merge result');
+      return {merged:true,repo,number,head_sha:sha,merge_sha:result.sha,method};
+    }
     if(name==='github_preview_branch_delete'){
       const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
@@ -375,8 +547,8 @@ export function makeServer(config={}) {
       const v=JSON.parse(raw),id=v.id;messageId=id??null;
       if(v.jsonrpc!=='2.0'||typeof v.method!=='string')throw error('INVALID_REQUEST','Invalid JSON-RPC');
       if(v.method==='notifications/initialized')return json(202,{});
-      if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.1.0'}}});
-      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
+      if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.2.0'}}});
+      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'},path:{type:'string'},content:{type:'string'},blob_sha:{type:'string',pattern:SHA.source},commit_message:{type:'string'},head:{type:'string'},base:{type:'string'},title:{type:'string'},body:{type:'string'},state:{type:'string',enum:['open','closed','all']},pr_number:{type:'integer'},merge_method:{type:'string',enum:['squash','merge','rebase']}},required,additionalProperties:false}}))}});
       if(v.method==='tools/call'){
         const name=v.params?.name;
         if(!TOOLS.some(x=>x[0]===name))
