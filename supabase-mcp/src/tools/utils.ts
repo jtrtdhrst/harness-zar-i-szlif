@@ -32,29 +32,6 @@ export function redactDatabaseUrl(url: string): string {
 }
 
 /**
- * Sanitizes an error for safe logging by extracting only safe properties.
- * Removes stack traces and sensitive context while preserving useful debug info.
- *
- * @param error - The error object to sanitize
- * @returns A safe string representation of the error
- */
-export function sanitizeErrorForLogging(error: unknown): string {
-    if (error instanceof Error) {
-        // Include only message and code (common in DB errors)
-        const code = (error as { code?: string }).code;
-        return code ? `[${code}] ${error.message}` : error.message;
-    }
-    if (typeof error === 'object' && error !== null) {
-        const errorObj = error as { message?: unknown; code?: unknown };
-        if (typeof errorObj.message === 'string') {
-            const code = typeof errorObj.code === 'string' ? errorObj.code : undefined;
-            return code ? `[${code}] ${errorObj.message}` : errorObj.message;
-        }
-    }
-    return String(error);
-}
-
-/**
  * Type guard to check if a SQL execution result is an error response.
  */
 export function isSqlErrorResponse(result: SqlExecutionResult): result is SqlErrorResponse {
