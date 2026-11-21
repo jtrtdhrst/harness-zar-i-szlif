@@ -884,13 +884,15 @@ class MainWiringTests(unittest.TestCase):
     def test_unclassified_build_denial_explicitly_reports_incomplete(self):
         host = FakeHost()
         err = io.StringIO()
-        with patch.object(delivery, "Host", return_value=host), \
+        with tempfile.TemporaryDirectory() as repo, \
+             patch.object(delivery, "Host", return_value=host), \
              patch.object(delivery, "load_gate_file", return_value=manifest()), \
              patch.object(delivery, "git_changed_paths", return_value=[
                  "mantic-mcp/src/server.ts", "rogue-service/Dockerfile"]), \
              patch.object(sys, "stderr", err):
+            (Path(repo) / "mantic-mcp").mkdir()
             code = delivery.main([
-                "--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
+                "--mode", "deploy", "--repo", repo, "--base-sha", "0" * 40,
                 "--source-sha", SOURCE])
         self.assertEqual(code, 1)
         response = json.loads(err.getvalue())

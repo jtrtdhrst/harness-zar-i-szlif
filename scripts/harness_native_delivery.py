@@ -780,6 +780,39 @@ def sync_checkout_to_main(repo):
     return source_sha
 
 
+CI_TOKEN = Path("/etc/multica-git-credential/roles/runner.json")
+CI_WORKFLOW = "MCP OCI images - trusted source builds"
+
+
+def ci_run_success(source_sha):
+    """Require the trusted-main OCI workflow to be green for this exact SHA.
+
+    The timer is the last line of defence: a red or missing CI run must never
+    become a production deployment just because the merge landed on main.
+    """
+    try:
+        payload = json.loads(CI_TOKEN.read_text(encoding="utf-8"))
+        token = payload.get("token")
+    except (OSError, ValueError, TypeError):
+        raise Denied("ci_token_unavailable") from None
+    if not isinstance(token, str) or not token:
+        raise Denied("ci_token_unavailable")
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/actions/runs?head_sha={source_sha}&per_page=50",
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.load(response)
+    except Exception:
+        raise Denied("ci_status_unavailable") from None
+    return any(isinstance(run, dict)
+               and run.get("name") == CI_WORKFLOW
+               and run.get("conclusion") == "success"
+               for run in data.get("workflow_runs", []))
+
+
 def deployed_source_sha(host, transport, repo, service, uuid):
     """Resolve the source SHA actually running for one service.
 
@@ -890,6 +923,13 @@ def auto_main_cycle(args, manifest, host):
         if args.mode == "plan":
             continue
         try:
+            if not ci_run_success(source_sha):
+                item.update(decision="ci_not_green")
+                continue
+        except Denied as exc:
+            item.update(decision="ci_check_failed", reason=str(exc))
+            continue
+        try:
             _, digest = prepare(host, args.repo, service, source_sha)
         except Exception as exc:
             item.update(decision="build_failed", reason=type(exc).__name__)
@@ -900,16 +940,21 @@ def auto_main_cycle(args, manifest, host):
         changed_paths.extend(paths)
         item.update(decision="built", image_digest=digest)
     report = {"mode": args.mode, "source_sha": source_sha, "services": plan}
-    failed = [item["service"] for item in plan
-              if item["decision"] in ("build_failed", "denied",
-                                      "unsupported_kind", "invalid_uuid")]
-    if args.mode == "plan" or not pre:
-        report["result"] = ("plan" if args.mode == "plan"
-                            else "release_failed" if failed else "no_service_change")
-        if failed:
-            report["failed_services"] = failed
+    # A skipped/failed admission or build must never look like a clean no-op.
+    # In a mixed batch, keep the successful promotion evidence but fail the
+    # cycle so the failed service is retried and monitoring remains truthful.
+    failures = any(item.get("decision") in {
+        "denied", "invalid_uuid", "unsupported_kind", "build_failed",
+        "ci_not_green", "ci_check_failed"
+    } for item in plan)
+    if args.mode == "plan":
+        report["result"] = "plan"
         print(json.dumps(report, sort_keys=True))
-        return 1 if failed and args.mode != "plan" else 0
+        return 0
+    if not pre:
+        report["result"] = "build_failed" if failures else "no_service_change"
+        print(json.dumps(report, sort_keys=True))
+        return 1 if failures else 0
     promotion = run_promotion(
         manifest, changed_paths, lambda service: {}, transport,
         state_path=str(Path(args.state_dir) / "delivery.json"),
@@ -918,15 +963,12 @@ def auto_main_cycle(args, manifest, host):
     report["promotion"] = promotion
     good = {"promoted", "already_delivered"}
     decisions = promotion.get("decisions", [])
-    ok = (len(decisions) == len(pre)
+    ok = (len(decisions) == len(pre) and not failures
           and all(decision.get("decision") in good for decision in decisions)
           and promotion.get("result") != "denied")
-    report["result"] = ("ok" if ok and not failed
-                        else "partial_release_failed" if failed else "denied")
-    if failed:
-        report["failed_services"] = failed
+    report["result"] = "ok" if ok else "partial_failure" if failures else "denied"
     print(json.dumps(report, sort_keys=True))
-    return 0 if ok and not failed else 1
+    return 0 if ok else 1
 
 
 def build_parser():
