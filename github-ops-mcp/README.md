@@ -26,6 +26,32 @@ Deletion additionally needs the `git` binary in the image (the Dockerfile instal
 
 Use a Coolify **private, manual** staging application with `base_directory=/github-ops-mcp`, `Dockerfile` build and `is_auto_deploy_enabled=false`. No FQDN, no public port, no production secrets in build args. Do not turn on writes/deletion in a test deployment. Register its private MCP URL in Multica only after independent authorization, a supported secure secret injection path, and test of the exact target runtime's network reachability.
 
+
+### Host-rotated read-only GitHub App token (source candidate)
+
+To avoid an expiring static Coolify \`GITHUB_TOKEN\`, the service can load a
+host-managed token through \`GITHUB_OPS_TOKEN_FILE\` (absolute path). The
+running Node process reads it for every GitHub request and health check;
+no process restart is needed when the host replaces the file atomically.
+
+The JSON grant must have app_id 5398752, installation_id 173456397,
+role \`githubops-reader\`, exactly the two allowlisted repositories,
+permissions exactly \`{"contents":"read","metadata":"read"}\`, and a
+fresh \`expires_at\` (more than 2 minutes remaining). The file must be
+mode 0600 or stricter and readable by the Node runtime UID. Other apps,
+repos, excessive permissions, expired/malformed files or world/group
+readability fail closed and \`/health.ready=false\`. Tests use only fake
+tokens; no real secrets appear in the repository.
+
+**Not an authorization to deploy:** an approved, dedicated read-only
+mount and an existing root-controlled 15-minute GitHub App refresher
+must be connected by the authorized VPS operator. Never mount the
+whole \`/etc/multica-git-credential/roles\` directory (it contains
+higher-privilege agent credentials), copy the App private key, or
+enable \`GITHUB_OPS_WRITES_ENABLED\`. Source-only changes do not
+satisfy ZARI-213 isolation, exact-SHA review/CI, live provider E2E or
+ZARI-240 production release.
+
 ## MCP verification
 
 - `initialize` then `tools/list` (authenticated): eight tools.
