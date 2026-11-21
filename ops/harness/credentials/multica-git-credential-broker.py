@@ -19,6 +19,7 @@ import struct
 import subprocess
 import sys
 import urllib.request
+import stat
 from pathlib import Path
 
 HARNESS_REPO = "jtrtdhrst/harness-zar-i-szlif"
@@ -29,7 +30,8 @@ EXPECTED_WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
 RUNTIME_UID = 997
 RUNTIME_GID = 981
 REFRESH = "/usr/local/libexec/multica-zar-github-app-refresh.py"
-AGENT_ROLES = {"implementer", "reviewer", "release", "runner"}
+# No runner grants: administration/actions write is not a credential-broker role.
+AGENT_ROLES = {"implementer", "reviewer", "release"}
 ROLE_PERMISSIONS = {
     "implementer": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
     "reviewer": {"contents": "read", "pull_requests": "write", "checks": "read", "metadata": "read"},
@@ -140,21 +142,50 @@ def repo_slug(value):
     return value.removesuffix(".git").strip("/")
 
 
-def task_repo_scope(token):
-    """Resolve the active task's project claim from the daemon. Fail closed."""
+class _DenyScopeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward a task bearer to an alternate endpoint.
+        return None
+
+
+def _trusted_daemon_port():
+    """Read a pinned runtime-owned file without following symlinks or races."""
+    fd = os.open(DAEMON_PORT_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        port = int(json.loads(DAEMON_PORT_FILE.read_text(encoding="utf-8"))["port"])
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{port}/repo/scope",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        with urllib.request.urlopen(request, timeout=3) as response:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != RUNTIME_UID or
+                st.st_gid != RUNTIME_GID or stat.S_IMODE(st.st_mode) != 0o600 or
+                st.st_nlink != 1):
+            raise ValueError("daemon port file identity mismatch")
+        raw = os.read(fd, 1024)
+        port = int(json.loads(raw)["port"])
+        if not 1 <= port <= 65535:
+            raise ValueError("invalid daemon port")
+        return port
+    finally:
+        os.close(fd)
+
+
+def task_repo_scope(token):
+    """Resolve task project from pinned local daemon without proxy/redirect."""
+    try:
+        port = _trusted_daemon_port()
+        url = f"http://127.0.0.1:{port}/repo/scope"
+        request = urllib.request.Request(url,
+            headers={"Authorization": f"Bearer {token}"})
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _DenyScopeRedirect())
+        with opener.open(request, timeout=3) as response:
+            if response.geturl() != url or response.status != 200:
+                return None
             data = json.loads(response.read(65536))
         if not isinstance(data, dict):
             return None
         if data.get("workspace_id") != EXPECTED_WORKSPACE:
             return None
         if not isinstance(data.get("task_id"), str) or not isinstance(data.get("repo_urls"), list):
+            return None
+        if not data.get("project_id"):
             return None
         return data
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
