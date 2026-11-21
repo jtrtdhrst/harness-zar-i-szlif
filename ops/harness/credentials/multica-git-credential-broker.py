@@ -143,7 +143,7 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
     daemon = daemon_pid(unit, pidfile, allow_any_daemon)
     chain = []
     current = pid
-    for _ in range(4):
+    for _ in range(5):
         try:
             status = proc_status(current)
             parent = int(status.get("PPid", "0"))
@@ -171,17 +171,33 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
         git_pid, _, git_argv = chain[2]
         if helper_parent != remote_pid or remote_parent != git_pid:
             return False
-    elif len(chain) == 4 and chain[3][1] == daemon:
+    elif len(chain) in {4, 5} and chain[-1][1] == daemon:
         helper_pid, helper_parent, helper_argv = chain[0]
         shell_pid, shell_parent, shell_argv = chain[1]
         remote_pid, remote_parent, remote_argv = chain[2]
-        git_pid, _, git_argv = chain[3]
         exact = helper + " get"
         if (helper_parent != shell_pid or shell_parent != remote_pid or
-            remote_parent != git_pid or
             shell_argv != ["/bin/sh", "-c", exact, exact] or
             not _cache_proc_executable(shell_pid, "shell")):
             return False
+        if len(chain) == 4:
+            git_pid, _, git_argv = chain[3]
+            if remote_parent != git_pid:
+                return False
+        else:
+            # Git may insert its internal `git remote-https` dispatcher between
+            # git-remote-http(s) and the original read-only fetch. Accept only
+            # that exact executable/argv relationship; arbitrary extra ancestors
+            # remain denied.
+            dispatcher_pid, dispatcher_parent, dispatcher_argv = chain[3]
+            git_pid, _, git_argv = chain[4]
+            if (remote_parent != dispatcher_pid or dispatcher_parent != git_pid or
+                len(dispatcher_argv) != 4 or
+                Path(dispatcher_argv[0]).name != "git" or
+                dispatcher_argv[1] not in {"remote-http", "remote-https"} or
+                dispatcher_argv[2:] != remote_argv[1:] or
+                not _cache_proc_executable(dispatcher_pid, "git")):
+                return False
     else:
         return False
     helper = "/usr/local/libexec/multica-zar-git-credential"
