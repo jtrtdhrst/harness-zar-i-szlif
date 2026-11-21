@@ -32,32 +32,44 @@ const DEFAULT_PINNED_BRANCHES = ['feat/github-ops-mcp-20261120'];
 // server rejects it unless the ref still points there. `git push
 // --force-with-lease=<ref>:<expect>` sends exactly that oid as the lease.
 export function casDeleteArgs({ remote, branch, expectedSha }) {
-  if (typeof remote !== 'string' || !/^(https:\/\/|file:\/\/\/)/.test(remote)) throw error('REMOTE_INVALID', 'Only literal https or file remotes are accepted');
+  // Production pushes only to the literal GitHub origin; local file remotes
+  // are permitted for isolated tests. Never rely on rewritten Git aliases.
+  if (typeof remote !== 'string' || !(/^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git|file:\/\/\/.+)$/).test(remote))
+    throw error('REMOTE_INVALID', 'Only canonical GitHub HTTPS or local test file remotes are accepted');
   return ['push', '--porcelain', `--force-with-lease=refs/heads/${branch}:${expectedSha}`, remote, `:refs/heads/${branch}`];
 }
 
 // The token never enters argv (visible in /proc): git gets it through an
 // environment variable read by an inline credential helper.
-function gitEnv(pushToken) {
+function gitEnv(pushToken, isolatedHome, remote) {
+  // All Git config inherited from the service account is untrusted: notably
+  // url.*.insteadOf can silently rewrite github.com to a credential sink.
+  const expectedPath=remote.startsWith('https://github.com/')
+    ? new URL(remote).pathname.slice(1) : '';
   return {
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-    HOME: process.env.HOME ?? '/tmp',
-    GIT_TERMINAL_PROMPT: '0',
+    HOME: isolatedHome,
+    XDG_CONFIG_HOME: isolatedHome,
     GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_COUNT: '3',
     GIT_CONFIG_KEY_0: 'credential.helper',
     GIT_CONFIG_VALUE_0: '',
-    GIT_CONFIG_KEY_1: 'credential.helper',
-    GIT_CONFIG_VALUE_1: '!f() { echo "username=x-access-token"; echo "password=${GITHUB_OPS_PUSH_TOKEN}"; }; f',
+    GIT_CONFIG_KEY_1: 'credential.useHttpPath',
+    GIT_CONFIG_VALUE_1: 'true',
+    GIT_CONFIG_KEY_2: 'credential.helper',
+    // The helper is denied for any other host, protocol or repository path.
+    GIT_CONFIG_VALUE_2: '!f() { protocol=; host=; path=; while IFS= read -r line; do case "$line" in protocol=*) protocol=${line#protocol=} ;; host=*) host=${line#host=} ;; path=*) path=${line#path=} ;; esac; done; [ "$protocol" = https ] && [ "$host" = github.com ] && [ "$path" = "$GITHUB_OPS_EXPECTED_PATH" ] || exit 1; printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_OPS_PUSH_TOKEN"; }; f',
+    GITHUB_OPS_EXPECTED_PATH: expectedPath,
     GITHUB_OPS_PUSH_TOKEN: pushToken,
   };
 }
-
 export async function deleteRefWithLease({ remote, branch, expectedSha, pushToken, gitBin = 'git', timeoutMs = 20000 }) {
   const args = casDeleteArgs({ remote, branch, expectedSha });
   const cwd = mkdtempSync(join(tmpdir(), 'ghops-'));
   const run = gitArgs => new Promise(resolve => {
-    const child = spawn(gitBin, gitArgs, { cwd, env: gitEnv(pushToken), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(gitBin, gitArgs, { cwd, env: gitEnv(pushToken, cwd, remote), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '', settled = false;
     const finish = value => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
     const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish({ code: -1, out, err: 'timeout' }); }, timeoutMs);
