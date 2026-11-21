@@ -27,9 +27,14 @@ tests only:
   bearer token as `/repo/checkout` and exposes no secret.
 - the broker uses that claim to select a project-scoped token role and denies a
   repository outside the task's project even when it is on the workspace union.
-- the refresh service mints `*-harness` and `*-product` roles in addition to
-  the existing broad roles, so an implementer/reviewer/release/runner token can
-  be restricted to exactly one repository.
+- the refresh service mints `*-harness` and `*-product` grants only for
+  implementer, reviewer and release. Privileged runner grants remain outside
+  the task credential broker and are not minted as scoped agent grants.
+- `/repo/checkout` fails closed when the active task lacks an authenticated
+  `ProjectID` or its requested repo is not in that task's `RepoURLs`.
+- the local broker resolves scope using a loopback-only no-proxy/no-redirect
+  HTTP client and verifies its daemon port file identity before sending any
+  task bearer; tests cover spoofed proxy, redirect, symlink and permissions.
 
 ## Verification (offline)
 Baseline: `zari213-pr163-exact-95a7-verify` (the source of the running
