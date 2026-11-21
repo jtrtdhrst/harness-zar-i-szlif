@@ -108,6 +108,7 @@ def _cache_proc_executable(pid, kind):
                    "/usr/bin/python3.12", "/usr/bin/python3.13",
                    "/usr/bin/python3.14", "/usr/bin/python3.15"},
         "git": {"/usr/bin/git", "/usr/lib/git-core/git"},
+        "git-core": {"/usr/lib/git-core/git"},
         "remote": {"/usr/lib/git-core/git-remote-https",
                    "/usr/lib/git-core/git-remote-http"},
         "shell": {"/bin/sh", "/bin/dash", "/usr/bin/dash"},
@@ -143,7 +144,7 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
     daemon = daemon_pid(unit, pidfile, allow_any_daemon)
     chain = []
     current = pid
-    for _ in range(4):
+    for _ in range(5):
         try:
             status = proc_status(current)
             parent = int(status.get("PPid", "0"))
@@ -181,6 +182,25 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
             remote_parent != git_pid or
             shell_argv != ["/bin/sh", "-c", exact, exact] or
             not _cache_proc_executable(shell_pid, "shell")):
+            return False
+    elif len(chain) == 5 and chain[4][1] == daemon:
+        helper_pid, helper_parent, helper_argv = chain[0]
+        shell_pid, shell_parent, shell_argv = chain[1]
+        remote_pid, remote_parent, remote_argv = chain[2]
+        transport_pid, transport_parent, transport_argv = chain[3]
+        git_pid, _, git_argv = chain[4]
+        exact = helper + " get"
+        if (helper_parent != shell_pid or shell_parent != remote_pid or
+            remote_parent != transport_pid or transport_parent != git_pid or
+            shell_argv != ["/bin/sh", "-c", exact, exact] or
+            not _cache_proc_executable(shell_pid, "shell")):
+            return False
+        if (len(transport_argv) != 4 or
+            Path(transport_argv[0]).name != "git" or
+            transport_argv[1] not in {"remote-http", "remote-https"} or
+            transport_argv[2:] != remote_argv[1:] or
+            Path(remote_argv[0]).name != "git-" + transport_argv[1] or
+            not _cache_proc_executable(transport_pid, "git-core")):
             return False
     else:
         return False
