@@ -183,7 +183,7 @@ function assertReadRef(ref){
   return assertBranch(ref);
 }
 function assertMessage(value,field,limit){
-  if(typeof value!=='string' || !value.trim() || value.length>limit || /[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]/.test(value))
+  if(typeof value!=='string' || !value.trim() || value.length>limit || [...value].some(c=>c.charCodeAt(0)<32 && ![9,10,13].includes(c.charCodeAt(0))))
     throw error('TEXT_INVALID',field+' must be nonempty bounded text');
   return value;
 }
