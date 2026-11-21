@@ -14,7 +14,7 @@ const TOOLS = [
   ['github_get_actions_permissions', 'Read Actions permissions; report missing app permission', ['repo']],
   ['github_get_branch_protection', 'Read main branch protection; report missing administration permission', ['repo']],
   ['github_get_deployments', 'Read deployments for one exact source commit', ['repo', 'sha']],
-  ['github_preview_branch_delete', 'Verify branch SHA, protection and merge status; no write', ['repo', 'branch', 'expected_sha']],
+  ['github_preview_branch_delete', 'Verify branch SHA, Coolify pin, rules and merge status; no write', ['repo', 'branch', 'expected_sha']],
   ['github_delete_merged_branch', 'Delete one merged-PR branch with a git protocol expected-SHA lease (CAS)', ['repo', 'branch', 'expected_sha']],
   ['github_cancel_workflow_run', 'Cancel an allowlisted in-flight run at its verified SHA', ['repo', 'run_id', 'expected_sha']],
 ];
@@ -158,6 +158,7 @@ export function makeServer(config={}) {
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
   const pushToken=config.pushToken??process.env.GITHUB_OPS_PUSH_TOKEN??'';
   const pinnedBranches=new Set(config.pinnedBranches??(process.env.GITHUB_OPS_PINNED_BRANCHES??DEFAULT_PINNED_BRANCHES.join(',')).split(',').map(x=>x.trim()).filter(Boolean));
+  const deletionAllowlist=new Set(config.deletionAllowlist??(process.env.GITHUB_OPS_DELETION_ALLOWLIST??'').split(',').map(x=>x.trim()).filter(Boolean));
   const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
   const gitBin=config.gitBin??'git';
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
@@ -234,9 +235,11 @@ export function makeServer(config={}) {
     }
     if(name==='github_preview_branch_delete'){
       const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
-      return {eligible:true,repo,branch,sha,merged_pr:merged.number,
-        deletion_supported:Boolean(writesEnabled&&pushToken),
+      const rules=await assertNoRules(repo,root,branch);
+      return {eligible:true,repo,branch,sha,merged_pr:merged.number,rules:rules.rules,
+        deletion_supported:Boolean(writesEnabled&&pushToken&&deletionAllowlist.has(`${repo}:${branch}@${sha}`)),
         note:'Deletion is available only through github_delete_merged_branch, which deletes with a git --force-with-lease=<ref>:<expected> lease: a concurrent push is rejected (stale lease), never overwritten'};
     }
     if(name==='github_delete_merged_branch'){
@@ -245,6 +248,7 @@ export function makeServer(config={}) {
       if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
       if(!pushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped push credential is required for CAS deletion');
       if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
+      if(!deletionAllowlist.has(`${repo}:${branch}@${sha}`))throw error('DELETE_NOT_APPROVED','Exact repo:branch@sha operator grant required');
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       const rules=await assertNoRules(repo,root,branch);
       const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
