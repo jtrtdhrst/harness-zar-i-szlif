@@ -118,7 +118,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_real_git_remote_https_dispatcher_ancestry(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -130,7 +130,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_git_remote_dispatcher_rejects_mismatched_transport(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -142,7 +142,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_git_remote_dispatcher_rejects_protocol_mismatch(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -154,7 +154,7 @@ class DaemonCacheAuthTests(unittest.TestCase):
     def test_git_remote_dispatcher_rejects_usr_bin_git(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
-        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
         self.verify({
             900: (850, ["python3", helper, "get"]),
             850: (800, ["/bin/sh", "-c", exact, exact]),
@@ -318,7 +318,7 @@ class BrokerHandlerTests(unittest.TestCase):
         h.request.getsockopt.return_value = struct.pack("3i", 900, 997, 981)
         h.rfile = io.BytesIO(json.dumps({
             "op": op, "protocol": "https", "host": "github.com",
-            "path": "miloszspyrka-code/zar-i-szlif.git"
+            "path": "jtrtdhrst/zar-i-szlif.git"
         }).encode() + b"\n")
         h.server = SimpleNamespace(daemon_unit="unit", pidfile=None,
                                    allow_any_daemon=False, tokens=pathlib.Path("/no/tokens"))
@@ -347,23 +347,29 @@ class BrokerHandlerTests(unittest.TestCase):
 
 class ScopedRoleTests(unittest.TestCase):
     def test_harness_project_uses_harness_only_role(self):
-        scope = {"repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif.git"]}
+        scope = {"repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif.git"]}
         self.assertEqual(broker.scoped_role("implementer", scope), "implementer-harness")
         self.assertEqual(
             broker.scoped_role("reviewer", scope,
-                               "miloszspyrka-code/harness-zar-i-szlif"),
+                               "jtrtdhrst/harness-zar-i-szlif"),
             "reviewer-harness",
         )
 
     def test_product_project_uses_product_only_role(self):
-        scope = {"repo_urls": ["https://github.com/miloszspyrka-code/zar-i-szlif"]}
-        self.assertEqual(broker.scoped_role("implementer", scope, "miloszspyrka-code/zar-i-szlif"),
+        scope = {"repo_urls": ["https://github.com/jtrtdhrst/zar-i-szlif"]}
+        self.assertEqual(broker.scoped_role("implementer", scope, "jtrtdhrst/zar-i-szlif"),
                          "implementer-product")
 
     def test_foreign_repository_denied_even_when_allowlisted(self):
-        scope = {"repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif"]}
+        scope = {"repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif"]}
         with self.assertRaisesRegex(ValueError, "outside task scope"):
-            broker.scoped_role("implementer", scope, "miloszspyrka-code/zar-i-szlif")
+            broker.scoped_role("implementer", scope, "jtrtdhrst/zar-i-szlif")
+
+    def test_redirect_alias_not_in_project_scope_is_denied(self):
+        scope = {"repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif.git"]}
+        with self.assertRaises(ValueError):
+            broker.scoped_role("reviewer", scope,
+                               "miloszspyrka-code/harness-zar-i-szlif")
 
     def test_empty_or_unknown_scope_fails_closed(self):
         for scope in ({"repo_urls": []},
@@ -380,7 +386,7 @@ class ScopedRoleTests(unittest.TestCase):
                 "token": "ghs_" + "synthetic-do-not-use",
                 "role": "implementer-harness",
                 "expires_at": "2099-01-01T00:00:00Z",
-                "repositories": ["miloszspyrka-code/harness-zar-i-szlif"],
+                "repositories": ["jtrtdhrst/harness-zar-i-szlif"],
                 "permissions": broker.ROLE_PERMISSIONS["implementer"],
             }
             path = pathlib.Path(directory) / "implementer-harness.json"
@@ -423,13 +429,13 @@ class TaskScopeHandlerTests(unittest.TestCase):
         return h, result
 
     def test_task_token_is_bound_to_daemon_project_scope(self):
-        h, result = self.make_handler("miloszspyrka-code/harness-zar-i-szlif.git")
+        h, result = self.make_handler("jtrtdhrst/harness-zar-i-szlif.git")
         with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
              patch.object(broker, "task_repo_scope", return_value={
                  "workspace_id": broker.EXPECTED_WORKSPACE,
                  "task_id": "task-1",
                  "agent_id": "agent-1",
-                 "repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif"],
+                 "repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif"],
              }), \
              patch.object(broker, "token_for_role", return_value={
                  "token": "synthetic-test-only", "expires_at": "2099-01-01T00:00:00Z"
@@ -439,13 +445,13 @@ class TaskScopeHandlerTests(unittest.TestCase):
         get_token.assert_called_once_with(pathlib.Path("/no/tokens"), "implementer-harness")
 
     def test_task_cannot_request_foreign_project_repo(self):
-        h, result = self.make_handler("miloszspyrka-code/zar-i-szlif.git")
+        h, result = self.make_handler("jtrtdhrst/zar-i-szlif.git")
         with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
              patch.object(broker, "task_repo_scope", return_value={
                  "workspace_id": broker.EXPECTED_WORKSPACE,
                  "task_id": "task-1",
                  "agent_id": "agent-1",
-                 "repo_urls": ["https://github.com/miloszspyrka-code/harness-zar-i-szlif"],
+                 "repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif"],
              }), \
              patch.object(broker, "token_for_role") as get_token:
             h.handle()
@@ -453,7 +459,7 @@ class TaskScopeHandlerTests(unittest.TestCase):
         get_token.assert_not_called()
 
     def test_task_scope_mismatch_denies_credentials(self):
-        h, result = self.make_handler("miloszspyrka-code/harness-zar-i-szlif.git")
+        h, result = self.make_handler("jtrtdhrst/harness-zar-i-szlif.git")
         with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
              patch.object(broker, "task_repo_scope", return_value=None) as scope, \
              patch.object(broker, "token_for_role") as get_token:
@@ -509,7 +515,7 @@ class CacheTokenScopeTests(unittest.TestCase):
                 "token": "ghs_" + "synthetic-do-not-use",
                 "role": "cache-reader",
                 "expires_at": "2099-01-01T00:00:00Z",
-                "repositories": ["miloszspyrka-code/zar-i-szlif"],
+                "repositories": ["jtrtdhrst/zar-i-szlif"],
                 "permissions": {"contents": "read", "metadata": "read"},
             }
             (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
