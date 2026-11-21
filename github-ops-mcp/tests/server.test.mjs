@@ -459,7 +459,11 @@ test('a push that lands between verification and delete is rejected by the lease
 });
 
 
-test('GitHub App role token file is validated, rotated and fail-closed', async()=>{
+test('GitHub App role token file is validated, rotated and fail-closed', async(t)=>{
+ if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+  t.skip('Positive root-owned credential fixture requires uid 0; non-root denial is tested separately.');
+  return;
+ }
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-role-')),file=join(dir,'reader.json');
@@ -495,3 +499,39 @@ test('GitHub App role token file is validated, rotated and fail-closed', async()
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
+test('non-root GitHub App credential fixture is rejected without provider traffic', async(t)=>{
+ if (typeof process.getuid !== 'function' || process.getuid() === 0) {
+  t.skip('Unprivileged credential denial requires a non-root test runner.');
+  return;
+ }
+ const {mkdtempSync,writeFileSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os');
+ const {join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-unprivileged-'));
+ const file=join(dir,'reader.json');
+ let providerCalls=0,s=null;
+ try {
+  writeFileSync(file,JSON.stringify({
+   token:'x'.repeat(50),role:'github-ops-reader',app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],
+   permissions:{actions:'read',administration:'read',contents:'read',metadata:'read'}
+  }),{mode:0o600});
+  s=makeServer({callerToken:'non-root-denial-test',githubToken:'',tokenFile:file,
+   fetchImpl:async()=>{providerCalls++;throw Error('Provider must not be contacted');}});
+  await new Promise(r=>s.listen(0,'127.0.0.1',r));
+  const base='http://127.0.0.1:'+s.address().port;
+  assert.equal((await (await fetch(base+'/health')).json()).ready,false);
+  const response=await fetch(base+'/mcp',{method:'POST',headers:{
+   authorization:'Bearer non-root-denial-test','content-type':'application/json'
+  },body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{
+   name:'github_repo_info',arguments:{repo:REPO}
+  }})});
+  const result=await response.json();
+  assert.match(result.result.content[0].text,/AUTH_FILE_UNTRUSTED/);
+  assert.equal(providerCalls,0);
+ }finally{
+  if(s)await new Promise(r=>s.close(r));
+  rmSync(dir,{recursive:true,force:true});
+ }
+});
