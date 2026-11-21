@@ -16,7 +16,7 @@ import tempfile
 
 APP_ID = 5398752
 INSTALLATION_ID = 173456397
-REPOS = ("miloszspyrka-code/harness-zar-i-szlif", "miloszspyrka-code/zar-i-szlif")
+REPOS = ("jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif")
 REPO_NAMES = ("harness-zar-i-szlif", "zar-i-szlif")
 DEST = Path("/etc/multica-git-credential/roles")
 ROLE_PERMISSIONS = {
