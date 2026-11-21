@@ -53,6 +53,7 @@ test('HTTP transport authenticates, exposes the CLI catalog, and forwards caller
   assert.equal(queryCall.result.isError, false);
   assert.equal(queryCall.result.structuredContent.tokenMatches, true);
   assert.equal(queryCall.result.structuredContent.workspaceIdFromEnv, '28378cc8-2c3a-4f8e-af1c-63e308407b17');
+  assert.deepEqual(queryCall.result.structuredContent.argv.slice(0, 4), ['--server-url', 'https://multica.zariszlif.pl', '--workspace-id', '28378cc8-2c3a-4f8e-af1c-63e308407b17']);
 
   const headers = { authorization: 'Bearer mat_testtoken123456789abc', 'content-type': 'application/json' };
   const init = await fetch(`${base}/mcp`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2025-06-18' } }) }).then((r) => r.json());
