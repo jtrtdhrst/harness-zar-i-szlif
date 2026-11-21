@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const REPOS = new Set(['miloszspyrka-code/harness-zar-i-szlif', 'miloszspyrka-code/zar-i-szlif']);
+const REPOS = new Set(['jtrtdhrst/harness-zar-i-szlif', 'jtrtdhrst/zar-i-szlif']);
 const SHA = /^[a-f0-9]{40}$/i;
 const WORKFLOW = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.ya?ml$/;
 const TOOLS = [
@@ -32,32 +32,44 @@ const DEFAULT_PINNED_BRANCHES = ['feat/github-ops-mcp-20261120'];
 // server rejects it unless the ref still points there. `git push
 // --force-with-lease=<ref>:<expect>` sends exactly that oid as the lease.
 export function casDeleteArgs({ remote, branch, expectedSha }) {
-  if (typeof remote !== 'string' || !/^(https:\/\/|file:\/\/\/)/.test(remote)) throw error('REMOTE_INVALID', 'Only literal https or file remotes are accepted');
+  // Production pushes only to the literal GitHub origin; local file remotes
+  // are permitted for isolated tests. Never rely on rewritten Git aliases.
+  if (typeof remote !== 'string' || !(/^(https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git|file:\/\/\/.+)$/).test(remote))
+    throw error('REMOTE_INVALID', 'Only canonical GitHub HTTPS or local test file remotes are accepted');
   return ['push', '--porcelain', `--force-with-lease=refs/heads/${branch}:${expectedSha}`, remote, `:refs/heads/${branch}`];
 }
 
 // The token never enters argv (visible in /proc): git gets it through an
 // environment variable read by an inline credential helper.
-function gitEnv(pushToken) {
+function gitEnv(pushToken, isolatedHome, remote) {
+  // All Git config inherited from the service account is untrusted: notably
+  // url.*.insteadOf can silently rewrite github.com to a credential sink.
+  const expectedPath=remote.startsWith('https://github.com/')
+    ? new URL(remote).pathname.slice(1) : '';
   return {
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-    HOME: process.env.HOME ?? '/tmp',
-    GIT_TERMINAL_PROMPT: '0',
+    HOME: isolatedHome,
+    XDG_CONFIG_HOME: isolatedHome,
     GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_COUNT: '3',
     GIT_CONFIG_KEY_0: 'credential.helper',
     GIT_CONFIG_VALUE_0: '',
-    GIT_CONFIG_KEY_1: 'credential.helper',
-    GIT_CONFIG_VALUE_1: '!f() { echo "username=x-access-token"; echo "password=${GITHUB_OPS_PUSH_TOKEN}"; }; f',
+    GIT_CONFIG_KEY_1: 'credential.useHttpPath',
+    GIT_CONFIG_VALUE_1: 'true',
+    GIT_CONFIG_KEY_2: 'credential.helper',
+    // The helper is denied for any other host, protocol or repository path.
+    GIT_CONFIG_VALUE_2: '!f() { protocol=; host=; path=; while IFS= read -r line; do case "$line" in protocol=*) protocol=${line#protocol=} ;; host=*) host=${line#host=} ;; path=*) path=${line#path=} ;; esac; done; [ "$protocol" = https ] && [ "$host" = github.com ] && [ "$path" = "$GITHUB_OPS_EXPECTED_PATH" ] || exit 1; printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_OPS_PUSH_TOKEN"; }; f',
+    GITHUB_OPS_EXPECTED_PATH: expectedPath,
     GITHUB_OPS_PUSH_TOKEN: pushToken,
   };
 }
-
 export async function deleteRefWithLease({ remote, branch, expectedSha, pushToken, gitBin = 'git', timeoutMs = 20000 }) {
   const args = casDeleteArgs({ remote, branch, expectedSha });
   const cwd = mkdtempSync(join(tmpdir(), 'ghops-'));
   const run = gitArgs => new Promise(resolve => {
-    const child = spawn(gitBin, gitArgs, { cwd, env: gitEnv(pushToken), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(gitBin, gitArgs, { cwd, env: gitEnv(pushToken, cwd, remote), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '', settled = false;
     const finish = value => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
     const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish({ code: -1, out, err: 'timeout' }); }, timeoutMs);
@@ -131,13 +143,24 @@ const error = (code,msg)=>Object.assign(new Error(msg),{code});
      } catch { return false; }
    };
  }
-function assertRepo(repo){ if(!REPOS.has(repo))throw error('REPO_DENIED','Repository is not explicitly allowlisted');return repo; }
+// Compatibility for MCP clients whose cached enum still contains the previous owner.
+// Resolve aliases BEFORE constructing the API path; authorization still applies only
+// to the two current repositories in REPOS and the current scoped GitHub App grant.
+const LEGACY_REPO_ALIASES = new Map([
+  ['miloszspyrka-code/harness-zar-i-szlif', 'jtrtdhrst/harness-zar-i-szlif'],
+  ['miloszspyrka-code/zar-i-szlif', 'jtrtdhrst/zar-i-szlif'],
+]);
+function assertRepo(repo){
+  const canonical = LEGACY_REPO_ALIASES.get(repo) ?? repo;
+  if(!REPOS.has(canonical))throw error('REPO_DENIED','Repository is not explicitly allowlisted');
+  return canonical;
+}
 function assertSHA(sha){if(typeof sha!=='string'||!SHA.test(sha))throw error('SHA_INVALID','Exact 40-character SHA required');return sha;}
 function assertBranch(branch){
   if(typeof branch!=='string'||!(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,120}$/).test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('.lock') || branch==='ZARI-155' || /(^|\/)(main|master|ci-approved|release|production|prod|hold|archive|staging|hotfix|deploy|operator)(\/|$)/i.test(branch))throw error('BRANCH_DENIED','Unsafe or protected branch name');
   return branch;
 }
-async function scopedTokenFromFile(path){
+async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
   try {
     const st=await lstat(path);
     if(!st.isFile() || st.isSymbolicLink() || st.uid!==0 || st.nlink!==1 || (st.mode & 0o007)!==0)
@@ -147,13 +170,17 @@ async function scopedTokenFromFile(path){
       throw error('AUTH_FILE_INVALID','GitHub installation token invalid');
     if(!v.expires_at || !Number.isFinite(Date.parse(v.expires_at)) || Date.parse(v.expires_at)<=Date.now()+120000)
       throw error('AUTH_FILE_EXPIRED','GitHub installation token expired');
-    if(v.app_id!==5398752 || v.installation_id!==173456397 || v.role!=='github-ops-reader')
+    if(v.app_id!==5398752 || v.installation_id!==173456397 || v.role!==expectedRole)
       throw error('AUTH_SCOPE_INVALID','GitHub installation token identity invalid');
-    const expected=['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'];
+    const expected=['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'];
     if(!Array.isArray(v.repositories) || v.repositories.length!==2 || expected.some(r=>!v.repositories.includes(r)))
       throw error('AUTH_SCOPE_INVALID','GitHub installation repository scope invalid');
-    const required={actions:'read',administration:'read',contents:'read',metadata:'read'};
-    if(!v.permissions || Object.keys(v.permissions).length!==4 || Object.entries(required).some(([k,x])=>v.permissions[k]!==x))
+    const allowedPermissions={
+      'github-ops-reader':{actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'},
+      'github-ops-writer':{actions:'write',contents:'write',metadata:'read'},
+    };
+    const required=allowedPermissions[expectedRole];
+    if(!required || !v.permissions || Object.keys(v.permissions).length!==Object.keys(required).length || Object.entries(required).some(([k,x])=>v.permissions[k]!==x))
       throw error('AUTH_SCOPE_INVALID','GitHub installation permission scope invalid');
     return v.token;
   } catch(e) {
@@ -182,13 +209,25 @@ export function makeServer(config={}) {
   const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
   const tokenFile=config.tokenFile??process.env.GITHUB_OPS_TOKEN_FILE??'';
+  const writerTokenFile=config.writerTokenFile??process.env.GITHUB_OPS_WRITER_TOKEN_FILE??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
-  const pushToken=config.pushToken??process.env.GITHUB_OPS_PUSH_TOKEN??'';
+  // Only explicit in-process test injection may use a static token. Production
+  // mutating calls resolve the short-lived GitHub App writer grant from a file.
+  const injectedPushToken=config.pushToken??'';
+  const injectedWriterToken=config.writerToken??'';
   const pinnedBranches=new Set(config.pinnedBranches??(process.env.GITHUB_OPS_PINNED_BRANCHES??DEFAULT_PINNED_BRANCHES.join(',')).split(',').map(x=>x.trim()).filter(Boolean));
+  const deletionAllowlist=new Set(config.deletionAllowlist??(process.env.GITHUB_OPS_DELETION_ALLOWLIST??'').split(',').map(x=>x.trim()).filter(Boolean));
   const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
   const gitBin=config.gitBin??'git';
   const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
   const api=githubClient({token:githubToken,getToken:tokenFile?()=>scopedTokenFromFile(tokenFile):null,fetchImpl:config.fetchImpl});
+  const readWriterToken=async()=>{
+    if(writerTokenFile)return scopedTokenFromFile(writerTokenFile,'github-ops-writer');
+    if(injectedWriterToken)return injectedWriterToken;
+    if(injectedPushToken)return injectedPushToken;
+    throw error('WRITE_CREDENTIAL_MISSING','A dedicated short-lived GitHub App writer credential is required');
+  };
+  const writerApi=githubClient({token:injectedWriterToken||injectedPushToken,getToken:readWriterToken,fetchImpl:config.fetchImpl});
   const access=cloudflareJwtVerifier({
     issuer:config.accessIssuer??process.env.CF_ACCESS_ISSUER??'',
     audience:config.accessAudience??process.env.CF_ACCESS_AUD??'',
@@ -252,7 +291,17 @@ export function makeServer(config={}) {
       return {repo,rulesets:list,count:list.length};
     }
     if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
-    if(name==='github_get_branch_protection')return api('GET',`${root}/branches/main/protection`);
+    if(name==='github_get_branch_protection'){
+      try{return await api('GET',`${root}/branches/main/protection`);}
+      catch(e){
+        // 404 means no CLASSIC branch protection; an active repository ruleset
+        // can still protect main. Never represent this as an unprotected branch.
+        if(e.code==='GITHUB_HTTP_404')return {repo,classic_protection:false,
+          ruleset_protection:'not_checked',
+          note:'No classic branch protection endpoint; check github_get_rulesets before changing refs'};
+        throw e;
+      }
+    }
     if(name==='github_get_deployments'){
       const sha=assertSHA(p.sha).toLowerCase();
       const list=await api('GET',`${root}/deployments?sha=${sha}&per_page=30`);
@@ -262,18 +311,21 @@ export function makeServer(config={}) {
     if(name==='github_preview_branch_delete'){
       const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
-      return {eligible:true,repo,branch,sha,merged_pr:merged.number,
-        deletion_supported:Boolean(writesEnabled&&pushToken),
+      const rules=await assertNoRules(repo,root,branch);
+      return {eligible:true,repo,branch,sha,merged_pr:merged.number,rules:rules.rules,
+        deletion_supported:Boolean(writesEnabled&&(writerTokenFile||injectedPushToken)&&deletionAllowlist.has(`${repo}:${branch}@${sha}`)),
         note:'Deletion is available only through github_delete_merged_branch, which deletes with a git --force-with-lease=<ref>:<expected> lease: a concurrent push is rejected (stale lease), never overwritten'};
     }
     if(name==='github_delete_merged_branch'){
       const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       // Fail closed before any provider or git traffic.
       if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
-      if(!pushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped push credential is required for CAS deletion');
+      if(!writerTokenFile&&!injectedPushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped writer credential is required for CAS deletion');
       if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
+      if(!deletionAllowlist.has(`${repo}:${branch}@${sha}`))throw error('DELETE_NOT_APPROVED','Exact repo:branch@sha operator grant required');
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       const rules=await assertNoRules(repo,root,branch);
+      const pushToken=await readWriterToken();
       const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
       if(!lease.accepted)throw error(lease.code,`CAS delete refused (${lease.code}); the ref was not removed`);
       let stillThere=true;
@@ -287,12 +339,13 @@ export function makeServer(config={}) {
       const sha=assertSHA(p.expected_sha),runid=p.run_id;
       if(!Number.isSafeInteger(runid)||runid<1)throw error('RUN_INVALID','Positive numeric run ID required');
       if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
+      if(!writerTokenFile&&!injectedWriterToken)throw error('WRITE_CREDENTIAL_MISSING','A scoped writer credential is required for cancelling runs');
       const run=await api('GET',`${root}/actions/runs/${runid}`);
       if(run.head_sha!==sha)throw error('STALE_SHA','Run SHA moved');
       const workflowName=run.path?.split('/').pop();
       if(!workflows.has(workflowName))throw error('WORKFLOW_DENIED','Run workflow is not allowlisted');
       if(!['queued','in_progress','waiting','requested','pending'].includes(run.status))throw error('RUN_TERMINAL','Cannot cancel a terminal run');
-      await api('POST',`${root}/actions/runs/${runid}/cancel`);
+      await writerApi('POST',`${root}/actions/runs/${runid}/cancel`);
       return {cancel_requested:true,run_id:runid,head_sha:sha};
     }
     throw error('TOOL_UNKNOWN','Unknown tool');
@@ -304,7 +357,8 @@ export function makeServer(config={}) {
     const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
     if(req.method==='GET'&&req.url==='/health'){
       const configured=tokenFile?await scopedTokenFromFile(tokenFile).then(()=>true,()=>false):Boolean(githubToken);
-      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured});
+      const writerConfigured=writerTokenFile?await scopedTokenFromFile(writerTokenFile,'github-ops-writer').then(()=>true,()=>false):false;
+      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured,writer_configured:writerConfigured});
     }
     if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
@@ -321,7 +375,7 @@ export function makeServer(config={}) {
       const v=JSON.parse(raw),id=v.id;messageId=id??null;
       if(v.jsonrpc!=='2.0'||typeof v.method!=='string')throw error('INVALID_REQUEST','Invalid JSON-RPC');
       if(v.method==='notifications/initialized')return json(202,{});
-      if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.0.0'}}});
+      if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.1.0'}}});
       if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
       if(v.method==='tools/call'){
         const name=v.params?.name;

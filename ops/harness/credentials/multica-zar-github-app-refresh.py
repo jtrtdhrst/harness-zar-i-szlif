@@ -16,7 +16,7 @@ import tempfile
 
 APP_ID = 5398752
 INSTALLATION_ID = 173456397
-REPOS = ("miloszspyrka-code/harness-zar-i-szlif", "miloszspyrka-code/zar-i-szlif")
+REPOS = ("jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif")
 REPO_NAMES = ("harness-zar-i-szlif", "zar-i-szlif")
 DEST = Path("/etc/multica-git-credential/roles")
 ROLE_PERMISSIONS = {
@@ -26,10 +26,18 @@ ROLE_PERMISSIONS = {
     "runner": {"actions": "write", "administration": "write", "contents": "read", "metadata": "read"},
     "harness-reader": {"contents": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
-    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "metadata": "read"},
+    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
+    "github-ops-writer": {"actions": "write", "contents": "write", "metadata": "read"},
 }
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
 ROLE_REPOS = {"harness-reader": (REPOS[0],)}
+# Scoped agent grants are consumed by the broker; runner is a separate privileged role.
+for _base in ("implementer", "reviewer", "release"):
+    for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
+                                  ("product", REPOS[1], REPO_NAMES[1])):
+        ROLE_PERMISSIONS[f"{_base}-{_suffix}"] = ROLE_PERMISSIONS[_base]
+        ROLE_REPOS[f"{_base}-{_suffix}"] = (_repo,)
+        ROLE_REPO_NAMES[f"{_base}-{_suffix}"] = (_name,)
 RUNTIME_GID = 981
 
 PHP_TEMPLATE = r'''
