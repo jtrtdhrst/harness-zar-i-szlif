@@ -5,7 +5,7 @@ const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
-  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
+  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,deletionAllowlistOverride,liveRef=null,liveBranch='fix/old'}={}){
   const calls=[];
   let branchDeleted=false;
   let runReadsToMiss=run404Count;
@@ -60,7 +60,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
   };
   const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
     pushToken,pinnedBranches,pushRemoteFor,gitBin,
-    deletionAllowlist:approved?[`${REPO}:fix/old@${liveSHA()??branchSHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
+    deletionAllowlist:deletionAllowlistOverride??(approved?[`${REPO}:fix/old@${liveSHA()??branchSHA}`]:[]),workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
   const request=async(name,args={},auth=true)=>{
@@ -391,7 +391,7 @@ test('deletion refuses stale SHA, protection, rules and unknown rule state witho
     { opt: { openPR: true }, err: 'OPEN_PR' },
   ];
   for (const { opt, err } of cases) {
-    const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', gitBin: '/nonexistent/git', ...opt });
+    const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', gitBin: '/nonexistent/git', deletionAllowlistOverride:[`${REPO}:fix/old@${SHA}`], ...opt });
     try {
       const x = await f.request('github_delete_merged_branch', { repo: REPO, branch: 'fix/old', expected_sha: SHA });
       assert.match(x.body.result.content[0].text, new RegExp(err));
