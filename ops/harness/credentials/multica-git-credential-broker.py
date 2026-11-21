@@ -3,9 +3,9 @@
 
 Agents share one Unix account, so a token file readable by that account is
 readable by every agent. This broker never writes tokens where the agent
-account can read them. It identifies the caller from the process tree: the
-task process must be a direct child of the systemd-managed Multica daemon and
-carry the daemon-set (unspoofable, MULTICA_* blocklisted) MULTICA_AGENT_ID.
+account can read them. It identifies a caller only after verifying ancestry under the systemd-managed
+Multica daemon, then verifies the nearest task identity against the live
+token-bound project scope. The Hermes gateway may be an intermediary.
 """
 import argparse
 import datetime
@@ -89,25 +89,44 @@ def daemon_pid(unit, pidfile=None, allow_any_daemon=False):
 
 
 def task_agent(pid, unit, pidfile=None, allow_any_daemon=False):
-    """Return (agent_id, task_id, task_token) only for a real task child."""
-    parent = daemon_pid(unit, pidfile, allow_any_daemon)
+    """Find a token-bound task in a VERIFIED daemon-descendant process tree.
+
+    Hermes may spawn a persistent gateway directly beneath the daemon and
+    launch the actual task shell several levels below it. Never assume the
+    daemon's immediate child has task-scoped environment variables.
+    """
+    daemon = daemon_pid(unit, pidfile, allow_any_daemon)
     current = pid
+    lineage = []
     for _ in range(64):
+        if current == daemon:
+            break
         ppid = int(proc_status(current).get("PPid", "0"))
-        if ppid == parent:
-            env = proc_environ(current)
-            agent = env.get("MULTICA_AGENT_ID", "").strip()
-            task = env.get("MULTICA_TASK_ID", "").strip()
-            token = env.get("MULTICA_TOKEN", "").strip()
-            workspace = env.get("MULTICA_WORKSPACE_ID", "").strip()
-            if not agent or not task or not token:
-                return None
-            if workspace != EXPECTED_WORKSPACE:
-                return None
-            return agent, task, token
-        if ppid <= 1:
+        if ppid <= 1 or ppid == current:
             return None
+        lineage.append(current)
         current = ppid
+    else:
+        return None
+    if current != daemon:
+        return None
+
+    # Only after proving daemon ancestry may we inspect task identity. Select
+    # the NEAREST candidate to the caller; never fall back from a malformed
+    # or mismatched candidate to a more privileged ancestor.
+    keys = ("MULTICA_AGENT_ID", "MULTICA_TASK_ID",
+            "MULTICA_TOKEN", "MULTICA_WORKSPACE_ID")
+    for ancestor in lineage:
+        env = proc_environ(ancestor)
+        values = [env.get(key, "").strip() for key in keys]
+        if not any(values):
+            continue
+        agent, task, token, workspace = values
+        if not (agent and task and token and workspace == EXPECTED_WORKSPACE):
+            return None
+        # Handler independently validates token, task, agent, workspace and
+        # repo scope against the daemon's live /repo/scope endpoint.
+        return agent, task, token
     return None
 
 
