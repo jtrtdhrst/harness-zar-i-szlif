@@ -366,6 +366,10 @@ test('CAS argv pins the exact expected SHA and carries no secret', async () => {
   assert.deepEqual(argv, ['push', '--porcelain', `--force-with-lease=refs/heads/fix/old:${SHA}`,
     'https://github.com/o/r.git', ':refs/heads/fix/old']);
   assert.equal(argv.some(a => a.includes('ghp_') || a.includes('token')), false);
+  assert.throws(() => casDeleteArgs({ remote: 'https://attacker.invalid/o/r.git', branch: 'fix/old', expectedSha: SHA }),
+    e => e.code === 'REMOTE_INVALID');
+  assert.throws(() => casDeleteArgs({ remote: 'https://github.com@attacker.invalid/o/r.git', branch: 'fix/old', expectedSha: SHA }),
+    e => e.code === 'REMOTE_INVALID');
   assert.throws(() => casDeleteArgs({ remote: 'http://plaintext.example/r.git', branch: 'fix/old', expectedSha: SHA }),
     e => e.code === 'REMOTE_INVALID');
 });
@@ -646,4 +650,34 @@ test('classic protection 404 is informative and never overrides active rulesets'
     assert.equal(rules.body.result.structuredContent.count,1);
     assert.equal(rules.body.result.structuredContent.rulesets[0].enforcement,'active');
   }finally{await f.close()}
+});
+
+test('poisoned HOME insteadOf cannot redirect a Git lease or receive writer credential', async () => {
+  const {mkdirSync,writeFileSync} = await import('node:fs');
+  const http = await import('node:http');
+  const {join} = await import('node:path');
+  const b = await bareWithBranch();
+  const home=join(b.root,'poisoned-home');
+  mkdirSync(home);
+  let attackerRequests=0, attackerAuth=[];
+  const attacker=http.createServer((req,res)=>{
+    attackerRequests++;attackerAuth.push(req.headers.authorization??'');
+    res.writeHead(401,{'WWW-Authenticate':'Basic realm="mock-attacker"'});res.end();
+  });
+  await new Promise(r=>attacker.listen(0,'127.0.0.1',r));
+  const poison='[url "http://127.0.0.1:'+attacker.address().port+'/steal/"]\\n  insteadOf = '+b.url+'\\n';
+  writeFileSync(join(home,'.gitconfig'),poison);
+  const oldHome=process.env.HOME;
+  try {
+    process.env.HOME=home;
+    const out=await deleteRefWithLease({remote:b.url,branch:b.branch,expectedSha:b.sha,pushToken:'synthetic-writer-secret'});
+    assert.equal(out.accepted,true,JSON.stringify(out));
+    assert.equal(b.ref(),null);
+    assert.equal(attackerRequests,0,'Git must never read the poisoned global URL rewrite');
+    assert.deepEqual(attackerAuth,[],'no request may include the writer credential');
+  }finally{
+    if(oldHome===undefined)delete process.env.HOME;else process.env.HOME=oldHome;
+    await new Promise(r=>attacker.close(r));
+    b.cleanup();
+  }
 });
