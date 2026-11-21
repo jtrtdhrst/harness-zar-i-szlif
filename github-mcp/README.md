@@ -1,5 +1,8 @@
 # GitHub Ops MCP — scoped augmentation (not a deployment controller)
 
+Canonical source and Docker build context: `github-mcp/` in `jtrtdhrst/harness-zar-i-szlif`. Coolify BGH application must use `base_directory=/github-mcp`, `dockerfile_location=/Dockerfile` and reviewed `main`; do not build from `github-ops-mcp/` or `coolify-mcp/`. The Docker verify stage runs both HTTP regression suites.
+
+
 An owner-authenticated GitHub operator MCP for the two current repositories. The 20-tool catalog includes source files and blob SHAs, branch reads/listing, pull requests/diffs, exact-SHA CI/runs, existing rule/deployment evidence, and guarded branch, commit, PR and merge mutations. It does not bypass GitHub rulesets, release HOLD or independent reviews. Workflow dispatch stays disabled because GitHub workflow_dispatch cannot atomically bind a mutable ref to a reviewed SHA.
 
 ## Fail-closed defaults
