@@ -30,7 +30,8 @@ ROLE_PERMISSIONS = {
 }
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
 ROLE_REPOS = {"harness-reader": (REPOS[0],)}
-for _base in ("implementer", "reviewer", "release", "runner"):
+# Privileged runner grants are not projected into task-scoped agent credentials.
+for _base in ("implementer", "reviewer", "release"):
     for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
                                   ("product", REPOS[1], REPO_NAMES[1])):
         ROLE_PERMISSIONS[f"{_base}-{_suffix}"] = ROLE_PERMISSIONS[_base]
