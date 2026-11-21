@@ -21,8 +21,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
-HARNESS_REPO = "miloszspyrka-code/harness-zar-i-szlif"
-PRODUCT_REPO = "miloszspyrka-code/zar-i-szlif"
+HARNESS_REPO = "jtrtdhrst/harness-zar-i-szlif"
+PRODUCT_REPO = "jtrtdhrst/zar-i-szlif"
 ALLOWED_REPOS = {PRODUCT_REPO, HARNESS_REPO}
 PROJECT_REPOS = {"harness": HARNESS_REPO, "product": PRODUCT_REPO}
 EXPECTED_WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
