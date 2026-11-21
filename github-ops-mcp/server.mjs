@@ -158,6 +158,187 @@ async function scopedTokenFromFile(path){
     return v.token;
   } catch(e) {
     if(e.code?.startsWith('AUTH_'))throw e;
-    throw error('AUTH_NOT_CONFIGURED','GitHub in
+    throw error('AUTH_NOT_CONFIGURED','GitHub installation credential file unavailable');
+  }
+}
+function githubClient({token,getToken,fetchImpl=fetch}){
+  return async(method,path,body)=>{
+    const resolvedToken=getToken?await getToken():token;
+    if(!resolvedToken)throw error('AUTH_NOT_CONFIGURED','A scoped GitHub App or fine-grained credential is required');
+    const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${resolvedToken}`,'X-GitHub-Api-Version':'2026-03-10','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
+    if(!result.ok){
+      let detail='';
+      try{ detail=(await result.text()).slice(0,512); }catch{}
+      const denied=error(`GITHUB_HTTP_${result.status}`,`GitHub API denied ${method} (${result.status})`);
+      denied.status=result.status;
+      denied.detail=detail;
+      throw denied;
+    }
+    if(result.status===204)return {accepted:true};
+    return result.json();
+  };
+}
+export function makeServer(config={}) {
+  const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
+  const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
+  const tokenFile=config.tokenFile??process.env.GITHUB_OPS_TOKEN_FILE??'';
+  const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
+  const pushToken=config.pushToken??process.env.GITHUB_OPS_PUSH_TOKEN??'';
+  const pinnedBranches=new Set(config.pinnedBranches??(process.env.GITHUB_OPS_PINNED_BRANCHES??DEFAULT_PINNED_BRANCHES.join(',')).split(',').map(x=>x.trim()).filter(Boolean));
+  const pushRemoteFor=config.pushRemoteFor??(repo=>`https://github.com/${repo}.git`);
+  const gitBin=config.gitBin??'git';
+  const workflows=new Set(config.workflows??(process.env.GITHUB_OPS_WORKFLOWS??'release-lanes-policy.yml').split(',').map(x=>x.trim()));
+  const api=githubClient({token:githubToken,getToken:tokenFile?()=>scopedTokenFromFile(tokenFile):null,fetchImpl:config.fetchImpl});
+  const access=cloudflareJwtVerifier({
+    issuer:config.accessIssuer??process.env.CF_ACCESS_ISSUER??'',
+    audience:config.accessAudience??process.env.CF_ACCESS_AUD??'',
+    ownerEmail:config.accessOwnerEmail??process.env.CF_ACCESS_OWNER_EMAIL??'',
+    fetchImpl:config.accessFetchImpl
+  });
+  const branchQ=branch=>branch.split('/').map(encodeURIComponent).join('/');
+  const listPulls=async(root,state)=>{
+    const items=[];
+    for(let page=1;page<=20;page++){
+      const batch=await api('GET',`${root}/pulls?state=${state}&per_page=100&page=${page}`);
+      if(!Array.isArray(batch))throw error('PR_LIST_INVALID','GitHub pull request listing returned invalid data');
+      items.push(...batch);
+      if(batch.length<100)return items;
+    }
+    throw error('PR_PAGE_LIMIT','Cannot verify all GitHub pull requests');
+  };
+  const openHasRef=(items,branch,repo)=>items.some(pr=>pr.base?.ref===branch||(pr.head?.ref===branch&&pr.head?.repo?.full_name===repo));
+  // Shared by preview and delete: exact SHA, unprotected, no open PR, and a
+  // merged PR whose head SHA is exactly this branch head.
+  async function branchDeleteEvidence(repo,root,branch,sha){
+    const current=await api('GET',`${root}/branches/${branchQ(branch)}`);
+    if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved');
+    if(current.protected)throw error('PROTECTED','GitHub reports branch protection');
+    if(openHasRef(await listPulls(root,'open'),branch,repo))throw error('OPEN_PR','An open pull request uses this branch');
+    const merged=(await listPulls(root,'closed')).find(pr=>pr.merged_at&&pr.base?.ref==='main'
+      &&pr.head?.ref===branch&&pr.head?.sha?.toLowerCase()===sha
+      &&pr.head?.repo?.full_name===repo&&SHA.test(pr.merge_commit_sha||''));
+    if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with this exact branch SHA');
+    const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
+    if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
+    return {current,merged};
+  }
+  // GitHub reports 403 for the rules endpoint on app/plan limitations. A scope
+  // denial or a 5xx means protection state is unknown, so deletion stops. The
+  // one exception is GitHub saying outright that this repository cannot have
+  // rulesets (private repository without GitHub Pro): then no rule of that kind
+  // can exist, and classic protection is still enforced through the branch's
+  // own `protected` flag, which is checked before this point.
+  async function assertNoRules(repo,root,branch){
+    let rules;
+    try{ rules=await api('GET',`${root}/rules/branches/${branchQ(branch)}`); }
+    catch(e){
+      const planLimited=e.status===403&&/upgrade to github pro|make this repository public/i.test(e.detail||'');
+      if(!planLimited)throw error('RULES_UNAVAILABLE',`Cannot verify repository rules (${e.code??'unknown'}); refusing to delete`);
+      return {rules:'unavailable_on_plan',count:0};
+    }
+    if(!Array.isArray(rules))throw error('RULES_UNAVAILABLE','Repository rules reply is not a list');
+    if(rules.length)throw error('RULES_PRESENT','Repository rules apply to this branch');
+    return {rules:'none',count:rules.length};
+  }
+  async function execute(name,p={}){
+    const repo=assertRepo(p.repo);
+    const root=`/repos/${repo}`;
+    if(name==='github_repo_info'){
+      const r=await api('GET',root);return {full_name:r.full_name,default_branch:r.default_branch,permissions:r.permissions,allow_auto_merge:r.allow_auto_merge};
+    }
+    if(name==='github_get_rulesets'){
+      const list=await api('GET',`${root}/rulesets`);
+      if(!Array.isArray(list))throw error('RULESETS_INVALID','GitHub ruleset listing returned invalid data');
+      return {repo,rulesets:list,count:list.length};
+    }
+    if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
+    if(name==='github_get_branch_protection')return api('GET',`${root}/branches/main/protection`);
+    if(name==='github_get_deployments'){
+      const sha=assertSHA(p.sha).toLowerCase();
+      const list=await api('GET',`${root}/deployments?sha=${sha}&per_page=30`);
+      if(!Array.isArray(list))throw error('DEPLOYMENTS_INVALID','GitHub deployment listing returned invalid data');
+      return {repo,sha,count:list.length,deployments:list};
+    }
+    if(name==='github_preview_branch_delete'){
+      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
+      return {eligible:true,repo,branch,sha,merged_pr:merged.number,
+        deletion_supported:Boolean(writesEnabled&&pushToken),
+        note:'Deletion is available only through github_delete_merged_branch, which deletes with a git --force-with-lease=<ref>:<expected> lease: a concurrent push is rejected (stale lease), never overwritten'};
+    }
+    if(name==='github_delete_merged_branch'){
+      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      // Fail closed before any provider or git traffic.
+      if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
+      if(!pushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped push credential is required for CAS deletion');
+      if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
+      const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
+      const rules=await assertNoRules(repo,root,branch);
+      const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
+      if(!lease.accepted)throw error(lease.code,`CAS delete refused (${lease.code}); the ref was not removed`);
+      let stillThere=true;
+      try{ await api('GET',`${root}/branches/${branchQ(branch)}`); }
+      catch(e){ if(e.code==='GITHUB_HTTP_404')stillThere=false; else throw error('READBACK_UNAVAILABLE',`Deletion readback failed (${e.code??'unknown'})`); }
+      if(stillThere)throw error('DELETE_NOT_CONFIRMED','Branch is still readable after a CAS delete');
+      return {deleted:true,repo,branch,sha,merged_pr:merged.number,lease:'force-with-lease',rules:rules.rules,readback:'404'};
+    }
+    // Disabled: workflow_dispatch with ref:main cannot atomically bind the requested SHA.
+    if(name==='github_cancel_workflow_run'){
+      const sha=assertSHA(p.expected_sha),runid=p.run_id;
+      if(!Number.isSafeInteger(runid)||runid<1)throw error('RUN_INVALID','Positive numeric run ID required');
+      if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
+      const run=await api('GET',`${root}/actions/runs/${runid}`);
+      if(run.head_sha!==sha)throw error('STALE_SHA','Run SHA moved');
+      const workflowName=run.path?.split('/').pop();
+      if(!workflows.has(workflowName))throw error('WORKFLOW_DENIED','Run workflow is not allowlisted');
+      if(!['queued','in_progress','waiting','requested','pending'].includes(run.status))throw error('RUN_TERMINAL','Cannot cancel a terminal run');
+      await api('POST',`${root}/actions/runs/${runid}/cancel`);
+      return {cancel_requested:true,run_id:runid,head_sha:sha};
+    }
+    throw error('TOOL_UNKNOWN','Unknown tool');
+  }
+  const resourceUrl=config.resourceUrl??process.env.GITHUB_OPS_RESOURCE_URL??'https://github-ops-mcp.zariszlif.pl/mcp';
+  const resourceMetadata=resourceUrl.replace(/\/mcp$/,'')+'/.well-known/oauth-protected-resource/mcp';
+  const authChallenge='Bearer resource_metadata="'+resourceMetadata+'", error="invalid_token", error_description="Authenticate with Cloudflare Access OAuth"';
+  const server=http.createServer(async(req,res)=>{
+    const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
+    if(req.method==='GET'&&req.url==='/health'){
+      const configured=tokenFile?await scopedTokenFromFile(tokenFile).then(()=>true,()=>false):Boolean(githubToken);
+      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured});
+    }
+    if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
+    if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
+    const bearer=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1]??'';
+    const bearerAuthorized=Boolean(callerToken&&secureEqual(bearer,callerToken));
+    const accessAuthorized=bearerAuthorized?false:await access(req.headers['cf-access-jwt-assertion']);
+    if(!bearerAuthorized&&!accessAuthorized){
+      res.writeHead(401,{'content-type':'application/json','cache-control':'no-store','www-authenticate':authChallenge});
+      return res.end(JSON.stringify({error:'invalid_token',error_description:'OAuth authentication required'}));
+    }
+    let messageId=null;
+    try{
+      let raw='';for await(const part of req){raw+=part;if(raw.length>65536)throw error('INPUT_LIMIT','Request exceeds size limit');}
+      const v=JSON.parse(raw),id=v.id;messageId=id??null;
+      if(v.jsonrpc!=='2.0'||typeof v.method!=='string')throw error('INVALID_REQUEST','Invalid JSON-RPC');
+      if(v.method==='notifications/initialized')return json(202,{});
+      if(v.method==='initialize')return json(200,{jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:false}},serverInfo:{name:'github-ops-mcp',version:'1.0.0'}}});
+      if(v.method==='tools/list')return json(200,{jsonrpc:'2.0',id,result:{tools:TOOLS.map(([name,description,required])=>({name,description,securitySchemes:[{type:'oauth2',scopes:[]}],_meta:{securitySchemes:[{type:'oauth2',scopes:[]}]},inputSchema:{type:'object',properties:{repo:{type:'string',enum:[...REPOS]},branch:{type:'string'},expected_sha:{type:'string',pattern:SHA.source},sha:{type:'string',pattern:SHA.source},run_id:{type:'integer'}},required,additionalProperties:false}}))}});
+      if(v.method==='tools/call'){
+        const name=v.params?.name;
+        if(!TOOLS.some(x=>x[0]===name))
+          throw error('TOOL_UNKNOWN','Tool not registered; removed tools stay disabled. Re-initialize the client tool list to reconcile a stale tool cache');
+        const answer=await execute(name,v.params?.arguments??{});
+        // MCP requires structuredContent to be an object. A bare array (an empty GitHub list) is invalid.
+        const structured=answer&&typeof answer==='object'&&!Array.isArray(answer)?answer:{result:answer??null};
+        return json(200,{jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(structured)}],structuredContent:structured}});
+      }
+      return json(200,{jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}});
+    }catch(e){return json(200,{jsonrpc:'2.0',id:messageId,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:e.code??'BAD_REQUEST',message:e.message??'Request failed'})}]}});}
+  });
+  return server;
+}
+if(process.argv[1]&&import.meta.url.endsWith(process.argv[1])){
+  const port=Number(process.env.PORT??3000);
+  makeServer().listen(port,'0.0.0.0',()=>console.log(`github-ops-mcp listening on port ${port}; credential values never logged`));
+}
 
-... [13357 characters truncated]
