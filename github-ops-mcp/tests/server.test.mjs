@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeServer, deleteRefWithLease, casDeleteArgs } from '../server.mjs';
-const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
+const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
@@ -468,7 +468,7 @@ test('GitHub App role token file is validated, rotated and fail-closed', async()
  const role=(token,permissions={actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'})=>({
   token,role:'github-ops-reader',app_id:5398752,installation_id:173456397,
   expires_at:new Date(Date.now()+2400000).toISOString(),
-  repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],permissions});
+  repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],permissions});
  const write=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
  const send=async(base)=>{
   const x=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer role-test', 'content-type':'application/json'},
@@ -524,7 +524,7 @@ test('GitHub Ops reader role requires deployments read and refuses legacy four-s
  try{
    const role={role:'github-ops-reader',app_id:5398752,installation_id:173456397,
     token:'r'.repeat(50),expires_at:new Date(Date.now()+2400000).toISOString(),
-    repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],
+    repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
     permissions:{actions:'read',administration:'read',contents:'read',metadata:'read'}};
    writeFileSync(file,JSON.stringify(role),{mode:0o600});chmodSync(file,0o600);
    s=makeServer({callerToken:'bearer',githubToken:'',tokenFile:file});
@@ -553,7 +553,7 @@ test('rotating GitHub App writer file governs only verified POST and fails close
  const role=(token,permissions={actions:'write',contents:'write',metadata:'read'})=>({
    token,role:'github-ops-writer',app_id:5398752,installation_id:173456397,
    expires_at:new Date(Date.now()+2400000).toISOString(),
-   repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],permissions});
+   repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],permissions});
  const setRole=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
  let s=null;
  try{
