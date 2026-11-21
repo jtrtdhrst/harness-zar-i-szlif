@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const REPOS = new Set(['miloszspyrka-code/harness-zar-i-szlif', 'miloszspyrka-code/zar-i-szlif']);
+const REPOS = new Set(['jtrtdhrst/harness-zar-i-szlif', 'jtrtdhrst/zar-i-szlif']);
 const SHA = /^[a-f0-9]{40}$/i;
 const WORKFLOW = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.ya?ml$/;
 const TOOLS = [
@@ -149,7 +149,7 @@ async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
       throw error('AUTH_FILE_EXPIRED','GitHub installation token expired');
     if(v.app_id!==5398752 || v.installation_id!==173456397 || v.role!==expectedRole)
       throw error('AUTH_SCOPE_INVALID','GitHub installation token identity invalid');
-    const expected=['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'];
+    const expected=['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'];
     if(!Array.isArray(v.repositories) || v.repositories.length!==2 || expected.some(r=>!v.repositories.includes(r)))
       throw error('AUTH_SCOPE_INVALID','GitHub installation repository scope invalid');
     const allowedPermissions={
