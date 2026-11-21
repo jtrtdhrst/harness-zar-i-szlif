@@ -1,5 +1,8 @@
 # Harness — active services only
 
+**Notatki do metodologii:** [Metodologia — notatki robocze](docs/metodologia/README.md). To szkic współtworzony i wersjonowany w Git; nie stanowi automatycznie obowiązującej polityki.
+
+
 This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Infrastructure services are maintained in their own source folders.
 
 **Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The former `kod-aplikacji/` and `kod-mcp/` inventories, including their legacy Paperclip sources, were removed from this repository; Żar i Szlif product code remains in its separate product repository. The Hermes Gateway receiver and adapter source from [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36) was merged on 2026-11-06 (source merge alone does not establish live rollout), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
