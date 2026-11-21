@@ -26,6 +26,7 @@ ROLE_PERMISSIONS = {
     "runner": {"actions": "write", "administration": "write", "contents": "read", "metadata": "read"},
     "harness-reader": {"contents": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
+    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "metadata": "read"},
 }
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
 ROLE_REPOS = {"harness-reader": (REPOS[0],)}
@@ -165,3 +166,4 @@ if __name__ == "__main__":
     except Exception as error:
         print(json.dumps({"refreshed": False, "error": str(error)[:160]}), file=sys.stderr)
         sys.exit(1)
+
