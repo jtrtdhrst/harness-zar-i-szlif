@@ -613,3 +613,23 @@ test('preview checks GitHub branch rules and reports no deletion capability with
     }finally{await f.close()}
   }
 });
+
+test('cached legacy MCP repo enums canonicalize to current GitHub owner, with no scope expansion',async()=>{
+  const f=await fixture();
+  try {
+    for(const [oldName,newName] of [
+      ['miloszspyrka-code/harness-zar-i-szlif','jtrtdhrst/harness-zar-i-szlif'],
+      ['miloszspyrka-code/zar-i-szlif','jtrtdhrst/zar-i-szlif']
+    ]){
+      const x=await f.request('github_get_deployments',{repo:oldName,sha:SHA});
+      assert.equal(x.http,200);
+      assert.equal(x.body.result.structuredContent.repo,newName);
+      assert.equal(x.body.result.structuredContent.count,0);
+      assert.equal(f.calls.at(-1)[1],`/repos/${newName}/deployments?sha=${SHA}&per_page=30`);
+    }
+    const prior=f.calls.length;
+    const denied=await f.request('github_repo_info',{repo:'someone/other'});
+    assert.match(denied.body.result.content[0].text,/REPO_DENIED/);
+    assert.equal(f.calls.length,prior);
+  }finally{await f.close()}
+});
