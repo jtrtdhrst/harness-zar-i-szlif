@@ -39,8 +39,11 @@ jobs:
       - name: Validate GitHub App credential broker source
         run: |
           python3 -m py_compile ops/harness/credentials/multica-zar-github-app-refresh.py ops/harness/credentials/github-ops-token-project.py
-      - name: MCP HTTP regression tests
-        run: npm --prefix github-ops-mcp test
+      # The token-file tests intentionally require root-owned 0640 files.
+      # Run inside the unprivileged BuildKit sandbox (root in the build stage),
+      # not as host root or by relaxing production credential checks.
+      - name: MCP HTTP regression tests (isolated image build)
+        run: docker build --target verify -t github-ops-mcp:verify ./github-ops-mcp
       - name: Build production Dockerfile
         run: docker build -t github-ops-mcp:ci ./github-ops-mcp
       - name: Validate packaged server syntax
