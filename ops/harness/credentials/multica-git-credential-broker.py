@@ -191,10 +191,12 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
             # remain denied.
             dispatcher_pid, dispatcher_parent, dispatcher_argv = chain[3]
             git_pid, _, git_argv = chain[4]
+            remote_transport = Path(remote_argv[0]).name.removeprefix("git-")
             if (remote_parent != dispatcher_pid or dispatcher_parent != git_pid or
                 len(dispatcher_argv) != 4 or
                 Path(dispatcher_argv[0]).name != "git" or
-                dispatcher_argv[1] not in {"remote-http", "remote-https"} or
+                remote_transport not in {"remote-http", "remote-https"} or
+                dispatcher_argv[1] != remote_transport or
                 dispatcher_argv[2:] != remote_argv[1:] or
                 not _cache_proc_executable(dispatcher_pid, "git")):
                 return False
