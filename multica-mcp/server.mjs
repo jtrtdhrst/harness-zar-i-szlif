@@ -91,6 +91,7 @@ function runCli(entry, args, token, requestKey) {
       HOME: home,
       MULTICA_TOKEN: token,
       MULTICA_SERVER_URL: API_URL,
+      ...(process.env.MULTICA_WORKSPACE_ID ? { MULTICA_WORKSPACE_ID: process.env.MULTICA_WORKSPACE_ID } : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
