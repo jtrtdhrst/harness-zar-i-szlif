@@ -49,7 +49,7 @@ function validationError(entry, args) {
 
 export function cliArguments(entry, input) {
   const args = { ...input };
-  const workspace = args.workspace_id;
+  const workspace = args.workspace_id ?? process.env.MULTICA_WORKSPACE_ID;
   delete args.workspace_id;
   delete args.confirm;
   const argv = [];
