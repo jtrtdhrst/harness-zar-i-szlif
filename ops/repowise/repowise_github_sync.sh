@@ -431,7 +431,7 @@ for repo in harness product; do
   # RepoWise 0.60.1 may re-embed SQL tombstones. Repair only orphaned store
   # entries; verify true SQL↔Vector and SQL↔FTS parity before reporting success.
   timeout 120 docker exec "$MCP" sh -lc "cd /workspace/$repo && repowise doctor --repair" >/dev/null 2>&1 \
-    || fail "sync-vector-repair-failed repo=$repo"
+    || echo "SYNC_DOCTOR_EXIT_NONZERO repo=$repo; verifying stores independently" >&2
   doctor_json=$(timeout 120 docker exec "$MCP" sh -lc "cd /workspace/$repo && repowise doctor --format json" 2>/dev/null) || :
   printf '%s\n' "$doctor_json" | python3 -c 'import json,sys; s=sys.stdin.read(); d=json.loads(s[s.index("{"):]); c={x["id"]:x["ok"] for x in d["checks"]}; assert c.get("vector-store-sync") and c.get("fts-index-sync"); print("SYNC_STORE_OK")' \
     || fail "sync-store-reconciliation-failed repo=$repo"
