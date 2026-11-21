@@ -118,6 +118,44 @@ async function driveProxy(proxyFile, calls) {
   }
 }
 
+
+
+async function driveConcurrentSessionless(proxyFile, calls = 2) {
+  const port = await freePort();
+  const proxy = spawn(process.execPath, [proxyFile], {
+    env: { ...process.env, LISTEN_PORTS: String(port), BACKEND_ENTRY: BACKEND, IDLE_SECONDS: "600" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let logs = "";
+  proxy.stderr.on("data", (d) => { logs += String(d); });
+  proxy.stdout.on("data", (d) => { logs += String(d); });
+
+  try {
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      if (await health(port)) break;
+      await sleep(50);
+    }
+    assert.ok(await health(port), `proxy did not start: ${logs.slice(-800)}`);
+
+    const requestBody = (id) => ({ jsonrpc: "2.0", id, method: "tools/list", params: {} });
+    const responses = await Promise.all(
+      Array.from({ length: calls }, (_, i) => post(port, requestBody(i + 1))),
+    );
+    return { statuses: responses.map((r) => r.status), logs };
+  } finally {
+    proxy.kill("SIGTERM");
+    await Promise.race([once(proxy, "exit"), sleep(3000)]);
+    if (proxy.exitCode === null) proxy.kill("SIGKILL");
+  }
+}
+
+test("concurrent session-less requests during cold start share one readiness queue", async () => {
+  const { statuses, logs } = await driveConcurrentSessionless(PROXY_FILE, 2);
+  assert.deepEqual(statuses, [200, 200],
+    `every cold-start caller must wait for backend readiness; proxy logs: ${logs.slice(-800)}`);
+});
+
 test("repeated calls on one session each get their own backend socket and succeed", async () => {
   const { statuses, connIds, connections } = await driveProxy(PROXY_FILE, 4);
   assert.deepEqual(statuses, [200, 200, 200, 200], "repeated calls on one session must all succeed");

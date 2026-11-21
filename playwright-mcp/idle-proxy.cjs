@@ -120,8 +120,12 @@ async function backendInitialize(be) {
 }
 
 function ensureBackend(cb) {
-  if (backend) return cb(null);
+  // A spawned process is not a ready backend. While cold-start initialization
+  // is in progress, every caller must join the same readiness queue; otherwise
+  // concurrent requests can observe `backend` before its port/shared session
+  // exists and fail spuriously with 502.
   if (starting) return starting.push(cb);
+  if (backend) return cb(null);
   starting = [cb];
   touch(); // a spawn counts as activity
   const be = spawnBackend();
