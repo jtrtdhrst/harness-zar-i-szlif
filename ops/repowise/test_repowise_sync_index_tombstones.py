@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Tombstones survive in SQL, but must not pollute live RepoWise FTS."""
 import importlib.util
+import json
+import re
+import subprocess
+import sys
 import sqlite3
 import tempfile
 import unittest
@@ -60,6 +64,50 @@ class TombstoneFTSContractTests(unittest.TestCase):
         self.db.commit()
         with self.assertRaisesRegex(RuntimeError, "page/FTS mismatch"):
             mod.check_wiki(self.path, "harness", SHA, full=False)
+
+
+    def test_shell_store_gates_cannot_be_optimized_away(self):
+        """Both scripts must reject incomplete store checks under python -O."""
+        for filename, marker in (
+            ("repowise_github_sync.sh", "SYNC_STORE_OK"),
+            ("repowise_refill_all.sh", "REFILL_STORE_OK"),
+        ):
+            with self.subTest(script=filename):
+                source = Path(__file__).with_name(filename).read_text()
+                snippets = re.findall(r"python3 -c '([^']+)'", source)
+                gates = [s for s in snippets if marker in s]
+                self.assertEqual(len(gates), 1)
+                snippet = gates[0]
+
+                def run(checks):
+                    return subprocess.run(
+                        [sys.executable, "-O", "-c", snippet],
+                        input=json.dumps({"checks": checks}),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+
+                both_ok = [
+                    {"id": "vector-store-sync", "ok": True},
+                    {"id": "fts-index-sync", "ok": True},
+                ]
+                success = run(both_ok)
+                self.assertEqual(success.returncode, 0, success.stderr)
+                self.assertIn(marker, success.stdout)
+
+                for bad in (
+                    [{"id": "vector-store-sync", "ok": False},
+                     {"id": "fts-index-sync", "ok": True}],
+                    [{"id": "vector-store-sync", "ok": True},
+                     {"id": "fts-index-sync", "ok": False}],
+                    [{"id": "vector-store-sync", "ok": True}],
+                    [],
+                ):
+                    failure = run(bad)
+                    self.assertNotEqual(failure.returncode, 0, bad)
+                    self.assertNotIn(marker, failure.stdout)
+
 
 
 if __name__ == "__main__":
