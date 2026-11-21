@@ -494,3 +494,56 @@ test('preview reports deletion_supported only with an exact grant',async()=>{
    assert.equal(out.body.result.structuredContent.rules,'none');
  }finally{await f.close()}
 });
+
+
+test('rotating read-only GitHub App file is scoped, refreshable and expires closed', async()=>{
+  const {mkdtempSync,writeFileSync,rmSync,chmodSync}=await import('node:fs');
+  const {tmpdir}=await import('node:os');
+  const {join}=await import('node:path');
+  const dir=mkdtempSync(join(tmpdir(),'ghops-credential-test-'));
+  const file=join(dir,'grant.json'), calls=[];
+  const payload=(token,expires_at,extra={})=>({
+    role:'githubops-reader',app_id:5398752,installation_id:173456397,
+    repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],
+    permissions:{contents:'read',metadata:'read'},token,expires_at,...extra
+  });
+  const future=()=>new Date(Date.now()+3600_000).toISOString();
+  const put=(record,mode=0o600)=>{writeFileSync(file,JSON.stringify(record),{mode:0o600});chmodSync(file,mode)};
+  const token1='ghs_'+'a'.repeat(80),token2='ghs_'+'b'.repeat(80);
+  const fake=async(_url,opt)=>{
+    calls.push(opt.headers.Authorization);
+    return new Response(JSON.stringify({full_name:REPO,default_branch:'main'}),{status:200,headers:{'content-type':'application/json'}});
+  };
+  put(payload(token1,future()));
+  const s=makeServer({githubToken:'',githubTokenFile:file,callerToken:'caller',fetchImpl:fake});
+  await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
+  const base='http://127.0.0.1:'+s.address().port;
+  const health=async()=>(await fetch(base+'/health')).json();
+  const call=async()=>(
+    await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer caller','content-type':'application/json'},
+      body:JSON.stringify({jsonrpc:'2.0',id:9,method:'tools/call',params:{name:'github_repo_info',arguments:{repo:REPO}}})})
+  ).json();
+  try{
+    assert.equal((await health()).ready,true);
+    assert.equal((await call()).result.structuredContent.full_name,REPO);
+    assert.equal(calls.pop(),'Bearer '+token1);
+    put(payload(token2,future()));
+    assert.equal((await call()).result.structuredContent.full_name,REPO);
+    assert.equal(calls.pop(),'Bearer '+token2,'reads new token for every provider request');
+    put(payload(token2,new Date(Date.now()-60000).toISOString()));
+    assert.equal((await health()).ready,false,'expired token is not ready');
+    assert.match((await call()).result.content[0].text,/AUTH_NOT_CONFIGURED/);
+    assert.equal(calls.length,0,'expired credential never reaches provider');
+    put(payload(token2,future(),{permissions:{contents:'write',metadata:'read'}}));
+    assert.equal((await health()).ready,false,'write privilege rejected');
+    put(payload(token2,future(),{repositories:['miloszspyrka-code/harness-zar-i-szlif']}));
+    assert.equal((await health()).ready,false,'partial repo scope rejected');
+    put(payload(token2,future(),{app_id:123}));
+    assert.equal((await health()).ready,false,'wrong installation rejected');
+    put(payload(token2,future()),0o644);
+    assert.equal((await health()).ready,false,'world-readable token rejected');
+  }finally{
+    await new Promise(resolve=>s.close(resolve));
+    rmSync(dir,{recursive:true,force:true});
+  }
+});
