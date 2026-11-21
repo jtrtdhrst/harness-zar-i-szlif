@@ -209,7 +209,7 @@ async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
       throw error('AUTH_SCOPE_INVALID','GitHub installation repository scope invalid');
     const allowedPermissions={
       'github-ops-reader':{actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'},
-      'github-ops-writer':{actions:'write',contents:'write',metadata:'read'},
+      'github-ops-writer':{actions:'write',contents:'write',pull_requests:'write',metadata:'read'},
     };
     const required=allowedPermissions[expectedRole];
     if(!required || !v.permissions || Object.keys(v.permissions).length!==Object.keys(required).length || Object.entries(required).some(([k,x])=>v.permissions[k]!==x))
