@@ -279,7 +279,17 @@ export function makeServer(config={}) {
       return {repo,rulesets:list,count:list.length};
     }
     if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
-    if(name==='github_get_branch_protection')return api('GET',`${root}/branches/main/protection`);
+    if(name==='github_get_branch_protection'){
+      try{return await api('GET',`${root}/branches/main/protection`);}
+      catch(e){
+        // 404 means no CLASSIC branch protection; an active repository ruleset
+        // can still protect main. Never represent this as an unprotected branch.
+        if(e.code==='GITHUB_HTTP_404')return {repo,classic_protection:false,
+          ruleset_protection:'not_checked',
+          note:'No classic branch protection endpoint; check github_get_rulesets before changing refs'};
+        throw e;
+      }
+    }
     if(name==='github_get_deployments'){
       const sha=assertSHA(p.sha).toLowerCase();
       const list=await api('GET',`${root}/deployments?sha=${sha}&per_page=30`);
