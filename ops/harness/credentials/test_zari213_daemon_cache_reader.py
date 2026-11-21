@@ -30,6 +30,8 @@ class DaemonCacheAuthTests(unittest.TestCase):
                 return original_readlink(path)
             pid = int(str(path).split("/")[2])
             argv = chain[pid][1]
+            if argv[0] == "/usr/lib/git-core/git":
+                return "/usr/lib/git-core/git"
             exe = pathlib.Path(argv[0]).name
             if exe.startswith("python3"):
                 return "/usr/bin/python3.11"
@@ -56,6 +58,42 @@ class DaemonCacheAuthTests(unittest.TestCase):
             800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
             700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
         }, True)
+
+    def test_real_git_core_transport_ancestry(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["/usr/lib/git-core/git-remote-https", "origin",
+                        "https://github.com/x/y"]),
+            750: (700, ["/usr/lib/git-core/git", "remote-https", "origin",
+                        "https://github.com/x/y"]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, True)
+
+    def test_git_core_transport_is_exact_and_fail_closed(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        base = {
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["/usr/lib/git-core/git-remote-https", "origin",
+                        "https://github.com/x/y"]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }
+        bad_transports = (
+            ["/usr/lib/git-core/git", "remote-https", "origin",
+             "https://github.com/x/other"],
+            ["/usr/lib/git-core/git", "remote-ext", "origin",
+             "https://github.com/x/y"],
+            ["git", "remote-https", "origin", "https://github.com/x/y"],
+        )
+        for argv in bad_transports:
+            with self.subTest(argv=argv):
+                chain = dict(base)
+                chain[750] = (700, argv)
+                self.verify(chain, False)
 
     def test_shell_rejects_arbitrary_command(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
