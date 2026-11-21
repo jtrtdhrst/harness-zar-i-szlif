@@ -523,5 +523,95 @@ class CacheTokenScopeTests(unittest.TestCase):
                 broker.read_role_token(pathlib.Path(directory), "cache-reader")
 
 
+
+class ScopeTransportBoundaryTests(unittest.TestCase):
+    """Synthetic localhost-only E2E; never contacts provider or live task."""
+
+    def local_server(self, handler_factory):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from threading import Thread
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                return handler_factory(self)
+            def log_message(self, *args):
+                pass
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 1)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_scope_probe_ignores_hostile_proxy_environment(self):
+        import json, os
+        from unittest.mock import patch
+        captures = []
+        evil = self.local_server(lambda req: (
+            captures.append(req.headers.get("Authorization")),
+            req.send_response(200), req.end_headers(), req.wfile.write(b'{}')))
+        def authorized(req):
+            self.assertEqual(req.path, "/repo/scope")
+            self.assertEqual(req.headers.get("Authorization"), "Bearer synthetic-only")
+            body = json.dumps({
+                "workspace_id": broker.EXPECTED_WORKSPACE,
+                "task_id": "synthetic-task", "project_id": "synthetic-project",
+                "repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif.git"],
+            }).encode()
+            req.send_response(200)
+            req.send_header("Content-Type", "application/json")
+            req.end_headers()
+            req.wfile.write(body)
+        trusted = self.local_server(authorized)
+        overrides = {"http_proxy": f"http://127.0.0.1:{evil.server_port}",
+                     "HTTP_PROXY": f"http://127.0.0.1:{evil.server_port}",
+                     "no_proxy": "", "NO_PROXY": ""}
+        with patch.object(broker, "_trusted_daemon_port", return_value=trusted.server_port), \
+             patch.dict(os.environ, overrides):
+            scope = broker.task_repo_scope("synthetic-only")
+        self.assertEqual(scope["task_id"], "synthetic-task")
+        self.assertEqual(captures, [], "task bearer never hits an environment proxy")
+
+    def test_scope_probe_denies_redirect_without_forwarding_bearer(self):
+        from unittest.mock import patch
+        captures = []
+        evil = self.local_server(lambda req: (
+            captures.append(req.headers.get("Authorization")),
+            req.send_response(200), req.end_headers(), req.wfile.write(b'{}')))
+        def redirect(req):
+            req.send_response(302)
+            req.send_header("Location", f"http://127.0.0.1:{evil.server_port}/steal")
+            req.end_headers()
+        trusted = self.local_server(redirect)
+        with patch.object(broker, "_trusted_daemon_port", return_value=trusted.server_port):
+            self.assertIsNone(broker.task_repo_scope("synthetic-only"))
+        self.assertEqual(captures, [], "scope redirect must not forward task bearer")
+
+    def test_port_file_identity_is_strict_and_symlink_safe(self):
+        import json, os, tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as root:
+            port = pathlib.Path(root) / "daemon.port"
+            port.write_text(json.dumps({"port": 12345}), encoding="utf-8")
+            port.chmod(0o600)
+            with patch.object(broker, "DAEMON_PORT_FILE", port), \
+                 patch.object(broker, "RUNTIME_UID", os.getuid()), \
+                 patch.object(broker, "RUNTIME_GID", os.getgid()):
+                self.assertEqual(broker._trusted_daemon_port(), 12345)
+                port.chmod(0o644)
+                with self.assertRaises(ValueError):
+                    broker._trusted_daemon_port()
+                port.chmod(0o600)
+                other = pathlib.Path(root) / "hardlink"
+                os.link(port, other)
+                with self.assertRaises(ValueError):
+                    broker._trusted_daemon_port()
+                other.unlink()
+                link = pathlib.Path(root) / "symlink"
+                link.symlink_to(port)
+                with patch.object(broker, "DAEMON_PORT_FILE", link):
+                    with self.assertRaises(OSError):
+                        broker._trusted_daemon_port()
+
 if __name__ == "__main__":
     unittest.main()
