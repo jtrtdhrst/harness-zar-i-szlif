@@ -131,7 +131,18 @@ const error = (code,msg)=>Object.assign(new Error(msg),{code});
      } catch { return false; }
    };
  }
-function assertRepo(repo){ if(!REPOS.has(repo))throw error('REPO_DENIED','Repository is not explicitly allowlisted');return repo; }
+// Compatibility for MCP clients whose cached enum still contains the previous owner.
+// Resolve aliases BEFORE constructing the API path; authorization still applies only
+// to the two current repositories in REPOS and the current scoped GitHub App grant.
+const LEGACY_REPO_ALIASES = new Map([
+  ['miloszspyrka-code/harness-zar-i-szlif', 'jtrtdhrst/harness-zar-i-szlif'],
+  ['miloszspyrka-code/zar-i-szlif', 'jtrtdhrst/zar-i-szlif'],
+]);
+function assertRepo(repo){
+  const canonical = LEGACY_REPO_ALIASES.get(repo) ?? repo;
+  if(!REPOS.has(canonical))throw error('REPO_DENIED','Repository is not explicitly allowlisted');
+  return canonical;
+}
 function assertSHA(sha){if(typeof sha!=='string'||!SHA.test(sha))throw error('SHA_INVALID','Exact 40-character SHA required');return sha;}
 function assertBranch(branch){
   if(typeof branch!=='string'||!(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,120}$/).test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('.lock') || branch==='ZARI-155' || /(^|\/)(main|master|ci-approved|release|production|prod|hold|archive|staging|hotfix|deploy|operator)(\/|$)/i.test(branch))throw error('BRANCH_DENIED','Unsafe or protected branch name');
