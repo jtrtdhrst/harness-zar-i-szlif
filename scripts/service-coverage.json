@@ -41,6 +41,10 @@
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
+    "hindsight-mcp": {
+      "mode": "manual_only",
+      "reason": "Git-owned Hindsight role-scoped gateway build; release requires 14-bank auth negative tests, preserved core/volumes and manual Coolify promotion."
+    },
     "integrations": {
       "mode": "manual_only",
       "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."
