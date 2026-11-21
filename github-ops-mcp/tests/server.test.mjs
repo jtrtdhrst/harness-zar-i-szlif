@@ -5,7 +5,7 @@ const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
-  rulesStatus=200,rulesList=[],pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
+  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
   const calls=[];
   let branchDeleted=false;
   let runReadsToMiss=run404Count;
@@ -24,7 +24,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
       return new Response(null,{status:204});
     }
     if(u.pathname.includes('/rules/branches/')){
-      if(rulesStatus!==200)return new Response(JSON.stringify({message:'Forbidden'}),{status:rulesStatus,headers:{'content-type':'application/json'}});
+      if(rulesStatus!==200)return new Response(JSON.stringify({message:rulesMessage}),{status:rulesStatus,headers:{'content-type':'application/json'}});
       v=rulesList;
     }
     else if(u.pathname.endsWith('/branches/main'))v={commit:{sha:SHA}};
@@ -399,6 +399,23 @@ test('deletion refuses stale SHA, protection, rules and unknown rule state witho
       assert.equal(f.calls.some(([method]) => method === 'DELETE'), false, 'no REST DELETE is ever issued');
     } finally { await f.close(); }
   }
+});
+
+test('a plan-limited rulesets endpoint is not treated as unknown protection', async () => {
+  // Private repository without GitHub Pro: rulesets cannot exist at all. The
+  // branch's own `protected` flag (checked earlier) is the authoritative
+  // classic-protection signal, so deletion proceeds — but any other 403 stays
+  // fail-closed (covered by the RULES_UNAVAILABLE case above).
+  const b = await bareWithBranch();
+  const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', branchSHA: b.sha,
+    liveRef: b.bare, liveBranch: 'fix/old', pushRemoteFor: () => b.url,
+    rulesStatus: 403, rulesMessage: 'Upgrade to GitHub Pro or make this repository public to enable this feature.' });
+  try {
+    const out = await f.request('github_delete_merged_branch', { repo: REPO, branch: 'fix/old', expected_sha: b.sha });
+    assert.equal(out.body.result.isError, undefined, JSON.stringify(out.body.result));
+    assert.equal(out.body.result.structuredContent.rules, 'unavailable_on_plan');
+    assert.equal(b.ref(), null);
+  } finally { await f.close(); b.cleanup(); }
 });
 
 test('a Coolify-pinned branch is refused even when every other gate would pass', async () => {

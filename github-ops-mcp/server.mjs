@@ -140,7 +140,14 @@ function githubClient({token,fetchImpl=fetch}){
   return async(method,path,body)=>{
     if(!token)throw error('AUTH_NOT_CONFIGURED','A scoped GitHub App or fine-grained credential is required');
     const result=await fetchImpl(`https://api.github.com${path}`,{method,headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`,'X-GitHub-Api-Version':'2026-03-10','User-Agent':'github-ops-mcp/1.0',...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,redirect:'error'});
-    if(!result.ok){throw error(`GITHUB_HTTP_${result.status}`,`GitHub API denied ${method} (${result.status})`);}
+    if(!result.ok){
+      let detail='';
+      try{ detail=(await result.text()).slice(0,512); }catch{}
+      const denied=error(`GITHUB_HTTP_${result.status}`,`GitHub API denied ${method} (${result.status})`);
+      denied.status=result.status;
+      denied.detail=detail;
+      throw denied;
+    }
     if(result.status===204)return {accepted:true};
     return result.json();
   };
@@ -188,15 +195,23 @@ export function makeServer(config={}) {
     if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
     return {current,merged};
   }
-  // GitHub reports 403 for the rules endpoint on app/plan limitations. That is
-  // not "no rules": it means protection state is unknown, so deletion stops.
+  // GitHub reports 403 for the rules endpoint on app/plan limitations. A scope
+  // denial or a 5xx means protection state is unknown, so deletion stops. The
+  // one exception is GitHub saying outright that this repository cannot have
+  // rulesets (private repository without GitHub Pro): then no rule of that kind
+  // can exist, and classic protection is still enforced through the branch's
+  // own `protected` flag, which is checked before this point.
   async function assertNoRules(repo,root,branch){
     let rules;
     try{ rules=await api('GET',`${root}/rules/branches/${branchQ(branch)}`); }
-    catch(e){ throw error('RULES_UNAVAILABLE',`Cannot verify repository rules (${e.code??'unknown'}); refusing to delete`); }
+    catch(e){
+      const planLimited=e.status===403&&/upgrade to github pro|make this repository public/i.test(e.detail||'');
+      if(!planLimited)throw error('RULES_UNAVAILABLE',`Cannot verify repository rules (${e.code??'unknown'}); refusing to delete`);
+      return {rules:'unavailable_on_plan',count:0};
+    }
     if(!Array.isArray(rules))throw error('RULES_UNAVAILABLE','Repository rules reply is not a list');
     if(rules.length)throw error('RULES_PRESENT','Repository rules apply to this branch');
-    return rules.length;
+    return {rules:'none',count:rules.length};
   }
   async function execute(name,p={}){
     const repo=assertRepo(p.repo);
@@ -231,14 +246,14 @@ export function makeServer(config={}) {
       if(!pushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped push credential is required for CAS deletion');
       if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
-      await assertNoRules(repo,root,branch);
+      const rules=await assertNoRules(repo,root,branch);
       const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
       if(!lease.accepted)throw error(lease.code,`CAS delete refused (${lease.code}); the ref was not removed`);
       let stillThere=true;
       try{ await api('GET',`${root}/branches/${branchQ(branch)}`); }
       catch(e){ if(e.code==='GITHUB_HTTP_404')stillThere=false; else throw error('READBACK_UNAVAILABLE',`Deletion readback failed (${e.code??'unknown'})`); }
       if(stillThere)throw error('DELETE_NOT_CONFIRMED','Branch is still readable after a CAS delete');
-      return {deleted:true,repo,branch,sha,merged_pr:merged.number,lease:'force-with-lease',readback:'429:not_found'};
+      return {deleted:true,repo,branch,sha,merged_pr:merged.number,lease:'force-with-lease',rules:rules.rules,readback:'404'};
     }
     // Disabled: workflow_dispatch with ref:main cannot atomically bind the requested SHA.
     if(name==='github_cancel_workflow_run'){

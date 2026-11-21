@@ -18,7 +18,7 @@ A separate, minimal GitHub MCP endpoint for operations absent from the regular G
 
 ## Run and check
 
-`npm test` — 28 HTTP-level and local-git positive/negative tests. These include disabled workflow dispatch, missing authentication, fail-closed branch deletion (writes disabled, missing push credential, pinned branch, stale SHA, protection, repository rules, unknown rule state, no merged PR), and a schema-invariant regression that every advertised tool returns object `structuredContent` for empty and non-empty GitHub lists. The lease tests run against a throwaway local bare repository: a stale expected SHA is rejected and the ref survives; the exact SHA deletes it; a push that lands between verification and delete is refused by the lease. They make no real GitHub provider writes.
+`npm test` — 29 HTTP-level and local-git positive/negative tests. These include disabled workflow dispatch, missing authentication, fail-closed branch deletion (writes disabled, missing push credential, pinned branch, stale SHA, protection, repository rules, unknown rule state, no merged PR), and a schema-invariant regression that every advertised tool returns object `structuredContent` for empty and non-empty GitHub lists. The lease tests run against a throwaway local bare repository: a stale expected SHA is rejected and the ref survives; the exact SHA deletes it; a push that lands between verification and delete is refused by the lease. A rules endpoint that answers 403 "Upgrade to GitHub Pro" (private repo, no rulesets possible) is accepted only together with `protected: false`; any other 403 stays fail-closed. They make no real GitHub provider writes.
 
 `PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_TOKEN=<scoped-secret> node server.mjs`
 
