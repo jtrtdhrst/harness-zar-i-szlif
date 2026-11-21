@@ -81,6 +81,18 @@ class DaemonCacheAuthTests(unittest.TestCase):
             700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
         }, False)
 
+    def test_git_remote_dispatcher_rejects_protocol_mismatch(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        url = "https://github.com/miloszspyrka-code/harness-zar-i-szlif"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["git-remote-https", "origin", url]),
+            750: (700, ["git", "remote-http", "origin", url]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
+
     def test_shell_rejects_arbitrary_command(self):
         helper = "/usr/local/libexec/multica-zar-git-credential"
         exact = helper + " get"
