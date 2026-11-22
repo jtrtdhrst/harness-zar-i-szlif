@@ -280,7 +280,7 @@ def _common_request(manifest, request, grant, now, expected_source_sha):
     # Hold is a manifest-level gate and is evaluated before any artifact, so a
     # held resource can never be promoted by satisfying later evidence checks.
     state = entry.get("promotion_state", HELD)
-    if state not in (HELD, "approved"):
+    if state not in (HELD, "approved", "auto_main"):
         raise Denied("invalid_promotion_state")
     if state == HELD and not isinstance(grant, dict):
         raise Denied("release_lane_on_hold")

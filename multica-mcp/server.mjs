@@ -49,7 +49,7 @@ function validationError(entry, args) {
 
 export function cliArguments(entry, input) {
   const args = { ...input };
-  const workspace = args.workspace_id;
+  const workspace = args.workspace_id ?? process.env.MULTICA_WORKSPACE_ID;
   delete args.workspace_id;
   delete args.confirm;
   const argv = [];
@@ -91,6 +91,7 @@ function runCli(entry, args, token, requestKey) {
       HOME: home,
       MULTICA_TOKEN: token,
       MULTICA_SERVER_URL: API_URL,
+      ...(process.env.MULTICA_WORKSPACE_ID ? { MULTICA_WORKSPACE_ID: process.env.MULTICA_WORKSPACE_ID } : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

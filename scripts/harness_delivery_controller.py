@@ -233,7 +233,7 @@ def _promote(service, record, transport, state, state_path):
 
 
 def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
-                  state_path=None, lock_path=None, *, source_sha):
+                  state_path=None, lock_path=None, *, source_sha, pre_admitted=None):
     """Return an audit report; mutate nothing unless every gate admits.
 
     ``artifacts(service)`` returns ``{"request": ..., "grant": ..., "attestation": ...}``
@@ -243,6 +243,8 @@ def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
     one SHA can never build or deploy another. A held or unapproved change
     yields a report with ``promoted: False`` and no transport call whatsoever.
     """
+    if pre_admitted is not None:
+        raise Denied("pre_admitted_forbidden")
     if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha):
         raise Denied("invalid_source_sha")
     attributed, unclassified = {}, []

@@ -30,6 +30,8 @@ class DaemonCacheAuthTests(unittest.TestCase):
                 return original_readlink(path)
             pid = int(str(path).split("/")[2])
             argv = chain[pid][1]
+            if argv[0] == "/usr/lib/git-core/git":
+                return "/usr/lib/git-core/git"
             exe = pathlib.Path(argv[0]).name
             if exe.startswith("python3"):
                 return "/usr/bin/python3.11"
@@ -46,6 +48,100 @@ class DaemonCacheAuthTests(unittest.TestCase):
             self.assertEqual(
                 broker.is_authorized_daemon_cache_fetch(900, "test"), expected
             )
+
+    def test_real_git_credential_shell_ancestry(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, True)
+
+    def test_real_git_remote_https_dispatcher_ancestry(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["/usr/lib/git-core/git-remote-https", "origin", url]),
+            750: (700, ["/usr/lib/git-core/git", "remote-https", "origin", url]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, True)
+
+    def test_git_remote_dispatcher_rejects_mismatched_transport(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["git-remote-https", "origin", url]),
+            750: (700, ["git", "remote-https", "other-origin", url]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
+
+    def test_git_remote_dispatcher_rejects_protocol_mismatch(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["git-remote-https", "origin", url]),
+            750: (700, ["git", "remote-http", "origin", url]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
+
+    def test_git_remote_dispatcher_rejects_usr_bin_git(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        url = "https://github.com/jtrtdhrst/harness-zar-i-szlif"
+        self.verify({
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (750, ["/usr/lib/git-core/git-remote-https", "origin", url]),
+            750: (700, ["/usr/bin/git", "remote-https", "origin", url]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
+
+    def test_shell_rejects_arbitrary_command(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        for sh_command in (exact + "; echo extra", "echo " + exact, exact + "  "):
+            with self.subTest(command=sh_command):
+                self.verify({
+                    900: (850, ["python3", helper, "get"]),
+                    850: (800, ["/bin/sh", "-c", sh_command, sh_command]),
+                    800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+                    700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+                }, False)
+
+    def test_shell_rejects_push_and_extra_ancestor(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        chain = {
+            900: (850, ["python3", helper, "get"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+            700: (100, ["git", "push", "origin", "main"]),
+        }
+        self.verify(chain, False)
+        chain[700] = (600, ["git", "-C", "/srv/cache", "fetch", "origin"])
+        chain[600] = (100, ["sh", "-c", "git fetch"])
+        self.verify(chain, False)
+
+    def test_shell_rejects_wrong_git_helper_argv(self):
+        helper = "/usr/local/libexec/multica-zar-git-credential"
+        exact = helper + " get"
+        self.verify({
+            900: (850, ["python3", helper, "token"]),
+            850: (800, ["/bin/sh", "-c", exact, exact]),
+            800: (700, ["git-remote-https", "origin", "https://github.com/x/y"]),
+            700: (100, ["git", "-C", "/srv/cache", "fetch", "origin"]),
+        }, False)
 
     def test_legitimate_daemon_fetch(self):
         self.verify({
@@ -166,7 +262,7 @@ class BrokerHandlerTests(unittest.TestCase):
         h.request.getsockopt.return_value = struct.pack("3i", 900, 997, 981)
         h.rfile = io.BytesIO(json.dumps({
             "op": op, "protocol": "https", "host": "github.com",
-            "path": "miloszspyrka-code/zar-i-szlif.git"
+            "path": "jtrtdhrst/zar-i-szlif.git"
         }).encode() + b"\n")
         h.server = SimpleNamespace(daemon_unit="unit", pidfile=None,
                                    allow_any_daemon=False, tokens=pathlib.Path("/no/tokens"))
@@ -239,7 +335,7 @@ class CacheTokenScopeTests(unittest.TestCase):
                 "token": "ghs_" + "synthetic-do-not-use",
                 "role": "cache-reader",
                 "expires_at": "2099-01-01T00:00:00Z",
-                "repositories": ["miloszspyrka-code/zar-i-szlif"],
+                "repositories": ["jtrtdhrst/zar-i-szlif"],
                 "permissions": {"contents": "read", "metadata": "read"},
             }
             (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
