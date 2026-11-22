@@ -20,6 +20,7 @@ SERVICE_ROOTS = {
 CONTROL_PATHS = {
     "scripts/select_owned_runtime_builds.py",
     ".github/workflows/owned-runtime-images-ghcr.yml",
+    "ops/service-build-roots.json",
 }
 
 def select(paths, *, event_name, service="all"):
