@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "id": "opik",
+  "uuid": "s7a4rwqbij7w4fxlnauriblo",
+  "root": "opik",
+  "release_state": "BLOCKED",
+  "source_build_ready": false,
+  "observed_at": "2026-11-22",
+  "kind": "compose",
+  "candidate": "compose.candidate.yml",
+  "required_digest_images": [
+    {
+      "key": "PINNED_IMAGE_OPIK_1",
+      "observed_image": "mysql:8.4.2"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_2",
+      "observed_image": "redis:7.2.4-alpine3.19"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_3",
+      "observed_image": "zookeeper:3.9.4"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_4",
+      "observed_image": "clickhouse/clickhouse-server:26.3.16.16-alpine"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_5",
+      "observed_image": "docker.io/cloudpirates/image-minio:RELEASE.2025-10-15T17-29-55Z-hardened"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_6",
+      "observed_image": "ghcr.io/comet-ml/opik/opik-backend:2.2.121"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_7",
+      "observed_image": "ghcr.io/comet-ml/opik/opik-python-backend:2.2.121"
+    },
+    {
+      "key": "PINNED_IMAGE_OPIK_8",
+      "observed_image": "ghcr.io/comet-ml/opik/opik-frontend:2.2.121"
+    }
+  ],
+  "observed_components": [
+    {
+      "name": "frontend",
+      "image": "ghcr.io/comet-ml/opik/opik-frontend:2.2.121"
+    },
+    {
+      "name": "python-backend",
+      "image": "ghcr.io/comet-ml/opik/opik-python-backend:2.2.121"
+    },
+    {
+      "name": "backend",
+      "image": "ghcr.io/comet-ml/opik/opik-backend:2.2.121"
+    },
+    {
+      "name": "clickhouse",
+      "image": "clickhouse/clickhouse-server:26.3.16.16-alpine"
+    },
+    {
+      "name": "minio",
+      "image": "docker.io/cloudpirates/image-minio:RELEASE.2025-10-15T17-29-55Z-hardened"
+    },
+    {
+      "name": "zookeeper",
+      "image": "zookeeper:3.9.4"
+    },
+    {
+      "name": "redis",
+      "image": "redis:7.2.4-alpine3.19"
+    },
+    {
+      "name": "mysql",
+      "image": "mysql:8.4.2"
+    }
+  ],
+  "current_app_source": null,
+  "existing_app_volumes": [],
+  "external_host_binds": [],
+  "removed_unowned_build": false,
+  "secret_literals_replaced": 1,
+  "watch_paths": [
+    "opik/"
+  ],
+  "required_release_gates": [
+    "independent exact SHA review",
+    "OCI digest verification",
+    "volume and secret parity",
+    "database backup/restore proof",
+    "authorized controller release",
+    "production positive and negative E2E",
+    "rollback proof"
+  ]
+}

@@ -154,6 +154,7 @@ class ServiceCoverageTests(unittest.TestCase):
             workflow.replace("    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')\n", ""),
             workflow.replace('test "$(id -un)" = actions-zis', 'test "$(id -un)" = root'),
             workflow.replace("! test -w /var/run/docker.sock", "test -w /var/run/docker.sock"),
+            workflow.replace("jtrtdhrst/harness-zar-i-szlif", "miloszspyrka-code/harness-zar-i-szlif"),
             workflow.replace("persist-credentials: false", "persist-credentials: true"),
             workflow.replace("run: npm test", "run: echo skipped"),
             workflow.replace("  validate-release-lanes:", "  fake-validator:"),

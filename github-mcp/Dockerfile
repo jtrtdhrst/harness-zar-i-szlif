@@ -4,7 +4,7 @@ RUN apk add --no-cache git
 WORKDIR /app
 COPY server.mjs ./server.mjs
 COPY tests ./tests
-RUN node --check server.mjs && node --test tests/server.test.mjs
+RUN node --check server.mjs && node --test tests/*.test.mjs
 
 # Runtime image contains only the tested server, not test fixtures.
 FROM node:24-alpine

@@ -1,0 +1,113 @@
+name: Owned Harness source build roots - safe PR validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ops/service-build-roots.json'
+      - 'scripts/test_service_build_roots.py'
+      - 'ops/repowise/compose.publisher.owned.yaml'
+      - 'ops/repowise/Dockerfile.publisher'
+      - '.github/workflows/source-build-roots-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-owned-source:
+    # Never use the production-adjacent self-hosted runner with unreviewed PR YAML.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exactly 10 source-ready roots and staged Coolify root
+        run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
+      - name: Validate standalone RepoWise staging Compose rooted at its own folder
+        run: docker compose -f ops/repowise/compose.publisher.owned.yaml config --quiet
+      - name: Build staging publisher from owned context with protocol tests
+        run: |
+          set -euo pipefail
+          docker build --pull -f ops/repowise/Dockerfile.publisher -t repowise-publisher-pr:${{ github.sha }} ops/repowise
+          docker image inspect repowise-publisher-pr:${{ github.sha }} --format '{{.Id}}'
+
+  detect-ready-roots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.map.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Derive exact 10-source matrix from canonical versioned mapping
+        id: map
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads(Path("ops/service-build-roots.json").read_text())
+          expected = {
+              "github-ops-mcp", "hermes-gateway", "multica-mcp",
+              "repowise-deployment-publisher-staging", "emailens-mcp",
+              "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
+              "mantic-mcp", "playwright-mcp",
+          }
+          ready = [r for r in data["resources"] if r["source_build_ready"]]
+          if len(ready) != 10 or {r["id"] for r in ready} != expected:
+              raise SystemExit("source_ready_set_changed_without_review")
+          matrix = []
+          for r in ready:
+              root = Path(r["source_root"])
+              dockerfile = Path(r["build_dockerfile"])
+              if root.is_absolute() or ".." in root.parts or root.as_posix() in (".", ""):
+                  raise SystemExit("unsafe_source_root:" + r["id"])
+              if dockerfile.parent != root or not dockerfile.is_file():
+                  raise SystemExit("owned_Dockerfile_missing:" + r["id"])
+              matrix.append({"service": r["id"], "root": root.as_posix(), "file": dockerfile.name})
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
+          print("Source root matrix:", [x["service"] for x in matrix])
+          PY
+
+  build-all-10-owned-sources:
+    needs: [verify-owned-source, detect-ready-roots]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJSON(needs.detect-ready-roots.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Build real Docker image from declared owned directory (not repo root)
+        shell: bash
+        env:
+          SERVICE: ${{ matrix.service }}
+          ROOT: ${{ matrix.root }}
+          DOCKERFILE: ${{ matrix.file }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -f "$ROOT/$DOCKERFILE"
+          test "$ROOT" != "."
+          test "$ROOT" != "/"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          docker build --pull \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            -t "owned-harness-${SERVICE}:pr" \
+            -f "$ROOT/$DOCKERFILE" "$ROOT"
+          actual=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "owned-harness-${SERVICE}:pr")
+          test "$actual" = "$SOURCE_SHA"
+          echo "Verified owned Docker build: $SERVICE, folder=$ROOT, SHA=$SOURCE_SHA"
