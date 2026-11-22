@@ -39,11 +39,12 @@ After an approved merge, the root-owned systemd service must run the **reviewed*
 `multica-zar-github-app-refresh.py` and `github-ops-token-project.py` versions
 from this repository. Merely merging the source or obtaining a green GitHub
 workflow does not update `/usr/local/libexec/` on the VPS. The existing systemd
-`ExecStartPost` currently copies only `token.json` into the Coolify named
-volume, not `writer.json`: writer must be explicitly projected to the existing
-`/run/secrets/github-ops/` **directory mount** through a reviewed root-owned
-path before write readiness can be claimed. Keep the existing refresher timer;
-do not add a second token controller.
+`ExecStartPost` copies the reader `token.json` to the Coolify named volume;
+the reviewed `github-ops-token-project.py` separately projects an opted-in,
+validated short-lived writer into `writer.json` in that same **existing** volume,
+atomically, and removes it on revocation. This path must first be installed on
+the host after review; until then the live volume has no writer. Keep the
+existing refresher timer; do not add a second token controller.
 
 Run the source-controlled read-only preflight on the target host using the
 exact checked-out approved SHA:
