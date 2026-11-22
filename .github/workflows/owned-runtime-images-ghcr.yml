@@ -79,7 +79,7 @@ jobs:
             -m unittest discover -s /tests -p 'test_*.py' -v
       - name: Run Multica MCP protocol and auth tests
         if: steps.impacted.outputs.multica == 'true'
-        run: npm --prefix multica-mcp test
+        run: npm --prefix mcp/multica-mcp test
 
   select:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
