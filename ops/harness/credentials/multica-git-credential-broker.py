@@ -370,13 +370,13 @@ def read_role_token(tokens_dir, role):
         raise ValueError("role token permissions mismatch")
     if role.endswith(tuple(f"-{suffix}" for suffix in PROJECT_REPOS)):
         if data.get("role") != role:
-            raise ValueError("role token scope label mismatch")
+            raise ValueError("role token permissions mismatch")
     elif role == "cache-reader":
         if (data.get("role") != "cache-reader" or
             data.get("permissions") != {"contents": "read", "metadata": "read"}):
             raise ValueError("daemon cache token permissions mismatch")
     elif data.get("role") != role:
-        raise ValueError("role token scope label mismatch")
+        raise ValueError("role token permissions mismatch")
     if parse_expiry(data["expires_at"]) <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2):
         raise ValueError("role token stale")
     return data
