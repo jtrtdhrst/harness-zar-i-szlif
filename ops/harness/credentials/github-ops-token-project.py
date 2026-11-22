@@ -22,7 +22,7 @@ PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", 
 WRITER_SOURCE = Path("/etc/multica-git-credential/roles/github-ops-writer.json")
 WRITER_TARGET = TARGET_DIR / "writer.json"
 WRITER_ROLE = "github-ops-writer"
-WRITER_PERMISSIONS = {"actions": "write", "contents": "write", "metadata": "read"}
+WRITER_PERMISSIONS = {"actions": "write", "contents": "write", "pull_requests": "write", "metadata": "read"}
 NODE_GID = 1000
 
 
