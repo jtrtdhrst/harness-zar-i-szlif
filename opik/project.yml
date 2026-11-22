@@ -1,5 +1,0 @@
-name: opik
-description: Production project for Opik observability platform
-environment: production
-service: opik
-data: [opik-clickhouse-data, opik-clickhouse-logs, opik-mysql, opik-minio-data, opik-redis-data, opik-zookeeper]
