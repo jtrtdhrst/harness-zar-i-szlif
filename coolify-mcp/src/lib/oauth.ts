@@ -601,7 +601,17 @@ export class OAuthProvider {
     // A document is public by construction, so it cannot carry a shared
     // secret and cannot ask to authenticate with one.
     const method = doc.token_endpoint_auth_method ?? 'none';
-    if (method !== 'none') invalid('may only use token_endpoint_auth_method "none"');
+    const advertisedMethods = doc.token_endpoint_auth_methods_supported;
+    // Some ChatGPT CIMD clients prefer private_key_jwt but explicitly support
+    // public-client 'none'. We never verify a JWT here: the session remains
+    // a public PKCE client and cannot supply a client secret.
+    const allowsPublicFallback =
+      method === 'private_key_jwt' &&
+      Array.isArray(advertisedMethods) &&
+      advertisedMethods.includes('none');
+    if (method !== 'none' && !allowsPublicFallback) {
+      invalid('may only use token_endpoint_auth_method "none"');
+    }
     if ('client_secret' in doc || 'client_secret_expires_at' in doc) {
       invalid('must not carry a client_secret');
     }
