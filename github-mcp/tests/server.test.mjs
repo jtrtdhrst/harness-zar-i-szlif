@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeServer, deleteRefWithLease, casDeleteArgs } from '../server.mjs';
-const REPO='miloszspyrka-code/harness-zar-i-szlif', SHA='a'.repeat(40);
-async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',callerToken='my-private-token',
+const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
+async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
-  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,
+  deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,classicProtectionMissing=false,
   rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
   const calls=[];
+  const authorizations=[];
   let branchDeleted=false;
   let runReadsToMiss=run404Count;
   const mergeSHA='c'.repeat(40);
@@ -17,7 +18,8 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     catch{return null;}
   };
   const fake=async(url,opts)=>{
-    const u=new URL(url);calls.push([opts.method,u.pathname+u.search]);
+    const u=new URL(url);calls.push([opts.method,u.pathname+u.search]);authorizations.push(opts.headers.Authorization);
+    if(classicProtectionMissing && u.pathname.endsWith('/branches/main/protection')) return new Response(JSON.stringify({message:'Branch not protected'}),{status:404});
     let v={};
     if(opts.method==='DELETE'&&u.pathname.includes('/git/refs/heads/')){
       branchDeleted=true;
@@ -58,29 +60,29 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     else if(u.pathname.endsWith('/actions/permissions'))v={enabled:true,allowed_actions:'all'};
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
-  const s=makeServer({fetchImpl:fake,githubToken,callerToken,writesEnabled,allowDeletion,
+  const s=makeServer({fetchImpl:fake,githubToken,writerToken,callerToken,writesEnabled,allowDeletion,
     pushToken,pinnedBranches,pushRemoteFor,gitBin,
-    deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
+    deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`,`${REPO}:fix/old@${branchSHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
   const request=async(name,args={},auth=true)=>{
     const x=await fetch(root+'/mcp',{method:'POST',headers:{'content-type':'application/json',...(auth?{authorization:`Bearer ${callerToken}`}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})});
     return {http:x.status,body:await x.json()};
   };
-  return {s,root,calls,request,close:()=>new Promise(r=>s.close(r))};
+  return {s,root,calls,authorizations,request,close:()=>new Promise(r=>s.close(r))};
 }
 test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,8);
+    assert.equal((await y.json()).result.tools.length,20);
   }finally{await f.close()}
 });
-test('tool metadata requires OAuth for all eight tools',async()=>{
+test('tool metadata requires OAuth for all twenty tools',async()=>{
  const f=await fixture();try{
   const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   const tools=(await response.json()).result.tools;
-  assert.equal(tools.length,8);
+  assert.equal(tools.length,20);
   for(const tool of tools){
     assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
     assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
@@ -184,7 +186,7 @@ test('workflow dispatch is unavailable even with write flag enabled',async()=>{
 });
 
 test('run cancellation exact SHA and allowlisted flow',async()=>{
- const f=await fixture({writesEnabled:true});try{
+ const f=await fixture({writesEnabled:true,writerToken:'writer-test'});try{
     assert.match((await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:'b'.repeat(40)})).body.result.content[0].text,/STALE_SHA/);
     assert.equal((await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:SHA})).body.result.structuredContent.cancel_requested,true);
  }finally{await f.close()}
@@ -285,11 +287,11 @@ test('invalid provider list shape fails closed instead of emitting a bare array'
 });
 test('every advertised tool returns object structuredContent, never a bare array',async()=>{
   const b=await bareWithBranch();
-  const f=await fixture({writesEnabled:true,deployments:[],rulesets:[],branchSHA:b.sha,
+  const f=await fixture({writesEnabled:true,writerToken:'writer-test',deployments:[],rulesets:[],branchSHA:b.sha,
     liveRef:b.bare,liveBranch:'fix/old',pushToken:'test-push-token',pushRemoteFor:()=>b.url});
   try{
     const tools=await toolsListed(f.root);
-    assert.equal(tools.length,8);
+    assert.equal(tools.length,20);
     assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false,'removed dispatch must stay unadvertised');
     const args={github_repo_info:{repo:REPO},github_get_rulesets:{repo:REPO},
       github_get_actions_permissions:{repo:REPO},github_get_branch_protection:{repo:REPO},
@@ -297,7 +299,7 @@ test('every advertised tool returns object structuredContent, never a bare array
       github_preview_branch_delete:{repo:REPO,branch:'fix/old',expected_sha:b.sha},
       github_delete_merged_branch:{repo:REPO,branch:'fix/old',expected_sha:b.sha},
       github_cancel_workflow_run:{repo:REPO,run_id:123,expected_sha:SHA}};
-    for(const tool of tools){
+    for(const tool of tools.filter(t=>Object.hasOwn(args,t.name))){
       const out=await f.request(tool.name,args[tool.name]);
       assert.equal(out.http,200,tool.name);
       assert.equal(out.body.result.isError,undefined,tool.name+' must not error: '+JSON.stringify(out.body.result).slice(0,300));
@@ -364,6 +366,10 @@ test('CAS argv pins the exact expected SHA and carries no secret', async () => {
   assert.deepEqual(argv, ['push', '--porcelain', `--force-with-lease=refs/heads/fix/old:${SHA}`,
     'https://github.com/o/r.git', ':refs/heads/fix/old']);
   assert.equal(argv.some(a => a.includes('ghp_') || a.includes('token')), false);
+  assert.throws(() => casDeleteArgs({ remote: 'https://attacker.invalid/o/r.git', branch: 'fix/old', expectedSha: SHA }),
+    e => e.code === 'REMOTE_INVALID');
+  assert.throws(() => casDeleteArgs({ remote: 'https://github.com@attacker.invalid/o/r.git', branch: 'fix/old', expectedSha: SHA }),
+    e => e.code === 'REMOTE_INVALID');
   assert.throws(() => casDeleteArgs({ remote: 'http://plaintext.example/r.git', branch: 'fix/old', expectedSha: SHA }),
     e => e.code === 'REMOTE_INVALID');
 });
@@ -459,19 +465,15 @@ test('a push that lands between verification and delete is rejected by the lease
 });
 
 
-test('GitHub App role token file is validated, rotated and fail-closed', async(t)=>{
- if (typeof process.getuid === 'function' && process.getuid() !== 0) {
-  t.skip('Positive root-owned credential fixture requires uid 0; non-root denial is tested separately.');
-  return;
- }
+test('GitHub App role token file is validated, rotated and fail-closed', async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-role-')),file=join(dir,'reader.json');
  const seen=[];
- const role=(token,permissions={actions:'read',administration:'read',contents:'read',metadata:'read'})=>({
+ const role=(token,permissions={actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'})=>({
   token,role:'github-ops-reader',app_id:5398752,installation_id:173456397,
   expires_at:new Date(Date.now()+2400000).toISOString(),
-  repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],permissions});
+  repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],permissions});
  const write=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
  const send=async(base)=>{
   const x=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer role-test', 'content-type':'application/json'},
@@ -490,13 +492,197 @@ test('GitHub App role token file is validated, rotated and fail-closed', async(t
   write(role('y'.repeat(50)));
   assert.equal((await send(base)).structuredContent.full_name,REPO);
   assert.deepEqual(seen,['Bearer '+'x'.repeat(50),'Bearer '+'y'.repeat(50)]);
-  write(role('z'.repeat(50),{actions:'write',administration:'read',contents:'read',metadata:'read'}));
+  write(role('z'.repeat(50),{actions:'write',administration:'read',contents:'read',deployments:'read',metadata:'read'}));
   assert.match((await send(base)).content[0].text,/AUTH_SCOPE_INVALID/);
   assert.equal((await (await fetch(base+'/health')).json()).ready,false);
   assert.equal(seen.length,2);
   write({...role('a'.repeat(50)),expires_at:new Date(Date.now()-60000).toISOString()});
   assert.match((await send(base)).content[0].text,/AUTH_FILE_EXPIRED/);
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
+
+test('GH Ops read-only reader cannot substitute for a separate writer',async()=>{
+ const f=await fixture({writesEnabled:true,githubToken:'only-reader',writerToken:''});
+ try {
+   const out=await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:SHA});
+   assert.equal(out.body.result.isError,true);
+   assert.match(out.body.result.content[0].text,/WRITE_CREDENTIAL_MISSING/);
+   assert.equal(f.calls.length,0,'no provider request without a writer grant');
+ } finally { await f.close(); }
+});
+test('SHA-verified workflow cancellation uses separate writer token only for POST',async()=>{
+ const f=await fixture({writesEnabled:true,githubToken:'reader-grant',writerToken:'writer-grant'});
+ try {
+   const out=await f.request('github_cancel_workflow_run',{repo:REPO,run_id:123,expected_sha:SHA});
+   assert.equal(out.body.result.isError,undefined,JSON.stringify(out.body.result));
+   assert.equal(out.body.result.structuredContent.cancel_requested,true);
+   assert.deepEqual(f.calls.map(x=>x[0]),['GET','POST']);
+   assert.deepEqual(f.authorizations,['Bearer reader-grant','Bearer writer-grant']);
+ } finally { await f.close(); }
+});
+test('GitHub Ops reader role requires deployments read and refuses legacy four-scope grant',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-scope-')),file=join(dir,'reader.json');
+ let s=null;
+ try{
+   const role={role:'github-ops-reader',app_id:5398752,installation_id:173456397,
+    token:'r'.repeat(50),expires_at:new Date(Date.now()+2400000).toISOString(),
+    repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
+    permissions:{actions:'read',administration:'read',contents:'read',metadata:'read'}};
+   writeFileSync(file,JSON.stringify(role),{mode:0o600});chmodSync(file,0o600);
+   s=makeServer({callerToken:'bearer',githubToken:'',tokenFile:file});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const x=await fetch('http://127.0.0.1:'+s.address().port+'/health');
+   assert.equal((await x.json()).github_configured,false);
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
+test('live MCP tools/list contains exact twenty names; removed dispatch is never advertised',async()=>{
+ const f=await fixture();
+ try {
+   const tools=await toolsListed(f.root);
+   const names=tools.map(t=>t.name).sort();
+   assert.deepEqual(names,[
+    'github_cancel_workflow_run','github_delete_merged_branch','github_get_actions_permissions',
+    'github_get_branch_protection','github_get_deployments','github_get_rulesets',
+    'github_preview_branch_delete','github_repo_info',
+    'github_get_file','github_get_branch','github_list_branches','github_list_pull_requests',
+    'github_get_pull_request','github_get_pr_files','github_get_check_runs','github_get_workflow_runs',
+    'github_create_branch','github_commit_file','github_create_pull_request','github_merge_pull_request'].sort());
+ }finally{await f.close()}
+});
+test('rotating GitHub App writer file governs only verified POST and fails closed',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-writer-')),file=join(dir,'writer.json');
+ const auths=[];
+ const role=(token,permissions={actions:'write',contents:'write',pull_requests:'write',metadata:'read'})=>({
+   token,role:'github-ops-writer',app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],permissions});
+ const setRole=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
+ let s=null;
+ try{
+   setRole(role('w'.repeat(50)));
+   s=makeServer({callerToken:'test-owner',githubToken:'reader-only',writerTokenFile:file,writesEnabled:true,
+     fetchImpl:async(url,opts)=>{
+      auths.push({method:opts.method,token:opts.headers.Authorization});
+      const body=opts.method==='GET'?{head_sha:SHA,status:'in_progress',path:'.github/workflows/release-lanes-policy.yml'}:null;
+      return new Response(body?JSON.stringify(body):null,{status:body?200:204,headers:{'content-type':'application/json'}});
+     }});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const cancel=async()=>{
+    const x=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer test-owner','content-type':'application/json'},
+     body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'github_cancel_workflow_run',
+      arguments:{repo:REPO,run_id:123,expected_sha:SHA}}})});
+    return (await x.json()).result;
+   };
+   assert.equal((await (await fetch(base+'/health')).json()).writer_configured,true);
+   assert.equal((await cancel()).structuredContent.cancel_requested,true);
+   setRole(role('y'.repeat(50)));
+   assert.equal((await cancel()).structuredContent.cancel_requested,true);
+   assert.deepEqual(auths.map(x=>x.token),[
+    'Bearer reader-only','Bearer '+'w'.repeat(50),'Bearer reader-only','Bearer '+'y'.repeat(50)]);
+   setRole(role('z'.repeat(50),{actions:'read',contents:'write',metadata:'read'}));
+   assert.equal((await (await fetch(base+'/health')).json()).writer_configured,false);
+   assert.match((await cancel()).content[0].text,/AUTH_SCOPE_INVALID/);
+   assert.equal(auths.filter(x=>x.method==='POST').length,2,'invalid grant never reaches GitHub mutation');
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
+test('branch delete requires exact repository, branch and SHA grant before provider calls',async()=>{
+  const f=await fixture({writesEnabled:true,pushToken:'test-push-token',approved:false});
+  try {
+    const x=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.match(x.body.result.content[0].text,/DELETE_NOT_APPROVED/);
+    assert.equal(f.calls.length,0,'no provider request before operator grant');
+  }finally{await f.close()}
+});
+test('preview checks GitHub branch rules and reports no deletion capability without a grant',async()=>{
+  for(const opt of [
+    {rulesList:[{id:123}],expected:'RULES_PRESENT'},
+    {rulesStatus:403,rulesMessage:'Forbidden',expected:'RULES_UNAVAILABLE'},
+    {rulesStatus:200,rulesList:[],approved:false,expected:null}
+  ]){
+    const f=await fixture(opt);
+    try{
+      const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+      if(opt.expected){
+        assert.equal(out.body.result.isError,true);
+        assert.match(out.body.result.content[0].text,new RegExp(opt.expected));
+      }else{
+        assert.equal(out.body.result.structuredContent.rules,'none');
+        assert.equal(out.body.result.structuredContent.deletion_supported,false);
+      }
+      assert.equal(f.calls.some(([method])=>method!=='GET'),false,'preview never mutates provider');
+    }finally{await f.close()}
+  }
+});
+
+test('cached legacy MCP repo enums canonicalize to current GitHub owner, with no scope expansion',async()=>{
+  const f=await fixture();
+  try {
+    for(const [oldName,newName] of [
+      ['miloszspyrka-code/harness-zar-i-szlif','jtrtdhrst/harness-zar-i-szlif'],
+      ['miloszspyrka-code/zar-i-szlif','jtrtdhrst/zar-i-szlif']
+    ]){
+      const x=await f.request('github_get_deployments',{repo:oldName,sha:SHA});
+      assert.equal(x.http,200);
+      assert.equal(x.body.result.structuredContent.repo,newName);
+      assert.equal(x.body.result.structuredContent.count,0);
+      assert.equal(f.calls.at(-1)[1],`/repos/${newName}/deployments?sha=${SHA}&per_page=30`);
+    }
+    const prior=f.calls.length;
+    const denied=await f.request('github_repo_info',{repo:'someone/other'});
+    assert.match(denied.body.result.content[0].text,/REPO_DENIED/);
+    assert.equal(f.calls.length,prior);
+  }finally{await f.close()}
+});
+
+test('classic protection 404 is informative and never overrides active rulesets',async()=>{
+  const f=await fixture({classicProtectionMissing:true,rulesets:[{name:'main-protection',enforcement:'active'}]});
+  try {
+    const protection=await f.request('github_get_branch_protection',{repo:REPO});
+    assert.equal(protection.http,200);
+    assert.equal(protection.body.result.structuredContent.classic_protection,false);
+    assert.equal(protection.body.result.structuredContent.ruleset_protection,'not_checked');
+    const rules=await f.request('github_get_rulesets',{repo:REPO});
+    assert.equal(rules.body.result.structuredContent.count,1);
+    assert.equal(rules.body.result.structuredContent.rulesets[0].enforcement,'active');
+  }finally{await f.close()}
+});
+
+test('poisoned HOME insteadOf cannot redirect a Git lease or receive writer credential', async () => {
+  const {mkdirSync,writeFileSync} = await import('node:fs');
+  const http = await import('node:http');
+  const {join} = await import('node:path');
+  const b = await bareWithBranch();
+  const home=join(b.root,'poisoned-home');
+  mkdirSync(home);
+  let attackerRequests=0, attackerAuth=[];
+  const attacker=http.createServer((req,res)=>{
+    attackerRequests++;attackerAuth.push(req.headers.authorization??'');
+    res.writeHead(401,{'WWW-Authenticate':'Basic realm="mock-attacker"'});res.end();
+  });
+  await new Promise(r=>attacker.listen(0,'127.0.0.1',r));
+  const poison='[url "http://127.0.0.1:'+attacker.address().port+'/steal/"]\\n  insteadOf = '+b.url+'\\n';
+  writeFileSync(join(home,'.gitconfig'),poison);
+  const oldHome=process.env.HOME;
+  try {
+    process.env.HOME=home;
+    const out=await deleteRefWithLease({remote:b.url,branch:b.branch,expectedSha:b.sha,pushToken:'synthetic-writer-secret'});
+    assert.equal(out.accepted,true,JSON.stringify(out));
+    assert.equal(b.ref(),null);
+    assert.equal(attackerRequests,0,'Git must never read the poisoned global URL rewrite');
+    assert.deepEqual(attackerAuth,[],'no request may include the writer credential');
+  }finally{
+    if(oldHome===undefined)delete process.env.HOME;else process.env.HOME=oldHome;
+    await new Promise(r=>attacker.close(r));
+    b.cleanup();
+  }
 });
 
 test('non-root GitHub App credential fixture is rejected without provider traffic', async(t)=>{
@@ -514,7 +700,7 @@ test('non-root GitHub App credential fixture is rejected without provider traffi
   writeFileSync(file,JSON.stringify({
    token:'x'.repeat(50),role:'github-ops-reader',app_id:5398752,installation_id:173456397,
    expires_at:new Date(Date.now()+2400000).toISOString(),
-   repositories:['miloszspyrka-code/harness-zar-i-szlif','miloszspyrka-code/zar-i-szlif'],
+   repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
    permissions:{actions:'read',administration:'read',contents:'read',metadata:'read'}
   }),{mode:0o600});
   s=makeServer({callerToken:'non-root-denial-test',githubToken:'',tokenFile:file,

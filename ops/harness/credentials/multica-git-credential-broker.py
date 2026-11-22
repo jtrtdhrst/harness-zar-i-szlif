@@ -230,6 +230,11 @@ def role_repos(role):
     return ALLOWED_REPOS
 
 
+def role_repo_allowed(role, repo):
+    """Additional static role allowlist; live task scope is checked separately."""
+    return repo in ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+
+
 def _cache_proc_executable(pid, kind):
     """Use /proc executable identity; argv[0] is caller-controlled."""
     approved = {
@@ -370,6 +375,8 @@ def read_role_token(tokens_dir, role):
         if (data.get("role") != "cache-reader" or
             data.get("permissions") != {"contents": "read", "metadata": "read"}):
             raise ValueError("daemon cache token permissions mismatch")
+    elif data.get("role") != role:
+        raise ValueError("role token scope label mismatch")
     if parse_expiry(data["expires_at"]) <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2):
         raise ValueError("role token stale")
     return data
@@ -445,7 +452,7 @@ class Handler(socketserver.StreamRequestHandler):
                     self.reply({"ok": False, "error": "unsupported_transport"})
                     return
                 repo = str(request.get("path", "")).removesuffix(".git").strip("/")
-                if repo not in ALLOWED_REPOS:
+                if not role_repo_allowed(role, repo):
                     self.reply({"ok": False, "error": "repository_not_allowed"})
                     return
                 if scope is not None:
