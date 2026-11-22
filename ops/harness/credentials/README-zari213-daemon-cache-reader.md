@@ -14,8 +14,9 @@ against the live daemon `/repo/scope` endpoint and selects the repository-only
 variant: `implementer-harness`, `implementer-product`, and the same suffixes for
 `reviewer`, `release` and `runner`. A request for a repository outside the
 task's `RepoURLs` is denied before any token is loaded; an empty, malformed or
-unreachable scope fails closed. Base roles remain only for a genuine
-workspace-wide claim covering both repositories.
+unreachable scope fails closed. Project tasks with two repository claims also fail
+closed at both the daemon checkout boundary and credential broker. No
+workspace-wide credential may be borrowed by a project task.
 
 This closes the direct `git clone`/`git fetch` path around project-scoped
 `repo checkout`: the returned credential can read only the task's project
