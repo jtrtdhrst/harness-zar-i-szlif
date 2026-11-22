@@ -23,8 +23,8 @@ class HarnessBuildRootsTests(unittest.TestCase):
         self.assertEqual(self.data["schema_version"], 1)
         self.assertEqual(self.data["repo"], "jtrtdhrst/harness-zar-i-szlif")
         self.assertEqual(len(self.rows), 22)
-        self.assertEqual(len({r["id"] for r in self.rows}), 31)
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 31)
+        self.assertEqual(len({r["id"] for r in self.rows}), 22)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 22)
 
     def test_every_source_root_is_non_root_and_explicit(self):
         for r in self.rows:
