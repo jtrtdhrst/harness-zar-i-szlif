@@ -362,6 +362,18 @@ def wait_live(sha, attempts=90, interval=10, *, image=None, digest=None):
     return False
 
 
+def restore_previous(previous_sha):
+    """Restore the last running release and independently verify its content."""
+    if not valid_commit_sha(previous_sha):
+        return {"healthy": False, "reason": "invalid_previous_sha"}
+    status, body = deploy(previous_sha)
+    deployment = (body.get("deployments", [{}])[0].get("deployment_uuid")
+                  if isinstance(body, dict) else None)
+    healthy = wait_live(previous_sha, attempts=12, interval=5)
+    return {"sha": previous_sha, "healthy": healthy,
+            "deploy_http": status, "deployment": deployment}
+
+
 def save(state):
     atomic_private_json(STATE, state)
 
@@ -415,26 +427,48 @@ def main():
             print(json.dumps({"result": "would_deliver", "sha": target, "live": current}))
             return 0
         log = STATE_DIR / f"build-{target}.log"
+        deployment_started = False
         try:
             image, digest = build_and_push(target, log)
+            deployment_started = True
             status, body = deploy(target)
             deployment = body.get("deployments", [{}])[0].get("deployment_uuid") if isinstance(body, dict) else None
             healthy = wait_live(target, image=image, digest=digest)
-            if healthy:
-                # Never certify an unverified deployment. A crash or negative
-                # readback must leave the prior verified receipt unchanged.
-                update_marker(target, image, digest)
+            if not healthy:
+                # The new image was not verified. Restore the prior approved
+                # release; never set a fresh verified marker on this path.
+                rollback = restore_previous(current)
+                save({"sha": target, "previous": current, "image": image,
+                      "digest": digest, "deployment": deployment, "healthy": False,
+                      "rollback": rollback,
+                      "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                print(json.dumps({"result": "readback_failed_rollback",
+                                  "sha": target, "digest": digest,
+                                  "rollback": rollback}), file=sys.stderr)
+                return 1
+            # Certification comes strictly AFTER positive runtime and public
+            # content readback, never after build or deployment request alone.
+            update_marker(target, image, digest)
             save({"sha": target, "previous": current, "image": image, "digest": digest,
-                  "deployment": deployment, "healthy": healthy,
+                  "deployment": deployment, "healthy": True,
                   "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-            print(json.dumps({"result": "deployed" if healthy else "readback_failed",
-                              "sha": target, "digest": digest, "deployment": deployment,
-                              "healthy": healthy, "deploy_http": status}))
-            return 0 if healthy else 1
+            print(json.dumps({"result": "deployed", "sha": target, "digest": digest,
+                              "deployment": deployment, "healthy": True,
+                              "deploy_http": status}))
+            return 0
         except Exception as error:
-            save({"sha": target, "previous": current, "healthy": False, "error": str(error)[:200],
+            rollback = None
+            if deployment_started:
+                try:
+                    rollback = restore_previous(current)
+                except Exception as rollback_error:
+                    rollback = {"healthy": False, "reason": "rollback_execution_failed",
+                                "error": str(rollback_error)[:100]}
+            save({"sha": target, "previous": current, "healthy": False,
+                  "rollback": rollback, "error": str(error)[:200],
                   "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-            print(json.dumps({"result": "error", "sha": target, "error": str(error)[:200]}), file=sys.stderr)
+            print(json.dumps({"result": "error", "sha": target,
+                              "rollback": rollback, "error": str(error)[:200]}), file=sys.stderr)
             return 1
 
 
