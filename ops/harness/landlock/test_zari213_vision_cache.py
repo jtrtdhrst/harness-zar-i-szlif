@@ -30,4 +30,69 @@ class VisionCacheTest(unittest.TestCase):
         (self.home/"cache").mkdir(mode=0o700)
         os.chmod(self.home/"cache", 0o755)  # fixed world-readable fixture despite umask 0077
         with self.assertRaises(ValueError):M.localize_private_vision_cache(self.home,self.shared)
+class RoleAuthIsolationTests(unittest.TestCase):
+    """Synthetic files only; never touch live OAuth or session credentials."""
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.addCleanup(self.t.cleanup)
+        self.root = pathlib.Path(self.t.name) / "hermes"
+        self.root.mkdir(mode=0o700)
+        (self.root / "profiles").mkdir(mode=0o700)
+        self.role_dir = self.root / "profiles" / "cto"
+        self.role_dir.mkdir(mode=0o700)
+        self.auth = self.role_dir / "auth.json"
+        self.uid = os.getuid()
+
+    def create_private(self):
+        self.auth.write_text('{"synthetic":"not-a-secret"}')
+        self.auth.chmod(0o600)
+
+    def test_private_role_auth_is_accepted(self):
+        self.create_private()
+        self.assertEqual(M.private_role_auth_file(self.root, "cto", self.uid), self.auth)
+
+    def test_symlink_into_global_oauth_is_rejected(self):
+        shared = self.root / "auth.json"
+        shared.write_text('{}')
+        shared.chmod(0o600)
+        self.auth.symlink_to(shared)
+        with self.assertRaisesRegex(ValueError, "private regular file"):
+            M.private_role_auth_file(self.root, "cto", self.uid)
+
+    def test_hardlink_into_global_oauth_is_rejected(self):
+        shared = self.root / "auth.json"
+        shared.write_text('{}')
+        shared.chmod(0o600)
+        os.link(shared, self.auth)
+        with self.assertRaisesRegex(ValueError, "private regular file"):
+            M.private_role_auth_file(self.root, "cto", self.uid)
+
+    def test_missing_role_secret_fails_closed(self):
+        with self.assertRaises(FileNotFoundError):
+            M.private_role_auth_file(self.root, "cto", self.uid)
+
+    def test_world_readable_secret_fails_closed(self):
+        self.create_private()
+        self.auth.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "private regular file"):
+            M.private_role_auth_file(self.root, "cto", self.uid)
+
+    def test_foreign_owner_claim_fails_closed(self):
+        self.create_private()
+        with self.assertRaisesRegex(ValueError, "directory is not private"):
+            M.private_role_auth_file(self.root, "cto", self.uid + 1)
+
+    def test_role_directory_symlink_is_rejected(self):
+        self.create_private()
+        self.role_dir.rename(self.root / "real-role")
+        self.role_dir.symlink_to(self.root / "real-role", target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "directory is not private"):
+            M.private_role_auth_file(self.root, "cto", self.uid)
+
+    def test_unapproved_role_cannot_read_codex_token(self):
+        self.create_private()
+        with self.assertRaisesRegex(ValueError, "not authorized"):
+            M.private_role_auth_file(self.root, "harness-engineer", self.uid)
+
+
 if __name__=="__main__":unittest.main()
