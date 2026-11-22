@@ -63,7 +63,7 @@ index 5ef71ab..2a926f7 100644
  
  	srv := &http.Server{Handler: mux}
  
-@@ -427,6 +431,110 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
+@@ -427,6 +431,115 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
  	}
  }
  
@@ -156,6 +156,11 @@ index 5ef71ab..2a926f7 100644
 +		seen[id] = true
 +		urls = append(urls, ref.URL)
 +	}
++	// Project task admission must fail closed on ambiguous repo sets.
++	// Never hand a task a workspace-wide repository allowlist.
++	if len(urls) != 1 {
++		return nil
++	}
 +	return urls
 +}
 +func repoURLInTaskScope(requested string, allowed []string) bool {
@@ -207,7 +212,7 @@ index 502612d..e87c2e5 100644
  		AgentID:     "agent-1",
  		AgentName:   "Test Agent",
  		WorkDir:     workDir,
-@@ -818,6 +820,54 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+@@ -818,6 +820,61 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
  	return d
  }
  
@@ -226,6 +231,13 @@ index 502612d..e87c2e5 100644
 +		repoURLInTaskScope("https://github.com/miloszspyrka-code/harness-zar-i-szlif.git", repos) ||
 +		repoURLInTaskScope("https://github.com@bad.invalid/x/y", repos) {
 +		t.Fatal("project repository boundary violated")
++	}
++	second, _ := json.Marshal(map[string]string{"url": product})
++	task.ProjectResources = append(task.ProjectResources, ProjectResourceData{
++		ResourceType: "github_repo", ResourceRef: second,
++	})
++	if len(projectTaskRepoURLs(task)) != 0 {
++		t.Fatal("multi-repository project must be denied, not widened")
 +	}
 +	task.ProjectID = ""
 +	if len(projectTaskRepoURLs(task)) != 0 {
