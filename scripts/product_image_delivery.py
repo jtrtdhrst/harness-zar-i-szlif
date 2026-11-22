@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = "miloszspyrka-code/zar-i-szlif"
+REPO = "jtrtdhrst/zar-i-szlif"
 APP_UUID = "cs847jiwtuq5rlm8ntjeohgf"
 REGISTRY = "127.0.0.1:5000"
 IMAGE = "zar-i-szlif-web"
