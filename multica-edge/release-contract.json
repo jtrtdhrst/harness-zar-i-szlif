@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "multica-edge",
+  "uuid": "vwe5lv4bniosxug34uhyf0ag",
+  "root": "multica-edge",
+  "release_state": "BLOCKED",
+  "source_build_ready": false,
+  "observed_at": "2026-11-22",
+  "kind": "compose",
+  "candidate": "compose.candidate.yml",
+  "required_digest_images": [
+    {
+      "key": "PINNED_IMAGE_MULTICA_EDGE_1",
+      "observed_image": "cloudflare/cloudflared:2026.9.3"
+    }
+  ],
+  "observed_components": [
+    {
+      "name": "cloudflared",
+      "image": "cloudflare/cloudflared:2026.9.3"
+    }
+  ],
+  "existing_app_volumes": [],
+  "external_host_binds": [],
+  "removed_unowned_build": false,
+  "secret_literals_replaced": 0,
+  "watch_paths": [
+    "multica-edge/"
+  ],
+  "required_release_gates": [
+    "independent exact SHA review",
+    "OCI digest verification",
+    "volume and secret parity",
+    "database backup/restore proof",
+    "authorized controller release",
+    "production positive and negative E2E",
+    "rollback proof"
+  ]
+}

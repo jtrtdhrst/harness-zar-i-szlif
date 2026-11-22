@@ -33,6 +33,7 @@ same project.
 | `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `supabase-mcp/` |
 | `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `comfy-mcp/` |
 | `coolify-mcp` | `coolify-mcp` | `*_coolify-mcp-oauth` state volume | `coolify-mcp/` (planned) |
+| `github-ops-mcp` (BGH) | `github-ops-mcp` | stateless, root-owned rotated GitHub App credentials mounted read-only | `github-mcp/` |
 | `emailens-mcp` | `emailens-mcp` | stateless | `emailens-mcp/` |
 | `ubuntu-mcp` | `ubuntu-mcp` | `ubuntu-mcp-audit` | `ubuntu-mcp/` |
 | `Multica MCP Control Plane` | `multica-mcp` | stateless (talks to `multica`) | `multica-mcp/` |
@@ -57,6 +58,7 @@ same project.
 | `supabase-mcp` | `docker build -t local/supabase-mcp supabase-mcp` | `Dockerfile` |
 | `ubuntu-mcp` | `docker build -t local/ubuntu-mcp ubuntu-mcp` | `Dockerfile` |
 | `multica-mcp` | `docker build -t local/multica-mcp-control-plane:0.2.0 multica-mcp` | `multica-mcp/Dockerfile` |
+| `github-mcp` (BGH) | `docker build --target verify -t local/github-mcp:verify github-mcp && docker build -t local/github-mcp github-mcp` | `github-mcp/Dockerfile` |
 | `mcp-edge` | `docker build -f mcp-edge/Dockerfile.coolify mcp-edge` | `Dockerfile.coolify` |
 
 ## Pending structural cleanup

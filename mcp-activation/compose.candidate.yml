@@ -1,0 +1,69 @@
+name: mcp-activation
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2375/_ping | grep -q OK"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      EVENTS: "1"
+      VERSION: "1"
+      POST: "1"
+      AUTH: "0"
+      SECRETS: "0"
+      BUILD: "0"
+      IMAGES: "0"
+      NETWORKS: "0"
+      VOLUMES: "0"
+      EXEC: "0"
+      SERVICES: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - mcp-lifecycle-private
+    mem_limit: 96m
+    cpus: "0.25"
+    security_opt:
+      - no-new-privileges:true
+  sablier:
+    image: sablierapp/sablier@sha256:c24b7198f6c552252db61d2e9daa5ac5d604d3fd0ccb852a76156be4b19d2114
+    healthcheck:
+      test: ["CMD", "/bin/sablier", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    command:
+      - start
+      - --provider.name=docker
+      - --provider.reject-unlabeled-requests
+      - --provider.verify-enabled-on-expiration
+      - --provider.auto-stop-externally-started=true
+      - --sessions.default-duration=30m
+      - --sessions.expiration-interval=30s
+      - --strategy.blocking.default-timeout=45s
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+    depends_on:
+      - socket-proxy
+    networks:
+      - mcp-lifecycle-private
+      - coolify
+    mem_limit: 128m
+    cpus: "0.5"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+networks:
+  mcp-lifecycle-private:
+    external: true
+  coolify:
+    external: true
