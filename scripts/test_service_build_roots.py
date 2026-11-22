@@ -9,6 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "ops" / "service-build-roots.json"
+# Fail closed on local Docker COPY/ADD instructions escaping the build context.
+# A literal "\\s" in this pattern would silently disable the guard.
+PARENT_CONTEXT_COPY_RE = re.compile(r"(?im)^\\s*(?:ADD|COPY)\\s+[^\\n]*\\.\\./")
 
 class HarnessBuildRootsTests(unittest.TestCase):
     @classmethod
@@ -47,7 +50,39 @@ class HarnessBuildRootsTests(unittest.TestCase):
                 self.assertTrue(dockerfile.is_file())
                 self.assertTrue(dockerfile.is_relative_to(folder))
                 source = dockerfile.read_text(encoding="utf-8")
-                self.assertNotRegex(source, r"(?m)^\\s*(?:ADD|COPY)\\s+[^\\n]*\\.\\./")
+                self.assertNotRegex(source, PARENT_CONTEXT_COPY_RE)
+
+    def test_parent_context_guard_rejects_real_dockerfile_syntax(self):
+        for offending in (
+            "COPY ../private.env /app/private.env",
+            "   ADD  ../state /state",
+            'COPY ["../outside", "/app/outside"]',
+            "COPY --chown=1000:1000 ../internal /app/internal",
+        ):
+            with self.subTest(instruction=offending):
+                self.assertRegex(offending, PARENT_CONTEXT_COPY_RE)
+        for safe in (
+            "COPY --from=builder /app/dist ./dist",
+            "COPY src ./src",
+            "ADD assets /app/assets",
+        ):
+            with self.subTest(instruction=safe):
+                self.assertNotRegex(safe, PARENT_CONTEXT_COPY_RE)
+
+    def test_exact_ten_source_ready_and_one_staged_coolify(self):
+        approved = {
+            "github-ops-mcp", "hermes-gateway", "multica-mcp",
+            "repowise-deployment-publisher-staging", "emailens-mcp",
+            "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
+            "mantic-mcp", "playwright-mcp",
+        }
+        ready = {row["id"] for row in self.rows if row["source_build_ready"]}
+        self.assertEqual(ready, approved)
+        coolify = next(row for row in self.rows if row["id"] == "coolify-mcp")
+        self.assertEqual(coolify["source_root"], "coolify-mcp")
+        self.assertEqual(coolify["build_dockerfile"], "coolify-mcp/Dockerfile")
+        # Its source is only in unmerged PR #221: never silently mark live-ready.
+        self.assertFalse(coolify["source_build_ready"])
 
     def test_missing_or_external_sources_are_never_marked_as_ready(self):
         for service in ("coolify-mcp", "qdrant-mcp", "hindsight-mcp", "comfy-mcp",
