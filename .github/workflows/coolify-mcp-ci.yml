@@ -53,7 +53,7 @@ jobs:
       - name: Release source coverage
         run: python3 scripts/check_service_coverage.py
       - name: Guarded Coolify MCP image routing and OAuth bind regressions
-        run: PYTHONPATH=scripts python3 -m unittest scripts.test_harness_native_delivery.OwnedCoolifyMcpRoutingTests scripts.test_harness_release_parity scripts.test_harness_release_admission -v
+        run: PYTHONPATH=scripts python3 -m unittest scripts.test_harness_native_delivery scripts.test_harness_release_parity scripts.test_harness_release_admission -v
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
