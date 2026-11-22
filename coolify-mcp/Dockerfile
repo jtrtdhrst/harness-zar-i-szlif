@@ -8,10 +8,9 @@ RUN npm run build && npm prune --omit=dev --ignore-scripts
 FROM node:24-alpine
 ENV NODE_ENV=production MCP_TRANSPORT=http
 WORKDIR /app
-RUN addgroup -S coolify && adduser -S -G coolify coolify
-COPY --from=build --chown=coolify:coolify /app/dist ./dist
-COPY --from=build --chown=coolify:coolify /app/node_modules ./node_modules
-COPY --from=build --chown=coolify:coolify /app/package.json ./package.json
-USER coolify
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/package.json ./package.json
+USER node
 EXPOSE 8080
 CMD ["node", "dist/http.js"]
