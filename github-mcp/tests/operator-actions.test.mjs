@@ -4,7 +4,7 @@ import { makeServer } from '../server.mjs';
 
 const REPO='jtrtdhrst/harness-zar-i-szlif';
 const SHA='a'.repeat(40),MERGE_SHA='b'.repeat(40),BLOB='c'.repeat(40);
-const TREE='d'.repeat(40),NEW_BLOB='e'.repeat(40),NEW_TREE='f'.repeat(40),RACED='1'.repeat(40);
+const TREE='d'.repeat(40),NEW_BLOB='e'.repeat(40),NEW_TREE='f'.repeat(40),RACED='1'.repeat(40),ANCESTOR='9'.repeat(40);
 async function harness(config={}){
   const requests=[];
   let branchHead=SHA,prHead=SHA,prState='open';
@@ -12,7 +12,9 @@ async function harness(config={}){
     const u=new URL(url),method=opts.method,route=u.pathname;
     requests.push({method,route,search:u.search,auth:opts.headers.Authorization,body:opts.body?JSON.parse(opts.body):null});
     let status=200,v={};
-    if(method==='GET'&&route.endsWith('/contents/src/example.txt')){
+    if(method==='GET'&&route==='/repos/'+REPO)
+      v={full_name:REPO,node_id:'R_kgDO12345678'};
+    else if(method==='GET'&&route.endsWith('/contents/src/example.txt')){
       v={type:'file',encoding:'base64',sha:BLOB,size:6,content:Buffer.from('hello\n').toString('base64')};
     }else if(method==='GET'&&route.endsWith('/branches/main'))
       v={name:'main',protected:true,commit:{sha:SHA}};
@@ -37,9 +39,17 @@ async function harness(config={}){
     else if(method==='POST'&&route.endsWith('/git/blobs')){status=201;v={sha:NEW_BLOB};}
     else if(method==='POST'&&route.endsWith('/git/trees')){status=201;v={sha:NEW_TREE};}
     else if(method==='POST'&&route.endsWith('/git/commits')){status=201;v={sha:MERGE_SHA};}
-    else if(method==='PATCH'&&route.endsWith('/git/refs/heads/feat/safe')){
-      if(config.simulateBranchRace){branchHead=RACED;status=422;v={message:'Update is not a fast forward'};}
-      else {branchHead=MERGE_SHA;v={ref:'refs/heads/feat/safe',object:{sha:MERGE_SHA}};}
+    else if(method==='POST'&&route==='/graphql'){
+      const input=JSON.parse(opts.body).variables?.input;
+      const update=input?.refUpdates?.[0];
+      if(config.simulateBranchRace)branchHead=RACED;
+      if(config.simulateAncestorRewind)branchHead=ANCESTOR;
+      if(!input||input.repositoryId!=='R_kgDO12345678'||!update||
+         update.name!=='refs/heads/feat/safe'||update.force!==false)
+        v={errors:[{message:'Invalid ref update'}]};
+      else if(update.beforeOid!==branchHead)
+        v={errors:[{message:'Expected ref beforeOid mismatch'}]};
+      else {branchHead=update.afterOid;v={data:{updateRefs:{clientMutationId:input.clientMutationId}}};}
     }
     else if(method==='POST'&&route.endsWith('/pulls')){
       status=201;prHead=config.simulatePRRace?RACED:branchHead;
@@ -139,11 +149,12 @@ test('approved operator flow writes immutable Git objects then advances only exa
     assert.equal(committed.structuredContent.blob_sha,NEW_BLOB);
     assert.equal((await h.call('github_create_pull_request',{head:'feat/safe',expected_sha:MERGE_SHA,title:'safe PR'})).structuredContent.number,42);
     const writes=h.requests.filter(r=>r.method!=='GET');
-    assert.deepEqual(writes.map(x=>x.method),['POST','POST','POST','POST','PATCH','POST']);
+    assert.deepEqual(writes.map(x=>x.method),['POST','POST','POST','POST','POST','POST']);
     assert.equal(writes.every(x=>x.auth==='Bearer separate-writer-grant'),true);
     assert.equal(h.requests.filter(x=>x.method==='GET').every(x=>x.auth==='Bearer reader-grant'),true);
-    const refUpdate=writes.find(x=>x.method==='PATCH'&&x.route.endsWith('/git/refs/heads/feat/safe'));
-    assert.deepEqual(refUpdate.body,{sha:MERGE_SHA,force:false});
+    const refUpdate=writes.find(x=>x.method==='POST'&&x.route==='/graphql');
+    assert.equal(refUpdate.body.variables.input.repositoryId,'R_kgDO12345678');
+    assert.deepEqual(refUpdate.body.variables.input.refUpdates,[{name:'refs/heads/feat/safe',beforeOid:SHA,afterOid:MERGE_SHA,force:false}]);
     const tree=writes.find(x=>x.route.endsWith('/git/trees'));
     assert.equal(tree.body.base_tree,TREE);
     const commit=writes.find(x=>x.route.endsWith('/git/commits'));
@@ -157,10 +168,24 @@ test('concurrent branch movement rejects file commit without overwriting the cha
       content:'new content',commit_message:'race rejection',expected_sha:SHA,blob_sha:BLOB});
     assert.match(result.content[0].text,/STALE_SHA/);
     assert.equal(h.requests.some(x=>x.method==='PUT'&&x.route.includes('/contents/')),false);
-    const patch=h.requests.find(x=>x.method==='PATCH'&&x.route.endsWith('/git/refs/heads/feat/safe'));
-    assert.equal(patch.body.force,false);
+    const cas=h.requests.find(x=>x.method==='POST'&&x.route==='/graphql');
+    assert.equal(cas.body.variables.input.refUpdates[0].beforeOid,SHA);
     const branch=await h.call('github_get_branch',{branch:'feat/safe'});
     assert.equal(branch.structuredContent.sha,RACED);
+  }finally{await h.close()}
+});
+test('ancestor rewind is rejected atomically and never resurrects removed commits',async()=>{
+  const h=await harness({writesEnabled:true,simulateAncestorRewind:true});
+  try{
+    const result=await h.call('github_commit_file',{branch:'feat/safe',path:'src/example.txt',
+      content:'do not restore rewound data',commit_message:'must fail',expected_sha:SHA,blob_sha:BLOB});
+    assert.match(result.content[0].text,/STALE_SHA/);
+    const cas=h.requests.find(x=>x.route==='/graphql');
+    assert.equal(cas.method,'POST');
+    assert.equal(cas.body.variables.input.refUpdates[0].beforeOid,SHA);
+    assert.equal(cas.body.variables.input.refUpdates[0].force,false);
+    const branch=await h.call('github_get_branch',{branch:'feat/safe'});
+    assert.equal(branch.structuredContent.sha,ANCESTOR);
   }finally{await h.close()}
 });
 test('concurrent PR head movement is compensated by immediately closing the created PR',async()=>{
