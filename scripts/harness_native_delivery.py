@@ -62,6 +62,7 @@ import re
 import secrets
 import subprocess
 import sys
+from harness_source_roots import source_path_prefix
 import time
 import urllib.request
 from pathlib import Path
@@ -116,6 +117,13 @@ SERVICES = {
     "ubuntu-mcp": {"folder": "ubuntu-mcp", "dockerfile": "Dockerfile",
                    "image_prefix": "local/ubuntu-mcp-bridge", "health_url": None},
 }
+
+
+# The source-only migration relocates code, not Coolify names or UUIDs.
+# Runtime path attribution must use the same strict reviewed ownership map
+# as the signed-CI attester and release admission checker.
+for _service, _spec in SERVICES.items():
+    _spec["folder"] = source_path_prefix(_service).rstrip("/")
 
 
 def image_tag(service, source_sha, registry=REGISTRY):
@@ -1141,7 +1149,7 @@ def main(argv=None):
         # controller. Report it as pending; never pretend it was deployed.
         unmodelled = sorted(service for service in entries
                             if service not in SERVICES
-                            and any(path == service or path.startswith(service + "/") for path in paths))
+                            and any(path == source_path_prefix(service).rstrip("/") or path.startswith(source_path_prefix(service)) for path in paths))
         held = [service for service in unmodelled
                 if (entries[service].get("promotion_state") == "hold"
                     and entries[service].get("auto_deploy_expected") is False
@@ -1150,7 +1158,7 @@ def main(argv=None):
         if unsupported:
             raise Denied("service_not_in_transport:" + ",".join(unsupported))
         manual_paths = {p for p in paths for service in held
-                        if p == service or p.startswith(service + "/")}
+                        if p == source_path_prefix(service).rstrip("/") or p.startswith(source_path_prefix(service))}
         paths = [p for p in paths if p not in manual_paths]
         pending_paths = sorted((set(all_paths) - set(paths)) if args.service
                                else manual_paths)

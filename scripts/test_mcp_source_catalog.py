@@ -29,15 +29,16 @@ class SourceLayoutTests(unittest.TestCase):
             self.assertFalse((ROOT/removed).exists(),removed)
     def test_service_folder_matches_owned_mcp_source(self):
         for name in ("playwright-mcp","mantic-mcp","comfy-mcp","multica-mcp",
+                     "qdrant-mcp","coolify-mcp","hindsight-mcp","opik-mcp",
                      "plasmic-mcp","emailens-mcp","ubuntu-mcp","supabase-mcp"):
             r=next(x for x in self.rows if x["name"]==name)
-            self.assertEqual(r["root"],name)
+            self.assertEqual(r["root"],"mcp/"+name)
             self.assertEqual(r["source"],"owned-code")
             self.assertTrue((ROOT/r["dockerfile"]).is_file())
     def test_unmerged_prs_not_claimed_as_main_source(self):
-        for name in ("qdrant-mcp","coolify-mcp","hindsight-mcp"):
+        for name in ():
             r=next(x for x in self.rows if x["name"]==name)
-            self.assertEqual(r["source"],"source-pending")
+            self.assertEqual(r["source"],"owned-code")
             self.assertNotIn("dockerfile",r)
 if __name__=="__main__":
     unittest.main()

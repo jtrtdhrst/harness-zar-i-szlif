@@ -69,20 +69,21 @@ class HarnessBuildRootsTests(unittest.TestCase):
             with self.subTest(instruction=safe):
                 self.assertNotRegex(safe, PARENT_CONTEXT_COPY_RE)
 
-    def test_exact_eleven_source_ready_and_one_staged_coolify(self):
+    def test_exact_fifteen_source_ready_and_unreleased_coolify(self):
         approved = {
             "github-ops-mcp", "hermes-gateway", "multica-mcp",
             "repowise-deployment-publisher-staging", "emailens-mcp",
             "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
             "mantic-mcp", "playwright-mcp", "comfy-mcp",
+            "coolify-mcp", "qdrant-mcp", "hindsight-mcp", "opik-mcp",
         }
         ready = {row["id"] for row in self.rows if row["source_build_ready"]}
         self.assertEqual(ready, approved)
         coolify = next(row for row in self.rows if row["id"] == "coolify-mcp")
-        self.assertEqual(coolify["source_root"], "coolify-mcp")
-        self.assertEqual(coolify["build_dockerfile"], "coolify-mcp/Dockerfile")
-        # Its source is only in unmerged PR #221: never silently mark live-ready.
-        self.assertFalse(coolify["source_build_ready"])
+        self.assertEqual(coolify["source_root"], "mcp/coolify-mcp")
+        self.assertEqual(coolify["build_dockerfile"], "mcp/coolify-mcp/Dockerfile")
+        # PR #221 source is now in main; production release parity remains unverified.
+        self.assertTrue(coolify["source_build_ready"])
 
     def test_staging_compose_has_owned_context_without_mount_drift(self):
         """A safe staged migration never silently changes active Compose or host mounts."""
@@ -106,8 +107,7 @@ class HarnessBuildRootsTests(unittest.TestCase):
         self.assertTrue((folder / "Dockerfile.publisher").is_file())
 
     def test_missing_or_external_sources_are_never_marked_as_ready(self):
-        for service in ("coolify-mcp", "qdrant-mcp", "hindsight-mcp",
-                        "plasmic"):
+        for service in ("plasmic",):
             row = next(r for r in self.rows if r["id"] == service)
             self.assertFalse(row["source_build_ready"], service)
         self.assertTrue(next(r for r in self.rows if r["id"] == "github-ops-mcp")["source_build_ready"])

@@ -16,8 +16,8 @@ same project.
    data, dumps, model files, browser profiles and credentials are never committed.
 4. Each source folder must be buildable from its own directory; no build may use the
    repository root as context.
-5. `comfy-mcp/` is the temporary combined ComfyUI build folder; the target
-   split is `comfy/` (engine) and `comfy-mcp/` (MCP).
+5. `mcp/comfy-mcp/` is the temporary combined ComfyUI build folder; the target
+   split is `comfy/` (engine) and `mcp/comfy-mcp/` (MCP).
 
 ## Projects and data
 
@@ -26,24 +26,24 @@ same project.
 | `mautic` | `mautic` (+ `mantic-mcp`) | `*_mautic-prod-db`, `-config`, `-logs`, `-media*` | `mautic/` |
 | `supabase` | `supabase` | `*_supabase-staging-db-data`, storage, deno cache, SQL seed volumes | `supabase/` |
 | `paperclip` | `paperclip` | `*_paperclip-db`, `*_paperclip-home` | source removed from this repo; runtime not changed |
-| `Plasmic` | `plasmic` | `*_plasmic-pgdata` | `plasmic/` |
-| `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `comfy-mcp/` (until split) |
+| `Plasmic` | `plasmic` | `*_plasmic-pgdata` | `apps/plasmic/` |
+| `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `mcp/comfy-mcp/` (until split) |
 | `opik` | `opik` | `*_opik-staging-clickhouse-*`, `-mysql`, `-minio-data`, `-redis-data`, `-zookeeper` | `opik/` (planned) |
-| `opik-mcp` | `opik-mcp` | stateless (talks to `opik`) | `opik-mcp/` (planned) |
+| `opik-mcp` | `opik-mcp` | stateless (talks to `opik`) | `mcp/opik-mcp/` (planned) |
 | `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | source removed from this repo; runtime not changed |
-| `plasmic-mcp` | `plasmic-mcp` | `plasmic_mcp_state` | `plasmic-mcp/` |
-| `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `supabase-mcp/` |
-| `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `comfy-mcp/` |
-| `coolify-mcp` | `coolify-mcp` | `*_coolify-mcp-oauth` state volume | `coolify-mcp/` (planned) |
-| `github-ops-mcp` (BGH) | `github-ops-mcp` | stateless, root-owned rotated GitHub App credentials mounted read-only | `github-mcp/` |
-| `emailens-mcp` | `emailens-mcp` | stateless | `emailens-mcp/` |
-| `ubuntu-mcp` | `ubuntu-mcp` | `ubuntu-mcp-audit` | `ubuntu-mcp/` |
-| `Multica MCP Control Plane` | `multica-mcp` | stateless (talks to `multica`) | `multica-mcp/` |
+| `plasmic-mcp` | `plasmic-mcp` | `plasmic_mcp_state` | `mcp/plasmic-mcp/` |
+| `supabase-mcp` | `supabase-mcp` | stateless (talks to `supabase`) | `mcp/supabase-mcp/` |
+| `comfy-mcp` | `comfy-mcp` | stateless (talks to `comfy`) | `mcp/comfy-mcp/` |
+| `coolify-mcp` | `coolify-mcp` | `*_coolify-mcp-oauth` state volume | `mcp/coolify-mcp/` (planned) |
+| `github-ops-mcp` (BGH) | `github-ops-mcp` | stateless, root-owned rotated GitHub App credentials mounted read-only | `mcp/github-mcp/` |
+| `emailens-mcp` | `emailens-mcp` | stateless | `mcp/emailens-mcp/` |
+| `ubuntu-mcp` | `ubuntu-mcp` | `ubuntu-mcp-audit` | `mcp/ubuntu-mcp/` |
+| `Multica MCP Control Plane` | `multica-mcp` | stateless (talks to `multica`) | `mcp/multica-mcp/` |
 | `multica` | `multica-stack` | `backend-uploads`, `pgdata` | `multica/` |
 | `Cloudflare Ingress i Edge` | `cloudflared-paperclip`, edge | no application data; tunnel token is a mounted secret | `cloudflare-ingress/` (planned) |
 | `shared-ingress` | `opencode`, `oauth-callback-proxy`, `oauth-loopback-bridge` | host bind paths, no Docker data volumes | `shared-ingress/` |
 | `Kod Aplikacji` | `kod-aplikacji` (panel) | panel-owned only | source inventory removed from this repo |
-| `Kod MCP` | `playwright-mcp` + dev | browser state ephemeral | `playwright-mcp/` (the old `kod-mcp/` inventory was removed) |
+| `Kod MCP` | `playwright-mcp` + dev | browser state ephemeral | `mcp/playwright-mcp/` (the old `kod-mcp/` inventory was removed) |
 | `Hermes Gateway POC` | — | disposable, archive | `_archive/hermes-gateway-poc/` |
 | `Staging techniczny i testy` | — | empty after migration, delete | `_archive/staging-techniczny-i-testy/` |
 
@@ -51,30 +51,30 @@ same project.
 
 | Folder | Build command | Dockerfile |
 |---|---|---|
-| `emailens-mcp` | `docker build -t local/emailens-mcp:0.10.0 emailens-mcp` | `emailens-mcp/Dockerfile` |
-| `playwright-mcp` | `docker build -t local/playwright-mcp:0.0.83 playwright-mcp` | `playwright-mcp/Dockerfile` |
-| `mantic-mcp` | `docker build -f mantic-mcp/Dockerfile.http mantic-mcp` | `Dockerfile.http` |
-| `plasmic` | `docker compose -f plasmic/docker-compose.yml build` | `studio.Dockerfile`, `platform/wab/Dockerfile` |
+| `emailens-mcp` | `docker build -t local/emailens-mcp:0.10.0 emailens-mcp` | `mcp/emailens-mcp/Dockerfile` |
+| `playwright-mcp` | `docker build -t local/playwright-mcp:0.0.83 playwright-mcp` | `mcp/playwright-mcp/Dockerfile` |
+| `mantic-mcp` | `docker build -f mcp/mantic-mcp/Dockerfile.http mantic-mcp` | `Dockerfile.http` |
+| `plasmic` | `docker compose -f apps/plasmic/docker-compose.yml build` | `studio.Dockerfile`, `platform/wab/Dockerfile` |
 | `plasmic-mcp` | `docker build -t local/plasmic-mcp plasmic-mcp` | `Dockerfile` |
-| `comfyui-mcp` | `docker build -f comfy-mcp/Dockerfile.comfyui comfyui-mcp` / `-f Dockerfile` | engine / MCP |
+| `comfyui-mcp` | `docker build -f mcp/comfy-mcp/Dockerfile.comfyui comfyui-mcp` / `-f Dockerfile` | engine / MCP |
 | `supabase-mcp` | `docker build -t local/supabase-mcp supabase-mcp` | `Dockerfile` |
 | `ubuntu-mcp` | `docker build -t local/ubuntu-mcp ubuntu-mcp` | `Dockerfile` |
-| `multica-mcp` | `docker build -t local/multica-mcp-control-plane:0.2.0 multica-mcp` | `multica-mcp/Dockerfile` |
-| `github-mcp` (BGH) | `docker build --target verify -t local/github-mcp:verify github-mcp && docker build -t local/github-mcp github-mcp` | `github-mcp/Dockerfile` |
-| `mcp-edge` | `docker build -f mcp-edge/Dockerfile.coolify mcp-edge` | `Dockerfile.coolify` |
+| `multica-mcp` | `docker build -t local/multica-mcp-control-plane:0.2.0 multica-mcp` | `mcp/multica-mcp/Dockerfile` |
+| `github-mcp` (BGH) | `docker build --target verify -t local/github-mcp:verify github-mcp && docker build -t local/github-mcp github-mcp` | `mcp/github-mcp/Dockerfile` |
+| `mcp-edge` | `docker build -f gateways/mcp-edge/Dockerfile.coolify mcp-edge` | `Dockerfile.coolify` |
 
 ## Pending structural cleanup
 
 These are tracked as migration work, not silently ignored:
 
 - ComfyUI is now split into `comfy` and `comfy-mcp`; the old combined
-  `comfy-mcp/` folder remains only as historical build source.
+  `mcp/comfy-mcp/` folder remains only as historical build source.
 - `mcp-bridges` is split into `emailens-mcp`, `mantic-mcp` (in `mautic`) and
   `ubuntu-mcp`; old app containers removed.
 - platform folders (`mautic`, `supabase`, `opik`,
   `comfy`) are metadata/build-contract folders; their upstream images/source
   remain external.
 
-Repository-only removal of the `qdrant/` and `qdrant-mcp/` source directories does not delete any deployed Qdrant services, collections or persistent Docker volumes. Any retirement of live resources requires separate inventory and migration.
+Repository-only removal of the `qdrant/` and `mcp/qdrant-mcp/` source directories does not delete any deployed Qdrant services, collections or persistent Docker volumes. Any retirement of live resources requires separate inventory and migration.
 
 The root inventories `kod-aplikacji/` and `kod-mcp/` were removed from Git, including nested legacy Paperclip application and MCP sources. The Coolify inventory above describes **runtime resources only**, not their ownership by this repository. Removing Git paths does not delete services, images, databases, Docker volumes or secrets.

@@ -15,7 +15,7 @@ The read-only scripts/harness_release_parity.py probe checks:
 2. Exact equality: upstream SHA == pinned HARNESS_SOURCE_SHA == local HEAD.
 3. Exactly one running Docker container with the manifest Coolify UUID label.
 4. Running revision from the OCI label or legacy SHA-prefixed image tag.
-5. Valid revision commit and no git diff under plasmic-mcp/ between running
+5. Valid revision commit and no git diff under mcp/plasmic-mcp/ between running
    revision and current main.
 
 Every Harness AUTO cycle verifies real upstream main and the checkout.\nThe AUTO NO-CHANGE path verifies every manifest-managed service in the\nHarness delivery transport before reporting global success.

@@ -22,7 +22,7 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("owned-runtime-images-ghcr.yml", "source-regressions"),
     ("owned-runtime-images-ghcr.yml", "publish"),
     ("source-build-roots-pr.yml", "verify-owned-source"),
-    ("source-build-roots-pr.yml", "build-all-11-owned-sources"),
+    ("source-build-roots-pr.yml", "build-all-15-owned-sources"),
 }
 DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@|buildah\s+bud\b")
 
@@ -46,14 +46,14 @@ def image_build_jobs(content):
 def compliant(workflow_name, job):
     if workflow_name == "coolify-mcp-ci.yml":
         # Hosted runner is ephemeral; publishing is SHA-bound to trusted main
-        # and coolify-mcp/ alone. This builds OCI; it never deploys to Coolify.
+        # and mcp/coolify-mcp/ alone. This builds OCI; it never deploys to Coolify.
         required = (
             "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
             "    runs-on: ubuntu-latest",
             "      packages: write",
             "      - uses: docker/build-push-action@",
             "          context: ./coolify-mcp",
-            "          file: ./coolify-mcp/Dockerfile",
+            "          file: ./mcp/coolify-mcp/Dockerfile",
             "          push: true",
             "          tags: ghcr.io/${{ github.repository_owner }}/coolify-mcp:sha-${{ github.sha }}",
             "          org.opencontainers.image.revision=${{ github.sha }}",
@@ -145,7 +145,7 @@ class NonMcpBuildGuardTests(unittest.TestCase):
             "    runs-on: ubuntu-latest",
             "      packages: write",
             "          context: ./coolify-mcp",
-            "          file: ./coolify-mcp/Dockerfile",
+            "          file: ./mcp/coolify-mcp/Dockerfile",
             "          push: true",
             "          org.opencontainers.image.revision=${{ github.sha }}",
             'test "$SOURCE_REPO" = "jtrtdhrst/harness-zar-i-szlif"',
@@ -186,7 +186,7 @@ class NonMcpBuildGuardTests(unittest.TestCase):
     def test_premerge_owned_root_builds_are_hosted_and_bounded(self):
         workflow = (WORKFLOWS / "source-build-roots-pr.yml").read_text(encoding="utf8")
         jobs = dict(image_build_jobs(workflow))
-        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-11-owned-sources"})
+        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-15-owned-sources"})
         for job in jobs.values():
             self.assertTrue(compliant("source-build-roots-pr.yml", job))
             self.assertFalse(compliant("source-build-roots-pr.yml", job.replace(

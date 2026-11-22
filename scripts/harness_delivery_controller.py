@@ -37,6 +37,7 @@ import os
 import secrets
 import subprocess
 import sys
+from harness_source_roots import source_path_prefix
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def changed_services(changed_paths, manifest):
     for path in changed_paths:
         if not isinstance(path, str) or not path or path.startswith("/") or "/../" in path:
             raise Denied("changed_paths_invalid")
-        owners = [service for service in services if path.startswith(service + "/")]
+        owners = [service for service in services if path.startswith(source_path_prefix(service))]
         if len(owners) > 1:
             raise Denied("ambiguous_changed_path")
         if not owners:

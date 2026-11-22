@@ -9,8 +9,8 @@
       "uuid": "t09dqe2eppn2eiqmhzlf8xzp",
       "type": "application",
       "source": "owned-code",
-      "root": "github-mcp",
-      "dockerfile": "github-mcp/Dockerfile"
+      "root": "mcp/github-mcp",
+      "dockerfile": "mcp/github-mcp/Dockerfile"
     },
     {
       "name": "hermes-gateway",
@@ -31,8 +31,8 @@
       "uuid": "5o4edyfjo0wftfg08mtkknir",
       "type": "application",
       "source": "owned-code",
-      "root": "multica-mcp",
-      "dockerfile": "multica-mcp/Dockerfile"
+      "root": "mcp/multica-mcp",
+      "dockerfile": "mcp/multica-mcp/Dockerfile"
     },
     {
       "name": "repowise",
@@ -83,7 +83,7 @@
       "uuid": "mzmlcorgkfgdy44hqfmmtxgw",
       "type": "service",
       "source": "non-mcp-custom-code",
-      "root": "plasmic",
+      "root": "apps/plasmic",
       "note": "Actual custom WAB application source retained outside MCP scope until separately verified production migration."
     },
     {
@@ -96,9 +96,10 @@
       "name": "hindsight-mcp",
       "uuid": "aglen8ervlo2lpi30oz8iii9",
       "type": "service",
-      "source": "source-pending",
-      "root": "hindsight-mcp",
-      "note": "PR #132 holds Git-owned Caddy gateway source; main has only candidate Compose."
+      "source": "owned-code",
+      "root": "mcp/hindsight-mcp",
+      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
+      "dockerfile": "mcp/hindsight-mcp/Dockerfile"
     },
     {
       "name": "opik",
@@ -122,49 +123,52 @@
       "name": "opik-mcp",
       "uuid": "egasedqaofxnzcqppuxi805h",
       "type": "service",
-      "source": "partial-code",
-      "root": "opik-mcp",
-      "note": "Custom guard and nginx proxy are in Git; upstream Opik MCP backend remains a separate local image."
+      "source": "owned-code",
+      "root": "mcp/opik-mcp",
+      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
+      "dockerfile": "mcp/opik-mcp/backend/Dockerfile"
     },
     {
       "name": "emailens-mcp",
       "uuid": "16qnapdkj0qqqmeokepdechk",
       "type": "service",
       "source": "owned-code",
-      "root": "emailens-mcp",
-      "dockerfile": "emailens-mcp/Dockerfile"
+      "root": "mcp/emailens-mcp",
+      "dockerfile": "mcp/emailens-mcp/Dockerfile"
     },
     {
       "name": "plasmic-mcp",
       "uuid": "a6ci2beifbinzckfnneiqnjd",
       "type": "service",
       "source": "owned-code",
-      "root": "plasmic-mcp",
-      "dockerfile": "plasmic-mcp/Dockerfile"
+      "root": "mcp/plasmic-mcp",
+      "dockerfile": "mcp/plasmic-mcp/Dockerfile"
     },
     {
       "name": "coolify-mcp",
       "uuid": "f7smgdueq8frlex9lfhp9iji",
       "type": "service",
-      "source": "source-pending",
-      "root": "coolify-mcp",
-      "note": "PR #221 owns full server source, not yet merged to main; Coolify still uses ghcr.io/stumason/coolify-mcp:3.9.0."
+      "source": "owned-code",
+      "root": "mcp/coolify-mcp",
+      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
+      "dockerfile": "mcp/coolify-mcp/Dockerfile"
     },
     {
       "name": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
       "type": "service",
-      "source": "source-pending",
-      "root": "qdrant-mcp",
-      "note": "PR #182 holds recovered server.py, requirements.txt and Dockerfile; main has only candidate files."
+      "source": "owned-code",
+      "root": "mcp/qdrant-mcp",
+      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
+      "dockerfile": "mcp/qdrant-mcp/Dockerfile"
     },
     {
       "name": "supabase-mcp",
       "uuid": "tjit4c8m0kjh8brkmdhyvkde",
       "type": "service",
       "source": "owned-code",
-      "root": "supabase-mcp",
-      "dockerfile": "supabase-mcp/Dockerfile"
+      "root": "mcp/supabase-mcp",
+      "dockerfile": "mcp/supabase-mcp/Dockerfile"
     },
     {
       "name": "qdrant",
@@ -177,9 +181,9 @@
       "uuid": "kkhfw0napmeaqewgdirwhc1h",
       "type": "service",
       "source": "owned-code",
-      "root": "comfy-mcp",
-      "dockerfile": "comfy-mcp/Dockerfile",
-      "note": "Canonical code moved from comfyui-mcp/ to comfy-mcp/; running image unchanged until authorized deployment."
+      "root": "mcp/comfy-mcp",
+      "dockerfile": "mcp/comfy-mcp/Dockerfile",
+      "note": "Canonical code moved from comfyui-mcp/ to mcp/comfy-mcp/; running image unchanged until authorized deployment."
     },
     {
       "name": "opencode",
@@ -192,8 +196,8 @@
       "uuid": "lcnjb3vreec7saihkhan6akh",
       "type": "service",
       "source": "owned-code",
-      "root": "ubuntu-mcp",
-      "dockerfile": "ubuntu-mcp/Dockerfile"
+      "root": "mcp/ubuntu-mcp",
+      "dockerfile": "mcp/ubuntu-mcp/Dockerfile"
     },
     {
       "name": "comfy",
@@ -225,16 +229,16 @@
       "uuid": "bioufw4uxwuhmr51ueyahf0u",
       "type": "service",
       "source": "owned-code",
-      "root": "mantic-mcp",
-      "dockerfile": "mantic-mcp/Dockerfile.http"
+      "root": "mcp/mantic-mcp",
+      "dockerfile": "mcp/mantic-mcp/Dockerfile.http"
     },
     {
       "name": "playwright-mcp",
       "uuid": "9e4fzsodixl4qzzap4zg0ntp",
       "type": "service",
       "source": "owned-code",
-      "root": "playwright-mcp",
-      "dockerfile": "playwright-mcp/Dockerfile"
+      "root": "mcp/playwright-mcp",
+      "dockerfile": "mcp/playwright-mcp/Dockerfile"
     },
     {
       "name": "multica-stack",
