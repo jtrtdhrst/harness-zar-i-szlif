@@ -7,7 +7,7 @@
       "id": "product-panel",
       "environment": "production",
       "mode": "git_promoted",
-      "repository": "miloszspyrka-code/zar-i-szlif",
+      "repository": "jtrtdhrst/zar-i-szlif",
       "integration_ref": "main",
       "release_ref": "ci-approved",
       "coolify_kind": "application",
