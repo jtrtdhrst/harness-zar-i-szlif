@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "ops" / "service-build-roots.json"
 # Fail closed on local Docker COPY/ADD instructions escaping the build context.
 # A literal "\\s" in this pattern would silently disable the guard.
-PARENT_CONTEXT_COPY_RE = re.compile(r"(?im)^\\s*(?:ADD|COPY)\\s+[^\\n]*\\.\\./")
+PARENT_CONTEXT_COPY_RE = re.compile(r"(?im)^\s*(?:ADD|COPY)\s+[^\n]*\.\./")
 
 class HarnessBuildRootsTests(unittest.TestCase):
     @classmethod
