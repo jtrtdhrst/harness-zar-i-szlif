@@ -7,6 +7,9 @@ on:
       - 'scripts/service-coverage.json'
       - 'scripts/harness_native_delivery.py'
       - 'scripts/test_harness_native_delivery.py'
+      - 'scripts/harness_release_admission.py'
+      - 'scripts/harness_release_parity.py'
+      - 'scripts/test_harness_release_parity.py'
   push:
     branches: [main]
     paths:
@@ -15,6 +18,9 @@ on:
       - 'scripts/service-coverage.json'
       - 'scripts/harness_native_delivery.py'
       - 'scripts/test_harness_native_delivery.py'
+      - 'scripts/harness_release_admission.py'
+      - 'scripts/harness_release_parity.py'
+      - 'scripts/test_harness_release_parity.py'
   workflow_dispatch:
 
 permissions:
@@ -45,7 +51,7 @@ jobs:
       - name: Release source coverage
         run: python3 scripts/check_service_coverage.py
       - name: Guarded Coolify MCP image routing and OAuth bind regressions
-        run: PYTHONPATH=scripts python3 -m unittest scripts.test_harness_native_delivery.OwnedCoolifyMcpRoutingTests -v
+        run: PYTHONPATH=scripts python3 -m unittest scripts.test_harness_native_delivery.OwnedCoolifyMcpRoutingTests scripts.test_harness_release_parity scripts.test_harness_release_admission -v
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
