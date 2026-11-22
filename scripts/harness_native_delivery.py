@@ -257,7 +257,7 @@ def remove_coolify_oauth_shadow_bind(compose):
                 and not clean[i].lstrip().startswith("#")
                 and clean[i].split("#", 1)[0].rstrip().endswith(":")), root_end)
     exact_bind = re.compile(
-        r"[ ]{4,}-[ \t]*/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro[ \t]*"
+        r"[ ]{4,}-[ \t]*(?P<quote>[\'\"]?)/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro(?P=quote)[ \t]*"
     )
     hits = [i for i, line in enumerate(clean) if exact_bind.fullmatch(line)]
     shadow_count = sum("/app/dist/lib/oauth.js" in line for line in clean)

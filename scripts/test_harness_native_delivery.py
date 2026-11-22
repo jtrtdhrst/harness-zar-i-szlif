@@ -1633,6 +1633,49 @@ class OwnedCoolifyMcpRoutingTests(unittest.TestCase):
         self.assertIn("  coolify-mcp-oauth:", host.compose)
         self.assertNotIn("/app/dist/lib/oauth.js", host.compose)
 
+    def test_coolify_emitted_quoted_oauth_shadow_bind_and_image(self):
+        # Real Coolify-generated Compose wraps scalar image and mount in
+        # single quotes. Preserve the OAuth state volume, remove only the
+        # legacy mount, and keep exact private rollback snapshot bytes.
+        for quote in ("'", '"'):
+            with self.subTest(quote=quote):
+                original = (
+                    "services:\n"
+                    "  coolify-mcp:\n"
+                    f"    image: {quote}ghcr.io/stumason/coolify-mcp:3.9.0{quote}\n"
+                    "    volumes:\n"
+                    f"      - {quote}coolify-mcp-oauth:/data{quote}\n"
+                    f"      - {quote}/opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro{quote}\n"
+                    "volumes:\n"
+                    "  coolify-mcp-oauth:\n"
+                )
+                host = FakeHost(compose=original)
+                target = delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR)
+                with tempfile.TemporaryDirectory() as tmp, patch.object(
+                        delivery, "STATE_ROOT", Path(tmp)):
+                    raw, snapshot = delivery.patch_compose(
+                        host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"], target)
+                    self.assertEqual(raw, original)
+                    self.assertEqual(snapshot.read_text(encoding="utf-8"), original)
+                self.assertIn(f"image: {quote}{target}{quote}", host.compose)
+                self.assertIn(f"- {quote}coolify-mcp-oauth:/data{quote}", host.compose)
+                self.assertNotIn("/app/dist/lib/oauth.js", host.compose)
+
+    def test_mixed_quote_legacy_bind_denies_before_write(self):
+        original = (
+            "services:\n  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "      - coolify-mcp-oauth:/data\n"
+            "      - '/opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\"\n"
+        )
+        host = FakeHost(compose=original)
+        with self.assertRaisesRegex(RuntimeError, "unexpected OAuth shadow bind"):
+            delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+        self.assertEqual(host.compose, original)
+
     def test_unrecognized_oauth_shadow_bind_denies_before_provider_write(self):
         original = (
             "services:\n"
