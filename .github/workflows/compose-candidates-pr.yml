@@ -1,0 +1,50 @@
+name: Harness Compose Candidates PR Gate
+
+# Never execute unreviewed PR code on the permanent self-hosted production runner.
+on:
+  pull_request:
+    paths:
+      - 'ops/service-build-roots.json'
+      - 'ops/service-deployment-roots.json'
+      - 'scripts/test_service_build_roots.py'
+      - 'scripts/test_service_deployment_roots.py'
+      - 'scripts/select_service_deployments.py'
+      - '**/deploy/**'
+      - '.github/workflows/compose-candidates-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test exact 31-root and 20-candidate ownership contracts
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_service_build_roots.py -v
+          python3 -m unittest discover -s scripts -p test_service_deployment_roots.py -v
+      - name: Validate all 20 candidate Compose configurations without deploying
+        run: |
+          set -euo pipefail
+          docker compose version
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          rows = json.loads(Path("ops/service-deployment-roots.json").read_text())["resources"]
+          assert len(rows) == 20
+          for row in rows:
+              source = row["versioned_compose"]
+              assert source and Path(source).is_file(), row["id"]
+              subprocess.run(
+                  ["docker", "compose", "-f", source, "config", "--no-interpolate", "--quiet"],
+                  check=True,
+                  timeout=20,
+              )
+              print("CANDIDATE_COMPOSE_OK", row["id"])
+          PY
