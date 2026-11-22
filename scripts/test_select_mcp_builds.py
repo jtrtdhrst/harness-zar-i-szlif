@@ -13,7 +13,7 @@ class McpBuildSelectionTests(unittest.TestCase):
     def test_unrelated_or_held_external_paths_never_trigger_builds(self):
         self.assertEqual(images.select(
             ["ops/repowise/Dockerfile.publisher", "qdrant-mcp/Dockerfile",
-             "paperclip-mcp/Dockerfile", "comfyui-mcp/patch-v1.mjs"],
+             "paperclip-mcp/Dockerfile", "comfy-mcp/patch-v1.mjs"],
             event_name="push"), [])
 
     def test_consecutive_pushes_do_not_lose_other_service_builds(self):
