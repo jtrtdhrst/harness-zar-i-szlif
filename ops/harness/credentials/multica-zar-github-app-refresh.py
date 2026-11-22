@@ -144,6 +144,26 @@ def write_token(role, payload):
             os.unlink(tempname)
 
 
+def retire_writer_grant():
+    """Fail closed on writer deactivation or a failed grant; never follow links."""
+    import stat
+    target = DEST / f"{WRITER_ROLE}.json"
+    try:
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+                info.st_gid != 0 or info.st_nlink != 1 or
+                stat.S_IMODE(info.st_mode) != 0o600):
+            raise RuntimeError("Untrusted writer grant file")
+    finally:
+        os.close(fd)
+    os.unlink(target)
+    return True
+
+
 def main():
     if os.geteuid() != 0:
         raise RuntimeError("Root service account required")
@@ -175,12 +195,26 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         summary = {}
         roles = selected_roles()
+        writer_blocked = False
+        if WRITER_ROLE not in roles:
+            retire_writer_grant()
         for role in roles:
-            payload = mint(role)
+            try:
+                payload = mint(role)
+            except Exception:
+                if role != WRITER_ROLE:
+                    raise
+                # A missing App permission must never starve the existing
+                # reader rotation. Remove any stale writer grant instead.
+                retire_writer_grant()
+                writer_blocked = True
+                continue
             write_token(role, payload)
             summary[role] = payload["expires_at"]
         print(json.dumps({"refreshed": True, "roles": sorted(summary),
                           "writer_mint_enabled": WRITER_ROLE in roles,
+                          "writer_ready": WRITER_ROLE in summary,
+                          "writer_grant_blocked": writer_blocked,
                           "expiry": min(summary.values())}))
     return 0
 
