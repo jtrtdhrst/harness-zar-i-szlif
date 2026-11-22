@@ -421,7 +421,7 @@ diff --git a/server/pkg/agent/codex_test.go b/server/pkg/agent/codex_test.go
 +	preserved := normalizeCodexMcpServerConfig(map[string]any{
 +		"type": "http", "url": "https://mcp.example.test/session", "oauth": structured,
 +	})
-+	if preserved["oauth"] != structured {
++	if !reflect.DeepEqual(preserved["oauth"], structured) {
 +		t.Fatal("structured OAuth must be preserved, never silently disabled")
 +	}
 +	unsupported := normalizeCodexMcpServerConfig(map[string]any{
