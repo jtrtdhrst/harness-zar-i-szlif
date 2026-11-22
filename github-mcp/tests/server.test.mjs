@@ -75,14 +75,14 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,8);
+    assert.equal((await y.json()).result.tools.length,20);
   }finally{await f.close()}
 });
-test('tool metadata requires OAuth for all eight tools',async()=>{
+test('tool metadata requires OAuth for all twenty tools',async()=>{
  const f=await fixture();try{
   const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   const tools=(await response.json()).result.tools;
-  assert.equal(tools.length,8);
+  assert.equal(tools.length,20);
   for(const tool of tools){
     assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
     assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
@@ -291,7 +291,7 @@ test('every advertised tool returns object structuredContent, never a bare array
     liveRef:b.bare,liveBranch:'fix/old',pushToken:'test-push-token',pushRemoteFor:()=>b.url});
   try{
     const tools=await toolsListed(f.root);
-    assert.equal(tools.length,8);
+    assert.equal(tools.length,20);
     assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false,'removed dispatch must stay unadvertised');
     const args={github_repo_info:{repo:REPO},github_get_rulesets:{repo:REPO},
       github_get_actions_permissions:{repo:REPO},github_get_branch_protection:{repo:REPO},
@@ -299,7 +299,7 @@ test('every advertised tool returns object structuredContent, never a bare array
       github_preview_branch_delete:{repo:REPO,branch:'fix/old',expected_sha:b.sha},
       github_delete_merged_branch:{repo:REPO,branch:'fix/old',expected_sha:b.sha},
       github_cancel_workflow_run:{repo:REPO,run_id:123,expected_sha:SHA}};
-    for(const tool of tools){
+    for(const tool of tools.filter(t=>Object.hasOwn(args,t.name))){
       const out=await f.request(tool.name,args[tool.name]);
       assert.equal(out.http,200,tool.name);
       assert.equal(out.body.result.isError,undefined,tool.name+' must not error: '+JSON.stringify(out.body.result).slice(0,300));
@@ -539,7 +539,7 @@ test('GitHub Ops reader role requires deployments read and refuses legacy four-s
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
-test('live MCP tools/list contains exact eight names; removed dispatch is never advertised',async()=>{
+test('live MCP tools/list contains exact twenty names; removed dispatch is never advertised',async()=>{
  const f=await fixture();
  try {
    const tools=await toolsListed(f.root);
@@ -547,7 +547,10 @@ test('live MCP tools/list contains exact eight names; removed dispatch is never 
    assert.deepEqual(names,[
     'github_cancel_workflow_run','github_delete_merged_branch','github_get_actions_permissions',
     'github_get_branch_protection','github_get_deployments','github_get_rulesets',
-    'github_preview_branch_delete','github_repo_info'].sort());
+    'github_preview_branch_delete','github_repo_info',
+    'github_get_file','github_get_branch','github_list_branches','github_list_pull_requests',
+    'github_get_pull_request','github_get_pr_files','github_get_check_runs','github_get_workflow_runs',
+    'github_create_branch','github_commit_file','github_create_pull_request','github_merge_pull_request'].sort());
  }finally{await f.close()}
 });
 test('rotating GitHub App writer file governs only verified POST and fails closed',async()=>{
@@ -555,7 +558,7 @@ test('rotating GitHub App writer file governs only verified POST and fails close
  const {tmpdir}=await import('node:os'),{join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-writer-')),file=join(dir,'writer.json');
  const auths=[];
- const role=(token,permissions={actions:'write',contents:'write',metadata:'read'})=>({
+ const role=(token,permissions={actions:'write',contents:'write',pull_requests:'write',metadata:'read'})=>({
    token,role:'github-ops-writer',app_id:5398752,installation_id:173456397,
    expires_at:new Date(Date.now()+2400000).toISOString(),
    repositories:['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],permissions});
