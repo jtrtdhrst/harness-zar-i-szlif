@@ -49,6 +49,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,10 +71,51 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-      - name: Record exact image digest (not a deployment)
+      - name: Verify immutable GHCR digest and exact trusted source
+        id: provenance
+        shell: bash
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REPO: ${{ github.repository }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/coolify-mcp
         run: |
-          test -n "$DIGEST"
-          echo "Owned Coolify MCP image: ghcr.io/${{ github.repository_owner }}/coolify-mcp@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
-          echo "Production promotion is separately signed/authorized; image publication is not deployment." >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$SOURCE_REPO" = "jtrtdhrst/harness-zar-i-szlif"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "${#SOURCE_SHA}" -eq 40
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          test -f coolify-mcp/Dockerfile
+          mkdir -p "$RUNNER_TEMP/coolify-mcp-release"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          e = os.environ
+          assert re.fullmatch(r"[a-f0-9]{40}", e["SOURCE_SHA"])
+          assert re.fullmatch(r"sha256:[a-f0-9]{64}", e["DIGEST"])
+          data = {"schema_version": 1, "service": "coolify-mcp",
+                  "source_repository": e["SOURCE_REPO"], "source_sha": e["SOURCE_SHA"],
+                  "source_root": "coolify-mcp", "dockerfile": "coolify-mcp/Dockerfile",
+                  "image": e["IMAGE"], "image_digest": e["DIGEST"],
+                  "subject": e["IMAGE"] + "@" + e["DIGEST"],
+                  "release_authorized": False, "production_verified": False}
+          p = pathlib.Path(e["RUNNER_TEMP"]) / "coolify-mcp-release" / "release.json"
+          p.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          echo "manifest=$RUNNER_TEMP/coolify-mcp-release/release.json" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Owned Coolify MCP image: $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifact publication is not authorized production deployment." >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest SHA-bound OCI image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.provenance.outputs.image }}
+          subject-digest: ${{ steps.provenance.outputs.digest }}
+      - name: Retain immutable release record for independent admission
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coolify-mcp-oci-${{ github.sha }}
+          path: ${{ steps.provenance.outputs.manifest }}
+          if-no-files-found: error
+          retention-days: 30
