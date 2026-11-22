@@ -1670,7 +1670,7 @@ class OwnedCoolifyMcpRoutingTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
                              for call in host.calls))
 
-def test_rejects_repository_prefix_collisions_and_invalid_digests(self):
+    def test_rejects_repository_prefix_collisions_and_invalid_digests(self):
         pattern = delivery.image_pattern(
             "coolify-mcp", delivery.SERVICES["coolify-mcp"], delivery.GHCR)
         invalid = (
