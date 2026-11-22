@@ -13,6 +13,7 @@ import sys
 # Only source-owned Dockerfiles; externally managed or unpinned images are not
 # built from this repository. Keep this table deliberately explicit.
 MCP_BUILD_CONTEXTS = {
+    "comfy-mcp": "comfy-mcp",
     "emailens-mcp": "emailens-mcp",
     "mantic-mcp": "mantic-mcp",
     "plasmic-mcp": "plasmic-mcp",
@@ -24,7 +25,7 @@ BUILD_CONFIG_PATHS = {
     ".github/workflows/mcp-images-ghcr.yml",
     "scripts/select_mcp_builds.py",
 }
-EXPECTED_REPOSITORY = "miloszspyrka-code/harness-zar-i-szlif"
+EXPECTED_REPOSITORY = "jtrtdhrst/harness-zar-i-szlif"
 
 
 def select(changed_paths, *, event_name, manual_service="all"):

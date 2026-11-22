@@ -1,5 +1,9 @@
 # Mantic MCP (Mautic 7)
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `bioufw4uxwuhmr51ueyahf0u`; katalog `mantic-mcp/`; Dockerfile `mantic-mcp/Dockerfile.http`; implementacja: `bridge.mjs, src/`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 MCP server for Mautic 7 marketing automation (Columba Edition): campaigns, contacts,
 segments, emails, forms, projects and business tools over Mautic v1 (FOSRestBundle)
 and v2 (API Platform) endpoints.

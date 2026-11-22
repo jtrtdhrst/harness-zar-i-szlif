@@ -1,5 +1,9 @@
 # Ubuntu operations MCP (`ubuntu-mcp-bridge`)
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `lcnjb3vreec7saihkhan6akh`; katalog `ubuntu-mcp/`; Dockerfile `ubuntu-mcp/Dockerfile`; implementacja: `server.mjs`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 Authenticated Streamable HTTP MCP in front of
 [`mcp-ssh-manager`](https://github.com/bvisible/mcp-ssh-manager) (stdio) → SSH → the
 managed Ubuntu host.

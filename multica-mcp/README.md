@@ -1,5 +1,9 @@
 # Multica MCP control plane
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `5o4edyfjo0wftfg08mtkknir`; katalog `multica-mcp/`; Dockerfile `multica-mcp/Dockerfile`; implementacja: `server.mjs, catalog.mjs`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 Independent, stateless MCP adapter for the installed Multica **v0.8.1** CLI at commit `b1ea927def6490c43bedff537b6f4ed9a47fa828`. It does not patch or deploy Multica Core. The Dockerfile copies the pinned CLI from the public `ghcr.io/multica-ai/multica-backend:v0.8.1` image; each tool invocation delegates to it with the caller’s token, so Multica remains the authorization authority.
 
 ## Transports and identity
