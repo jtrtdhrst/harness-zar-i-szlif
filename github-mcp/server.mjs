@@ -434,19 +434,38 @@ export function makeServer(config={}) {
       ensureWrite();
       const prior=await api('GET',`${root}/branches/${branchQ(branch)}`);
       if(prior.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved before file commit');
+      if(prior.protected)throw error('PROTECTED','Protected branch is not writable');
+      // Resolve file and base tree at an immutable commit, never at a moving branch.
+      const base=await api('GET',`${root}/git/commits/${sha}`);
+      if(!SHA.test(base.tree?.sha||''))throw error('BASE_TREE_INVALID','Commit has no valid tree');
       let existing=null;
-      try{existing=await api('GET',`${root}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`);}
+      try{existing=await api('GET',`${root}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${sha}`);}
       catch(e){if(e.code!=='GITHUB_HTTP_404')throw e;}
       if(existing && (existing.type!=='file'||!SHA.test(existing.sha||'')))throw error('FILE_INVALID','Existing target is not a regular file');
       if(existing && (!p.blob_sha||assertSHA(p.blob_sha).toLowerCase()!==existing.sha.toLowerCase()))
         throw error('BLOB_SHA_REQUIRED','Exact current blob SHA required to update an existing file');
       if(!existing && p.blob_sha)throw error('FILE_CHANGED','Expected blob is missing');
-      const payload={message,content:Buffer.from(content,'utf8').toString('base64'),branch,
-        ...(existing?{sha:existing.sha}:{})};
-      const write=await writerApi('PUT',`${root}/contents/${path.split('/').map(encodeURIComponent).join('/')}`,payload);
-      if(!SHA.test(write.commit?.sha||'')||!SHA.test(write.content?.sha||''))
-        throw error('WRITE_READBACK_INVALID','GitHub did not return committed source SHA and blob');
-      return {committed:true,repo,branch,path,commit_sha:write.commit.sha,blob_sha:write.content.sha,created:!existing};
+      // Git object creation does not move any ref; only the final non-force
+      // fast-forward succeeds if the branch still equals our exact parent.
+      const blob=await writerApi('POST',`${root}/git/blobs`,{content,encoding:'utf-8'});
+      if(!SHA.test(blob.sha||''))throw error('BLOB_CREATE_INVALID','GitHub returned no blob SHA');
+      const tree=await writerApi('POST',`${root}/git/trees`,{
+        base_tree:base.tree.sha,tree:[{path,mode:'100644',type:'blob',sha:blob.sha}]
+      });
+      if(!SHA.test(tree.sha||''))throw error('TREE_CREATE_INVALID','GitHub returned no tree SHA');
+      const commit=await writerApi('POST',`${root}/git/commits`,{message,tree:tree.sha,parents:[sha]});
+      if(!SHA.test(commit.sha||''))throw error('COMMIT_CREATE_INVALID','GitHub returned no commit SHA');
+      try{
+        await writerApi('PATCH',`${root}/git/refs/heads/${branchQ(branch)}`,{sha:commit.sha,force:false});
+      }catch(e){
+        if(e.code==='GITHUB_HTTP_422'||e.code==='GITHUB_HTTP_409')
+          throw error('STALE_SHA','Non-fast-forward update rejected; branch moved concurrently');
+        throw e;
+      }
+      const readback=await api('GET',`${root}/branches/${branchQ(branch)}`);
+      if(readback.commit?.sha?.toLowerCase()!==commit.sha.toLowerCase())
+        throw error('BRANCH_MOVED_AFTER_COMMIT','Branch advanced after this commit; refresh before next write');
+      return {committed:true,repo,branch,path,commit_sha:commit.sha,blob_sha:blob.sha,created:!existing};
     }
     if(name==='github_create_pull_request'){
       const head=ensureBranchWritable(p.head),sha=assertSHA(p.expected_sha).toLowerCase();
@@ -459,9 +478,21 @@ export function makeServer(config={}) {
       if(b.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','PR head branch moved');
       if((await listPulls(root,'open')).some(pr=>pr.head?.ref===head&&pr.head?.repo?.full_name===repo&&pr.base?.ref==='main'))
         throw error('PR_EXISTS','Existing open PR for this branch; reuse it');
+      // GitHub PR creation binds to a branch name, not an immutable SHA. Validate
+      // the new PR by readback and compensate by closing it if a race is found.
       const created=await writerApi('POST',`${root}/pulls`,{title,head,base:'main',body,draft:false});
-      if(!Number.isSafeInteger(created.number) || created.head?.sha?.toLowerCase()!==sha)
-        throw error('PR_READBACK_MISMATCH','Created PR does not match exact branch SHA');
+      if(!Number.isSafeInteger(created.number)||created.number<1)
+        throw error('PR_CREATE_INVALID','GitHub did not return an identifiable PR');
+      let observed=null;
+      try{observed=await api('GET',`${root}/pulls/${created.number}`);}catch{}
+      const matches=created.head?.sha?.toLowerCase()===sha&&
+        observed?.head?.sha?.toLowerCase()===sha&&observed?.head?.ref===head&&
+        observed?.base?.ref==='main'&&observed?.state==='open';
+      if(!matches){
+        try{await writerApi('PATCH',`${root}/pulls/${created.number}`,{state:'closed'});}
+        catch{throw error('PR_ROLLBACK_FAILED',`PR ${created.number} could not be verified or closed; manual intervention required`);}
+        throw error('STALE_SHA','PR head changed during creation or readback failed; created PR closed');
+      }
       return {created:true,repo,number:created.number,head,head_sha:sha,base:'main',url:created.html_url};
     }
     if(name==='github_merge_pull_request'){
