@@ -28,13 +28,14 @@ class SafeRefreshPathTests(unittest.TestCase):
         self.target = self.parent / "roles"
         self.original_fstat = os.fstat
 
-    def run_refresh(self, *, uid=0, gid=0, lock_uid=0):
+    def run_refresh(self, *, uid=0, gid=0, lock_uid=0, writer_enabled='false'):
         def root_fstat(fd):
             info = self.original_fstat(fd)
             owner = lock_uid if stat.S_ISREG(info.st_mode) else uid
             return types.SimpleNamespace(st_mode=info.st_mode, st_uid=owner,
                                          st_gid=gid, st_nlink=info.st_nlink)
-        with patch.object(refresh, "DEST", self.target), \
+        with patch.dict(refresh.os.environ, {refresh.WRITER_OPT_IN: writer_enabled}), \
+             patch.object(refresh, "DEST", self.target), \
              patch.object(refresh.os, "geteuid", return_value=0), \
              patch.object(refresh.os, "fstat", side_effect=root_fstat), \
              patch.object(refresh, "mint", return_value={"expires_at": "2099-01-01T00:00:00Z"}) as minted, \
@@ -47,11 +48,22 @@ class SafeRefreshPathTests(unittest.TestCase):
 
     def test_good_0700_real_directory_and_0600_lock(self):
         self.run_refresh()
-        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS))
-        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS))
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS) - 1)
+        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS) - 1)
         lock = self.target / ".refresh.lock"
         self.assertTrue(lock.is_file())
         self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+    def test_writer_mint_requires_explicit_root_service_opt_in(self):
+        self.run_refresh(writer_enabled='true')
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS))
+        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS))
+
+    def test_invalid_writer_gate_denied_before_any_token_issuance(self):
+        with self.assertRaisesRegex(RuntimeError, "Invalid writer mint gate"):
+            self.run_refresh(writer_enabled='yes')
+        self.assertEqual(self.minted_count, 0)
+        self.assertEqual(self.wrote_count, 0)
 
     def test_symlinked_token_dir_refused_without_chmod_target(self):
         victim = pathlib.Path(self.tmp.name) / "victim"
