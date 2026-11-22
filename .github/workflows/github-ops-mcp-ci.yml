@@ -83,6 +83,7 @@ jobs:
       - name: Checkout exact PR source without persisted credentials
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Fetch immutable upstream Multica baseline and apply patch
         shell: bash
@@ -117,3 +118,27 @@ jobs:
           go test -count=1 -run 'TestCreateWorktreeFreshFailsWhenFetchFails|TestCreateWorktreeReportsFailedFetch|TestLocalCloneArgsNeverHardlinkSharedCache|TestLocalCloneArgsNoHardlinksAllPlatforms|TestIsolatedCheckoutCloneWithoutHardlinksIsIndependent|TestCreateWorktreeWithIsolatedGitMetadata' ./internal/daemon/repocache
           go test -count=1 -run 'TestProjectRepoScopeFailClosed|TestRepoCheckout|TestZARI213|TestRepoCheckoutModeFor' ./internal/daemon
           go test -count=1 -run TestCodexManagedMcpOAuthFalseCompatibility ./pkg/agent
+      - name: Build source-pinned Multica daemon and CLI candidate (no installation)
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          set -euo pipefail
+          cd "${ZARI213_GO_SOURCE}"
+          mkdir -p "${RUNNER_TEMP}/zari213-candidate"
+          go build -trimpath -ldflags='-buildid=' -o "${RUNNER_TEMP}/zari213-candidate/multica" ./cmd/multica
+          test -x "${RUNNER_TEMP}/zari213-candidate/multica"
+          "${RUNNER_TEMP}/zari213-candidate/multica" --version
+          cd "${RUNNER_TEMP}/zari213-candidate"
+          sha256sum multica > SHA256SUMS
+          printf 'UPSTREAM_BASE_SHA=b1ea927def6490c43bedff537b6f4ed9a47fa828\nPR_HEAD_SHA=%s\n' "$(git -C \"${GITHUB_WORKSPACE}\" rev-parse HEAD)" > PROVENANCE.txt
+      - name: Retain candidate checksum and executable for gated operator release
+        uses: actions/upload-artifact@v4
+        with:
+          name: zari213-daemon-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/zari213-candidate/
+          if-no-files-found: error
+          retention-days: 7
