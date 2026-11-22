@@ -186,6 +186,7 @@ class ReadbackRegressionTests(unittest.TestCase):
                         expected_uid=os.geteuid(),expected_gid=os.getegid())
 
     def test_real_marker_opened_inode_not_swapped_by_replaced_path(self):
+        """Replacing the marker PATH after open must not replace the opened inode."""
         import os
         with tempfile.TemporaryDirectory() as temp:
             parent = Path(temp) / "marker"
@@ -193,10 +194,26 @@ class ReadbackRegressionTests(unittest.TestCase):
             file = parent / "proof.json"
             file.write_text(json.dumps(self.marker_data))
             file.chmod(0o600)
-            with mock.patch.object(delivery, "MARKER", file):
-                result = REAL_READ_MARKER(
-                    expected_uid=os.geteuid(),expected_gid=os.getegid())
-                self.assertEqual(result["sha"], SHA)
+            original_fstat = os.fstat
+            swapped = []
+
+            def swap_after_open(fd):
+                metadata = original_fstat(fd)
+                if stat.S_ISREG(metadata.st_mode) and not swapped:
+                    # The descriptor already points to the original inode.
+                    os.replace(file, parent / "original.json")
+                    file.write_text(json.dumps({**self.marker_data, "sha": OLD_SHA}))
+                    file.chmod(0o600)
+                    swapped.append(True)
+                return metadata
+
+            with mock.patch.object(delivery, "MARKER", file), \
+                 mock.patch.object(delivery.os, "fstat", side_effect=swap_after_open):
+                result = REAL_READ_MARKER(expected_uid=os.geteuid(),
+                                          expected_gid=os.getegid())
+            self.assertEqual(swapped, [True], "the replacement must actually occur")
+            self.assertEqual(result["sha"], SHA, "must read the already opened inode")
+            self.assertEqual(json.loads(file.read_text())["sha"], OLD_SHA)
 
     def test_public_html_drift_rejected_even_if_release_json_claims_sha(self):
         self.public_html = b"<html>stale data</html>"
