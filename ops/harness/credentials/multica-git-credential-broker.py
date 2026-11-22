@@ -21,14 +21,32 @@ import sys
 from pathlib import Path
 
 ALLOWED_REPOS = {
-    "miloszspyrka-code/zar-i-szlif",
-    "miloszspyrka-code/harness-zar-i-szlif",
+    "jtrtdhrst/zar-i-szlif",
+    "jtrtdhrst/harness-zar-i-szlif",
 }
 EXPECTED_WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
 RUNTIME_UID = 997
 RUNTIME_GID = 981
 REFRESH = "/usr/local/libexec/multica-zar-github-app-refresh.py"
 AGENT_ROLES = {"implementer", "reviewer", "release"}
+ROLE_SCOPED_REPOS = {}
+for _base in ("implementer", "reviewer", "release"):
+    for _suffix, _repo in (("harness", "jtrtdhrst/harness-zar-i-szlif"),
+                           ("product", "jtrtdhrst/zar-i-szlif")):
+        _role = f"{_base}-{_suffix}"
+        AGENT_ROLES.add(_role)
+        ROLE_SCOPED_REPOS[_role] = {_repo}
+ROLE_PERMISSIONS = {
+    "implementer": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "reviewer": {"contents": "read", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "release": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
+    "cache-reader": {"contents": "read", "metadata": "read"},
+}
+
+
+def role_repo_allowed(role, repo):
+    return repo in ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+
 DEFAULT_ROOT = "/etc/multica-git-credential"
 DAEMON_UNIT = "multica-zar-daemon.service"
 
@@ -108,8 +126,10 @@ def _cache_proc_executable(pid, kind):
                    "/usr/bin/python3.12", "/usr/bin/python3.13",
                    "/usr/bin/python3.14", "/usr/bin/python3.15"},
         "git": {"/usr/bin/git", "/usr/lib/git-core/git"},
+        "git-core": {"/usr/lib/git-core/git"},
         "remote": {"/usr/lib/git-core/git-remote-https",
                    "/usr/lib/git-core/git-remote-http"},
+        "shell": {"/bin/sh", "/bin/dash", "/usr/bin/dash"},
     }
     try:
         actual = os.path.realpath(os.readlink(f"/proc/{pid}/exe"))
@@ -142,7 +162,7 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
     daemon = daemon_pid(unit, pidfile, allow_any_daemon)
     chain = []
     current = pid
-    for _ in range(3):
+    for _ in range(5):
         try:
             status = proc_status(current)
             parent = int(status.get("PPid", "0"))
@@ -159,12 +179,47 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
         if parent <= 1:
             return False
         current = parent
-    if len(chain) != 3 or chain[2][1] != daemon:
-        return False
-    helper_pid, helper_parent, helper_argv = chain[0]
-    remote_pid, remote_parent, remote_argv = chain[1]
-    git_pid, _, git_argv = chain[2]
-    if helper_parent != remote_pid or remote_parent != git_pid:
+
+    # Git executes credential helpers through "sh -c"; this exact, trusted
+    # intermediary is present in the real process tree. Do not accept a
+    # generic shell, arbitrary command, or an extra process ancestor.
+    helper = "/usr/local/libexec/multica-zar-git-credential"
+    if len(chain) == 3 and chain[2][1] == daemon:
+        helper_pid, helper_parent, helper_argv = chain[0]
+        remote_pid, remote_parent, remote_argv = chain[1]
+        git_pid, _, git_argv = chain[2]
+        if helper_parent != remote_pid or remote_parent != git_pid:
+            return False
+    elif len(chain) in {4, 5} and chain[-1][1] == daemon:
+        helper_pid, helper_parent, helper_argv = chain[0]
+        shell_pid, shell_parent, shell_argv = chain[1]
+        remote_pid, remote_parent, remote_argv = chain[2]
+        exact = helper + " get"
+        if (helper_parent != shell_pid or shell_parent != remote_pid or
+            shell_argv != ["/bin/sh", "-c", exact, exact] or
+            not _cache_proc_executable(shell_pid, "shell")):
+            return False
+        if len(chain) == 4:
+            git_pid, _, git_argv = chain[3]
+            if remote_parent != git_pid:
+                return False
+        else:
+            # Git may insert its internal `git remote-https` dispatcher between
+            # git-remote-http(s) and the original read-only fetch. Accept only
+            # that exact executable/argv relationship; arbitrary extra ancestors
+            # remain denied.
+            dispatcher_pid, dispatcher_parent, dispatcher_argv = chain[3]
+            git_pid, _, git_argv = chain[4]
+            remote_transport = Path(remote_argv[0]).name.removeprefix("git-")
+            if (remote_parent != dispatcher_pid or dispatcher_parent != git_pid or
+                len(dispatcher_argv) != 4 or
+                Path(dispatcher_argv[0]).name != "git" or
+                remote_transport not in {"remote-http", "remote-https"} or
+                dispatcher_argv[1] != remote_transport or
+                dispatcher_argv[2:] != remote_argv[1:] or
+                not _cache_proc_executable(dispatcher_pid, "git-core")):
+                return False
+    else:
         return False
     helper = "/usr/local/libexec/multica-zar-git-credential"
     if (len(helper_argv) != 3 or
@@ -190,12 +245,14 @@ def read_role_token(tokens_dir, role):
     data = json.loads((tokens_dir / f"{role}.json").read_text(encoding="utf-8"))
     if not isinstance(data.get("token"), str) or not data["token"].startswith("ghs_"):
         raise ValueError("role token malformed")
-    if set(data.get("repositories", [])) != ALLOWED_REPOS:
+    if role not in AGENT_ROLES and role != "cache-reader":
+        raise ValueError("role not authorized for broker")
+    expected_repos = ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+    if set(data.get("repositories", [])) != expected_repos:
         raise ValueError("role token repository scope mismatch")
-    if role == "cache-reader":
-        if (data.get("role") != "cache-reader" or
-            data.get("permissions") != {"contents": "read", "metadata": "read"}):
-            raise ValueError("daemon cache token permissions mismatch")
+    base_role = role if role == "cache-reader" else role.split("-", 1)[0]
+    if data.get("role") != role or data.get("permissions") != ROLE_PERMISSIONS[base_role]:
+        raise ValueError("role token permissions mismatch")
     if parse_expiry(data["expires_at"]) <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=2):
         raise ValueError("role token stale")
     return data
@@ -265,7 +322,7 @@ class Handler(socketserver.StreamRequestHandler):
                     self.reply({"ok": False, "error": "unsupported_transport"})
                     return
                 repo = str(request.get("path", "")).removesuffix(".git").strip("/")
-                if repo not in ALLOWED_REPOS:
+                if not role_repo_allowed(role, repo):
                     self.reply({"ok": False, "error": "repository_not_allowed"})
                     return
                 log.info("credential pid=%s agent=%s role=%s repo=%s", pid, agent_id, role, repo)

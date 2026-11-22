@@ -164,6 +164,19 @@ class ControllerRefusalTests(unittest.TestCase):
         self.assertEqual(transport.calls, [], "no transport may be called on denial")
         self.assertEqual(transport.running, {"mantic-mcp": PREVIOUS})
 
+    def test_pre_admitted_digest_cannot_bypass_review_grant_or_attestation(self):
+        transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
+        with self.assertRaises(gate.Denied) as caught:
+            controller.run_promotion(
+                manifest(), ["mantic-mcp/src/server.ts"],
+                lambda service: {}, transport, now=NOW, source_sha=SOURCE,
+                pre_admitted={"mantic-mcp": {
+                    "service": "mantic-mcp", "source_sha": SOURCE,
+                    "coolify_uuid": UUID, "image_digest": DIGEST}})
+        self.assertEqual(str(caught.exception), "pre_admitted_forbidden")
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(transport.running, {"mantic-mcp": PREVIOUS})
+
     def test_held_lane_never_reaches_build_or_deploy(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
         report = self.run_controller(transport, artifacts=lambda service: bundle(grant=None))
