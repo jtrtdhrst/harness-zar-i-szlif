@@ -1,5 +1,7 @@
 """Regression checks for RepoWise branch/build retrieval in the pinned 0.60.1 wheel."""
 import unittest
+from tempfile import TemporaryDirectory
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from repowise.server.mcp_server.tool_answer import answer as a
@@ -25,6 +27,13 @@ class IdentifierTests(unittest.TestCase):
         self.assertEqual(a._service_identifiers(question), ["github-ops-mcp", "zar-i-szlif-web"])
         self.assertTrue(a._branch_source_question(question))
         self.assertFalse(a._branch_source_question("Explain github-ops-mcp architecture"))
+        for question in (
+            "Która gałąź buduje github-ops-mcp?",
+            "Z jakiej gałęzi budowany jest github-ops-mcp?",
+            "Który branch buduje github-ops-mcp?",
+            "Jaka jest produkcyjna gałąź github-ops-mcp?",
+        ):
+            self.assertTrue(a._branch_source_question(question), question)
         self.assertEqual(a._service_identifiers("plain words without service names"), [])
 
     def test_exact_config_and_dated_runtime_disclaimer(self):
@@ -104,6 +113,41 @@ class AnchorTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(hits, [])
         search.assert_not_awaited()
+
+
+class LiveMarkdownEvidenceTests(unittest.TestCase):
+    def test_missing_wiki_body_is_replaced_by_verified_source_lines(self):
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "ops" / "repowise" / "BRANCH_BUILD_PROVENANCE.md"
+            p.parent.mkdir(parents=True)
+            p.write_text("# Branch provenance\n" + row() + "\n")
+            h = {"target_path": str(p.relative_to(tmp)), "page_type": "file_page"}
+            excerpt = a._verified_markdown_source_excerpt(
+                h, Path(tmp), "Which configured branch builds github-ops-mcp?"
+            )
+            self.assertIsNotNone(excerpt)
+            self.assertIn("feat/github-ops-mcp-20261120", excerpt)
+            self.assertIn("L2:", excerpt)
+
+    def test_no_source_fabrication_for_missing_or_unrelated_docs(self):
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "doc.md"
+            p.write_text("# Fruit growing\nOranges and lemons.\n")
+            for path in ["missing.md", "../doc.md", "/etc/passwd", "doc.md"]:
+                h = {"target_path": path}
+                self.assertIsNone(a._verified_markdown_source_excerpt(
+                    h, Path(tmp), "Which branch builds github-ops-mcp?"
+                ))
+
+    def test_source_symlinks_are_refused(self):
+        with TemporaryDirectory() as tmp:
+            p = Path(tmp) / "src.md"
+            p.write_text(row())
+            (Path(tmp) / "link.md").symlink_to(p)
+            h = {"target_path": "link.md"}
+            self.assertIsNone(a._verified_markdown_source_excerpt(
+                h, Path(tmp), "Which branch builds github-ops-mcp?"
+            ))
 
 
 if __name__ == "__main__":
