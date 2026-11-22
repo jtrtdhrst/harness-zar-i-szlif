@@ -48,3 +48,43 @@ jobs:
               )
               print("CANDIDATE_COMPOSE_OK", row["id"])
           PY
+
+      - name: Synthetic positive/negative interpolation (no deploy or secrets)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          rows = json.loads(Path("ops/service-deployment-roots.json").read_text())["resources"]
+          expr = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^}]*\}")
+          negative_count = 0
+          for row in rows:
+              path = row["versioned_compose"]
+              names = set(expr.findall(Path(path).read_text()))
+              env = {"PATH": os.environ["PATH"]}
+              for name in names:
+                  if "DIGEST" in name:
+                      value = "example.invalid/fixture@sha256:" + "0" * 64
+                  elif "BIND" in name or "MOUNT" in name:
+                      value = "/tmp/fixture-data"
+                  elif "PORT" in name:
+                      value = "1234"
+                  else:
+                      value = "fixture"
+                  env[name] = value
+              args = ["docker", "compose", "-f", path, "config", "--quiet"]
+              subprocess.run(args, env=env, check=True, timeout=20)
+              if names:
+                  negative_count += 1
+                  result = subprocess.run(
+                      args, env={"PATH": os.environ["PATH"]},
+                      capture_output=True, text=True, timeout=20
+                  )
+                  assert result.returncode != 0, "FAIL_OPEN: " + row["id"]
+              print("SYNTHETIC_CONFIG_OK", row["id"])
+          assert negative_count == 16, f"expected 16 required env candidates: {negative_count}"
+          PY
