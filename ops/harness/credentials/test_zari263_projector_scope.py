@@ -72,6 +72,35 @@ class WriterRevocation(unittest.TestCase):
             self.assertEqual(target.read_text(), 'unchanged')
 
 
+    def test_reader_failure_revokes_existing_writer_in_both_mounts(self):
+        from unittest.mock import call, patch
+        project = load("github-ops-token-project.py", "bgh_reader_failure_revoke")
+        with patch.object(project, "project", side_effect=RuntimeError("reader invalid")), \
+             patch.object(project, "retire_writer_target", return_value=True) as revoke:
+            with self.assertRaisesRegex(RuntimeError, "reader invalid"):
+                project.main()
+        self.assertEqual(revoke.call_args_list, [
+            call(project.WRITER_TARGET), call(project.WRITER_RUNTIME)
+        ])
+
+    def test_writer_projection_failure_revokes_both_previous_grants(self):
+        import tempfile
+        from unittest.mock import call, patch
+        project = load("github-ops-token-project.py", "bgh_writer_failure_revoke")
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "writer.json"
+            source.write_text("synthetic-only")
+            with patch.object(project, "WRITER_SOURCE", source), \
+                 patch.object(project, "project", side_effect=["2099-01-01T00:00:00Z",
+                                                            RuntimeError("writer invalid")]), \
+                 patch.object(project, "retire_writer_target", return_value=True) as revoke:
+                with self.assertRaisesRegex(RuntimeError, "writer invalid"):
+                    project.main()
+            self.assertEqual(revoke.call_args_list, [
+                call(project.WRITER_TARGET), call(project.WRITER_RUNTIME)
+            ])
+
+
 class RuntimeVolumeProjection(unittest.TestCase):
     def test_scoped_writer_is_atomically_projected_into_existing_volume(self):
         import json
