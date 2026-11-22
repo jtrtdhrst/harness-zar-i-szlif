@@ -559,23 +559,30 @@ export function makeServer(config={}) {
       return {merged:true,repo,number,head_sha:sha,merge_sha:result.sha,method};
     }
     if(name==='github_preview_branch_delete'){
-      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      // Preview and mutation share the exact pinned-branch guard. A preview
+      // must never invite an operator to delete a deployment-pinned ref.
+      const branch=ensureBranchWritable(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       const rules=await assertNoRules(repo,root,branch);
+      // A configured but absent/expired writer file is not an available
+      // deletion capability. A preview is read-only and must not disclose it.
+      let writerReady=false;
+      if(writesEnabled&&(writerTokenFile||injectedPushToken)&&deletionAllowlist.has(`${repo}:${branch}@${sha}`)){
+        writerReady=await readWriterToken().then(()=>true,()=>false);
+      }
       return {eligible:true,repo,branch,sha,merged_pr:merged.number,rules:rules.rules,
-        deletion_supported:Boolean(writesEnabled&&(writerTokenFile||injectedPushToken)&&deletionAllowlist.has(`${repo}:${branch}@${sha}`)),
+        deletion_supported:writerReady,
         note:'Deletion is available only through github_delete_merged_branch, which deletes with a git --force-with-lease=<ref>:<expected> lease: a concurrent push is rejected (stale lease), never overwritten'};
     }
     if(name==='github_delete_merged_branch'){
-      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      const branch=ensureBranchWritable(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       // Fail closed before any provider or git traffic.
       if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
       if(!writerTokenFile&&!injectedPushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped writer credential is required for CAS deletion');
-      if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
       if(!deletionAllowlist.has(`${repo}:${branch}@${sha}`))throw error('DELETE_NOT_APPROVED','Exact repo:branch@sha operator grant required');
+      const pushToken=await readWriterToken();
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       const rules=await assertNoRules(repo,root,branch);
-      const pushToken=await readWriterToken();
       const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
       if(!lease.accepted)throw error(lease.code,`CAS delete refused (${lease.code}); the ref was not removed`);
       let stillThere=true;
