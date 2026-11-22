@@ -37,11 +37,9 @@ same Coolify project; only `.gitkeep` and documentation are committed. See
 [`docs/COOLIFY-PROJECTS.md`](docs/COOLIFY-PROJECTS.md) for the project/service/
 volume map and pending structural cleanup.
 
-Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` under `harness-legacy-20261029/`, preserving each file's relative path. Verified archived source SHA matches were removed from this repository.
 
 ## Source ownership and candidate build layout — not a production deployment claim
 
-**Source owner:** `miloszspyrka-code/harness-zar-i-szlif`. `main` is an integration branch, **not** a universal production release ref. Existing infrastructure MCP services include image-only/upstream-pinned Coolify resources. A folder, Dockerfile or green GitHub Action alone does not prove automatic deployment. Promote an exact reviewed image/ref per service only after its own Git-backed canary, health, authenticated MCP test, immutable digest, runtime readback and rollback. The source release-lane policy from [PR #41](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/41) was merged on 2026-11-04. The active source contracts live in `docs/RELEASE-POLICY.md`, `ops/release-lanes.json`, and `.github/workflows/release-lanes-policy.yml`; verify current Coolify deployment, immutable digest, independent review, and authenticated E2E separately.
 
 The **unified Paperclip Core + Hermes adapter candidate** deliberately uses the repository-root build context to apply pinned Core review-recovery and Hermes adapter overlays together. This special case does not imply a general rule to deploy other infrastructure MCPs from the repo root. Only a reviewed, tested source SHA may be promoted; the 14-agent migration remains gated by real Wiki/Skills, Hindsight, Opik and rollback validation.
 
