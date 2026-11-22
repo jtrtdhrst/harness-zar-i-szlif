@@ -165,7 +165,7 @@ class ProductSquashTests(unittest.TestCase):
         self.assertIn("! test -w /var/run/docker.sock",workflow)
         self.assertIn("persist-credentials: false",workflow)
         self.assertIn("test_product_squash_release.py -v",workflow)
-        self.assertIn("  pull_request:\\n    branches: [main]".replace("\\\\n", "\\n"), workflow)
+        self.assertIn("  pull_request:" + chr(10) + "    branches: [main]", workflow)
         self.assertNotIn("  pull_request_target:", workflow)
         pr_job = workflow.split("  validate-unprivileged-pr:", 1)[1].split(
             "  validate-native-product-release:", 1)[0]
