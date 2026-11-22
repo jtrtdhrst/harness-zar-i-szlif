@@ -26,11 +26,12 @@ ROLE_PERMISSIONS = {
     "runner": {"actions": "write", "administration": "write", "contents": "read", "metadata": "read"},
     "harness-reader": {"contents": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
-    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "metadata": "read"},
+    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
+    "github-ops-writer": {"actions": "write", "contents": "write", "pull_requests": "write", "metadata": "read"},
 }
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
 ROLE_REPOS = {"harness-reader": (REPOS[0],)}
-# Privileged runner grants are not projected into task-scoped agent credentials.
+# Scoped agent grants are consumed by the broker; runner is a separate privileged role.
 for _base in ("implementer", "reviewer", "release"):
     for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
                                   ("product", REPOS[1], REPO_NAMES[1])):
