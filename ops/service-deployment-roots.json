@@ -18,7 +18,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "local-build-registry/deploy/compose.candidate.yaml",
       "watched_paths": [
         "local-build-registry/"
       ],
@@ -47,7 +47,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "repowise/deploy/compose.candidate.yaml",
       "watched_paths": [
         "repowise/"
       ],

@@ -1,0 +1,16 @@
+# External Git repowise-dev/repowise v0.60.1, NOT Harness-owned source build.
+# NOT APPROVED FOR DEPLOYMENT. Require approved upstream SHA, immutable OCI digest and state reconciliation.
+services:
+  repowise:
+    image: "${REPOWISE_APP_IMAGE_DIGEST:?publish OCI digest built from independently reviewed upstream SHA}"
+    restart: unless-stopped
+    expose:
+      - "3000"
+      - "7337"
+      - "7338"
+    volumes:
+      - "${REPOWISE_EXISTING_WORKSPACE_BIND:?reconcile existing data before migration}:/workspace"
+    networks: [coolify]
+networks:
+  coolify:
+    external: true

@@ -1,0 +1,14 @@
+# Reconstructed from the live Coolify dockerimage app. NOT APPROVED FOR DEPLOYMENT.
+# Existing registry storage not identified. Fail closed until its migration/backup is verified.
+services:
+  registry:
+    image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - "${REGISTRY_CURRENT_STORAGE_BIND:?reconcile existing registry data before migration}:/var/lib/registry"
+    networks: [coolify]
+networks:
+  coolify:
+    external: true
