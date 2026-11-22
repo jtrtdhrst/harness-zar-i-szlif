@@ -12,6 +12,9 @@ on:
       - 'ops/harness/credentials/multica-git-credential-broker.py'
       - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
       - 'ops/harness/credentials/test_zari263_broker_scope.py'
+      - 'ops/harness/credentials/test_zari263_projector_scope.py'
+      - 'scripts/service-coverage.json'
+      - 'scripts/check_service_coverage.py'
       - '.github/workflows/github-ops-mcp-ci.yml'
   push:
     paths:
@@ -21,6 +24,9 @@ on:
       - 'ops/harness/credentials/multica-git-credential-broker.py'
       - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
       - 'ops/harness/credentials/test_zari263_broker_scope.py'
+      - 'ops/harness/credentials/test_zari263_projector_scope.py'
+      - 'scripts/service-coverage.json'
+      - 'scripts/check_service_coverage.py'
       - '.github/workflows/github-ops-mcp-ci.yml'
 
 permissions:
@@ -50,6 +56,10 @@ jobs:
         run: python3 ops/harness/credentials/test_zari213_daemon_cache_reader.py -q
       - name: Scoped repository grants and credential broker negatives
         run: python3 ops/harness/credentials/test_zari263_broker_scope.py -q
+      - name: Verify MCP root coverage and separate writer grant projection
+        run: |
+          python3 scripts/check_service_coverage.py
+          python3 ops/harness/credentials/test_zari263_projector_scope.py -q
       # The token-file tests intentionally require root-owned 0640 files.
       # Run inside the unprivileged BuildKit sandbox (root in the build stage),
       # not as host root or by relaxing production credential checks.
