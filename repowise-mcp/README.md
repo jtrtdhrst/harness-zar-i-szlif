@@ -2,7 +2,7 @@
 The live Coolify service `lecwi3emh9hjxir7gphmalie` runs RepoWise **0.60.1** and hosts the Harness/Product MCP indexes. This source builds an equivalent pinned MCP executable; existing live containers/volumes stay unchanged until a separately approved cutover.
 
 ## Coolify Git deployment configuration
-- Source: private GitHub `miloszspyrka-code/harness-zar-i-szlif`, reviewed commit of `main`.
+- Source: private GitHub `jtrtdhrst/harness-zar-i-szlif`, reviewed commit of `main`.
 - Build Pack: **Dockerfile**. Base Directory: `/repowise-mcp`; Dockerfile Location: `/Dockerfile`.
 - Internal port: `7338`. Disable auto-deploy during the release HOLD.
 - Copy existing runtime environment keys through **Coolify secrets**, never into Git; `REPOWISE_API_KEY`, `REPOWISE_DB_URL`, `REPOWISE_EMBEDDER`, `REPOWISE_EMBEDDING_MODEL` may be required by the existing runtime.
