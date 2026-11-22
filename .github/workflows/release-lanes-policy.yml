@@ -44,6 +44,26 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
       - name: Verify 20 source/Compose deployment contracts
         run: python3 -m unittest discover -s scripts -p 'test_service_deployment_roots.py' -v
+      - name: Validate Compose syntax for all 20 owned deployment candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose version
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          rows = json.loads(Path("ops/service-deployment-roots.json").read_text())["resources"]
+          assert len(rows) == 20
+          for row in rows:
+              path = row["versioned_compose"]
+              assert path and Path(path).is_file(), row["id"]
+              subprocess.run(
+                  ["docker", "compose", "-f", path, "config", "--no-interpolate", "--quiet"],
+                  check=True, timeout=20,
+              )
+              print("COMPOSE_OK", row["id"])
+          PY
       - name: Test auto-build, independent review and signed-CI admission
         run: python3 -m unittest discover -s scripts -p 'test_harness_native_delivery.py' -v
       - name: Guard against non-MCP automatic image builds

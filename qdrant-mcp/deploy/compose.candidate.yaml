@@ -2,7 +2,6 @@
 # Must reconcile secret values, volumes, host mounts, SHA/digest, and network before release.
 services:
   qdrant-mcp:
-    labels:
     image: "${QDRANT_MCP_IMAGE_DIGEST:?published immutable OCI digest required}"
     pull_policy: always # candidate uses an immutable distributable registry digest
     restart: unless-stopped
