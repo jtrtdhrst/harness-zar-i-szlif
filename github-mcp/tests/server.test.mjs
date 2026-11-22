@@ -5,7 +5,7 @@ const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,classicProtectionMissing=false,
-  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false}={}){
+  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false}={}){
   const calls=[];
   const authorizations=[];
   let branchDeleted=false;
@@ -71,7 +71,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
   const s=makeServer({fetchImpl:fake,githubToken,writerToken,callerToken,writesEnabled,allowDeletion,
-    pushToken,pinnedBranches,pushRemoteFor,gitBin,
+    pushToken,writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,
     deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`,`${REPO}:fix/old@${branchSHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
@@ -485,6 +485,8 @@ test('a Coolify-pinned branch is refused even when every other gate would pass',
   const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', branchSHA: b.sha,
     liveRef: b.bare, liveBranch: b.branch, pushRemoteFor: () => b.url });
   try {
+    const preview = await f.request('github_preview_branch_delete', { repo: REPO, branch: b.branch, expected_sha: b.sha });
+    assert.match(preview.body.result.content[0].text, /BRANCH_PINNED/);
     const x = await f.request('github_delete_merged_branch', { repo: REPO, branch: b.branch, expected_sha: b.sha });
     assert.match(x.body.result.content[0].text, /BRANCH_PINNED/);
     assert.equal(b.ref(), b.sha, 'the pinned ref survives');
@@ -521,7 +523,7 @@ test('a push that lands between verification and delete is rejected by the lease
 });
 
 
-test('GitHub App role token file is validated, rotated and fail-closed', async()=>{
+test('GitHub App role token file is validated, rotated and fail-closed', {skip:process.getuid?.()!==0?'root-owned file fixture only':false}, async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-role-')),file=join(dir,'reader.json');
@@ -609,7 +611,7 @@ test('live MCP tools/list contains exact twenty names; removed dispatch is never
     'github_create_branch','github_commit_file','github_create_pull_request','github_merge_pull_request'].sort());
  }finally{await f.close()}
 });
-test('rotating GitHub App writer file governs only verified POST and fails closed',async()=>{
+test('rotating GitHub App writer file governs only verified POST and fails closed',{skip:process.getuid?.()!==0?'root-owned file fixture only':false},async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os'),{join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-writer-')),file=join(dir,'writer.json');
@@ -649,6 +651,30 @@ test('rotating GitHub App writer file governs only verified POST and fails close
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
+test('preview and deletion deny missing writer grant even when a flag and allowlist are set',async()=>{
+  const {join}=await import('node:path');
+  const {tmpdir}=await import('node:os');
+  const missing=join(tmpdir(),'bgh-intentionally-absent-writer-'+process.pid+'.json');
+  const f=await fixture({writesEnabled:true,writerTokenFile:missing});
+  try{
+    const preview=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(preview.body.result.structuredContent.eligible,true);
+    assert.equal(preview.body.result.structuredContent.deletion_supported,false);
+    const prior=f.calls.length;
+    const result=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.match(result.body.result.content[0].text,/AUTH_NOT_CONFIGURED/);
+    assert.equal(f.calls.length,prior,'unavailable writer credential is rejected before provider access');
+  }finally{await f.close()}
+});
+test('scoped ready writer permits preview but no GitHub mutation',async()=>{
+  const f=await fixture({writesEnabled:true,pushToken:'unit-test-scoped-credential'});
+  try{
+    const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(out.body.result.structuredContent.eligible,true);
+    assert.equal(out.body.result.structuredContent.deletion_supported,true);
+    assert.equal(f.calls.every(([method])=>method==='GET'),true);
+  }finally{await f.close()}
+});
 test('branch delete requires exact repository, branch and SHA grant before provider calls',async()=>{
   const f=await fixture({writesEnabled:true,pushToken:'test-push-token',approved:false});
   try {
