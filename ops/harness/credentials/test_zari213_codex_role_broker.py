@@ -54,6 +54,12 @@ class RoleCredentialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "role_key_role_directory_invalid"):
             self.read_key()
 
+    def test_hardlinked_role_key_denied(self):
+        shared = self.root / "shared"
+        os.link(self.key, shared)
+        with self.assertRaisesRegex(ValueError, "role_key_permissions_invalid"):
+            self.read_key()
+
     def test_world_readable_key_denied(self):
         self.key.chmod(0o644)
         with self.assertRaisesRegex(ValueError, "role_key_permissions_invalid"):
