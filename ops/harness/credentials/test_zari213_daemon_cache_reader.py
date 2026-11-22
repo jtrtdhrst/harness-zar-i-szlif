@@ -360,6 +360,20 @@ class ScopedRoleTests(unittest.TestCase):
         self.assertEqual(broker.scoped_role("implementer", scope, "jtrtdhrst/zar-i-szlif"),
                          "implementer-product")
 
+    def test_multi_repository_project_scope_never_falls_back_to_global_role(self):
+        scope = {"repo_urls": [
+            "https://github.com/jtrtdhrst/harness-zar-i-szlif.git",
+            "https://github.com/jtrtdhrst/zar-i-szlif.git",
+        ]}
+        for base_role in ("implementer", "reviewer", "release"):
+            with self.subTest(base_role=base_role):
+                with self.assertRaisesRegex(ValueError, "exactly one repository"):
+                    broker.scoped_role(base_role, scope)
+                for requested_repo in ("jtrtdhrst/harness-zar-i-szlif",
+                                       "jtrtdhrst/zar-i-szlif"):
+                    with self.assertRaisesRegex(ValueError, "exactly one repository"):
+                        broker.scoped_role(base_role, scope, requested_repo)
+
     def test_foreign_repository_denied_even_when_allowlisted(self):
         scope = {"repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif"]}
         with self.assertRaisesRegex(ValueError, "outside task scope"):
