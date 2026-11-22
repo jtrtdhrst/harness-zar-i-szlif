@@ -602,22 +602,50 @@ class ProductPromotionTests(unittest.TestCase):
                     p.local_ci_attestation(SOURCE)
 
     def test_local_image_receipt_rejects_json_bool_numeric_coercion(self):
+        import product_image_delivery as worker
+        digest = "sha256:" + "a"*64
         valid = {"schema_version": 1, "verified": True,
                  "registry": "127.0.0.1:5000",
                  "coolify_image_app_uuid": "cs847jiwtuq5rlm8ntjeohgf",
-                 "runner": "zis-local-build"}
-        with patch.object(p, "Path") as mock_path:
+                 "runner": "zis-local-build", "sha": OLD,
+                 "image": "127.0.0.1:5000/zar-i-szlif-web:" + OLD,
+                 "digest": digest}
+        good_live = {"ok": True, "sha": OLD, "image_digest": digest}
+        with patch.object(p, "Path") as mock_path, \
+             patch.object(worker, "read_build_attestation", return_value=valid) as read, \
+             patch.object(worker, "target_readback", return_value=good_live) as live:
             mock_path.return_value.is_file.return_value = True
-            mock_path.return_value.read_text.return_value = json.dumps(valid)
-            self.assertIsNone(p.require_verified_local_image_delivery())
+            self.assertIsNone(p.require_verified_local_image_delivery(OLD))
+            read.assert_called()
+            live.assert_called_with(OLD)
             for key, value in (("schema_version", True),
                                ("schema_version", 1.0),
                                ("verified", 1),
-                               ("verified", "true")):
+                               ("verified", "true"),
+                               ("sha", NEW),
+                               ("image", "unrelated:image"),
+                               ("digest", "sha256:" + "xyz")):
                 with self.subTest(key=key, value=value):
-                    mock_path.return_value.read_text.return_value = json.dumps({**valid, key: value})
-                    with self.assertRaisesRegex(p.Denied, "local_image_delivery_unverified"):
-                        p.require_verified_local_image_delivery()
+                    read.return_value = {**valid, key: value}
+                    with self.assertRaisesRegex(p.Denied, "local_image_delivery_stale_or_unverified"):
+                        p.require_verified_local_image_delivery(OLD)
+            read.return_value = valid
+            for bad_live in ({"ok": False, "reason": "no_live_release"},
+                             {"ok": True, "sha": NEW, "image_digest": digest},
+                             {"ok": True, "sha": OLD, "image_digest": "sha256:" + "b"*64}):
+                live.return_value = bad_live
+                with self.assertRaisesRegex(p.Denied, "prior_release_live_digest_mismatch"):
+                    p.require_verified_local_image_delivery(OLD)
+            with self.assertRaisesRegex(p.Denied, "invalid_prior_release_sha"):
+                p.require_verified_local_image_delivery("not-a-sha")
+
+    def test_marker_read_permission_error_denies_before_git_write(self):
+        import product_image_delivery as worker
+        with patch.object(p, "Path") as mock_path, \
+             patch.object(worker, "read_build_attestation", side_effect=PermissionError("symlink")):
+            mock_path.return_value.is_file.return_value = True
+            with self.assertRaisesRegex(p.Denied, "local_image_delivery_unverified"):
+                p.require_verified_local_image_delivery(OLD)
 
     def test_local_ci_attestation_missing_and_unreadable_deny(self):
         with self.trusted_tree() as directory:
