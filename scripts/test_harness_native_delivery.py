@@ -1572,3 +1572,39 @@ class AutoMainCycleTests(unittest.TestCase):
         self.assertEqual(report["result"], "plan")
         prepare.assert_not_called()
         promote.assert_not_called()
+
+
+class OwnedCoolifyMcpRoutingTests(unittest.TestCase):
+    """Source routing is owner-scoped; the running legacy image is matchable."""
+
+    def test_canonical_owner_and_owned_digest(self):
+        self.assertEqual(delivery.REPO, "jtrtdhrst/harness-zar-i-szlif")
+        self.assertEqual(delivery.GHCR, "ghcr.io/jtrtdhrst")
+        self.assertIn("coolify-mcp", delivery.GHCR_SOURCE_SERVICES)
+        spec = delivery.SERVICES["coolify-mcp"]
+        self.assertEqual((spec["folder"], spec["dockerfile"]),
+                         ("coolify-mcp", "Dockerfile"))
+        self.assertIsNone(spec["health_url"])
+        self.assertEqual(delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR),
+                         f"ghcr.io/jtrtdhrst/coolify-mcp@{DIGEST}")
+        self.assertEqual(delivery.image_reference("mantic-mcp", DIGEST, delivery.GHCR),
+                         f"ghcr.io/jtrtdhrst/harness-mantic-mcp@{DIGEST}")
+
+    def test_target_compose_images_and_unrelated_image_refusal(self):
+        pattern = delivery.image_pattern(
+            "coolify-mcp", delivery.SERVICES["coolify-mcp"], delivery.GHCR)
+        self.assertIsNotNone(pattern.search(
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"))
+        self.assertIsNotNone(pattern.search(
+            f"    image: ghcr.io/jtrtdhrst/coolify-mcp@{DIGEST}\n"))
+        self.assertIsNone(pattern.search(
+            "    image: ghcr.io/jtrtdhrst/unrelated@sha256:bad\n"))
+
+    def test_trusted_origin_denies_previous_owner(self):
+        import re
+        good = "https://github.com/jtrtdhrst/harness-zar-i-szlif.git"
+        old = "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git"
+        self.assertTrue(any(re.fullmatch(expr, good, flags=re.IGNORECASE)
+                            for expr in delivery.TRUSTED_ORIGINS))
+        self.assertFalse(any(re.fullmatch(expr, old, flags=re.IGNORECASE)
+                             for expr in delivery.TRUSTED_ORIGINS))
