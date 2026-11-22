@@ -46,6 +46,46 @@ class ProductPromotionTests(unittest.TestCase):
                 with self.assertRaisesRegex(p.Denied, "production_provenance_invalid"):
                     p.validated_product_release_sha(value)
 
+    def test_live_http_readback_requires_canonical_or_pinned_source(self):
+        class HTTPResponse:
+            status = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def read(self, limit=None):
+                return json.dumps(self.body).encode("utf-8")
+
+        def probe(payload):
+            with patch("urllib.request.urlopen", side_effect=[
+                HTTPResponse(payload), HTTPResponse({"ok": True})
+            ]) as urlopen:
+                result = p.live_release()
+            self.assertEqual(urlopen.call_count, 2)
+            return result
+
+        self.assertEqual(probe({
+            "commit": NEW, "source": p.PRODUCT_RELEASE_SOURCE
+        }), NEW)
+        for historical_sha in p.LEGACY_PRODUCT_RELEASE_SHAS:
+            with self.subTest(legacy=historical_sha):
+                self.assertEqual(probe({
+                    "commit": historical_sha,
+                    "source": p.LEGACY_PRODUCT_RELEASE_SOURCE
+                }), historical_sha)
+        with patch("urllib.request.urlopen", side_effect=[
+            HTTPResponse({"commit": NEW, "source": p.LEGACY_PRODUCT_RELEASE_SOURCE}),
+            HTTPResponse({"ok": True})
+        ]):
+            with self.assertRaisesRegex(p.Denied, "production_provenance_invalid"):
+                p.live_release()
+
     def test_canonical_github_owner_is_current_and_old_owner_is_denied(self):
         self.assertEqual(p.REPO, "jtrtdhrst/zar-i-szlif")
         current = "/repos/jtrtdhrst/zar-i-szlif"
