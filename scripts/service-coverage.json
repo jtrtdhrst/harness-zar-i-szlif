@@ -41,7 +41,7 @@
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
-    "github-ops-mcp": {
+    "github-mcp": {
       "mode": "workflow",
       "workflows": [
         ".github/workflows/github-ops-mcp-ci.yml"
