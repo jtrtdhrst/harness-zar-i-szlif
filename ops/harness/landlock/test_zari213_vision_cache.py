@@ -95,4 +95,61 @@ class RoleAuthIsolationTests(unittest.TestCase):
             M.private_role_auth_file(self.root, "harness-engineer", self.uid)
 
 
+class TaskHermesHomeACLTests(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.addCleanup(self.t.cleanup)
+        self.root = pathlib.Path(self.t.name)
+        self.task = self.root / "workspaces" / "task"
+        self.task.mkdir(parents=True)
+        self.home = self.task / "hermes-home"
+        self.home.mkdir(mode=0o700)
+        self.sessions = self.root / "persistent-sessions"
+        self.sessions.mkdir()
+        self.agent = "3a54e0b4-6526-4de5-a1fd-e66e205cb3b4"
+        self.issue = "01a20413-9f18-70b2-b518-a0cd487c5b12"
+
+    def verify(self, path, role="cto"):
+        return M.verified_hermes_home_profile(self.task, path, self.sessions,
+                                             self.agent, role, os.getuid())
+
+    def test_own_private_task_home_allowed(self):
+        self.assertEqual(self.verify(self.home), "cto")
+
+    def test_task_home_world_readable_denied(self):
+        self.home.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "not private"):
+            self.verify(self.home)
+
+    def test_task_home_symlink_denied(self):
+        original = self.task / "authentic"
+        self.home.rename(original)
+        self.home.symlink_to(original, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlinked"):
+            self.verify(self.home)
+
+    def test_foreign_task_home_denied(self):
+        foreign = self.root / "workspaces" / "foreign-task" / "hermes-home"
+        foreign.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError, "outside own task/session"):
+            self.verify(foreign)
+
+    def test_own_persisted_session_allowed(self):
+        own = self.sessions / self.agent / "cto" / self.issue
+        own.mkdir(parents=True, mode=0o700)
+        self.assertEqual(self.verify(own), "cto")
+
+    def test_foreign_persisted_profile_denied(self):
+        foreign = self.sessions / self.agent / "cho" / self.issue
+        foreign.mkdir(parents=True, mode=0o700)
+        with self.assertRaisesRegex(ValueError, "foreign Hermes profile"):
+            self.verify(foreign)
+
+    def test_foreign_persisted_agent_denied(self):
+        other = self.sessions / "c1c8b457-e602-4eda-8ac7-67b994348878" / "cto" / self.issue
+        other.mkdir(parents=True, mode=0o700)
+        with self.assertRaisesRegex(ValueError, "outside own task/session"):
+            self.verify(other)
+
+
 if __name__=="__main__":unittest.main()
