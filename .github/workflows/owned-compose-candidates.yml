@@ -44,6 +44,21 @@ jobs:
           while IFS= read -r file; do
             docker compose -f "$file" config --no-interpolate --quiet
           done < "$RUNNER_TEMP/compose-paths.txt"
+      - name: Outline Redis credential parity (synthetic positive and missing-secret negative)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fake test-only OCI references; never use them for a release.
+          dummy="example.invalid/ci-only@sha256:$(printf '%064d' 0)"
+          for i in 1 2 3; do
+            export "PINNED_IMAGE_OUTLINE_KNOWLEDGE_${i}=$dummy"
+          done
+          export OUTLINE_REDIS_PASSWORD="ci-only-not-a-real-secret"
+          docker compose -f outline-knowledge/compose.candidate.yml config --quiet
+          if env -u OUTLINE_REDIS_PASSWORD docker compose -f outline-knowledge/compose.candidate.yml config --quiet >/dev/null 2>&1; then
+            echo 'Outline candidate accepted missing Redis credential' >&2
+            exit 1
+          fi
       - name: Select changed resources; do not deploy
         shell: bash
         env:
