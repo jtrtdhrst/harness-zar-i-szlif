@@ -11,6 +11,8 @@ on:
       - 'ops/harness/credentials/github-ops-token-project.py'
       - 'ops/harness/credentials/multica-git-credential-broker.py'
       - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
+      - 'ops/harness/landlock/zari213-hermes-task-landlock.py'
+      - 'ops/harness/landlock/test_zari213_vision_cache.py'
       - 'ops/harness/credentials/README-zari213-daemon-cache-reader.md'
       - 'ops/harness/credentials/test_zari263_broker_scope.py'
       - 'ops/harness/credentials/test_zari263_projector_scope.py'
@@ -26,6 +28,8 @@ on:
       - 'ops/harness/credentials/github-ops-token-project.py'
       - 'ops/harness/credentials/multica-git-credential-broker.py'
       - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
+      - 'ops/harness/landlock/zari213-hermes-task-landlock.py'
+      - 'ops/harness/landlock/test_zari213_vision_cache.py'
       - 'ops/harness/credentials/README-zari213-daemon-cache-reader.md'
       - 'ops/harness/credentials/test_zari263_broker_scope.py'
       - 'ops/harness/credentials/test_zari263_projector_scope.py'
@@ -59,6 +63,8 @@ jobs:
           python3 -m py_compile ops/harness/credentials/multica-git-credential-broker.py
       - name: Git credential broker identity and isolation regressions
         run: python3 ops/harness/credentials/test_zari213_daemon_cache_reader.py -q
+      - name: Verify task-role OAuth isolation and cache ACL regressions
+        run: python3 -m unittest discover -s ops/harness/landlock -p 'test_zari213_*.py' -v
       - name: Scoped repository grants and credential broker negatives
         run: python3 ops/harness/credentials/test_zari263_broker_scope.py -q
       - name: Verify MCP root coverage and separate writer grant projection
