@@ -1,0 +1,525 @@
+{
+  "schema_version": 1,
+  "repo": "jtrtdhrst/harness-zar-i-szlif",
+  "snapshot_date": "2026-11-22",
+  "scope": "All Coolify resources named *mcp* plus Hermes Gateway. Includes vendor and product resources for completeness.",
+  "evidence": "Live Docker container/image readback and successful main push OCI publication jobs. Does not prove end-to-end production provenance.",
+  "interpretation": "Docker image IDs and local RepoDigests are not trusted OCI release digests. Never deploy or delete images solely from this snapshot.",
+  "items": [
+    {
+      "service": "github-ops-mcp",
+      "coolify_uuid": "t09dqe2eppn2eiqmhzlf8xzp",
+      "coolify_type": "application",
+      "source_kind": "owned-code",
+      "source_root": "github-mcp",
+      "dockerfile": "github-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "t09dqe2eppn2eiqmhzlf8xzp-20261122T114018",
+          "engine_reported_repo_digests": [
+            "t09dqe2eppn2eiqmhzlf8xzp@sha256:094d32aec8f3aace3ebf8fda141f0a084207513674aceafa6415db4185877866"
+          ],
+          "image_id": "sha256:094d32aec8f3aace3ebf8fda141f0a084207513674aceafa6415db4185877866",
+          "image_ref": "t09dqe2eppn2eiqmhzlf8xzp:009a4966ef80b12ca4c9b3512c88a0c1d199f8e4",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-github-ops-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "hermes-gateway",
+      "coolify_uuid": "2sganhxhhnioiqh4an9g2f4k",
+      "coolify_type": "application",
+      "source_kind": "owned-code",
+      "source_root": "integrations/hermes-paperclip/gateway",
+      "dockerfile": "integrations/hermes-paperclip/gateway/Dockerfile",
+      "running_containers": [
+        {
+          "container": "2sganhxhhnioiqh4an9g2f4k",
+          "engine_reported_repo_digests": [
+            "2sganhxhhnioiqh4an9g2f4k@sha256:73d618590367d0cce8e37f86dbdcd441ddd1807dddbfedee573985a8c49d53dd"
+          ],
+          "image_id": "sha256:73d618590367d0cce8e37f86dbdcd441ddd1807dddbfedee573985a8c49d53dd",
+          "image_ref": "2sganhxhhnioiqh4an9g2f4k:0424ed1b5e040bd0147d1380dd3cbc857f65406b",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-hermes-gateway:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "multica-mcp",
+      "coolify_uuid": "5o4edyfjo0wftfg08mtkknir",
+      "coolify_type": "application",
+      "source_kind": "owned-code",
+      "source_root": "multica-mcp",
+      "dockerfile": "multica-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "5o4edyfjo0wftfg08mtkknir-20261121T115025",
+          "engine_reported_repo_digests": [
+            "5o4edyfjo0wftfg08mtkknir@sha256:fe0c288b4a2283979413d59f9003f09d9c9792e839b471ede7f0152ce9bc997d"
+          ],
+          "image_id": "sha256:fe0c288b4a2283979413d59f9003f09d9c9792e839b471ede7f0152ce9bc997d",
+          "image_ref": "5o4edyfjo0wftfg08mtkknir:ec564dbb189141e088c07119eacf22c0bb4dcb61",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-multica-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "zar-i-szlif-mcp-host",
+      "coolify_uuid": "xevk2uwgf7lgbnflyvwkaoqp",
+      "coolify_type": "application",
+      "source_kind": "other-repository",
+      "source_root": null,
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "xevk2uwgf7lgbnflyvwkaoqp-20261122T161108",
+          "engine_reported_repo_digests": [
+            "xevk2uwgf7lgbnflyvwkaoqp@sha256:266a75eda241228b4636f81d4864ddbda8d501b6f50e62bddd5f8152c3f27f6e"
+          ],
+          "image_id": "sha256:266a75eda241228b4636f81d4864ddbda8d501b6f50e62bddd5f8152c3f27f6e",
+          "image_ref": "xevk2uwgf7lgbnflyvwkaoqp:11a3ebbb8a0a034316eeb31deb7367b38571f0f8",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "zar-i-szlif-mcp-host-image",
+      "coolify_uuid": "z4ikllc2j5zvhjr2tyloovmg",
+      "coolify_type": "application",
+      "source_kind": "other-repository",
+      "source_root": null,
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "z4ikllc2j5zvhjr2tyloovmg-20261122T133922",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/zar-i-szlif-mcp-host@sha256:c8e01f5210c151ef435346cf002fb6d4acad2b75fbd6215b9beb6ad017fd35cc"
+          ],
+          "image_id": "sha256:c8e01f5210c151ef435346cf002fb6d4acad2b75fbd6215b9beb6ad017fd35cc",
+          "image_ref": "127.0.0.1:5000/zar-i-szlif-mcp-host:11a3ebbb8a0a034316eeb31deb7367b38571f0f8-c8e01f5210c1",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "hindsight-mcp",
+      "coolify_uuid": "aglen8ervlo2lpi30oz8iii9",
+      "coolify_type": "service",
+      "source_kind": "source-pending",
+      "source_root": "hindsight-mcp",
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "hindsight-mcp-aglen8ervlo2lpi30oz8iii9",
+          "engine_reported_repo_digests": [
+            "caddy@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f"
+          ],
+          "image_id": "sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f",
+          "image_ref": "caddy:2-alpine",
+          "source_repository_label": "https://github.com/caddyserver/caddy-docker",
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "opik-mcp",
+      "coolify_uuid": "egasedqaofxnzcqppuxi805h",
+      "coolify_type": "service",
+      "source_kind": "partial-code",
+      "source_root": "opik-mcp",
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "proxy-egasedqaofxnzcqppuxi805h",
+          "engine_reported_repo_digests": [],
+          "image_id": "sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+          "image_ref": "785835ea65db",
+          "source_repository_label": null,
+          "source_revision_label": null
+        },
+        {
+          "container": "opik-mcp-egasedqaofxnzcqppuxi805h",
+          "engine_reported_repo_digests": [
+            "local/opik-mcp@sha256:b8bfcbc4dfc9d3f4381a2a90c6b1134df8688a1d8aeacaf1b278ba2226cab00a"
+          ],
+          "image_id": "sha256:b8bfcbc4dfc9d3f4381a2a90c6b1134df8688a1d8aeacaf1b278ba2226cab00a",
+          "image_ref": "local/opik-mcp:3.0.7",
+          "source_repository_label": null,
+          "source_revision_label": null
+        },
+        {
+          "container": "access-guard-egasedqaofxnzcqppuxi805h",
+          "engine_reported_repo_digests": [
+            "local/opik-access-guard@sha256:475ab2e3ed35966dcc86a55920f79edf65cf3c7f2882522ce3cf82cf15d71fd6"
+          ],
+          "image_id": "sha256:475ab2e3ed35966dcc86a55920f79edf65cf3c7f2882522ce3cf82cf15d71fd6",
+          "image_ref": "local/opik-access-guard:20261105-v2",
+          "source_repository_label": null,
+          "source_revision_label": null
+        },
+        {
+          "container": "mcp-egasedqaofxnzcqppuxi805h",
+          "engine_reported_repo_digests": [
+            "local/opik-mcp@sha256:b8bfcbc4dfc9d3f4381a2a90c6b1134df8688a1d8aeacaf1b278ba2226cab00a"
+          ],
+          "image_id": "sha256:b8bfcbc4dfc9d3f4381a2a90c6b1134df8688a1d8aeacaf1b278ba2226cab00a",
+          "image_ref": "local/opik-mcp:3.0.7",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "emailens-mcp",
+      "coolify_uuid": "16qnapdkj0qqqmeokepdechk",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "emailens-mcp",
+      "dockerfile": "emailens-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "emailens-mcp-16qnapdkj0qqqmeokepdechk",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-emailens-mcp@sha256:468cddba326e4e5fa129740eadd5db687e063841b9f4a70870980208821328d4"
+          ],
+          "image_id": "sha256:468cddba326e4e5fa129740eadd5db687e063841b9f4a70870980208821328d4",
+          "image_ref": "127.0.0.1:5000/harness-emailens-mcp",
+          "source_repository_label": "https://github.com/miloszspyrka-code/harness-zar-i-szlif",
+          "source_revision_label": "147205f6f58f5c8760f50a4054c412dee7a3cbbd"
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-emailens-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "plasmic-mcp",
+      "coolify_uuid": "a6ci2beifbinzckfnneiqnjd",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "plasmic-mcp",
+      "dockerfile": "plasmic-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "plasmic-mcp-a6ci2beifbinzckfnneiqnjd",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-plasmic-mcp@sha256:726abafe1f1aeb31f52832034b9a6ba2b9a2eb762fe96bb46bf8fa374a43c47a"
+          ],
+          "image_id": "sha256:726abafe1f1aeb31f52832034b9a6ba2b9a2eb762fe96bb46bf8fa374a43c47a",
+          "image_ref": "127.0.0.1:5000/harness-plasmic-mcp",
+          "source_repository_label": "https://github.com/miloszspyrka-code/harness-zar-i-szlif",
+          "source_revision_label": "b877020fe4e192de322940ba61f9ebb9243dcfef"
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-plasmic-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "coolify-mcp",
+      "coolify_uuid": "f7smgdueq8frlex9lfhp9iji",
+      "coolify_type": "service",
+      "source_kind": "source-pending",
+      "source_root": "coolify-mcp",
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "coolify-mcp-f7smgdueq8frlex9lfhp9iji",
+          "engine_reported_repo_digests": [
+            "ghcr.io/stumason/coolify-mcp@sha256:15261f67e1b35fb6ffe2ac07b01adfd204bfda1672807beef1fe5becb83418ca"
+          ],
+          "image_id": "sha256:15261f67e1b35fb6ffe2ac07b01adfd204bfda1672807beef1fe5becb83418ca",
+          "image_ref": "ghcr.io/stumason/coolify-mcp:3.9.0",
+          "source_repository_label": "https://github.com/StuMason/coolify-mcp",
+          "source_revision_label": "596e645b1a8ea7474fdfded08ae95ef5dee40120"
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "qdrant-mcp",
+      "coolify_uuid": "a4zgmthjspz8hwvyu6llr8dh",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "qdrant-mcp",
+      "dockerfile": "qdrant-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "qdrant-mcp-a4zgmthjspz8hwvyu6llr8dh",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-qdrant-mcp@sha256:18ec19c4108eaa284a0a15b11ec8e2a44c1978e1c5f05d3d11262ccc1ebf28f6"
+          ],
+          "image_id": "sha256:18ec19c4108eaa284a0a15b11ec8e2a44c1978e1c5f05d3d11262ccc1ebf28f6",
+          "image_ref": "127.0.0.1:5000/harness-qdrant-mcp:deb907a88591",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false,
+      "runtime_matching_server_sha256": "59aeaf846aa9781a17a7de098958a4268b145555e948c6f296979356e5b7df45",
+      "runtime_matching_requirements_sha256": "f7ba36d15d134709fe89125d340299f059b48a671027828f213182b64a9bf101"
+    },
+    {
+      "service": "supabase-mcp",
+      "coolify_uuid": "tjit4c8m0kjh8brkmdhyvkde",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "supabase-mcp",
+      "dockerfile": "supabase-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "supabase-mcp-tjit4c8m0kjh8brkmdhyvkde",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-supabase-mcp@sha256:9b766c33342bbb4c766c9fd2c02aa48fe9b8ccca24489ac2b0d6ec5699ebc393"
+          ],
+          "image_id": "sha256:9b766c33342bbb4c766c9fd2c02aa48fe9b8ccca24489ac2b0d6ec5699ebc393",
+          "image_ref": "127.0.0.1:5000/harness-supabase-mcp",
+          "source_repository_label": "https://github.com/miloszspyrka-code/harness-zar-i-szlif",
+          "source_revision_label": "b877020fe4e192de322940ba61f9ebb9243dcfef"
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-supabase-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "comfy-mcp",
+      "coolify_uuid": "kkhfw0napmeaqewgdirwhc1h",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "comfy-mcp",
+      "dockerfile": "comfy-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "comfy-mcp-kkhfw0napmeaqewgdirwhc1h",
+          "engine_reported_repo_digests": [
+            "local/comfyui-mcp@sha256:868b8509bfcfaba7c12319895df243c6c3c5855b16c67f31b82de3eb4d65aa0d"
+          ],
+          "image_id": "sha256:868b8509bfcfaba7c12319895df243c6c3c5855b16c67f31b82de3eb4d65aa0d",
+          "image_ref": "local/comfyui-mcp:0.52.206-chatfiles7",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-comfy-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "ubuntu-mcp",
+      "coolify_uuid": "lcnjb3vreec7saihkhan6akh",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "ubuntu-mcp",
+      "dockerfile": "ubuntu-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "ubuntu-mcp-lcnjb3vreec7saihkhan6akh",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-ubuntu-mcp@sha256:b0bc9a052358a95e1f8068225cf4ccfa558f7d718c94f8e6ba835e58f71ebb52"
+          ],
+          "image_id": "sha256:b0bc9a052358a95e1f8068225cf4ccfa558f7d718c94f8e6ba835e58f71ebb52",
+          "image_ref": "127.0.0.1:5000/harness-ubuntu-mcp:3c8da46902d2",
+          "source_repository_label": "https://github.com/miloszspyrka-code/harness-zar-i-szlif",
+          "source_revision_label": "3c8da46902d2fd488b4bb1edc41fcf70a3c6fa6d"
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-ubuntu-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "cloudflared-mcp",
+      "coolify_uuid": "3byzyvjxsycixyzcpxbujzev",
+      "coolify_type": "service",
+      "source_kind": "vendor-image",
+      "source_root": null,
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "cloudflared-3byzyvjxsycixyzcpxbujzev",
+          "engine_reported_repo_digests": [
+            "cloudflare/cloudflared@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339"
+          ],
+          "image_id": "sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339",
+          "image_ref": "cloudflare/cloudflared:latest",
+          "source_repository_label": "https://github.com/cloudflare/cloudflared",
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "mcp-activation",
+      "coolify_uuid": "ra0iy2xs7abgms1r0phx4iqg",
+      "coolify_type": "service",
+      "source_kind": "vendor-image",
+      "source_root": null,
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "sablier-ra0iy2xs7abgms1r0phx4iqg",
+          "engine_reported_repo_digests": [
+            "sablierapp/sablier@sha256:c24b7198f6c552252db61d2e9daa5ac5d604d3fd0ccb852a76156be4b19d2114"
+          ],
+          "image_id": "sha256:c24b7198f6c552252db61d2e9daa5ac5d604d3fd0ccb852a76156be4b19d2114",
+          "image_ref": "c24b7198f6c5",
+          "source_repository_label": "https://github.com/sablierapp/sablier",
+          "source_revision_label": "bd75a54805cf7141bffd8720d517da9407ee75e3"
+        },
+        {
+          "container": "socket-proxy-ra0iy2xs7abgms1r0phx4iqg",
+          "engine_reported_repo_digests": [
+            "tecnativa/docker-socket-proxy@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459"
+          ],
+          "image_id": "sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459",
+          "image_ref": "1f5038b54f06",
+          "source_repository_label": "https://github.com/Tecnativa/docker-socket-proxy",
+          "source_revision_label": "2e118a0c0c66e1831f68b7afd6d49ad3e2f96b5d"
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "mantic-mcp",
+      "coolify_uuid": "bioufw4uxwuhmr51ueyahf0u",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "mantic-mcp",
+      "dockerfile": "mantic-mcp/Dockerfile.http",
+      "running_containers": [
+        {
+          "container": "mantic-mcp-bioufw4uxwuhmr51ueyahf0u",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-mantic-mcp@sha256:bc966c2b36b8d19dae1a870d8d3be8695a0bc2d25212e3c58b08fe4f212f9a53"
+          ],
+          "image_id": "sha256:bc966c2b36b8d19dae1a870d8d3be8695a0bc2d25212e3c58b08fe4f212f9a53",
+          "image_ref": "127.0.0.1:5000/harness-mantic-mcp:deb907a88591",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-mantic-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "playwright-mcp",
+      "coolify_uuid": "9e4fzsodixl4qzzap4zg0ntp",
+      "coolify_type": "service",
+      "source_kind": "owned-code",
+      "source_root": "playwright-mcp",
+      "dockerfile": "playwright-mcp/Dockerfile",
+      "running_containers": [
+        {
+          "container": "playwright-mcp-9e4fzsodixl4qzzap4zg0ntp",
+          "engine_reported_repo_digests": [
+            "127.0.0.1:5000/harness-playwright-mcp@sha256:c2cefcf303f39bf8035f298de21a75535e627c4bebea039c29663680294b397b"
+          ],
+          "image_id": "sha256:c2cefcf303f39bf8035f298de21a75535e627c4bebea039c29663680294b397b",
+          "image_ref": "127.0.0.1:5000/harness-playwright-mcp:deb907a88591",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": "ghcr.io/jtrtdhrst/harness-playwright-mcp:sha-78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "last_published_sha": "78e36297dd4df3cce5be91bd6fba21977ab01108",
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    },
+    {
+      "service": "repowise-mcp-runtime",
+      "coolify_uuid": "lecwi3emh9hjxir7gphmalie",
+      "coolify_type": "service",
+      "source_kind": "local-image-unknown-source",
+      "source_root": null,
+      "dockerfile": null,
+      "running_containers": [
+        {
+          "container": "repowise-mcp-lecwi3emh9hjxir7gphmalie",
+          "engine_reported_repo_digests": [
+            "fciqzgceop7mqtqickkfomd7@sha256:466bf284f5751720db82c6160ad5d014168fea8bd619e3c75c0a32502b3ba7a7"
+          ],
+          "image_id": "sha256:466bf284f5751720db82c6160ad5d014168fea8bd619e3c75c0a32502b3ba7a7",
+          "image_ref": "fciqzgceop7mqtqickkfomd7:HEAD",
+          "source_repository_label": null,
+          "source_revision_label": null
+        }
+      ],
+      "last_published_ghcr_tag": null,
+      "last_published_sha": null,
+      "verified_remote_oci_digest": null,
+      "verified_production_source_sha": null,
+      "verified_production_e2e": false
+    }
+  ]
+}

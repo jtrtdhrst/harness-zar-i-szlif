@@ -2,6 +2,8 @@
 
 Repozytorium **`jtrtdhrst/harness-zar-i-szlif`** zawiera kod własnych serwerów MCP, gatewayów i integracji Harness. Nie przechowuje kopii źródeł usług, które uruchamiamy z oficjalnych obrazów Docker.
 
+**Katalog obrazów MCP:** [ops/mcp-images/](ops/mcp-images/) — rzeczywiście uruchomione obrazy, wersje GHCR i UUID Coolify.
+
 **Pełny spis:** [ops/coolify-service-registry.json](ops/coolify-service-registry.json) — 36 zasobów Coolify, UUID, właściciel źródła i rzeczywisty status przygotowania kodu. To spis, **nie dowód produkcyjnego wdrożenia**.
 
 ## Własne MCP: gdzie jest kod
@@ -17,7 +19,7 @@ Repozytorium **`jtrtdhrst/harness-zar-i-szlif`** zawiera kod własnych serwerów
 | `emailens-mcp` | [`emailens-mcp/`](emailens-mcp/) | `emailens-mcp/Dockerfile` | Kod + Dockerfile |
 | `plasmic-mcp` | [`plasmic-mcp/`](plasmic-mcp/) | `plasmic-mcp/Dockerfile` | Kod + Dockerfile |
 | `coolify-mcp` | [`coolify-mcp/`](coolify-mcp/) | — | PR #221 (niezmergowany) |
-| `qdrant-mcp` | [`qdrant-mcp/`](qdrant-mcp/) | — | PR #182 (niezmergowany) |
+| `qdrant-mcp` | [`qdrant-mcp/`](qdrant-mcp/) | `qdrant-mcp/Dockerfile` | Kod Qdrant w PR #182 (niezmergowany) |
 | `supabase-mcp` | [`supabase-mcp/`](supabase-mcp/) | `supabase-mcp/Dockerfile` | Kod + Dockerfile |
 | `comfy-mcp` | [`comfy-mcp/`](comfy-mcp/) | `comfy-mcp/Dockerfile` | Kod + Dockerfile |
 | `ubuntu-mcp` | [`ubuntu-mcp/`](ubuntu-mcp/) | `ubuntu-mcp/Dockerfile` | Kod + Dockerfile |
