@@ -1,0 +1,14 @@
+services:
+  repowise:
+    image: "${PINNED_IMAGE_REPOWISE_1:?Set reviewed immutable OCI digest}"
+    restart: unless-stopped
+    volumes:
+      - oea9obpkhzbgkmipxwqmz2hj-repowise-workspace:/workspace
+      - oea9obpkhzbgkmipxwqmz2hj-repowise-data:/data
+volumes:
+  oea9obpkhzbgkmipxwqmz2hj-repowise-workspace:
+    external: true
+    name: oea9obpkhzbgkmipxwqmz2hj-repowise-workspace
+  oea9obpkhzbgkmipxwqmz2hj-repowise-data:
+    external: true
+    name: oea9obpkhzbgkmipxwqmz2hj-repowise-data

@@ -1,0 +1,122 @@
+services:
+  db:
+    image: "${PINNED_IMAGE_HINDSIGHT_CORE_1:?Set reviewed immutable OCI digest}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hindsight
+      POSTGRES_USER: hindsight
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_HINDSIGHT_DB}
+    volumes:
+      - hindsight-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight -d hindsight"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks:
+      - hindsight-private
+  hindsight:
+    image: "${PINNED_IMAGE_HINDSIGHT_CORE_2:?Set reviewed immutable OCI digest}"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8888/health", timeout=5)'
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${SERVICE_PASSWORD_HINDSIGHT_DB}@db:5432/hindsight
+      HINDSIGHT_API_WORKER_ID: hindsight-prod-1
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_MODEL: deepseek-v4.1-flash
+      HINDSIGHT_API_LLM_BASE_URL: https://opencode.ai/zen/go/v1
+      HINDSIGHT_API_LLM_API_KEY: ${OPENCODE_GO_API_KEY}
+      HINDSIGHT_API_LLM_DEFAULT_HEADERS: '{"x-opencode-session":"hindsight"}'
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: qwen3.7-text-embedding
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: https://llm-6qujc12tesgl52tv.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${ALIBABA_MODEL_STUDIO_API_KEY}
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS: "1024"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE: "20"
+      HINDSIGHT_API_RERANKER_PROVIDER: cohere
+      HINDSIGHT_API_RERANKER_COHERE_MODEL: qwen3-rerank
+      HINDSIGHT_API_RERANKER_COHERE_BASE_URL: https://llm-6qujc12tesgl52tv.ap-southeast-1.maas.aliyuncs.com/compatible-api/v1/reranks
+      HINDSIGHT_API_RERANKER_COHERE_API_KEY: ${ALIBABA_MODEL_STUDIO_API_KEY}
+      HINDSIGHT_API_MCP_ENABLED: "true"
+      HINDSIGHT_API_MCP_AUTH_TOKEN: ${SERVICE_PASSWORD_HINDSIGHT_MCP}
+      HINDSIGHT_API_MCP_ENABLED_TOOLS: retain,sync_retain,recall,reflect,list_mental_models,get_mental_model,search_knowledge_base,get_knowledge_page
+      HINDSIGHT_API_RECALL_MAX_TOKENS: "${HINDSIGHT_API_RECALL_MAX_TOKENS:?Set runtime secret}"
+      HINDSIGHT_API_RECALL_INCLUDE_CHUNKS: "false"
+      HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS: "true"
+      HINDSIGHT_API_MCP_INSTRUCTIONS: "Use the current single-agent bank only. RepoWise is the only source for code facts: never store or recall file paths, symbols, file contents, repository structure, dependencies, ownership, commit SHAs, branches, indexed state or code snippets. Store only verified execution experience (what worked or failed, pitfalls invisible in code, process, environment, cost, security). Never store secrets or raw logs. Paperclip Wiki and Git are authoritative."
+      HINDSIGHT_CP_ACCESS_KEY: ${SERVICE_PASSWORD_HINDSIGHT_CP}
+      HINDSIGHT_API_ENABLE_BANK_CONFIG_API: "false"
+    volumes:
+      - hindsight-oauth:/home/hindsight/.hindsight
+    networks:
+      - hindsight-private
+      - hindsight-isolated
+  hindsight-admin:
+    image: "${PINNED_IMAGE_HINDSIGHT_CORE_3:?Set reviewed immutable OCI digest}"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8888/health", timeout=5)'
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HINDSIGHT_ENABLE_CP: "false"
+      HINDSIGHT_API_WORKER_ENABLED: "false"
+      HINDSIGHT_API_DATABASE_URL: postgresql://hindsight:${SERVICE_PASSWORD_HINDSIGHT_DB}@db:5432/hindsight
+      HINDSIGHT_API_WORKER_ID: hindsight-admin-mcp
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_MODEL: deepseek-v4.1-flash
+      HINDSIGHT_API_LLM_BASE_URL: https://opencode.ai/zen/go/v1
+      HINDSIGHT_API_LLM_API_KEY: ${OPENCODE_GO_API_KEY}
+      HINDSIGHT_API_LLM_DEFAULT_HEADERS: '{"x-opencode-session":"hindsight"}'
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: openai
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: qwen3.7-text-embedding
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: https://llm-6qujc12tesgl52tv.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: ${ALIBABA_MODEL_STUDIO_API_KEY}
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS: "1024"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE: "20"
+      HINDSIGHT_API_RERANKER_PROVIDER: cohere
+      HINDSIGHT_API_RERANKER_COHERE_MODEL: qwen3-rerank
+      HINDSIGHT_API_RERANKER_COHERE_BASE_URL: https://llm-6qujc12tesgl52tv.ap-southeast-1.maas.aliyuncs.com/compatible-api/v1/reranks
+      HINDSIGHT_API_RERANKER_COHERE_API_KEY: ${ALIBABA_MODEL_STUDIO_API_KEY}
+      HINDSIGHT_API_MCP_ENABLED: "true"
+      HINDSIGHT_API_MCP_AUTH_TOKEN: ${SERVICE_PASSWORD_HINDSIGHT_MCP}
+      HINDSIGHT_API_RECALL_MAX_TOKENS: "${HINDSIGHT_API_RECALL_MAX_TOKENS:?Set runtime secret}"
+      HINDSIGHT_API_RECALL_INCLUDE_CHUNKS: "false"
+      HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS: "true"
+      HINDSIGHT_API_MCP_INSTRUCTIONS: "Administrative multi-bank MCP. Manage entire installation only for authenticated administrators; do not expose tokens in tool outputs."
+      HINDSIGHT_CP_ACCESS_KEY: ${SERVICE_PASSWORD_HINDSIGHT_CP}
+      HINDSIGHT_API_ENABLE_BANK_CONFIG_API: "true"
+    volumes:
+      - hindsight-oauth:/home/hindsight/.hindsight
+    networks:
+      - hindsight-private
+      - hindsight-isolated
+volumes:
+  hindsight-postgres:
+  hindsight-oauth:
+networks:
+  hindsight-private:
+    internal: true
+  hindsight-isolated:
+    external: true

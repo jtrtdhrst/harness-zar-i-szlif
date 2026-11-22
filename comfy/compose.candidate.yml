@@ -1,0 +1,72 @@
+services:
+  comfyui:
+    image: "${PINNED_IMAGE_COMFY_1:?Set reviewed immutable OCI digest}"
+    # pull policy withheld; release must use approved OCI digest
+    container_name: comfyui-coolify
+    restart: unless-stopped
+    command:
+      - python
+      - main.py
+      - '--listen'
+      - 0.0.0.0
+      - '--port'
+      - '8188'
+      - '--cpu'
+      - '--disabled-nodes-config'
+      - /app/user/disabled_nodes.yaml
+    expose:
+      - '8188'
+    networks:
+      coolify:
+        aliases:
+          - comfyui
+    volumes:
+      -
+        type: volume
+        source: comfy_custom
+        target: /app/custom_nodes
+      -
+        type: volume
+        source: comfy_input
+        target: /app/input
+      -
+        type: volume
+        source: comfy_models
+        target: /app/models
+      -
+        type: volume
+        source: comfy_output
+        target: /app/output
+      -
+        type: volume
+        source: comfy_user
+        target: /app/user
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl -fsS http://127.0.0.1:8188/ >/dev/null'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+  comfy-mcp:
+    image: "${PINNED_IMAGE_COMFY_2:?Set reviewed immutable OCI digest}"
+volumes:
+  comfy_custom:
+    external: true
+    name: comfy_comfy-custom
+  comfy_input:
+    external: true
+    name: comfy_comfy-input
+  comfy_models:
+    external: true
+    name: comfy_comfy-models
+  comfy_output:
+    external: true
+    name: comfy_comfy-output
+  comfy_user:
+    external: true
+    name: comfy_comfy-user
+networks:
+  coolify:
+    external: true
