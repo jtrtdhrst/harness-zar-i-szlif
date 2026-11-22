@@ -82,7 +82,7 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
             "qdrant-extra/Dockerfile": set(),
             "mautic/release-contract.json": set(),
             "comfy-mcp/Dockerfile": set(),
-            "ops/repowise/README.md": {"repowise-mcp-runtime"},
+            "ops/repowise/README.md": set(),
             "coolify-mcp/Dockerfile": set(),
             "docs/unrelated.md": set(),
         }
