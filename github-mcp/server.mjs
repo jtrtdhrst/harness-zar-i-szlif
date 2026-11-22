@@ -317,10 +317,32 @@ export function makeServer(config={}) {
     if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved');
     if(current.protected)throw error('PROTECTED','GitHub reports branch protection');
     if(openHasRef(await listPulls(root,'open'),branch,repo))throw error('OPEN_PR','An open pull request uses this branch');
-    const merged=(await listPulls(root,'closed')).find(pr=>pr.merged_at&&pr.base?.ref==='main'
-      &&pr.head?.ref===branch&&pr.head?.sha?.toLowerCase()===sha
-      &&pr.head?.repo?.full_name===repo&&SHA.test(pr.merge_commit_sha||''));
-    if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with this exact branch SHA');
+    // Match the immutable branch commit to its associated PR, rather than
+    // relying solely on the repository-wide closed PR listing. A GitHub App
+    // may see an incomplete closed feed; individual PR GET is authoritative.
+    const associated=await api('GET',`${root}/commits/${sha}/pulls?per_page=100`);
+    if(!Array.isArray(associated)||associated.length===100)
+      throw error('PR_ASSOCIATIONS_UNVERIFIED','Commit-to-PR proof unavailable or truncated');
+    const matches=pr=>Number.isSafeInteger(pr?.number)&&pr.number>0&&
+      Boolean(pr.merged_at)&&pr.base?.ref==='main'&&pr.head?.ref===branch&&
+      pr.head?.sha?.toLowerCase()===sha&&pr.head?.repo?.full_name===repo&&
+      SHA.test(pr.merge_commit_sha||'');
+    // A second discovery route is allowed, but not a weaker verification:
+    // every candidate must still pass individual PR readback below.
+    const candidates=associated.filter(matches);
+    if(candidates.length===0){
+      for(const pr of (await listPulls(root,'closed')).filter(matches))candidates.push(pr);
+    }
+    let merged=null;
+    for(const candidate of candidates){
+      const verified=await api('GET',`${root}/pulls/${candidate.number}`);
+      if(matches(verified)&&verified.merged===true&&verified.state==='closed'&&
+         verified.merge_commit_sha.toLowerCase()===candidate.merge_commit_sha.toLowerCase()){
+        merged=verified;
+        break;
+      }
+    }
+    if(!merged)throw error('MERGE_NOT_VERIFIED','No individually verified merged PR for this exact branch SHA');
     const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
     if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
     return {current,merged};
@@ -586,7 +608,7 @@ export function makeServer(config={}) {
     if(req.method==='GET'&&req.url==='/health'){
       const configured=tokenFile?await scopedTokenFromFile(tokenFile).then(()=>true,()=>false):Boolean(githubToken);
       const writerConfigured=writerTokenFile?await scopedTokenFromFile(writerTokenFile,'github-ops-writer').then(()=>true,()=>false):false;
-      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured,writer_configured:writerConfigured});
+      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured,writer_configured:writerConfigured,write_ready:Boolean(writesEnabled&&writerConfigured),write_gate:!writesEnabled?'WRITE_DISABLED':!writerConfigured?'WRITER_CREDENTIAL_UNAVAILABLE':'EXACT_OPERATOR_GRANT_REQUIRED'});
     }
     if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});
