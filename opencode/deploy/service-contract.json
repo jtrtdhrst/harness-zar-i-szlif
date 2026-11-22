@@ -16,7 +16,7 @@
     }
   ],
   "source_build_ready": false,
-  "versioned_compose": null,
+  "versioned_compose": "opencode/deploy/compose.candidate.yaml",
   "watched_paths": [
     "opencode/"
   ],

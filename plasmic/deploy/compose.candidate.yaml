@@ -1,0 +1,135 @@
+# Sanitized live Coolify snapshot. NOT APPROVED FOR DEPLOYMENT.
+# This is an upstream/local image Compose CANDIDATE, not a verified own-source Docker build.
+# Preserve live env, stateful mounts, ingress and network; require verified OCI digest, source review, E2E and rollback.
+services:
+  plasmic-db:
+    image: postgres@sha256:64b99032e218b66b1d1a6334995056e1aa57f50a0c522cc856e72dff0e4b0d63
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?required Coolify variable}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?required Coolify variable}"
+      POSTGRES_DB: "${POSTGRES_DB:?required Coolify variable}"
+    volumes:
+    - plasmic_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER:-wab} -d ${POSTGRES_DB:-wab}
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    pull_policy: always
+  plasmic-wab:
+    image: "${PLASMIC_WAB_DIGEST:?publish owned image digest}"
+    restart: unless-stopped
+    depends_on:
+      plasmic-db:
+        condition: service_healthy
+    environment:
+      HOST: "${HOST:?required Coolify variable}"
+      REACT_APP_DEFAULT_HOST_URL: "${REACT_APP_DEFAULT_HOST_URL:?required Coolify variable}"
+      NODE_ENV: "${NODE_ENV:?required Coolify variable}"
+      DISABLE_EMAIL: "${DISABLE_EMAIL:?required Coolify variable}"
+      GENERIC_WORKER_POOL_SIZE: "${GENERIC_WORKER_POOL_SIZE:?required Coolify variable}"
+      LOADER_WORKER_POOL_SIZE: "${LOADER_WORKER_POOL_SIZE:?required Coolify variable}"
+      TERMINATION_GRACE_PERIOD_MS: "${TERMINATION_GRACE_PERIOD_MS:?required Coolify variable}"
+      SERVER_KEEP_ALIVE_TIMEOUT: "${SERVER_KEEP_ALIVE_TIMEOUT:?required Coolify variable}"
+      NODE_OPTIONS: "${NODE_OPTIONS:?required Coolify variable}"
+      ADMIN_EMAILS: "${ADMIN_EMAILS:?required Coolify variable}"
+      DATABASE_URI: "${DATABASE_URI:?required Coolify variable}"
+      SESSION_SECRET: "${SESSION_SECRET:?required Coolify variable}"
+      PLASMIC_GITHUB_SECRETS_B64: "${PLASMIC_GITHUB_SECRETS_B64:?required Coolify variable}"
+    command:
+    - sh
+    - -c
+    - 'mkdir -p /home/node/.plasmic
+
+      printf ''%s'' "$$PLASMIC_GITHUB_SECRETS_B64" | base64 -d > /home/node/.plasmic/secrets.json
+
+      chmod 600 /home/node/.plasmic/secrets.json
+
+      exec node -r esbuild-register src/wab/server/main.ts
+
+      '
+    expose:
+    - '3004'
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -qO- http://127.0.0.1:3004/healthcheck >/dev/null
+      interval: 20s
+      timeout: 10s
+      retries: 9
+      start_period: 90s
+    pull_policy: always
+  plasmic-codegen:
+    image: "${PLASMIC_WAB_DIGEST:?publish owned image digest}"
+    restart: unless-stopped
+    depends_on:
+      plasmic-db:
+        condition: service_healthy
+    environment:
+      HOST: "${HOST:?required Coolify variable}"
+      REACT_APP_DEFAULT_HOST_URL: "${REACT_APP_DEFAULT_HOST_URL:?required Coolify variable}"
+      NODE_ENV: "${NODE_ENV:?required Coolify variable}"
+      DISABLE_EMAIL: "${DISABLE_EMAIL:?required Coolify variable}"
+      BACKEND_PORT: "${BACKEND_PORT:?required Coolify variable}"
+      GENERIC_WORKER_POOL_SIZE: "${GENERIC_WORKER_POOL_SIZE:?required Coolify variable}"
+      LOADER_WORKER_POOL_SIZE: "${LOADER_WORKER_POOL_SIZE:?required Coolify variable}"
+      TERMINATION_GRACE_PERIOD_MS: "${TERMINATION_GRACE_PERIOD_MS:?required Coolify variable}"
+      SERVER_KEEP_ALIVE_TIMEOUT: "${SERVER_KEEP_ALIVE_TIMEOUT:?required Coolify variable}"
+      NODE_OPTIONS: "${NODE_OPTIONS:?required Coolify variable}"
+      ADMIN_EMAILS: "${ADMIN_EMAILS:?required Coolify variable}"
+      DATABASE_URI: "${DATABASE_URI:?required Coolify variable}"
+      SESSION_SECRET: "${SESSION_SECRET:?required Coolify variable}"
+      PLASMIC_GITHUB_SECRETS_B64: "${PLASMIC_GITHUB_SECRETS_B64:?required Coolify variable}"
+    command:
+    - sh
+    - -c
+    - 'mkdir -p /home/node/.plasmic
+
+      printf ''%s'' "$$PLASMIC_GITHUB_SECRETS_B64" | base64 -d > /home/node/.plasmic/secrets.json
+
+      chmod 600 /home/node/.plasmic/secrets.json
+
+      exec node -r esbuild-register src/wab/server/codegen-backend.ts
+
+      '
+    expose:
+    - '3005'
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -qO- http://127.0.0.1:3005/healthcheck >/dev/null
+      interval: 20s
+      timeout: 10s
+      retries: 9
+      start_period: 60s
+    pull_policy: always
+  plasmic-studio:
+    image: "${PLASMIC_STUDIO_DIGEST:?publish owned image digest}"
+    networks:
+    - default
+    - coolify
+    restart: unless-stopped
+    depends_on:
+    - plasmic-wab
+    - plasmic-codegen
+    expose:
+    - '8080'
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -qO- http://127.0.0.1:8080/ >/dev/null
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    pull_policy: always
+networks:
+  coolify:
+    external: true
+volumes:
+  plasmic_pgdata:
+    external: true
+    name: qs1n9i1mzgvkjz8zeystfl5e_plasmic-pgdata
