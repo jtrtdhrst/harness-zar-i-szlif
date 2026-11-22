@@ -57,7 +57,7 @@ SELECT row_to_json(t)::text FROM (
             'id', c.id, 'author_type', c.author_type, 'author_id', c.author_id,
             'content', c.content, 'created_at', c.created_at,
             'source_task_id', c.source_task_id) ORDER BY c.created_at DESC)
-         FROM comment c WHERE c.issue_id=i.id AND c.deleted_at IS NULL) comments,
+         FROM comment c WHERE c.issue_id=i.id AND c.deleted_at IS NULL\n           AND (c.content ILIKE '%RELEASE_APPROVED%'\n                OR c.content ILIKE '%CHANGES_REQUESTED%')) comments,
         (SELECT count(*) FROM agent_task_queue q
          WHERE q.issue_id=i.id AND q.agent_id=i.assignee_id AND q.status='completed') producer_runs
  FROM issue i
