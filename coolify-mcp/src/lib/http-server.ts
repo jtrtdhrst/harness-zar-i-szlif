@@ -33,9 +33,9 @@ export interface HttpServerConfig {
   /** MCP_REDIRECT_HOSTS: non-loopback hosts a client may redirect to. Empty = any. */
   redirectHosts?: string[];
   /**
-   * MCP_CLIENT_IP_HEADER: a header the proxy in front sets to the caller's
-   * address (e.g. cf-connecting-ip). Unset, the first X-Forwarded-For hop is
-   * used, which the caller can forge.
+   * MCP_CLIENT_IP_HEADER: explicitly trusted proxy header (e.g. cf-connecting-ip).
+   * Use only when ingress overwrites this header and blocks direct origin access.
+   * By default rate limiting uses the Node socket peer, never X-Forwarded-For.
    */
   clientIpHeader?: string;
 }
@@ -259,7 +259,7 @@ function authorizePage(params: URLSearchParams, clientName: string, error?: stri
 }
 
 export function createHttpApp(config: HttpServerConfig): {
-  fetch: (request: Request) => Promise<Response>;
+  fetch: (request: Request, socketPeerIp?: string) => Promise<Response>;
   provider: OAuthProvider;
 } {
   const publicUrl = config.publicUrl.replace(/\/$/, '');
@@ -302,13 +302,15 @@ export function createHttpApp(config: HttpServerConfig): {
   const registrationLimiter = new RateLimiter(30, 60 * 60_000);
   const ipHeader = config.clientIpHeader?.trim().toLowerCase();
 
-  async function handle(request: Request): Promise<Response> {
+  async function handle(request: Request, socketPeerIp?: string): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '') || '/';
-    const clientIp =
-      (ipHeader
-        ? request.headers.get(ipHeader)?.trim()
-        : request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()) || 'local';
+    // socketPeerIp comes from the Node HTTP socket, never from caller headers.
+    // With no peer (direct fetch tests), rate limit everyone in one bucket.
+    // Explicit proxy headers are trustworthy ONLY with overwrite + origin ACL.
+    const clientIp = (ipHeader
+      ? request.headers.get(ipHeader)?.trim()
+      : socketPeerIp?.trim()) || 'unidentified';
 
     if (path === '/healthz') {
       // Still "ok": the server is answering. But state that lives only in
