@@ -185,6 +185,15 @@ index 5ef71ab..2a926f7 100644
  		if req.WorkspaceID == "" {
  			http.Error(w, "workspace_id is required", http.StatusBadRequest)
  			return
+@@ -520,7 +632,7 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
+ 			AgentName:           req.AgentName,
+ 			TaskID:              req.TaskID,
+ 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
+-			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
++			IsolatedGitMetadata: true, // task-local .git; Landlock must never grant shared bare cache
+ 			Fresh:               req.Fresh,
+ 		}
+ 		if req.RetryBusy {
 diff --git a/server/internal/daemon/health_test.go b/server/internal/daemon/health_test.go
 index 502612d..e87c2e5 100644
 --- a/server/internal/daemon/health_test.go
@@ -275,11 +284,34 @@ index c391abe..aaa838a 100644
  		fetchErr = redact.Text(err.Error())
  		c.logger.Warn("repo checkout: fetch failed, agent will see possibly stale code",
  			"url", params.RepoURL,
+@@ -1174,17 +1179,11 @@
+ // localCloneArgs builds the `git clone --local` invocation that seeds a fresh
+ // isolated checkout from the shared bare cache.
+ //
+-// On Windows the clone also passes --no-hardlinks. A local clone hardlinks
+-// .git/objects whenever it can, but an NTFS hard link only exists within a
+-// single volume and every link shares one underlying file *and* one security
+-// descriptor. Copying the objects instead keeps a cache and workdir that live
+-// on different drives working, and stops a task checkout — whose tree the
+-// sandbox makes writable — from re-permissioning the daemon-owned cache's
+-// object files. The cost is extra disk and a slower first checkout on Windows.
++// Never hardlink Git objects into agent-writable task checkout directories.
++// Shared inodes would allow changes to object permissions or content across
++// Landlock's cache boundary. A copied object store costs disk but prevents
++// agents from mutating the daemon-owned bare cache through a writable alias.
+ func localCloneArgs(goos, barePath, checkoutPath string) []string {
+-	args := []string{"clone", "--local", "--no-checkout", "--no-tags"}
+-	if goos == "windows" {
+-		args = append(args, "--no-hardlinks")
+-	}
++	args := []string{"clone", "--local", "--no-hardlinks", "--no-checkout", "--no-tags"}
+ 	return append(args, "--origin", isolatedCacheRemoteName, barePath, checkoutPath)
+ }
 diff --git a/server/internal/daemon/repocache/cache_test.go b/server/internal/daemon/repocache/cache_test.go
 index 1e105f1..7128698 100644
 --- a/server/internal/daemon/repocache/cache_test.go
 +++ b/server/internal/daemon/repocache/cache_test.go
-@@ -841,6 +841,31 @@ func TestCreateWorktreeReportsFailedFetch(t *testing.T) {
+@@ -841,6 +841,46 @@ func TestCreateWorktreeReportsFailedFetch(t *testing.T) {
  	}
  }
  
@@ -305,6 +337,21 @@ index 1e105f1..7128698 100644
 +	if _, err := cache.CreateWorktree(params); err == nil ||
 +		!strings.Contains(err.Error(), "fresh checkout requires a successful remote fetch") {
 +		t.Fatalf("fresh checkout error = %v, want a failed-fetch error", err)
++	}
++}
++
++func TestLocalCloneArgsNeverHardlinkSharedCache(t *testing.T) {
++	for _, platform := range []string{"linux", "darwin", "windows"} {
++		args := localCloneArgs(platform, "/daemon/cache.git", "/task/checkout")
++		count := 0
++		for _, arg := range args {
++			if arg == "--no-hardlinks" {
++				count++
++			}
++		}
++		if count != 1 {
++			t.Fatalf("%s: expected exactly one --no-hardlinks, got %v", platform, args)
++		}
 +	}
 +}
 +
