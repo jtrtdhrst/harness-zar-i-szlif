@@ -189,7 +189,16 @@ diff --git a/server/internal/daemon/health_test.go b/server/internal/daemon/heal
 index 502612d..e87c2e5 100644
 --- a/server/internal/daemon/health_test.go
 +++ b/server/internal/daemon/health_test.go
-@@ -818,6 +818,54 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+@@ -811,6 +811,8 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+ 	d.registerActiveRepoCheckoutTask("mat_repo_checkout_test", activeRepoCheckoutTask{
+ 		WorkspaceID: workspaceID,
+ 		TaskID:      "task-1",
++		ProjectID:   "project-test",
++		RepoURLs:    []string{repoURL},
+ 		AgentID:     "agent-1",
+ 		AgentName:   "Test Agent",
+ 		WorkDir:     workDir,
+@@ -818,6 +820,54 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
  	return d
  }
  
