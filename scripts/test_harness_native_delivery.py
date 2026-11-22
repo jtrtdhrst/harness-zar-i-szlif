@@ -1769,4 +1769,3 @@ class OwnedCoolifyMcpRoutingTests(unittest.TestCase):
         self.assertEqual(host.compose, original)
         self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
                              for call in host.calls))
-
