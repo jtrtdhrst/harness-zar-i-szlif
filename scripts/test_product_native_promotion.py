@@ -16,6 +16,36 @@ MID="c"*40
 SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
+    def test_release_source_is_canonical_for_new_sha_and_legacy_is_exactly_pinned(self):
+        self.assertEqual(p.PRODUCT_RELEASE_SOURCE, "jtrtdhrst/zar-i-szlif")
+        self.assertEqual(p.LEGACY_PRODUCT_RELEASE_SOURCE, "zar-i-szlif/main")
+        self.assertEqual(p.validated_product_release_sha({
+            "commit": NEW, "source": p.PRODUCT_RELEASE_SOURCE}), NEW)
+        # Current and previous approved panel image labels can be read while
+        # migrating and rolling back; neither permits fresh old-source images.
+        self.assertEqual(len(p.LEGACY_PRODUCT_RELEASE_SHAS), 2)
+        for sha in p.LEGACY_PRODUCT_RELEASE_SHAS:
+            with self.subTest(legacy_sha=sha):
+                self.assertEqual(p.validated_product_release_sha({
+                    "commit": sha, "source": p.LEGACY_PRODUCT_RELEASE_SOURCE}), sha)
+        bad = [
+            {"commit": NEW, "source": p.LEGACY_PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW, "source": "miloszspyrka-code/zar-i-szlif"},
+            {"commit": NEW, "source": "zar-i-szlif/main"},
+            {"commit": NEW, "source": ""},
+            {"commit": "not-sha", "source": p.PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW[:39], "source": p.PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW, "source": None},
+            {"source": p.PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW},
+            None,
+            [],
+        ]
+        for value in bad:
+            with self.subTest(invalid_provenance=value):
+                with self.assertRaisesRegex(p.Denied, "production_provenance_invalid"):
+                    p.validated_product_release_sha(value)
+
     def test_canonical_github_owner_is_current_and_old_owner_is_denied(self):
         self.assertEqual(p.REPO, "jtrtdhrst/zar-i-szlif")
         current = "/repos/jtrtdhrst/zar-i-szlif"
