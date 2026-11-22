@@ -36,6 +36,11 @@ class FakeResponse(io.BytesIO):
         self.close()
 
 
+class CanonicalSourceOwnerTests(unittest.TestCase):
+    def test_product_image_builder_uses_current_github_owner(self):
+        self.assertEqual(delivery.REPO, "jtrtdhrst/zar-i-szlif")
+
+
 class ReadbackRegressionTests(unittest.TestCase):
     def setUp(self):
         self.html = b"<html><body>approved release fixture</body></html>"
