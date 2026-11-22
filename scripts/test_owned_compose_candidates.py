@@ -75,6 +75,22 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
                     self.assertFalse(literal_credential(line),
                                      (row["id"], lineno, "inline authentication forbidden"))
 
+    def test_outline_redis_authentication_parity(self):
+        # Prevent a repeat of live Outline Redis NOAUTH after Compose migration.
+        # Values come from runtime secrets, never checked into the repository.
+        compose = (ROOT / "outline-knowledge/compose.candidate.yml").read_text(
+            encoding="utf-8")
+        self.assertIn(
+            "REDIS_URL: 'redis://:\u0024{OUTLINE_REDIS_PASSWORD:?",
+            compose)
+        self.assertIn(
+            "OUTLINE_REDIS_PASSWORD: '\u0024{OUTLINE_REDIS_PASSWORD:?",
+            compose)
+        self.assertIn("--requirepass", compose)
+        self.assertIn("$OUTLINE_REDIS_PASSWORD", compose)
+        self.assertIn("REDISCLI_AUTH=", compose)
+        self.assertNotIn("REDIS_URL: 'redis://redis:6379'", compose)
+
     def test_select_exact_source_dependency_and_negative_cases(self):
         import select_owned_compose
         cases = {
