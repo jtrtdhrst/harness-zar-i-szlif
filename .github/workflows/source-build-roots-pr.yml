@@ -20,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Verify exactly 10 source-ready roots and staged Coolify root
         run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
@@ -39,6 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Derive exact 10-source matrix from canonical versioned mapping
         id: map
@@ -87,6 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Build real Docker image from declared owned directory (not repo root)
         shell: bash
