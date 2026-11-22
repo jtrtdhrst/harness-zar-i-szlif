@@ -13,5 +13,5 @@ COPY --from=build --chown=coolify:coolify /app/dist ./dist
 COPY --from=build --chown=coolify:coolify /app/node_modules ./node_modules
 COPY --from=build --chown=coolify:coolify /app/package.json ./package.json
 USER coolify
-EXPOSE 3000
+EXPOSE 8080
 CMD ["node", "dist/http.js"]
