@@ -105,6 +105,41 @@ def private_role_auth_file(shared_home: Path, role: str, uid: int) -> Path:
     return entry
 
 
+def verified_hermes_home_profile(task: Path, home: Path, session_root: Path,
+                                 agent: str, role: str, uid: int) -> str:
+    """Accept only an owned task-private home or the exact persisted role session.
+
+    A task-local Hermes home is produced by Multica for fresh sessions. It
+    must not be mistaken for a foreign shared/persistent Hermes profile.
+    Never follow a symlink and never broaden the shared-profile READ grant.
+    """
+    if not UUID.fullmatch(agent) or not UID_NAME.fullmatch(role):
+        raise ValueError("invalid task agent/role identity for Hermes home")
+    resolved = home.resolve(strict=True)
+    if home != resolved:
+        raise ValueError("Hermes home is symlinked")
+    expected_task_home = task / "hermes-home"
+    if home == expected_task_home:
+        st = home.lstat()
+        if (not stat.S_ISDIR(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o700):
+            raise ValueError("task-local Hermes home is not private")
+        return role
+    try:
+        rel = home.relative_to(session_root / agent)
+    except ValueError:
+        raise ValueError("Hermes home outside own task/session") from None
+    if (len(rel.parts) != 2 or not UID_NAME.fullmatch(rel.parts[0])
+            or not UUID.fullmatch(rel.parts[1])):
+        raise ValueError("unverified persisted Hermes session for profile ACL")
+    if rel.parts[0] != role:
+        raise ValueError("foreign Hermes profile session")
+    st = home.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != uid or stat.S_IMODE(st.st_mode) != 0o700:
+        raise ValueError("persisted Hermes home is not private")
+    return role
+
+
 def task_scope():
     if not UUID.fullmatch(os.environ.get("MULTICA_TASK_ID", "")):
         raise ValueError("missing verified task context")
@@ -181,12 +216,9 @@ def restrict(task, tmpdir):
         # profiles under the common Unix uid, bypassing repo/task isolation.
         shared_home = Path("/srv/multica-zar/.hermes")
         session_root = Path("/srv/multica-zar/.multica/profiles/zar-prod/hermes-sessions")
-        home_for_acl = Path(os.environ.get("HERMES_HOME", "")).resolve(strict=True)
-        rel_home = home_for_acl.relative_to(session_root / agent)
-        if (len(rel_home.parts) != 2 or not UID_NAME.fullmatch(rel_home.parts[0])
-                or not UUID.fullmatch(rel_home.parts[1])):
-            raise ValueError("unverified Hermes session for profile read ACL")
-        own_profile = rel_home.parts[0]
+        home_for_acl = Path(os.environ.get("HERMES_HOME", ""))
+        own_profile = verified_hermes_home_profile(
+            task, home_for_acl, session_root, agent, role, os.getuid())
         if not UID_NAME.fullmatch(role) or own_profile != role:
             raise ValueError("agent role and trusted persisted session profile disagree")
         if role not in CODEX_ROLES and role not in OPENCODE_ROLES:
