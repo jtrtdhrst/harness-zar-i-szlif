@@ -136,28 +136,36 @@ def project_writer_runtime():
 
 
 def main():
-    reader_expiry = project(SOURCE, TARGET, ROLE, PERMISSIONS)
     writer_projected = False
     writer_revoked = False
     runtime_revoked = False
-    if WRITER_SOURCE.is_symlink():
-        # Even a compromised source path must not leave an old writer alive.
-        retire_writer_target()
-        retire_writer_target(WRITER_RUNTIME)
-        raise RuntimeError("Untrusted writer grant symlink")
-    if WRITER_SOURCE.exists():
-        project(WRITER_SOURCE, WRITER_TARGET, WRITER_ROLE, WRITER_PERMISSIONS)
-        project_writer_runtime()
-        writer_projected = True
-    else:
-        # Remove any previous still-valid token from BOTH root-managed
-        # directories; the volume is what the running container actually sees.
-        writer_revoked = retire_writer_target()
-        runtime_revoked = retire_writer_target(WRITER_RUNTIME)
+    try:
+        reader_expiry = project(SOURCE, TARGET, ROLE, PERMISSIONS)
+        if WRITER_SOURCE.is_symlink():
+            raise RuntimeError("Untrusted writer grant symlink")
+        if WRITER_SOURCE.exists():
+            project(WRITER_SOURCE, WRITER_TARGET, WRITER_ROLE, WRITER_PERMISSIONS)
+            project_writer_runtime()
+            writer_projected = True
+        else:
+            writer_revoked = retire_writer_target()
+            runtime_revoked = retire_writer_target(WRITER_RUNTIME)
+    except Exception:
+        # A failed reader refresh or rejected writer projection must not
+        # leave a previously authorized writer alive in the runtime volume.
+        # Attempt both revocations even if one path is untrusted.
+        cleanup_error = None
+        for path in (WRITER_TARGET, WRITER_RUNTIME):
+            try:
+                retire_writer_target(path)
+            except Exception as exc:
+                cleanup_error = exc
+        if cleanup_error is not None:
+            raise RuntimeError("Writer revocation failed") from cleanup_error
+        raise
     print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry,
                       "writer_projected": writer_projected, "writer_revoked": writer_revoked,
                       "runtime_writer_revoked": runtime_revoked}))
-
 
 if __name__ == "__main__":
     try:
