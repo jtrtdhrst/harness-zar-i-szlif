@@ -30,6 +30,12 @@ class RepoAdmissionTests(unittest.TestCase):
             with self.subTest(repo=repo), self.assertRaisesRegex(gate.Denied, "invalid_repository_or_pr"):
                 gate.validate_input(repo, 215, HEAD, MERGE, "ZARI-213")
 
+    def test_only_release_evidence_comments_are_loaded(self):
+        sql = gate.query(HARNESS, 215, "ZARI-213")
+        self.assertIn("c.content ILIKE '%RELEASE_APPROVED%'", sql)
+        self.assertIn("c.content ILIKE '%CHANGES_REQUESTED%'", sql)
+        self.assertIn("c.deleted_at IS NULL", sql)
+
     def test_stale_or_malformed_sha_denied(self):
         with self.assertRaisesRegex(gate.Denied, "invalid_sha"):
             gate.validate_input(HARNESS, 215, "abc", MERGE, "ZARI-213")
