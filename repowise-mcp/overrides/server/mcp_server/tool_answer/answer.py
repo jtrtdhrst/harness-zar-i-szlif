@@ -318,6 +318,14 @@ async def _literal_source_anchor_hits(
             not row["text"].lstrip().startswith("|"),
             row["path"], row.get("line") or 0,
         ))
+        # Only complete, validated config rows may become branch-source anchors.
+        # Incidental mentions, including negative prose from another repo,
+        # must not be surfaced as branch configuration evidence.
+        matching = [
+            row for row in matching
+            if (config_row := _BUILD_CONFIG_ROW.match(row["text"].lstrip()))
+            and config_row.group("service").lower() == name
+        ]
         if not matching:
             continue
         row = matching[0]
