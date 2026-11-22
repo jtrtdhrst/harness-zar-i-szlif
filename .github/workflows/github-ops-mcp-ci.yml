@@ -71,7 +71,7 @@ jobs:
         run: docker build -t github-ops-mcp:ci ./github-mcp
       - name: Validate packaged server syntax
         run: docker run --rm --entrypoint node github-ops-mcp:ci --check /app/server.mjs
-  
+
   verify-daemon-patch:
     name: Verify pinned Multica daemon isolation patch
     runs-on: ubuntu-latest
