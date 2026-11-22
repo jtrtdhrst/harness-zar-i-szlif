@@ -113,5 +113,4 @@ jobs:
           go version
           go test -count=1 -run 'TestCreateWorktreeFreshFailsWhenFetchFails|TestCreateWorktreeReportsFailedFetch|TestLocalCloneArgsNeverHardlinkSharedCache|TestCreateWorktreeWithIsolatedGitMetadata' ./internal/daemon/repocache
           go test -count=1 -run 'TestProjectRepoScopeFailClosed|TestRepoCheckout|TestZARI213|TestRepoCheckoutModeFor' ./internal/daemon
-          go test -count=1 -run '^TestCodexManagedMcpOAuthFalseCompatibility
- ./pkg/agent
+          go test -count=1 -run TestCodexManagedMcpOAuthFalseCompatibility ./pkg/agent
