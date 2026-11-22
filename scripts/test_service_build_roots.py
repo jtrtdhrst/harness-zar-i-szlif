@@ -69,12 +69,12 @@ class HarnessBuildRootsTests(unittest.TestCase):
             with self.subTest(instruction=safe):
                 self.assertNotRegex(safe, PARENT_CONTEXT_COPY_RE)
 
-    def test_exact_eleven_source_ready_and_one_staged_coolify(self):
+    def test_exact_twelve_source_ready_and_one_staged_coolify(self):
         approved = {
             "github-ops-mcp", "hermes-gateway", "multica-mcp",
             "repowise-deployment-publisher-staging", "emailens-mcp",
             "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
-            "mantic-mcp", "playwright-mcp", "comfy-mcp",
+            "mantic-mcp", "playwright-mcp", "comfy-mcp", "qdrant-mcp",
         }
         ready = {row["id"] for row in self.rows if row["source_build_ready"]}
         self.assertEqual(ready, approved)
@@ -106,7 +106,7 @@ class HarnessBuildRootsTests(unittest.TestCase):
         self.assertTrue((folder / "Dockerfile.publisher").is_file())
 
     def test_missing_or_external_sources_are_never_marked_as_ready(self):
-        for service in ("coolify-mcp", "qdrant-mcp", "hindsight-mcp",
+        for service in ("coolify-mcp", "hindsight-mcp",
                         "plasmic"):
             row = next(r for r in self.rows if r["id"] == service)
             self.assertFalse(row["source_build_ready"], service)

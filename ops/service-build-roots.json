@@ -98,12 +98,9 @@
       "id": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
       "source_root": "qdrant-mcp",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "No qdrant-mcp source folder in Harness main; live image cannot be reproduced from a declared folder.",
-      "compose_candidate": "qdrant-mcp/compose.candidate.yml",
-      "release_contract": "qdrant-mcp/release-contract.json",
-      "compose_release_ready": false
+      "build_dockerfile": "qdrant-mcp/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Source recovered byte-for-byte from running production MCP; image provenance, review, deploy and E2E remain independently gated."
     },
     {
       "id": "supabase-mcp",

@@ -16,13 +16,13 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
         cls.mapping = json.loads(MAP.read_text(encoding="utf-8"))["resources"]
         cls.rows = json.loads(REGISTRY.read_text(encoding="utf-8"))["resources"]
 
-    def test_exact_four_uuid_ownership_no_coolify_mcp(self):
+    def test_exact_three_uuid_ownership_no_coolify_mcp(self):
         source = {r["id"]: r for r in self.mapping
                   if not r["source_build_ready"] and r["id"] != "coolify-mcp"}
-        self.assertEqual(len(source), 4)
-        self.assertEqual(len(self.rows), 4)
+        self.assertEqual(len(source), 3)
+        self.assertEqual(len(self.rows), 3)
         self.assertEqual({r["id"] for r in self.rows}, set(source))
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 4)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 3)
         for row in self.rows:
             self.assertEqual(row["uuid"], source[row["id"]]["uuid"])
             self.assertEqual(row["root"], source[row["id"]]["source_root"])
@@ -90,7 +90,7 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(set(select_owned_compose.select([path])), expected)
         self.assertEqual(len(select_owned_compose.select(
-            ["ops/compose-migration-candidates.json"])), 4)
+            ["ops/compose-migration-candidates.json"])), 3)
 
 if __name__ == "__main__":
     unittest.main()

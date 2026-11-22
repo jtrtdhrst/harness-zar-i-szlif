@@ -154,9 +154,10 @@
       "name": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
       "type": "service",
-      "source": "source-pending",
+      "source": "owned-code",
       "root": "qdrant-mcp",
-      "note": "PR #182 holds recovered server.py, requirements.txt and Dockerfile; main has only candidate files."
+      "note": "Code from running Qdrant MCP recovered into this directory; production still runs older local registry image without provenance attestation.",
+      "dockerfile": "qdrant-mcp/Dockerfile"
     },
     {
       "name": "supabase-mcp",

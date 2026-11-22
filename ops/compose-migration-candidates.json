@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "source_pr": 223,
-  "scope": "Four source-pending in-repository candidates: plasmic (non-MCP), hindsight-mcp, opik-mcp and qdrant-mcp. External-image resources have no phantom build roots.",
+  "scope": "Three source-pending candidates: plasmic WAB, hindsight-mcp and opik-mcp. Qdrant code is now owned source; its production release is still gated.",
   "release_status": "BLOCKED_CANDIDATES_ONLY",
   "resources": [
     {
@@ -35,17 +35,6 @@
       "contract": "opik-mcp/release-contract.json",
       "watch_paths": [
         "opik-mcp/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "qdrant-mcp",
-      "uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "root": "qdrant-mcp",
-      "compose": "qdrant-mcp/compose.candidate.yml",
-      "contract": "qdrant-mcp/release-contract.json",
-      "watch_paths": [
-        "qdrant-mcp/"
       ],
       "release_ready": false
     }
