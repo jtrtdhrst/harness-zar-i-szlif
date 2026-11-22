@@ -234,7 +234,7 @@ def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
         # Remove exactly this known obsolete line, never /data or any other
         # mount; the full original Compose is snapshotted before provider write.
         legacy_bind = re.compile(
-            r"(?m)^[ \\t]*-[ \\t]*/opt/coolify-mcp/oauth\\.js:/app/dist/lib/oauth\\.js:ro[ \\t]*(?:\\r?\\n|$)"
+            r"(?m)^[ \t]*-[ \t]*/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro[ \t]*(?:\r?\n|$)"
         )
         patched, removed = legacy_bind.subn("", patched)
         if removed > 1 or "/app/dist/lib/oauth.js" in patched:
