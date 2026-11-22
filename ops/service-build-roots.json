@@ -3,7 +3,7 @@
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "branch": "main",
   "observed_at": "2026-11-22",
-  "description": "Owned build roots for in-repository Harness integrations and MCP services. Upstream-image-only Coolify services are deliberately not in this build inventory. Each ready root must contain an owned Dockerfile. Production release remains governed by independent review and release admission.",
+  "description": "Only real source-owned MCP/integration roots. Upstream and local image-only services are inventoried separately without ghost code folders. Ready does not imply production deploy.",
   "resources": [
     {
       "id": "github-ops-mcp",
@@ -20,17 +20,6 @@
       "build_dockerfile": "integrations/hermes-paperclip/gateway/Dockerfile",
       "source_build_ready": true,
       "reason": "Coolify already uses the owned subdirectory; release remains manual."
-    },
-    {
-      "id": "local-build-registry",
-      "uuid": "g0xdkztpmjnhgwms7qelzxqd",
-      "source_root": "local-build-registry",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "External registry:2 image; no source-owned folder or Dockerfile in Harness.",
-      "compose_candidate": "local-build-registry/compose.candidate.yml",
-      "release_contract": "local-build-registry/release-contract.json",
-      "compose_release_ready": false
     },
     {
       "id": "multica-mcp",
@@ -68,17 +57,6 @@
       "reason": "Caddy proxy Compose configuration remains only in Coolify; dedicated source folder missing.",
       "compose_candidate": "hindsight-mcp/compose.candidate.yml",
       "release_contract": "hindsight-mcp/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
-      "id": "supabase",
-      "uuid": "r2gnunvpkqwmuew1tupbf7lx",
-      "source_root": "supabase",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Only wrapper metadata; upstream multi-container image/DB stack is not built from this folder.",
-      "compose_candidate": "supabase/compose.candidate.yml",
-      "release_contract": "supabase/release-contract.json",
       "compose_release_ready": false
     },
     {
@@ -139,12 +117,9 @@
       "id": "comfy-mcp",
       "uuid": "kkhfw0napmeaqewgdirwhc1h",
       "source_root": "comfy-mcp",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Live image built from comfyui-mcp/ rather than designated comfy-mcp/ wrapper. Ownership migration pending.",
-      "compose_candidate": "comfy-mcp/compose.candidate.yml",
-      "release_contract": "comfy-mcp/release-contract.json",
-      "compose_release_ready": false
+      "build_dockerfile": "comfy-mcp/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Canonical MCP source migrated from comfyui-mcp into comfy-mcp/. Production still runs prior local image until reviewed immutable OCI deployment."
     },
     {
       "id": "ubuntu-mcp",
@@ -153,39 +128,6 @@
       "build_dockerfile": "ubuntu-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
-    },
-    {
-      "id": "cloudflared-mcp",
-      "uuid": "3byzyvjxsycixyzcpxbujzev",
-      "source_root": "cloudflared-mcp",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Tunnel upstream latest mutable; dedicated pinned compose source missing.",
-      "compose_candidate": "cloudflared-mcp/compose.candidate.yml",
-      "release_contract": "cloudflared-mcp/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
-      "id": "mcp-activation",
-      "uuid": "ra0iy2xs7abgms1r0phx4iqg",
-      "source_root": "mcp-activation",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Sablier and Docker socket proxy Compose not versioned in own source directory.",
-      "compose_candidate": "mcp-activation/compose.candidate.yml",
-      "release_contract": "mcp-activation/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
-      "id": "outline-knowledge",
-      "uuid": "g16yynrbdpkab4hnmaoj7vxk",
-      "source_root": "outline-knowledge",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Outline plus DB/Redis data stack lacks dedicated owned Compose source.",
-      "compose_candidate": "outline-knowledge/compose.candidate.yml",
-      "release_contract": "outline-knowledge/release-contract.json",
-      "compose_release_ready": false
     },
     {
       "id": "mantic-mcp",
@@ -202,17 +144,6 @@
       "build_dockerfile": "playwright-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
-    },
-    {
-      "id": "repowise-mcp-runtime",
-      "uuid": "lecwi3emh9hjxir7gphmalie",
-      "source_root": "repowise-mcp-runtime",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Private MCP points to upstream Repowise; no owned source-context or immutable build recipe.",
-      "compose_candidate": "repowise-mcp-runtime/compose.candidate.yml",
-      "release_contract": "repowise-mcp-runtime/release-contract.json",
-      "compose_release_ready": false
     }
   ]
 }

@@ -2,20 +2,9 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "source_pr": 223,
-  "scope": "11 in-repository candidate-only Harness resources; upstream-image-only Coolify services intentionally excluded",
+  "scope": "Four source-pending in-repository candidates: plasmic (non-MCP), hindsight-mcp, opik-mcp and qdrant-mcp. External-image resources have no phantom build roots.",
   "release_status": "BLOCKED_CANDIDATES_ONLY",
   "resources": [
-    {
-      "id": "local-build-registry",
-      "uuid": "g0xdkztpmjnhgwms7qelzxqd",
-      "root": "local-build-registry",
-      "compose": "local-build-registry/compose.candidate.yml",
-      "contract": "local-build-registry/release-contract.json",
-      "watch_paths": [
-        "local-build-registry/"
-      ],
-      "release_ready": false
-    },
     {
       "id": "plasmic",
       "uuid": "mzmlcorgkfgdy44hqfmmtxgw",
@@ -39,17 +28,6 @@
       "release_ready": false
     },
     {
-      "id": "supabase",
-      "uuid": "r2gnunvpkqwmuew1tupbf7lx",
-      "root": "supabase",
-      "compose": "supabase/compose.candidate.yml",
-      "contract": "supabase/release-contract.json",
-      "watch_paths": [
-        "supabase/"
-      ],
-      "release_ready": false
-    },
-    {
       "id": "opik-mcp",
       "uuid": "egasedqaofxnzcqppuxi805h",
       "root": "opik-mcp",
@@ -68,63 +46,6 @@
       "contract": "qdrant-mcp/release-contract.json",
       "watch_paths": [
         "qdrant-mcp/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "comfy-mcp",
-      "uuid": "kkhfw0napmeaqewgdirwhc1h",
-      "root": "comfy-mcp",
-      "compose": "comfy-mcp/compose.candidate.yml",
-      "contract": "comfy-mcp/release-contract.json",
-      "watch_paths": [
-        "comfy-mcp/",
-        "comfyui-mcp/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "cloudflared-mcp",
-      "uuid": "3byzyvjxsycixyzcpxbujzev",
-      "root": "cloudflared-mcp",
-      "compose": "cloudflared-mcp/compose.candidate.yml",
-      "contract": "cloudflared-mcp/release-contract.json",
-      "watch_paths": [
-        "cloudflared-mcp/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "mcp-activation",
-      "uuid": "ra0iy2xs7abgms1r0phx4iqg",
-      "root": "mcp-activation",
-      "compose": "mcp-activation/compose.candidate.yml",
-      "contract": "mcp-activation/release-contract.json",
-      "watch_paths": [
-        "mcp-activation/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "outline-knowledge",
-      "uuid": "g16yynrbdpkab4hnmaoj7vxk",
-      "root": "outline-knowledge",
-      "compose": "outline-knowledge/compose.candidate.yml",
-      "contract": "outline-knowledge/release-contract.json",
-      "watch_paths": [
-        "outline-knowledge/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "repowise-mcp-runtime",
-      "uuid": "lecwi3emh9hjxir7gphmalie",
-      "root": "repowise-mcp-runtime",
-      "compose": "repowise-mcp-runtime/compose.candidate.yml",
-      "contract": "repowise-mcp-runtime/release-contract.json",
-      "watch_paths": [
-        "repowise-mcp-runtime/",
-        "ops/repowise/"
       ],
       "release_ready": false
     }

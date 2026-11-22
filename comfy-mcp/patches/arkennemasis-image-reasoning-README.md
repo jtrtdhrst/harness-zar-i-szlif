@@ -10,7 +10,7 @@ removes `reasoning.effort=low` only from the `ArkCodexImageGen` Responses payloa
 The LLM route and model selection are untouched. Check and test with:
 
 ```sh
-python3 comfyui-mcp/tests/test_arkennemasis_image_reasoning_patch.py /path/to/comfyui-arkennemasis
+python3 comfy-mcp/tests/test_arkennemasis_image_reasoning_patch.py /path/to/comfyui-arkennemasis
 ```
 
 The test requires the exact pinned commit and source-file hash, applies both
@@ -30,7 +30,7 @@ review/deploy path with rollback and live prompt-id/PNG readback.
 
 ## Versioned startup overlay and safe rollback (KOMAA-1599)
 
-The candidate `comfyui-mcp/Dockerfile.comfyui` copies the versioned
+The candidate `comfy-mcp/Dockerfile.comfyui` copies the versioned
 `patches/arkcodex_image_compat.py` into its image and invokes `apply`
 before ComfyUI starts. `custom_nodes` is a separate persisted Docker
 volume: a patch copied into an image alone does not reach its runtime.
@@ -62,8 +62,8 @@ verify production health. Image rollback alone does not revert the volume.
 Reproducible source and negative tests:
 
 ```sh
-python3 comfyui-mcp/tests/test_arkennemasis_image_reasoning_patch.py /path/to/pinned/upstream
-python3 comfyui-mcp/tests/test_arkcodex_image_compat.py /path/to/pinned/upstream
+python3 comfy-mcp/tests/test_arkennemasis_image_reasoning_patch.py /path/to/pinned/upstream
+python3 comfy-mcp/tests/test_arkcodex_image_compat.py /path/to/pinned/upstream
 ```
 
 Both are executed by `.github/workflows/comfy-arkcodex-compat.yml`.

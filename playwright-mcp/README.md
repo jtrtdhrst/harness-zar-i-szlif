@@ -1,5 +1,9 @@
 # Playwright MCP
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `9e4fzsodixl4qzzap4zg0ntp`; katalog `playwright-mcp/`; Dockerfile `playwright-mcp/Dockerfile`; implementacja: `idle-proxy.cjs`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 Playwright MCP server with the idle HTTP proxy used by Paperclip.
 
 - Build context: this directory only.

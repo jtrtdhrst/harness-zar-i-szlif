@@ -1,5 +1,9 @@
 # Supabase MCP (self-hosted)
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `tjit4c8m0kjh8brkmdhyvkde`; katalog `supabase-mcp/`; Dockerfile `supabase-mcp/Dockerfile`; implementacja: `src/`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 MCP server for a **self-hosted** Supabase instance: 50+ database management tools
 (schemas, tables, migrations, SQL execution, extensions, types, functions, policies,
 roles) over PostgREST/Kong and direct Postgres.

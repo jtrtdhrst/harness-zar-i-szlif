@@ -1,5 +1,0 @@
-name: comfy-mcp
-description: Production project for the ComfyUI MCP service
-environment: production
-service: comfy-mcp
-data: []

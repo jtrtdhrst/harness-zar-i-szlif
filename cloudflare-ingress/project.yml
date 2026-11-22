@@ -1,5 +1,0 @@
-name: Cloudflare Ingress i Edge
-description: Tunel Cloudflare, reverse proxy i edge gatewaye. Bez baz i danych aplikacyjnych.
-environment: production
-service: cloudflare-ingress
-data: []

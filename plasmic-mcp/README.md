@@ -1,5 +1,9 @@
 # Plasmic MCP — canonical self-hosted adapter
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `a6ci2beifbinzckfnneiqnjd`; katalog `plasmic-mcp/`; Dockerfile `plasmic-mcp/Dockerfile`; implementacja: `services/, libs/, design-sync/`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 The canonical self-hosted source lives in `harness-zar-i-szlif/plasmic-mcp/**`. Product-specific MCP remains in the separate `zar-i-szlif` repository. This adapter talks to the
 self-hosted **Plasmic WAB REST API**, not GitHub. Repository branches, PRs and
 CI checks belong to GitHub MCP.

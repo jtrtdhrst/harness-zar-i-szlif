@@ -22,7 +22,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Verify exactly 10 source-ready roots and staged Coolify root
+      - name: Verify exactly 11 source-ready roots and staged Coolify root
         run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
       - name: Validate standalone RepoWise staging Compose rooted at its own folder
         run: docker compose -f ops/repowise/compose.publisher.owned.yaml config --quiet
@@ -42,7 +42,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Derive exact 10-source matrix from canonical versioned mapping
+      - name: Derive exact 11-source matrix from canonical versioned mapping
         id: map
         shell: bash
         run: |
@@ -56,10 +56,10 @@ jobs:
               "github-ops-mcp", "hermes-gateway", "multica-mcp",
               "repowise-deployment-publisher-staging", "emailens-mcp",
               "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
-              "mantic-mcp", "playwright-mcp",
+              "mantic-mcp", "playwright-mcp", "comfy-mcp",
           }
           ready = [r for r in data["resources"] if r["source_build_ready"]]
-          if len(ready) != 10 or {r["id"] for r in ready} != expected:
+          if len(ready) != 11 or {r["id"] for r in ready} != expected:
               raise SystemExit("source_ready_set_changed_without_review")
           matrix = []
           for r in ready:
@@ -75,7 +75,7 @@ jobs:
           print("Source root matrix:", [x["service"] for x in matrix])
           PY
 
-  build-all-10-owned-sources:
+  build-all-11-owned-sources:
     needs: [verify-owned-source, detect-ready-roots]
     runs-on: ubuntu-latest
     timeout-minutes: 60

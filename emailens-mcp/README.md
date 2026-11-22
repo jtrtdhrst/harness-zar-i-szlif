@@ -1,5 +1,9 @@
 # Emailens MCP
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `16qnapdkj0qqqmeokepdechk`; katalog `emailens-mcp/`; Dockerfile `emailens-mcp/Dockerfile`; implementacja: `bridge.mjs`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 Persistent HTTP bridge for the Emailens stdio MCP server.
 
 - Build context: this directory only.

@@ -1,3 +1,5 @@
+> **Mapowanie kodu MCP na Coolify:** zobacz [ops/coolify-service-registry.json](../ops/coolify-service-registry.json). Poniższe informacje o wolumenach i wdrożeniach mają charakter historyczny; katalogi oficjalnych obrazów zostały wycofane z repo, ale zasoby Coolify pozostały.
+
 # Coolify project / service / volume map
 
 Source of truth for the Git layout. Service code is grouped by project; every project's runtime data must be attached to a resource in that
@@ -14,7 +16,7 @@ same project.
    data, dumps, model files, browser profiles and credentials are never committed.
 4. Each source folder must be buildable from its own directory; no build may use the
    repository root as context.
-5. `comfyui-mcp/` is the temporary combined ComfyUI build folder; the target
+5. `comfy-mcp/` is the temporary combined ComfyUI build folder; the target
    split is `comfy/` (engine) and `comfy-mcp/` (MCP).
 
 ## Projects and data
@@ -25,7 +27,7 @@ same project.
 | `supabase` | `supabase` | `*_supabase-staging-db-data`, storage, deno cache, SQL seed volumes | `supabase/` |
 | `paperclip` | `paperclip` | `*_paperclip-db`, `*_paperclip-home` | source removed from this repo; runtime not changed |
 | `Plasmic` | `plasmic` | `*_plasmic-pgdata` | `plasmic/` |
-| `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `comfyui-mcp/` (until split) |
+| `comfy` | `comfy` | `comfy_comfy-models`, `-input`, `-output`, `-user`, `-custom` | `comfy-mcp/` (until split) |
 | `opik` | `opik` | `*_opik-staging-clickhouse-*`, `-mysql`, `-minio-data`, `-redis-data`, `-zookeeper` | `opik/` (planned) |
 | `opik-mcp` | `opik-mcp` | stateless (talks to `opik`) | `opik-mcp/` (planned) |
 | `paperclip-mcp` | `paperclip-mcp` | `*_paperclip-mcp-state` + project-owned `paperclip-mcp-legacy`; no cross-project bind | source removed from this repo; runtime not changed |
@@ -54,7 +56,7 @@ same project.
 | `mantic-mcp` | `docker build -f mantic-mcp/Dockerfile.http mantic-mcp` | `Dockerfile.http` |
 | `plasmic` | `docker compose -f plasmic/docker-compose.yml build` | `studio.Dockerfile`, `platform/wab/Dockerfile` |
 | `plasmic-mcp` | `docker build -t local/plasmic-mcp plasmic-mcp` | `Dockerfile` |
-| `comfyui-mcp` | `docker build -f comfyui-mcp/Dockerfile.comfyui comfyui-mcp` / `-f Dockerfile` | engine / MCP |
+| `comfyui-mcp` | `docker build -f comfy-mcp/Dockerfile.comfyui comfyui-mcp` / `-f Dockerfile` | engine / MCP |
 | `supabase-mcp` | `docker build -t local/supabase-mcp supabase-mcp` | `Dockerfile` |
 | `ubuntu-mcp` | `docker build -t local/ubuntu-mcp ubuntu-mcp` | `Dockerfile` |
 | `multica-mcp` | `docker build -t local/multica-mcp-control-plane:0.2.0 multica-mcp` | `multica-mcp/Dockerfile` |
@@ -66,7 +68,7 @@ same project.
 These are tracked as migration work, not silently ignored:
 
 - ComfyUI is now split into `comfy` and `comfy-mcp`; the old combined
-  `comfyui-mcp/` folder remains only as historical build source.
+  `comfy-mcp/` folder remains only as historical build source.
 - `mcp-bridges` is split into `emailens-mcp`, `mantic-mcp` (in `mautic`) and
   `ubuntu-mcp`; old app containers removed.
 - platform folders (`mautic`, `supabase`, `opik`,

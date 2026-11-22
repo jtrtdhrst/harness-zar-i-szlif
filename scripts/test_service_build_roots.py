@@ -19,12 +19,12 @@ class HarnessBuildRootsTests(unittest.TestCase):
         cls.data = json.loads(MANIFEST.read_text(encoding="utf-8"))
         cls.rows = cls.data["resources"]
 
-    def test_exactly_22_in_repo_build_root_resources(self):
+    def test_exactly_16_in_repo_build_root_resources(self):
         self.assertEqual(self.data["schema_version"], 1)
         self.assertEqual(self.data["repo"], "jtrtdhrst/harness-zar-i-szlif")
-        self.assertEqual(len(self.rows), 22)
-        self.assertEqual(len({r["id"] for r in self.rows}), 22)
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 22)
+        self.assertEqual(len(self.rows), 16)
+        self.assertEqual(len({r["id"] for r in self.rows}), 16)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 16)
 
     def test_every_source_root_is_non_root_and_explicit(self):
         for r in self.rows:
@@ -69,12 +69,12 @@ class HarnessBuildRootsTests(unittest.TestCase):
             with self.subTest(instruction=safe):
                 self.assertNotRegex(safe, PARENT_CONTEXT_COPY_RE)
 
-    def test_exact_ten_source_ready_and_one_staged_coolify(self):
+    def test_exact_eleven_source_ready_and_one_staged_coolify(self):
         approved = {
             "github-ops-mcp", "hermes-gateway", "multica-mcp",
             "repowise-deployment-publisher-staging", "emailens-mcp",
             "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
-            "mantic-mcp", "playwright-mcp",
+            "mantic-mcp", "playwright-mcp", "comfy-mcp",
         }
         ready = {row["id"] for row in self.rows if row["source_build_ready"]}
         self.assertEqual(ready, approved)
@@ -106,7 +106,7 @@ class HarnessBuildRootsTests(unittest.TestCase):
         self.assertTrue((folder / "Dockerfile.publisher").is_file())
 
     def test_missing_or_external_sources_are_never_marked_as_ready(self):
-        for service in ("coolify-mcp", "qdrant-mcp", "hindsight-mcp", "comfy-mcp",
+        for service in ("coolify-mcp", "qdrant-mcp", "hindsight-mcp",
                         "plasmic"):
             row = next(r for r in self.rows if r["id"] == service)
             self.assertFalse(row["source_build_ready"], service)
