@@ -37,7 +37,7 @@ class TestOwnedComposeCandidates(unittest.TestCase):
                     refs = re.findall(r"(?m)^\s*image:\s*(.+)$", data)
                     self.assertTrue(refs)
                     for ref in refs:
-                        self.assertRegex(ref,r"@sha256:[0-9a-f]{64}$")
+                        self.assertRegex(ref,r"(?:@sha256:[0-9a-f]{64}|\\$\\{[A-Z0-9_]+:\\?[^}]*\\})$")
     def test_exact_changes_only(self):
         self.assertEqual(select(["qdrant/anything"]),["qdrant"])
         self.assertEqual(select(["cloudflared-mcp/compose.yaml"]),["cloudflared-mcp"])

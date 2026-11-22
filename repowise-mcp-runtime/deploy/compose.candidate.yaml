@@ -1,0 +1,43 @@
+# Source shape: live Coolify 2026-11-22. ENV VALUES REDACTED. NOT APPROVED FOR DEPLOYMENT.
+# Must reconcile secret values, volumes, host mounts, SHA/digest, and network before release.
+services:
+  repowise-mcp:
+    image: "${REPOWISE_MCP_IMAGE_DIGEST:?published immutable OCI digest required}"
+    pull_policy: always # candidate uses an immutable distributable registry digest
+    entrypoint: ["repowise", "mcp"]
+    command: ["/workspace", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "7338", "--tools", "get_answer,get_context,get_symbol,search_codebase,get_risk,get_change_risk,get_why,get_overview,get_health,get_dead_code,list_repos,get_dependency_path,get_execution_flows,get_blast_radius,get_architecture,get_conformance"]
+    working_dir: /workspace
+    volumes:
+      - repowise-index:/workspace
+      - repowise-codex-state:/home/repowise/codex-state
+    environment:
+      REPOWISE_API_KEY: "${REPOWISE_API_KEY:?supply through Coolify environment}"
+      REPOWISE_DB_URL: "${REPOWISE_DB_URL:?supply through Coolify environment}"
+      DO_NOT_TRACK: "${DO_NOT_TRACK:?supply through Coolify environment}"
+      REPOWISE_TELEMETRY_DISABLED: "${REPOWISE_TELEMETRY_DISABLED:?supply through Coolify environment}"
+      REPOWISE_EMBEDDER: "${REPOWISE_EMBEDDER:?supply through Coolify environment}"
+      REPOWISE_EMBEDDING_MODEL: "${REPOWISE_EMBEDDING_MODEL:?supply through Coolify environment}"
+    expose: ["7338"]
+    ports:
+      - "127.0.0.1:17338:7338"
+    networks: [coolify]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import socket;s=socket.create_connection((\"127.0.0.1\",7338),timeout=3);s.close()'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+volumes:
+  repowise-index:
+    external: true
+    name: oea9obpkhzbgkmipxwqmz2hj-repowise-workspace
+  repowise-codex-state:
+    name: repowise-mcp-runtime-codex-state
+networks:
+  coolify:
+    external: true

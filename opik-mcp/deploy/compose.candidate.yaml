@@ -1,0 +1,59 @@
+# Source shape: live Coolify 2026-11-22. ENV VALUES REDACTED. NOT APPROVED FOR DEPLOYMENT.
+# Must reconcile secret values, volumes, host mounts, SHA/digest, and network before release.
+services:
+  proxy:
+    image: "${OPIK_PROXY_IMAGE_DIGEST:?published immutable OCI digest required}"
+    restart: unless-stopped
+    depends_on:
+      - opik-mcp
+    ports:
+      - '127.0.0.1:18082:8080'
+    volumes:
+      - '/home/opencode/projects/opik/mcp-proxy.conf:/etc/nginx/conf.d/default.conf:ro'
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'nc -z 127.0.0.1 8080'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  opik-mcp:
+    image: "${OPIK_MCP_IMAGE_DIGEST:?published immutable OCI digest required}"
+    pull_policy: always # candidate uses an immutable distributable registry digest
+    restart: unless-stopped
+    expose:
+      - '8080'
+    environment:
+      OPIK_MCP_HOST: "${OPIK_MCP_HOST:?supply through Coolify environment}"
+      OPIK_MCP_PORT: "${OPIK_MCP_PORT:?supply through Coolify environment}"
+      OPIK_MCP_ALLOWED_HOSTS: "${OPIK_MCP_ALLOWED_HOSTS:?supply through Coolify environment}"
+      OPIK_MCP_LOG_LEVEL: "${OPIK_MCP_LOG_LEVEL:?supply through Coolify environment}"
+      OPIK_URL: "${OPIK_URL:?supply through Coolify environment}"
+      OPIK_MCP_TRANSPORT: "${OPIK_MCP_TRANSPORT:?supply through Coolify environment}"
+      OPIK_MCP_ALLOWED_ORIGINS: "${OPIK_MCP_ALLOWED_ORIGINS:?supply through Coolify environment}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'python -c "import socket; socket.create_connection((''127.0.0.1'',8080),2).close()"'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  access-guard:
+    image: "${OPIK_ACCESS_GUARD_IMAGE_DIGEST:?published immutable OCI digest required}"
+    pull_policy: always # candidate uses an immutable distributable registry digest
+    restart: unless-stopped
+    expose:
+      - '8088'
+    environment:
+      CF_ACCESS_ISSUER: "${CF_ACCESS_ISSUER:?supply through Coolify environment}"
+      CF_ACCESS_AUD: "${CF_ACCESS_AUD:?supply through Coolify environment}"
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
+  mcp:
+    image: "${OPIK_MCP_IMAGE_DIGEST:?published immutable OCI digest required}"

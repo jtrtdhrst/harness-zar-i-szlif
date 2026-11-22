@@ -1,0 +1,26 @@
+# Source shape: live Coolify 2026-11-22. ENV VALUES REDACTED. NOT APPROVED FOR DEPLOYMENT.
+# Must reconcile secret values, volumes, host mounts, SHA/digest, and network before release.
+services:
+  comfy-mcp:
+    image: "${COMFY_MCP_IMAGE_DIGEST:?published immutable OCI digest required}"
+    pull_policy: always # candidate uses an immutable distributable registry digest
+    restart: unless-stopped
+    expose:
+      - '9100'
+    networks:
+      coolify:
+        aliases:
+          - comfy-mcp
+    environment:
+      COMFYUI_URL: "${COMFYUI_URL:?supply through Coolify environment}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"require('net').connect(9100,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+networks:
+  coolify:
+    external: true

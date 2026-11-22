@@ -16,7 +16,7 @@
     }
   ],
   "source_build_ready": false,
-  "versioned_compose": null,
+  "versioned_compose": "comfy/deploy/compose.candidate.yaml",
   "watched_paths": [
     "comfy/",
     "comfyui-mcp/"

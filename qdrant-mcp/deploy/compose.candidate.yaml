@@ -1,0 +1,37 @@
+# Source shape: live Coolify 2026-11-22. ENV VALUES REDACTED. NOT APPROVED FOR DEPLOYMENT.
+# Must reconcile secret values, volumes, host mounts, SHA/digest, and network before release.
+services:
+  qdrant-mcp:
+    labels:
+    image: "${QDRANT_MCP_IMAGE_DIGEST:?published immutable OCI digest required}"
+    pull_policy: always # candidate uses an immutable distributable registry digest
+    restart: unless-stopped
+    command:
+    - python
+    - server.py
+    expose:
+    - '8000'
+    networks:
+      coolify:
+        aliases:
+        - mcp-qdrant-staging
+        - qa3jcxpcbx7vgh1exbbaacnu-20261029T223054
+    environment:
+      QDRANT_URL: "${QDRANT_URL:?supply through Coolify environment}"
+      QDRANT_API_KEY: "${QDRANT_API_KEY:?supply through Coolify environment}"
+      COLLECTION_NAME: "${COLLECTION_NAME:?supply through Coolify environment}"
+      DENSE_MODEL: "${DENSE_MODEL:?supply through Coolify environment}"
+      SPARSE_MODEL: "${SPARSE_MODEL:?supply through Coolify environment}"
+      MCP_TRANSPORT: "${MCP_TRANSPORT:?supply through Coolify environment}"
+      QDRANT_MCP_TOKEN: "${QDRANT_MCP_TOKEN:?supply through Coolify environment}"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - python -c "import socket; socket.create_connection(('127.0.0.1',8000),2).close()"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+networks:
+  coolify:
+    external: true

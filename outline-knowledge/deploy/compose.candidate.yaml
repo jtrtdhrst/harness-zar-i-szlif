@@ -1,0 +1,89 @@
+# Source shape: live Coolify 2026-11-22. ENV VALUES REDACTED. NOT APPROVED FOR DEPLOYMENT.
+# Must reconcile secret values, volumes, host mounts, SHA/digest, and network before release.
+services:
+  outline:
+    image: docker.getoutline.com/outlinewiki/outline@sha256:25d6a2ced2f1f0cf03c09abd776d87ba31941ed96d3a99992aa84b3bd0afc074
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "${NODE_ENV:?supply through Coolify environment}"
+      URL: "${URL:?supply through Coolify environment}"
+      PORT: "${PORT:?supply through Coolify environment}"
+      SECRET_KEY: "${SECRET_KEY:?supply through Coolify environment}"
+      UTILS_SECRET: "${UTILS_SECRET:?supply through Coolify environment}"
+      DATABASE_URL: "${DATABASE_URL:?supply through Coolify environment}"
+      REDIS_URL: "${REDIS_URL:?supply through Coolify environment}"
+      PGSSLMODE: "${PGSSLMODE:?supply through Coolify environment}"
+      FILE_STORAGE: "${FILE_STORAGE:?supply through Coolify environment}"
+      FILE_STORAGE_LOCAL_ROOT_DIR: "${FILE_STORAGE_LOCAL_ROOT_DIR:?supply through Coolify environment}"
+      FORCE_HTTPS: "${FORCE_HTTPS:?supply through Coolify environment}"
+      OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:?supply through Coolify environment}"
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:?supply through Coolify environment}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:?supply through Coolify environment}"
+      OIDC_DISPLAY_NAME: "${OIDC_DISPLAY_NAME:?supply through Coolify environment}"
+      OIDC_USERNAME_CLAIM: "${OIDC_USERNAME_CLAIM:?supply through Coolify environment}"
+      OIDC_SCOPES: "${OIDC_SCOPES:?supply through Coolify environment}"
+    volumes:
+      - 'outline-files:/var/lib/outline/data'
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - g16yynrbdpkab4hnmaoj7vxk
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'wget -q -O /dev/null --header="X-Forwarded-Proto: https" --header="X-Forwarded-Host: wiki.zariszlif.pl" http://127.0.0.1:3000/_health || exit 1'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+  database:
+    image: postgres@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?supply through Coolify environment}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?supply through Coolify environment}"
+      POSTGRES_DB: "${POSTGRES_DB:?supply through Coolify environment}"
+    volumes:
+      - 'outline-db:/var/lib/postgresql/data'
+    networks:
+      - g16yynrbdpkab4hnmaoj7vxk
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U outline -d outline'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    restart: unless-stopped
+    command:
+      - redis-server
+      - '--appendonly'
+      - 'yes'
+    volumes:
+      - 'outline-redis:/data'
+    networks:
+      - g16yynrbdpkab4hnmaoj7vxk
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+volumes:
+  outline-files:
+    name: g16yynrbdpkab4hnmaoj7vxk_outline-files
+  outline-db:
+    name: g16yynrbdpkab4hnmaoj7vxk_outline-db
+  outline-redis:
+    name: g16yynrbdpkab4hnmaoj7vxk_outline-redis
+networks:
+  g16yynrbdpkab4hnmaoj7vxk:
+    name: g16yynrbdpkab4hnmaoj7vxk
+    external: true

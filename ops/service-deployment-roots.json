@@ -365,7 +365,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "opik-mcp/deploy/compose.candidate.yaml",
       "watched_paths": [
         "opik-mcp/"
       ],
@@ -394,7 +394,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "qdrant-mcp/deploy/compose.candidate.yaml",
       "watched_paths": [
         "qdrant-mcp/"
       ],
@@ -452,7 +452,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "comfy-mcp/deploy/compose.candidate.yaml",
       "watched_paths": [
         "comfy-mcp/",
         "comfyui-mcp/"
@@ -521,7 +521,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "comfy/deploy/compose.candidate.yaml",
       "watched_paths": [
         "comfy/",
         "comfyui-mcp/"
@@ -624,7 +624,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "outline-knowledge/deploy/compose.candidate.yaml",
       "watched_paths": [
         "outline-knowledge/"
       ],
@@ -726,7 +726,7 @@
         }
       ],
       "source_build_ready": false,
-      "versioned_compose": null,
+      "versioned_compose": "repowise-mcp-runtime/deploy/compose.candidate.yaml",
       "watched_paths": [
         "repowise-mcp-runtime/"
       ],
