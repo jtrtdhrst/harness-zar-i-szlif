@@ -152,4 +152,73 @@ class TaskHermesHomeACLTests(unittest.TestCase):
             self.verify(other)
 
 
+class RoleProviderPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.addCleanup(self.t.cleanup)
+        self.home = pathlib.Path(self.t.name)
+        (self.home / "profiles").mkdir()
+
+    def profile(self, role, provider):
+        root = self.home / "profiles" / role
+        root.mkdir(mode=0o700, exist_ok=True)
+        config = root / "config.yaml"
+        config.write_text("model:\n  provider: " + provider + "\n  default: synthetic\n")
+        config.chmod(0o600)
+        env = root / ".env"
+        env.write_text("# synthetic provider env, no credential\n")
+        env.chmod(0o600)
+        return config, env
+
+    def test_cto_opencode_explicit_fallback_allowed(self):
+        self.profile("cto", "opencode-go")
+        self.assertEqual(M.role_model_provider(self.home, "cto", os.getuid()), "opencode-go")
+
+    def test_codex_role_uses_codex_auth(self):
+        self.profile("coo", "openai-codex")
+        self.assertEqual(M.role_model_provider(self.home, "coo", os.getuid()), "openai-codex")
+
+    def test_unapproved_other_codex_role_fallback_denied(self):
+        self.profile("coo", "opencode-go")
+        with self.assertRaisesRegex(ValueError, "not approved"):
+            M.role_model_provider(self.home, "coo", os.getuid())
+
+    def test_opencode_role_cannot_switch_to_codex(self):
+        self.profile("harness-engineer", "openai-codex")
+        with self.assertRaisesRegex(ValueError, "not approved"):
+            M.role_model_provider(self.home, "harness-engineer", os.getuid())
+
+    def test_config_symlink_denied(self):
+        config, _ = self.profile("cto", "opencode-go")
+        dest = config.with_suffix(".bak")
+        config.rename(dest)
+        config.symlink_to(dest)
+        with self.assertRaises(OSError):
+            M.role_model_provider(self.home, "cto", os.getuid())
+
+    def test_duplicate_provider_blocks_denied(self):
+        config, _ = self.profile("cto", "opencode-go")
+        config.write_text(config.read_text() + "model:\n  provider: openai-codex\n")
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            M.role_model_provider(self.home, "cto", os.getuid())
+
+    def test_private_role_env_accepted(self):
+        _, env = self.profile("cto", "opencode-go")
+        self.assertEqual(M.private_role_env_file(self.home, "cto", os.getuid()), env)
+
+    def test_role_env_symlink_denied(self):
+        _, env = self.profile("cto", "opencode-go")
+        target = env.with_suffix(".trusted")
+        env.rename(target)
+        env.symlink_to(target)
+        with self.assertRaises(OSError):
+            M.private_role_env_file(self.home, "cto", os.getuid())
+
+    def test_role_env_hardlink_denied(self):
+        _, env = self.profile("cto", "opencode-go")
+        os.link(env, env.with_suffix(".alias"))
+        with self.assertRaisesRegex(ValueError, "not private"):
+            M.private_role_env_file(self.home, "cto", os.getuid())
+
+
 if __name__=="__main__":unittest.main()
