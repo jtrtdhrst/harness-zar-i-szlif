@@ -76,6 +76,35 @@ def grant(ruleset, path, rights, *, require_regular_nofollow=False):
     finally:
         os.close(fd)
 
+def private_role_auth_file(shared_home: Path, role: str, uid: int) -> Path:
+    """Require a private role credential file; never follow common OAuth links.
+
+    This validates filesystem isolation, not whether upstream credentials have
+    distinct token identities. An independently provisioned role credential is
+    mandatory before enabling this stricter policy on the production daemon.
+    """
+    if role not in CODEX_ROLES:
+        raise ValueError("role is not authorized for Codex credentials")
+    directory = shared_home / "profiles" / role
+    entry = directory / "auth.json"
+    d = directory.lstat()  # reject role path symlinks
+    if (not stat.S_ISDIR(d.st_mode) or d.st_uid != uid or
+            stat.S_IMODE(d.st_mode) != 0o700):
+        raise ValueError("Codex role credential directory is not private")
+    f = entry.lstat()  # NEVER resolve a symlink into shared OAuth state
+    if (not stat.S_ISREG(f.st_mode) or f.st_uid != uid or
+            stat.S_IMODE(f.st_mode) != 0o600 or f.st_nlink != 1):
+        raise ValueError("Codex role credential must be a private regular file")
+    root_auth = shared_home / "auth.json"
+    try:
+        global_stat = root_auth.stat()
+    except FileNotFoundError:
+        global_stat = None
+    if global_stat and (f.st_dev, f.st_ino) == (global_stat.st_dev, global_stat.st_ino):
+        raise ValueError("Codex role credential aliases shared OAuth state")
+    return entry
+
+
 def task_scope():
     if not UUID.fullmatch(os.environ.get("MULTICA_TASK_ID", "")):
         raise ValueError("missing verified task context")
@@ -170,10 +199,9 @@ def restrict(task, tmpdir):
         # Only exact shared bootstrap files needed for profile symlinks;
         # never grant other profiles, global session DBs, logs or backups.
         grant(ruleset, shared_home / "installs", READ)
-        # Provider-scoped model secrets: never grant global OpenCode .env to a
-        # task. The root projector creates a private role-local .env before
-        # policy cutover. OpenCode roles never need root Codex OAuth auth.json;
-        # Codex roles still require shared OAuth until a trusted broker exists.
+        # Provider-scoped secrets: never grant global .env or auth.json.
+        # Every Codex role requires an independently provisioned local auth file;
+        # missing, linked, hardlinked or group-readable credentials fail closed.
         bootstrap_names = ("auth.lock", "install_id", "SOUL.md",
                            ".codex_gpt55_autoraise_notice",
                            "models_dev_cache.json", "provider_models_cache.json",
@@ -181,7 +209,8 @@ def restrict(task, tmpdir):
         for name in bootstrap_names:
             grant(ruleset, shared_home / name, READ_FILE)
         if role in CODEX_ROLES:
-            grant(ruleset, shared_home / "auth.json", READ_FILE)
+            grant(ruleset, private_role_auth_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
         # Hermes startup uses an existing per-install flock. Permit only
         # this single lock file to be opened for writing, never shared config
         # or a parent directory, so no other task's data becomes writable.
