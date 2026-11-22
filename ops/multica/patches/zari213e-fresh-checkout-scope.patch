@@ -311,3 +311,123 @@ index 1e105f1..7128698 100644
  func TestCreateWorktreeWithIsolatedGitMetadata(t *testing.T) {
  	t.Parallel()
  	sourceRepo := createTestRepo(t)
+diff --git a/server/pkg/agent/codex.go b/server/pkg/agent/codex.go
+--- a/server/pkg/agent/codex.go
++++ b/server/pkg/agent/codex.go
+@@ -760,37 +760,48 @@
+ 	return sb.String(), true, nil
+ }
+ 
+-func normalizeCodexMcpServerConfig(server map[string]any) map[string]any {
+-	if !isCodexRemoteMcpServer(server) {
+-		normalized := make(map[string]any, len(server))
+-		for k, v := range server {
+-			if isMulticaMcpSelectorKey(k) {
+-				continue
+-			}
+-			normalized[k] = v
+-		}
+-		return normalized
+-	}
+-
+-	normalized := make(map[string]any, len(server)+1)
+-	for k, v := range server {
+-		switch {
+-		case isMulticaMcpSelectorKey(k):
+-			continue
+-		case k == "type":
+-			continue
+-		case k == "headers":
+-			if _, ok := server["http_headers"]; !ok {
+-				normalized["http_headers"] = v
+-			}
+-		default:
+-			normalized[k] = v
+-		}
+-	}
+-	normalized["experimental_use_rmcp_client"] = true
+-	return normalized
+-}
+-
++func normalizeCodexMcpServerConfig(server map[string]any) map[string]any {
++	if !isCodexRemoteMcpServer(server) {
++		normalized := make(map[string]any, len(server))
++		for k, v := range server {
++			if isMulticaMcpSelectorKey(k) || isCodexDisabledOAuth(k, v) {
++				continue
++			}
++			normalized[k] = v
++		}
++		return normalized
++	}
++
++	normalized := make(map[string]any, len(server)+1)
++	for k, v := range server {
++		switch {
++		case isMulticaMcpSelectorKey(k), isCodexDisabledOAuth(k, v):
++			continue
++		case k == "type":
++			continue
++		case k == "headers":
++			if _, ok := server["http_headers"]; !ok {
++				normalized["http_headers"] = v
++			}
++		default:
++			normalized[k] = v
++		}
++	}
++	normalized["experimental_use_rmcp_client"] = true
++	return normalized
++}
++
++// A disabled OAuth flag from the Multica MCP registry is not a valid Codex
++// McpServerOAuthConfig table. Omit only explicit false; preserve structured
++// OAuth and fail closed on unsupported true rather than silently granting access.
++func isCodexDisabledOAuth(key string, value any) bool {
++	if key != "oauth" {
++		return false
++	}
++	enabled, ok := value.(bool)
++	return ok && !enabled
++}
++
+ func isMulticaMcpSelectorKey(k string) bool {
+ 	switch k {
+ 	case "tools", "prompts", "resources":
+diff --git a/server/pkg/agent/codex_test.go b/server/pkg/agent/codex_test.go
+--- a/server/pkg/agent/codex_test.go
++++ b/server/pkg/agent/codex_test.go
+@@ -6445,3 +6445,33 @@
+ 		})
+ 	}
+ }
++
++func TestCodexManagedMcpOAuthFalseCompatibility(t *testing.T) {
++	t.Parallel()
++	mcp := json.RawMessage(`{"mcpServers":{"remote":{"type":"http","url":"https://mcp.example.test/session","oauth":false},"local":{"command":"mock","oauth":false}}}`)
++	block, hasServers, err := renderCodexMcpServersBlock(mcp)
++	if err != nil {
++		t.Fatalf("render: %v", err)
++	}
++	if !hasServers || strings.Contains(block, "oauth = false") {
++		t.Fatalf("disabled boolean OAuth must not appear in Codex TOML: %s", block)
++	}
++	for _, table := range []string{"[mcp_servers.remote]", "[mcp_servers.local]"} {
++		if !strings.Contains(block, table) {
++			t.Fatalf("missing authorized server %q", table)
++		}
++	}
++	structured := map[string]any{"scopes": []any{"read"}}
++	preserved := normalizeCodexMcpServerConfig(map[string]any{
++		"type": "http", "url": "https://mcp.example.test/session", "oauth": structured,
++	})
++	if preserved["oauth"] != structured {
++		t.Fatal("structured OAuth must be preserved, never silently disabled")
++	}
++	unsupported := normalizeCodexMcpServerConfig(map[string]any{
++		"type": "http", "url": "https://mcp.example.test/session", "oauth": true,
++	})
++	if unsupported["oauth"] != true {
++		t.Fatal("unsupported true OAuth must remain fail-closed, not silently downgraded")
++	}
++}
