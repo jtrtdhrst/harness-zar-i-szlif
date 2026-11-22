@@ -42,7 +42,7 @@ def trusted_main_only_release_policy(path):
         "    runs-on: [self-hosted, linux, x64, local-build]",
         "      - name: Trusted main-only runner admission",
         "          test \"$GITHUB_REF\" = 'refs/heads/main'",
-        "          test \"$GITHUB_REPOSITORY\" = 'miloszspyrka-code/harness-zar-i-szlif'",
+        "          test \"$GITHUB_REPOSITORY\" = 'jtrtdhrst/harness-zar-i-szlif'",
         "          test \"$(id -un)\" = actions-zis",
         "          ! test -w /var/run/docker.sock",
         "          ! test -r /opt/zis-actions-runner/.credentials",
