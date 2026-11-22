@@ -78,13 +78,36 @@ def project(source, target, role, permissions):
     return expires
 
 
+def retire_writer_target():
+    """Revoke a projected writer credential after its source grant disappears."""
+    try:
+        st = os.lstat(WRITER_TARGET)
+    except FileNotFoundError:
+        return False
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+            st.st_gid != NODE_GID or st.st_nlink != 1 or
+            stat.S_IMODE(st.st_mode) != 0o640):
+        raise RuntimeError("Untrusted projected writer file")
+    # TARGET_DIR is root-owned and not writable by the container's group.
+    os.unlink(WRITER_TARGET)
+    return True
+
+
 def main():
     reader_expiry = project(SOURCE, TARGET, ROLE, PERMISSIONS)
     writer_projected = False
+    writer_revoked = False
+    if WRITER_SOURCE.is_symlink():
+        raise RuntimeError("Untrusted writer grant symlink")
     if WRITER_SOURCE.exists():
         project(WRITER_SOURCE, WRITER_TARGET, WRITER_ROLE, WRITER_PERMISSIONS)
         writer_projected = True
-    print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry, "writer_projected": writer_projected}))
+    else:
+        # Do not leave an old still-valid projected writer token usable after
+        # a deployment disables the role or an App grant is withdrawn.
+        writer_revoked = retire_writer_target()
+    print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry,
+                      "writer_projected": writer_projected, "writer_revoked": writer_revoked}))
 
 
 if __name__ == "__main__":
