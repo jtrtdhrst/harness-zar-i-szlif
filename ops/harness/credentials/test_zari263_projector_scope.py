@@ -72,5 +72,94 @@ class WriterRevocation(unittest.TestCase):
             self.assertEqual(target.read_text(), 'unchanged')
 
 
+class RuntimeVolumeProjection(unittest.TestCase):
+    def test_scoped_writer_is_atomically_projected_into_existing_volume(self):
+        import json
+        import os
+        import tempfile
+        import types
+        from unittest.mock import patch
+        project = load("github-ops-token-project.py", "bgh_projector_volume")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime_dir = root / "volume"
+            runtime_dir.mkdir(mode=0o750)
+            runtime_dir.chmod(0o750)
+            source = root / "writer.json"
+            grant = {
+                "role": project.WRITER_ROLE, "app_id": 5398752,
+                "installation_id": 173456397,
+                "permissions": project.WRITER_PERMISSIONS,
+                "repositories": sorted(project.REPOS),
+                "token": "synthetic-not-production",
+            }
+            source.write_text(json.dumps(grant))
+            source.chmod(0o640)
+            final = runtime_dir / "writer.json"
+            actual_fstat = os.fstat
+            def trusted(fd):
+                st = actual_fstat(fd)
+                return types.SimpleNamespace(
+                    st_mode=st.st_mode, st_uid=0, st_gid=project.NODE_GID,
+                    st_nlink=st.st_nlink, st_size=st.st_size
+                )
+            with patch.object(project, 'WRITER_TARGET', source), \
+                 patch.object(project, 'WRITER_RUNTIME', final), \
+                 patch.object(project.os, 'fstat', side_effect=trusted), \
+                 patch.object(project.os, 'fchown', return_value=None):
+                project.project_writer_runtime()
+            self.assertEqual(json.loads(final.read_text())["role"], "github-ops-writer")
+            self.assertEqual(final.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(sorted(p.name for p in runtime_dir.iterdir()), ['writer.json'])
+
+    def test_wrong_scope_never_projects_to_runtime_volume(self):
+        import json
+        import os
+        import tempfile
+        import types
+        from unittest.mock import patch
+        project = load("github-ops-token-project.py", "bgh_projector_wrong_scope")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime_dir = root / "volume"
+            runtime_dir.mkdir(mode=0o750)
+            runtime_dir.chmod(0o750)
+            source = root / "writer.json"
+            source.write_text(json.dumps({
+                "role": "github-ops-writer", "app_id": 5398752,
+                "installation_id": 173456397,
+                "permissions": {"contents": "write"},
+                "repositories": sorted(project.REPOS)
+            }))
+            source.chmod(0o640)
+            final = runtime_dir / "writer.json"
+            real_fstat = os.fstat
+            def trusted(fd):
+                st = real_fstat(fd)
+                return types.SimpleNamespace(st_mode=st.st_mode, st_uid=0,
+                    st_gid=project.NODE_GID, st_nlink=st.st_nlink, st_size=st.st_size)
+            with patch.object(project, 'WRITER_TARGET', source), \
+                 patch.object(project, 'WRITER_RUNTIME', final), \
+                 patch.object(project.os, 'fstat', side_effect=trusted):
+                with self.assertRaisesRegex(RuntimeError, 'scope mismatch'):
+                    project.project_writer_runtime()
+            self.assertFalse(final.exists())
+
+    def test_stale_runtime_volume_token_revoked_independently(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        project = load("github-ops-token-project.py", "bgh_projector_volume_revoke")
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'writer.json'
+            target.write_text('synthetic-no-secret')
+            target.chmod(0o640)
+            st = target.lstat()
+            trusted = SimpleNamespace(st_mode=st.st_mode, st_uid=0,
+                st_gid=project.NODE_GID, st_nlink=1)
+            with patch.object(project.os, 'lstat', return_value=trusted):
+                self.assertTrue(project.retire_writer_target(target))
+            self.assertFalse(target.exists())
+
 if __name__ == "__main__":
     unittest.main()
