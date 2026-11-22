@@ -64,8 +64,8 @@ jobs:
       # Run inside the unprivileged BuildKit sandbox (root in the build stage),
       # not as host root or by relaxing production credential checks.
       - name: MCP HTTP regression tests (isolated image build)
-        run: docker build --target verify -t github-ops-mcp:verify ./github-mcp
+        run: docker build --target verify -t github-ops-mcp:verify ./mcp/github-mcp
       - name: Build production Dockerfile
-        run: docker build -t github-ops-mcp:ci ./github-mcp
+        run: docker build -t github-ops-mcp:ci ./mcp/github-mcp
       - name: Validate packaged server syntax
         run: docker run --rm --entrypoint node github-ops-mcp:ci --check /app/server.mjs
