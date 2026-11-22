@@ -5,7 +5,7 @@ Katalog `mcp/` zawiera tylko serwery MCP i ich kod/proxy bezpieczeństwa. Usług
 | Serwer | Kod i rola | Dockerfile / build root | Coolify UUID | Stan kodu |
 | --- | --- | --- | --- | --- |
 | [comfy-mcp](comfy-mcp/) | Sterowanie ComfyUI, narzędzia obrazu, integracja plików | `mcp/comfy-mcp/Dockerfile` | `kkhfw0napmeaqewgdirwhc1h` | Kod w repo; produkcja nadal ma obraz lokalny |
-| [coolify-mcp](coolify-mcp/) | Operacje Coolify, OAuth, MCP HTTP | `mcp/coolify-mcp/Dockerfile` | `f7smgdueq8frlex9lfhp9iji` | Pełny kod v3.10.1 (PR #221 scalony), produkcja 3.9.0 upstream |
+| [coolify-mcp](coolify-mcp/) | Operacje Coolify, OAuth, MCP HTTP | `mcp/coolify-mcp/Dockerfile` | `f7smgdueq8frlex9lfhp9iji` | Pełny kod v3.10.1; produkcja na obrazie Harness ze źródłową etykietą `b0bb233c`, health PASS; nowy układ katalogów nadal przed wydaniem |
 | [emailens-mcp](emailens-mcp/) | Emailens MCP Bridge, zabezpieczenia i testy HTTP | `mcp/emailens-mcp/Dockerfile` | `16qnapdkj0qqqmeokepdechk` | Kod w repo; produkcja używa wcześniejszego digestu |
 | [github-mcp](github-mcp/) | GitHub Ops MCP z kontrolą operacji | `mcp/github-mcp/Dockerfile` | `t09dqe2eppn2eiqmhzlf8xzp` | Kod w repo, Git-backed app |
 | [hindsight-mcp](hindsight-mcp/) | Bramka Caddy/Hindsight, izolacja banków | `mcp/hindsight-mcp/Dockerfile` | `aglen8ervlo2lpi30oz8iii9` | Produkcyjny Caddyfile + osobny nieaktywny wariant PR #132 |

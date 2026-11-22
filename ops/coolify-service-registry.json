@@ -150,7 +150,7 @@
       "type": "service",
       "source": "owned-code",
       "root": "mcp/coolify-mcp",
-      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
+      "note": "Running healthy since reviewed release of source SHA b0bb233c2c6ca5c1a81c38d80aa75d3fd9f9c4b9, image ghcr.io/jtrtdhrst/coolify-mcp@sha256:3680d1b58fbc6c5097ac3f525e9e1b0aaec390be0a05ab5580eba322f70d734d; /data retained; release of reorganized mcp/coolify-mcp/ source not yet authorized or production E2E verified.",
       "dockerfile": "mcp/coolify-mcp/Dockerfile"
     },
     {
