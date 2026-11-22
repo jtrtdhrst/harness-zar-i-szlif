@@ -72,7 +72,7 @@ jobs:
         if: steps.impacted.outputs.hermes == 'true'
         run: |
           set -euo pipefail
-          docker run --rm --network none --read-only \
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m \
             --mount "type=bind,src=$PWD/integrations/hermes-paperclip/gateway,dst=/tests,readonly" \
             -e PYTHONPATH=/opt/hermes:/opt/hermes/gateway \
             -w /opt/hermes --entrypoint python3 hermes-gateway-owned-pr:${{ github.sha }} \
