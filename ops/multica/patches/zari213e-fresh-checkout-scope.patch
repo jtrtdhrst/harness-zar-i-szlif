@@ -370,6 +370,23 @@ index 1e105f1..7128698 100644
  func TestCreateWorktreeWithIsolatedGitMetadata(t *testing.T) {
  	t.Parallel()
  	sourceRepo := createTestRepo(t)
+@@ -1134,13 +1174,13 @@ func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
+-func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
++func TestLocalCloneArgsNoHardlinksAllPlatforms(t *testing.T) {
+ 	t.Parallel()
+ 	const barePath, checkoutPath = "/cache/repo.git", "/task/repo"
+ 
+ 	for _, tt := range []struct {
+ 		goos          string
+ 		wantNoHardlnk bool
+ 	}{
+ 		{goos: "windows", wantNoHardlnk: true},
+-		{goos: "linux"},
+-		{goos: "darwin"},
++		{goos: "linux", wantNoHardlnk: true},
++		{goos: "darwin", wantNoHardlnk: true},
+ 	} {
+ 		t.Run(tt.goos, func(t *testing.T) {
 diff --git a/server/pkg/agent/codex.go b/server/pkg/agent/codex.go
 --- a/server/pkg/agent/codex.go
 +++ b/server/pkg/agent/codex.go
