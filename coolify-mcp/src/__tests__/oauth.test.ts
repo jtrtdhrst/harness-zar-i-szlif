@@ -1194,6 +1194,33 @@ describe('Client ID Metadata Documents (#340)', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a ChatGPT CIMD public fallback only with PKCE', async () => {
+    const provider = makeCimdProvider(async () => ({
+      ...goodDocument(),
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_methods_supported: ['private_key_jwt', 'none'],
+    }));
+    const { verifier, challenge } = pkcePair();
+    await provider.resolveClient(CLIENT_URL);
+    const validated = provider.validateAuthorizationRequest(authorizeParams(CLIENT_URL, challenge));
+    // We cannot authenticate a client JWT: downgrade only when 'none' is advertised.
+    expect(validated.client.token_endpoint_auth_method).toBe('none');
+    const { redirectTo } = provider.completeAuthorization(validated);
+    const code = new URL(redirectTo).searchParams.get('code')!;
+    const tokens = provider.exchange(
+      new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: CLIENT_URL,
+        code,
+        redirect_uri: CALLBACK,
+        code_verifier: verifier,
+      }),
+    );
+    await expect(provider.verifyAccessToken(tokens.access_token as string)).resolves.toMatchObject({
+      clientId: CLIENT_URL,
+    });
+  });
+
   it('is a no-op for registered ids and for ids that are not URLs', async () => {
     const fetcher = jest.fn(async () => goodDocument());
     const provider = makeCimdProvider(fetcher);
@@ -1236,6 +1263,30 @@ describe('Client ID Metadata Documents (#340)', () => {
       'secret-based auth',
       { ...goodDocument(), token_endpoint_auth_method: 'client_secret_post' },
       '"none"',
+    ],
+    [
+      'private_key_jwt without none fallback',
+      { ...goodDocument(), token_endpoint_auth_method: 'private_key_jwt' },
+      '"none"',
+    ],
+    [
+      'private_key_jwt without advertised none',
+      {
+        ...goodDocument(),
+        token_endpoint_auth_method: 'private_key_jwt',
+        token_endpoint_auth_methods_supported: ['private_key_jwt'],
+      },
+      '"none"',
+    ],
+    [
+      'private_key_jwt with fallback but embedded secret',
+      {
+        ...goodDocument(),
+        token_endpoint_auth_method: 'private_key_jwt',
+        token_endpoint_auth_methods_supported: ['none'],
+        client_secret: 'nope',
+      },
+      'client_secret',
     ],
     ['embedded secret', { ...goodDocument(), client_secret: 'nope' }, 'client_secret'],
     ['not an object', ['nope'], 'JSON object'],
