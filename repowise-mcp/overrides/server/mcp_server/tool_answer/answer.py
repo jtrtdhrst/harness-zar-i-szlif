@@ -55,6 +55,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from repowise.core.persistence.database import get_session
@@ -272,7 +273,7 @@ def _service_identifiers(question: str) -> list[str]:
 def _branch_source_question(question: str) -> bool:
     """Do not incur source-line lookup for ordinary architectural questions."""
     return bool(_service_identifiers(question)) and bool(re.search(
-        r"\b(?:branch|branches|build|built|deploy|production|source|gałęz|budowan|wdroż|produkcj)\w*",
+        r"\b(?:branch|branches|build|built|deploy|production|source|gał[ąę]ź|gałęzi|budow|buduj|wdroż|produkcj)\w*",
         question, flags=re.IGNORECASE,
     ))
 
@@ -667,13 +668,84 @@ def _fallback_targets(hits: list[dict]) -> list[str]:
     ]
 
 
-async def _attach_excerpts(hits: list[dict], ctx) -> None:
+def _verified_markdown_source_excerpt(
+    hit: dict, repo_root: Path, question: str,
+) -> str | None:
+    """Return bounded *live source*, never invented wiki content.
+
+    Repo/source path is already scoped and exclusion-filtered by retrieval.
+    This is a read-only rescue for documentation pages missing from wiki_pages.
+    It never traverses directories, symlinks, or hidden credentials.
+    """
+    path = hit.get("target_path")
+    if not isinstance(path, str) or not path.endswith((".md", ".mdx", ".rst")):
+        return None
+    if not path or path.startswith("/") or ".." in Path(path).parts:
+        return None
+    try:
+        root = Path(repo_root).resolve(strict=True)
+        source = root / path
+        if source.is_symlink() or not source.is_file():
+            return None
+        if not source.resolve(strict=True).is_relative_to(root):
+            return None
+        if source.stat().st_size > 128_000:
+            return None
+        lines = source.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+    stop = {
+        "which", "what", "where", "when", "does", "from", "this", "with",
+        "that", "about", "configured", "how", "the", "and", "która", "jakiej",
+        "jaki", "jak", "jest", "gałąź", "branch", "build", "buduje",
+        "repo", "source", "file", "plik", "gdzie", "który",
+    }
+    terms = list(dict.fromkeys(
+        tok.lower() for tok in re.findall(r"[\w./-]{4,}", question)
+        if tok.lower() not in stop and len(tok) < 90
+    ))[:12]
+    if not terms:
+        return None
+    scored = []
+    for i, line in enumerate(lines):
+        trimmed = line.strip()
+        if not trimmed or len(trimmed) > 1200:
+            continue
+        lower = trimmed.lower()
+        matches = [term for term in terms if term in lower]
+        if matches:
+            scored.append((len(matches), any("-" in term and term in lower for term in matches), i, trimmed))
+    if not scored:
+        return None
+    scored.sort(key=lambda row: (-row[0], -int(row[1]), row[2]))
+    winners = sorted(scored[:3], key=lambda row: row[2])
+    return "Verified live repository documentation (not production state):\n" + "\n".join(
+        f"L{n+1}: {line}" for _, _, n, line in winners
+    )
+
+
+async def _attach_excerpts(hits: list[dict], ctx, question: str) -> None:
     """Page content for the top hits, before anything branches on retrieval quality.
 
     Gating it on dominance starves the confident answers of prose; the cost is
     one indexed SELECT over at most five rows.
     """
     missing = await _attach_page_excerpts(hits, ctx)
+    # Wiki indexes only selected pages. A source-backed documentation hit may
+    # have a title but no wiki body, even when its Markdown exists on disk.
+    # Do not let synthesis infer config values from title-only evidence.
+    if missing:
+        for hit in hits[:5]:
+            if hit.get("excerpt"):
+                continue
+            verified = await asyncio.to_thread(
+                _verified_markdown_source_excerpt, hit, _repo_root(ctx), question
+            )
+            if verified:
+                hit["excerpt"] = verified
+                hit["snippet"] = verified
+                hit.setdefault("_sources", set()).add("live_doc")
     if missing:
         _log.warning(
             "get_answer: %d of %d top hits have no page content; those hits "
@@ -962,7 +1034,7 @@ async def get_answer(
         return _with_candidates(early, resolved_pool)
 
     fallback_targets = _fallback_targets(hits)
-    await _attach_excerpts(hits, ctx)
+    await _attach_excerpts(hits, ctx, question)
     # The grade takes the dominance TIER so its note quotes only the measurement made.
     dominance = dominance_reason(hits, agreement_dominant=agreement_dominant)
     gated = await _gated_reply(
