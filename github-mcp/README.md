@@ -31,7 +31,7 @@ The host's existing `multica-zar-github-app-refresh.service` reads its existing 
 
 Deletion additionally needs the `git` binary in the image (the Dockerfile installs it) and the separate, rotating `GITHUB_OPS_WRITER_TOKEN_FILE` grant. Global Git configuration is suppressed and the credential helper restricts protocol, host and exact repository path. The deprecated `GITHUB_OPS_PUSH_TOKEN` environment variable is not accepted in production.
 
-Use a Coolify **private, manual** staging application with `base_directory=/github-ops-mcp`, `Dockerfile` build and `is_auto_deploy_enabled=false`. No FQDN, no public port, no production secrets in build args. Do not turn on writes/deletion in a test deployment. Register its private MCP URL in Multica only after independent authorization, a supported secure secret injection path, and test of the exact target runtime's network reachability.
+Use a Coolify **private, manual** staging application with `base_directory=/github-mcp`, `Dockerfile` build and `is_auto_deploy_enabled=false`. No FQDN, no public port, no production secrets in build args. Do not turn on writes/deletion in a test deployment. Register its private MCP URL in Multica only after independent authorization, a supported secure secret injection path, and test of the exact target runtime's network reachability.
 
 ## MCP verification
 
