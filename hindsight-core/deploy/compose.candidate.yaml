@@ -1,0 +1,124 @@
+# Versioned candidate reconstructed from live Coolify 2026-11-22; all ENV VALUES REDACTED.
+# NOT APPROVED FOR DEPLOYMENT. Verify registry manifest, data, secrets, mounts, live E2E and rollback.
+services:
+  db:
+    image: pgvector/pgvector@sha256:7d0a41464797aeb9862dfdc0bbf1526b82cfd324cdd8036df19e3545f4a9ccb8
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:?supply via Coolify environment}"
+      POSTGRES_USER: "${POSTGRES_USER:?supply via Coolify environment}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?supply via Coolify environment}"
+    volumes:
+      - hindsight-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hindsight -d hindsight"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks:
+      - hindsight-private
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight@sha256:c7d494c309fde53d07e79158be08d7a61f3f309b23cc417c7e4b0b8fc8adc77a
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8888/health", timeout=5)'
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HINDSIGHT_API_DATABASE_URL: "${HINDSIGHT_API_DATABASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_WORKER_ID: "${HINDSIGHT_API_WORKER_ID:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_PROVIDER: "${HINDSIGHT_API_LLM_PROVIDER:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_MODEL: "${HINDSIGHT_API_LLM_MODEL:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_BASE_URL: "${HINDSIGHT_API_LLM_BASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_API_KEY: "${HINDSIGHT_API_LLM_API_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_DEFAULT_HEADERS: "${HINDSIGHT_API_LLM_DEFAULT_HEADERS:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_PROVIDER: "${HINDSIGHT_API_RERANKER_PROVIDER:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_COHERE_MODEL: "${HINDSIGHT_API_RERANKER_COHERE_MODEL:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_COHERE_BASE_URL: "${HINDSIGHT_API_RERANKER_COHERE_BASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_COHERE_API_KEY: "${HINDSIGHT_API_RERANKER_COHERE_API_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_ENABLED: "${HINDSIGHT_API_MCP_ENABLED:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_AUTH_TOKEN: "${HINDSIGHT_API_MCP_AUTH_TOKEN:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_ENABLED_TOOLS: "${HINDSIGHT_API_MCP_ENABLED_TOOLS:?supply via Coolify environment}"
+      HINDSIGHT_API_RECALL_MAX_TOKENS: "${HINDSIGHT_API_RECALL_MAX_TOKENS:?supply via Coolify environment}"
+      HINDSIGHT_API_RECALL_INCLUDE_CHUNKS: "${HINDSIGHT_API_RECALL_INCLUDE_CHUNKS:?supply via Coolify environment}"
+      HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS: "${HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_INSTRUCTIONS: "${HINDSIGHT_API_MCP_INSTRUCTIONS:?supply via Coolify environment}"
+      HINDSIGHT_CP_ACCESS_KEY: "${HINDSIGHT_CP_ACCESS_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_ENABLE_BANK_CONFIG_API: "${HINDSIGHT_API_ENABLE_BANK_CONFIG_API:?supply via Coolify environment}"
+    volumes:
+      - hindsight-oauth:/home/hindsight/.hindsight
+    networks:
+      - hindsight-private
+      - hindsight-isolated
+  hindsight-admin:
+    image: ghcr.io/vectorize-io/hindsight@sha256:c7d494c309fde53d07e79158be08d7a61f3f309b23cc417c7e4b0b8fc8adc77a
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8888/health", timeout=5)'
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HINDSIGHT_ENABLE_CP: "${HINDSIGHT_ENABLE_CP:?supply via Coolify environment}"
+      HINDSIGHT_API_WORKER_ENABLED: "${HINDSIGHT_API_WORKER_ENABLED:?supply via Coolify environment}"
+      HINDSIGHT_API_DATABASE_URL: "${HINDSIGHT_API_DATABASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_WORKER_ID: "${HINDSIGHT_API_WORKER_ID:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_PROVIDER: "${HINDSIGHT_API_LLM_PROVIDER:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_MODEL: "${HINDSIGHT_API_LLM_MODEL:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_BASE_URL: "${HINDSIGHT_API_LLM_BASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_API_KEY: "${HINDSIGHT_API_LLM_API_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_LLM_DEFAULT_HEADERS: "${HINDSIGHT_API_LLM_DEFAULT_HEADERS:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER: "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_MODEL:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_BASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_API_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS:?supply via Coolify environment}"
+      HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE: "${HINDSIGHT_API_EMBEDDINGS_OPENAI_BATCH_SIZE:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_PROVIDER: "${HINDSIGHT_API_RERANKER_PROVIDER:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_COHERE_MODEL: "${HINDSIGHT_API_RERANKER_COHERE_MODEL:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_COHERE_BASE_URL: "${HINDSIGHT_API_RERANKER_COHERE_BASE_URL:?supply via Coolify environment}"
+      HINDSIGHT_API_RERANKER_COHERE_API_KEY: "${HINDSIGHT_API_RERANKER_COHERE_API_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_ENABLED: "${HINDSIGHT_API_MCP_ENABLED:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_AUTH_TOKEN: "${HINDSIGHT_API_MCP_AUTH_TOKEN:?supply via Coolify environment}"
+      HINDSIGHT_API_RECALL_MAX_TOKENS: "${HINDSIGHT_API_RECALL_MAX_TOKENS:?supply via Coolify environment}"
+      HINDSIGHT_API_RECALL_INCLUDE_CHUNKS: "${HINDSIGHT_API_RECALL_INCLUDE_CHUNKS:?supply via Coolify environment}"
+      HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS: "${HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS:?supply via Coolify environment}"
+      HINDSIGHT_API_MCP_INSTRUCTIONS: "${HINDSIGHT_API_MCP_INSTRUCTIONS:?supply via Coolify environment}"
+      HINDSIGHT_CP_ACCESS_KEY: "${HINDSIGHT_CP_ACCESS_KEY:?supply via Coolify environment}"
+      HINDSIGHT_API_ENABLE_BANK_CONFIG_API: "${HINDSIGHT_API_ENABLE_BANK_CONFIG_API:?supply via Coolify environment}"
+    volumes:
+      - hindsight-oauth:/home/hindsight/.hindsight
+    networks:
+      - hindsight-private
+      - hindsight-isolated
+volumes:
+  hindsight-postgres:
+  hindsight-oauth:
+networks:
+  hindsight-private:
+    internal: true
+  hindsight-isolated:
+    external: true

@@ -1,0 +1,194 @@
+# Versioned candidate reconstructed from live Coolify 2026-11-22; all ENV VALUES REDACTED.
+# NOT APPROVED FOR DEPLOYMENT. Verify registry manifest, data, secrets, mounts, live E2E and rollback.
+x-mautic-environment:
+  MAUTIC_DB_HOST: db
+  MAUTIC_DB_PORT: '3306'
+  MAUTIC_DB_DATABASE: ${MAUTIC_DB_DATABASE}
+  MAUTIC_DB_USER: ${MAUTIC_DB_USER}
+  MAUTIC_DB_PASSWORD: ${MAUTIC_DB_PASSWORD}
+  MAUTIC_DB_TABLE_PREFIX: ''
+  MAUTIC_MESSENGER_DSN_EMAIL: ${MAUTIC_MESSENGER_DSN_EMAIL:-doctrine://default?queue_name=email}
+  MAUTIC_MESSENGER_DSN_HIT: ${MAUTIC_MESSENGER_DSN_HIT:-doctrine://default?queue_name=hit}
+  MAUTIC_MESSENGER_DSN_FAILED: ${MAUTIC_MESSENGER_DSN_FAILED:-doctrine://default?queue_name=failed}
+  PHP_INI_VALUE_DATE_TIMEZONE: ${PHP_INI_VALUE_DATE_TIMEZONE:-UTC}
+  PHP_INI_VALUE_MEMORY_LIMIT: ${PHP_INI_VALUE_MEMORY_LIMIT:-512M}
+  PHP_INI_VALUE_UPLOAD_MAX_FILESIZE: ${PHP_INI_VALUE_UPLOAD_MAX_FILESIZE:-64M}
+  PHP_INI_VALUE_POST_MAX_FILESIZE: ${PHP_INI_VALUE_POST_MAX_FILESIZE:-64M}
+  PHP_INI_VALUE_MAX_EXECUTION_TIME: ${PHP_INI_VALUE_MAX_EXECUTION_TIME:-300}
+x-mautic-service:
+  image: "${MAUTIC_OCI_01_DIGEST:?approved registry OCI digest required}"
+  init: true
+  restart: unless-stopped
+  networks:
+  - mautic
+  volumes:
+  - mautic-prod-config:/var/www/html/config
+  - mautic-prod-logs:/var/www/html/var/logs
+  - mautic-prod-media:/var/www/html/docroot/media
+  - mautic-prod-media-files:/var/www/html/docroot/media/files
+  - mautic-prod-media-images:/var/www/html/docroot/media/images
+  environment:
+    MAUTIC_DB_HOST: "${MAUTIC_DB_HOST:?supply via Coolify environment}"
+    MAUTIC_DB_PORT: "${MAUTIC_DB_PORT:?supply via Coolify environment}"
+    MAUTIC_DB_DATABASE: "${MAUTIC_DB_DATABASE:?supply via Coolify environment}"
+    MAUTIC_DB_USER: "${MAUTIC_DB_USER:?supply via Coolify environment}"
+    MAUTIC_DB_PASSWORD: "${MAUTIC_DB_PASSWORD:?supply via Coolify environment}"
+    MAUTIC_DB_TABLE_PREFIX: "${MAUTIC_DB_TABLE_PREFIX:?supply via Coolify environment}"
+    MAUTIC_MESSENGER_DSN_EMAIL: "${MAUTIC_MESSENGER_DSN_EMAIL:?supply via Coolify environment}"
+    MAUTIC_MESSENGER_DSN_HIT: "${MAUTIC_MESSENGER_DSN_HIT:?supply via Coolify environment}"
+    MAUTIC_MESSENGER_DSN_FAILED: "${MAUTIC_MESSENGER_DSN_FAILED:?supply via Coolify environment}"
+    PHP_INI_VALUE_DATE_TIMEZONE: "${PHP_INI_VALUE_DATE_TIMEZONE:?supply via Coolify environment}"
+    PHP_INI_VALUE_MEMORY_LIMIT: "${PHP_INI_VALUE_MEMORY_LIMIT:?supply via Coolify environment}"
+    PHP_INI_VALUE_UPLOAD_MAX_FILESIZE: "${PHP_INI_VALUE_UPLOAD_MAX_FILESIZE:?supply via Coolify environment}"
+    PHP_INI_VALUE_POST_MAX_FILESIZE: "${PHP_INI_VALUE_POST_MAX_FILESIZE:?supply via Coolify environment}"
+    PHP_INI_VALUE_MAX_EXECUTION_TIME: "${PHP_INI_VALUE_MAX_EXECUTION_TIME:?supply via Coolify environment}"
+  stop_grace_period: 60s
+services:
+  db:
+    image: mariadb@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620
+    init: true
+    restart: unless-stopped
+    command:
+    - --character-set-server=utf8mb4
+    - --collation-server=utf8mb4_unicode_ci
+    - --max_allowed_packet=64M
+    - --max_connections=100
+    - --innodb-buffer-pool-size=512M
+    - --innodb-log-file-size=128M
+    environment:
+      MARIADB_DATABASE: "${MARIADB_DATABASE:?supply via Coolify environment}"
+      MARIADB_USER: "${MARIADB_USER:?supply via Coolify environment}"
+      MARIADB_PASSWORD: "${MARIADB_PASSWORD:?supply via Coolify environment}"
+      MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD:?supply via Coolify environment}"
+    volumes:
+    - mautic-prod-db:/var/lib/mysql
+    healthcheck:
+      test:
+      - CMD
+      - healthcheck.sh
+      - --connect
+      - --innodb_initialized
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+  web:
+    image: "${MAUTIC_OCI_01_DIGEST:?approved registry OCI digest required}"
+    init: true
+    restart: unless-stopped
+    volumes:
+    - mautic-prod-config:/var/www/html/config
+    - mautic-prod-logs:/var/www/html/var/logs
+    - mautic-prod-media:/var/www/html/docroot/media
+    - mautic-prod-media-files:/var/www/html/docroot/media/files
+    - mautic-prod-media-images:/var/www/html/docroot/media/images
+    environment:
+      MAUTIC_DB_HOST: "${MAUTIC_DB_HOST:?supply via Coolify environment}"
+      MAUTIC_DB_PORT: "${MAUTIC_DB_PORT:?supply via Coolify environment}"
+      MAUTIC_DB_DATABASE: "${MAUTIC_DB_DATABASE:?supply via Coolify environment}"
+      MAUTIC_DB_USER: "${MAUTIC_DB_USER:?supply via Coolify environment}"
+      MAUTIC_DB_PASSWORD: "${MAUTIC_DB_PASSWORD:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_EMAIL: "${MAUTIC_MESSENGER_DSN_EMAIL:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_HIT: "${MAUTIC_MESSENGER_DSN_HIT:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_FAILED: "${MAUTIC_MESSENGER_DSN_FAILED:?supply via Coolify environment}"
+      PHP_INI_VALUE_DATE_TIMEZONE: "${PHP_INI_VALUE_DATE_TIMEZONE:?supply via Coolify environment}"
+      PHP_INI_VALUE_MEMORY_LIMIT: "${PHP_INI_VALUE_MEMORY_LIMIT:?supply via Coolify environment}"
+      PHP_INI_VALUE_UPLOAD_MAX_FILESIZE: "${PHP_INI_VALUE_UPLOAD_MAX_FILESIZE:?supply via Coolify environment}"
+      PHP_INI_VALUE_POST_MAX_FILESIZE: "${PHP_INI_VALUE_POST_MAX_FILESIZE:?supply via Coolify environment}"
+      PHP_INI_VALUE_MAX_EXECUTION_TIME: "${PHP_INI_VALUE_MAX_EXECUTION_TIME:?supply via Coolify environment}"
+      DOCKER_MAUTIC_ROLE: "${DOCKER_MAUTIC_ROLE:?supply via Coolify environment}"
+      DOCKER_MAUTIC_RUN_MIGRATIONS: "${DOCKER_MAUTIC_RUN_MIGRATIONS:?supply via Coolify environment}"
+    stop_grace_period: 60s
+    mem_limit: 1g
+    memswap_limit: 2g
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+    - 0.0.0.0:8080:80
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -fsS http://127.0.0.1/s/login >/dev/null
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+  worker:
+    image: "${MAUTIC_OCI_01_DIGEST:?approved registry OCI digest required}"
+    environment:
+      MAUTIC_DB_HOST: "${MAUTIC_DB_HOST:?supply via Coolify environment}"
+      MAUTIC_DB_PORT: "${MAUTIC_DB_PORT:?supply via Coolify environment}"
+      MAUTIC_DB_DATABASE: "${MAUTIC_DB_DATABASE:?supply via Coolify environment}"
+      MAUTIC_DB_USER: "${MAUTIC_DB_USER:?supply via Coolify environment}"
+      MAUTIC_DB_PASSWORD: "${MAUTIC_DB_PASSWORD:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_EMAIL: "${MAUTIC_MESSENGER_DSN_EMAIL:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_HIT: "${MAUTIC_MESSENGER_DSN_HIT:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_FAILED: "${MAUTIC_MESSENGER_DSN_FAILED:?supply via Coolify environment}"
+      PHP_INI_VALUE_DATE_TIMEZONE: "${PHP_INI_VALUE_DATE_TIMEZONE:?supply via Coolify environment}"
+      PHP_INI_VALUE_MEMORY_LIMIT: "${PHP_INI_VALUE_MEMORY_LIMIT:?supply via Coolify environment}"
+      PHP_INI_VALUE_UPLOAD_MAX_FILESIZE: "${PHP_INI_VALUE_UPLOAD_MAX_FILESIZE:?supply via Coolify environment}"
+      PHP_INI_VALUE_POST_MAX_FILESIZE: "${PHP_INI_VALUE_POST_MAX_FILESIZE:?supply via Coolify environment}"
+      PHP_INI_VALUE_MAX_EXECUTION_TIME: "${PHP_INI_VALUE_MAX_EXECUTION_TIME:?supply via Coolify environment}"
+      DOCKER_MAUTIC_ROLE: "${DOCKER_MAUTIC_ROLE:?supply via Coolify environment}"
+      DOCKER_MAUTIC_RUN_MIGRATIONS: "${DOCKER_MAUTIC_RUN_MIGRATIONS:?supply via Coolify environment}"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f messenger:consume >/dev/null
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes: &id001
+    - mautic-prod-config:/var/www/html/config
+    - mautic-prod-logs:/var/www/html/var/logs
+    - mautic-prod-media-files:/var/www/html/docroot/media/files
+    - mautic-prod-media-images:/var/www/html/docroot/media/images
+  cron:
+    image: "${MAUTIC_OCI_01_DIGEST:?approved registry OCI digest required}"
+    environment:
+      MAUTIC_DB_HOST: "${MAUTIC_DB_HOST:?supply via Coolify environment}"
+      MAUTIC_DB_PORT: "${MAUTIC_DB_PORT:?supply via Coolify environment}"
+      MAUTIC_DB_DATABASE: "${MAUTIC_DB_DATABASE:?supply via Coolify environment}"
+      MAUTIC_DB_USER: "${MAUTIC_DB_USER:?supply via Coolify environment}"
+      MAUTIC_DB_PASSWORD: "${MAUTIC_DB_PASSWORD:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_EMAIL: "${MAUTIC_MESSENGER_DSN_EMAIL:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_HIT: "${MAUTIC_MESSENGER_DSN_HIT:?supply via Coolify environment}"
+      MAUTIC_MESSENGER_DSN_FAILED: "${MAUTIC_MESSENGER_DSN_FAILED:?supply via Coolify environment}"
+      PHP_INI_VALUE_DATE_TIMEZONE: "${PHP_INI_VALUE_DATE_TIMEZONE:?supply via Coolify environment}"
+      PHP_INI_VALUE_MEMORY_LIMIT: "${PHP_INI_VALUE_MEMORY_LIMIT:?supply via Coolify environment}"
+      PHP_INI_VALUE_UPLOAD_MAX_FILESIZE: "${PHP_INI_VALUE_UPLOAD_MAX_FILESIZE:?supply via Coolify environment}"
+      PHP_INI_VALUE_POST_MAX_FILESIZE: "${PHP_INI_VALUE_POST_MAX_FILESIZE:?supply via Coolify environment}"
+      PHP_INI_VALUE_MAX_EXECUTION_TIME: "${PHP_INI_VALUE_MAX_EXECUTION_TIME:?supply via Coolify environment}"
+      DOCKER_MAUTIC_ROLE: "${DOCKER_MAUTIC_ROLE:?supply via Coolify environment}"
+      DOCKER_MAUTIC_RUN_MIGRATIONS: "${DOCKER_MAUTIC_RUN_MIGRATIONS:?supply via Coolify environment}"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f cron -f >/dev/null
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes: *id001
+volumes:
+  mautic-prod-db:
+    external: true
+    name: tknr3lq7m6qhgdak6tqzmawg_mautic-prod-db
+  mautic-prod-config:
+    external: true
+    name: tknr3lq7m6qhgdak6tqzmawg_mautic-prod-config
+  mautic-prod-logs:
+    external: true
+    name: tknr3lq7m6qhgdak6tqzmawg_mautic-prod-logs
+  mautic-prod-media:
+    external: true
+    name: tknr3lq7m6qhgdak6tqzmawg_mautic-prod-media
+  mautic-prod-media-files:
+    external: true
+    name: tknr3lq7m6qhgdak6tqzmawg_mautic-prod-media-files
+  mautic-prod-media-images:
+    external: true
+    name: tknr3lq7m6qhgdak6tqzmawg_mautic-prod-media-images

@@ -1,0 +1,426 @@
+# Versioned candidate reconstructed from live Coolify 2026-11-22; all ENV VALUES REDACTED.
+# NOT APPROVED FOR DEPLOYMENT. Verify registry manifest, data, secrets, mounts, live E2E and rollback.
+name: supabase-staging
+services:
+  studio:
+    container_name: supabase-studio
+    image: supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8
+    restart: unless-stopped
+    init: true
+    mem_limit: 1g
+    memswap_limit: 2g
+    cpus: 1.0
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - node -e "fetch('http://localhost:3000/api/platform/profile').then((r) => {if
+        (r.status !== 200) throw new Error(r.status)})"
+      timeout: 10s
+      interval: 5s
+      retries: 3
+      start_period: 20s
+    environment:
+      HOSTNAME: "${HOSTNAME:?supply via Coolify environment}"
+      STUDIO_PG_META_URL: "${STUDIO_PG_META_URL:?supply via Coolify environment}"
+      POSTGRES_PORT: "${POSTGRES_PORT:?supply via Coolify environment}"
+      POSTGRES_HOST: "${POSTGRES_HOST:?supply via Coolify environment}"
+      POSTGRES_DB: "${POSTGRES_DB:?supply via Coolify environment}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?supply via Coolify environment}"
+      POSTGRES_USER_READ_WRITE: "${POSTGRES_USER_READ_WRITE:?supply via Coolify environment}"
+      PG_META_CRYPTO_KEY: "${PG_META_CRYPTO_KEY:?supply via Coolify environment}"
+      PGRST_DB_SCHEMAS: "${PGRST_DB_SCHEMAS:?supply via Coolify environment}"
+      PGRST_DB_MAX_ROWS: "${PGRST_DB_MAX_ROWS:?supply via Coolify environment}"
+      PGRST_DB_EXTRA_SEARCH_PATH: "${PGRST_DB_EXTRA_SEARCH_PATH:?supply via Coolify environment}"
+      DEFAULT_ORGANIZATION_NAME: "${DEFAULT_ORGANIZATION_NAME:?supply via Coolify environment}"
+      DEFAULT_PROJECT_NAME: "${DEFAULT_PROJECT_NAME:?supply via Coolify environment}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:?supply via Coolify environment}"
+      SUPABASE_URL: "${SUPABASE_URL:?supply via Coolify environment}"
+      SUPABASE_PUBLIC_URL: "${SUPABASE_PUBLIC_URL:?supply via Coolify environment}"
+      SUPABASE_ANON_KEY: "${SUPABASE_ANON_KEY:?supply via Coolify environment}"
+      SUPABASE_SERVICE_KEY: "${SUPABASE_SERVICE_KEY:?supply via Coolify environment}"
+      AUTH_JWT_SECRET: "${AUTH_JWT_SECRET:?supply via Coolify environment}"
+      SUPABASE_PUBLISHABLE_KEY: "${SUPABASE_PUBLISHABLE_KEY:?supply via Coolify environment}"
+      SUPABASE_SECRET_KEY: "${SUPABASE_SECRET_KEY:?supply via Coolify environment}"
+      ENABLED_FEATURES_LOGS_ALL: "${ENABLED_FEATURES_LOGS_ALL:?supply via Coolify environment}"
+      SNIPPETS_MANAGEMENT_FOLDER: "${SNIPPETS_MANAGEMENT_FOLDER:?supply via Coolify environment}"
+      EDGE_FUNCTIONS_MANAGEMENT_FOLDER: "${EDGE_FUNCTIONS_MANAGEMENT_FOLDER:?supply via Coolify environment}"
+    volumes:
+    - supabase-staging-snippets:/app/snippets:z
+    - supabase-staging-functions:/app/edge-functions:ro,z
+  api-gw:
+    container_name: supabase-envoy
+    image: envoyproxy/envoy@sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 1g
+    networks:
+      default:
+        aliases:
+        - envoy
+        - kong
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      studio:
+        condition: service_healthy
+    volumes:
+    - /data/coolify/mission/supabase-staging-config-restore-20261028T2125Z/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    - /data/coolify/mission/supabase-staging-config-restore-20261028T2125Z/envoy/cds-staging.yaml:/etc/envoy/cds.yaml:ro
+    - /data/coolify/mission/supabase-staging-config-restore-20261028T2125Z/envoy/lds.template.yaml:/etc/envoy/lds.template.yaml:ro
+    - /data/coolify/mission/supabase-staging-config-restore-20261028T2125Z/envoy/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    environment:
+      ANON_KEY: "${ANON_KEY:?supply via Coolify environment}"
+      SERVICE_ROLE_KEY: "${SERVICE_ROLE_KEY:?supply via Coolify environment}"
+      SUPABASE_PUBLISHABLE_KEY: "${SUPABASE_PUBLISHABLE_KEY:?supply via Coolify environment}"
+      SUPABASE_SECRET_KEY: "${SUPABASE_SECRET_KEY:?supply via Coolify environment}"
+      ANON_KEY_ASYMMETRIC: "${ANON_KEY_ASYMMETRIC:?supply via Coolify environment}"
+      SERVICE_ROLE_KEY_ASYMMETRIC: "${SERVICE_ROLE_KEY_ASYMMETRIC:?supply via Coolify environment}"
+      SUPABASE_PUBLIC_URL: "${SUPABASE_PUBLIC_URL:?supply via Coolify environment}"
+      DASHBOARD_USERNAME: "${DASHBOARD_USERNAME:?supply via Coolify environment}"
+      DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:?supply via Coolify environment}"
+    entrypoint:
+    - /bin/sh
+    - /docker-entrypoint.sh
+    ports:
+    - 0.0.0.0:8000:8000
+  auth:
+    container_name: supabase-auth
+    image: supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --no-verbose
+      - --tries=1
+      - --spider
+      - http://localhost:9999/health
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: "${GOTRUE_API_HOST:?supply via Coolify environment}"
+      GOTRUE_API_PORT: "${GOTRUE_API_PORT:?supply via Coolify environment}"
+      API_EXTERNAL_URL: "${API_EXTERNAL_URL:?supply via Coolify environment}"
+      GOTRUE_DB_DRIVER: "${GOTRUE_DB_DRIVER:?supply via Coolify environment}"
+      GOTRUE_DB_DATABASE_URL: "${GOTRUE_DB_DATABASE_URL:?supply via Coolify environment}"
+      GOTRUE_SITE_URL: "${GOTRUE_SITE_URL:?supply via Coolify environment}"
+      GOTRUE_URI_ALLOW_LIST: "${GOTRUE_URI_ALLOW_LIST:?supply via Coolify environment}"
+      GOTRUE_DISABLE_SIGNUP: "${GOTRUE_DISABLE_SIGNUP:?supply via Coolify environment}"
+      GOTRUE_JWT_ADMIN_ROLES: "${GOTRUE_JWT_ADMIN_ROLES:?supply via Coolify environment}"
+      GOTRUE_JWT_AUD: "${GOTRUE_JWT_AUD:?supply via Coolify environment}"
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: "${GOTRUE_JWT_DEFAULT_GROUP_NAME:?supply via Coolify environment}"
+      GOTRUE_JWT_EXP: "${GOTRUE_JWT_EXP:?supply via Coolify environment}"
+      GOTRUE_JWT_SECRET: "${GOTRUE_JWT_SECRET:?supply via Coolify environment}"
+      GOTRUE_JWT_KEYS: "${GOTRUE_JWT_KEYS:?supply via Coolify environment}"
+      GOTRUE_JWT_ISSUER: "${GOTRUE_JWT_ISSUER:?supply via Coolify environment}"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "${GOTRUE_EXTERNAL_EMAIL_ENABLED:?supply via Coolify environment}"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "${GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED:?supply via Coolify environment}"
+      GOTRUE_MAILER_AUTOCONFIRM: "${GOTRUE_MAILER_AUTOCONFIRM:?supply via Coolify environment}"
+      GOTRUE_SMTP_ADMIN_EMAIL: "${GOTRUE_SMTP_ADMIN_EMAIL:?supply via Coolify environment}"
+      GOTRUE_SMTP_HOST: "${GOTRUE_SMTP_HOST:?supply via Coolify environment}"
+      GOTRUE_SMTP_PORT: "${GOTRUE_SMTP_PORT:?supply via Coolify environment}"
+      GOTRUE_SMTP_USER: "${GOTRUE_SMTP_USER:?supply via Coolify environment}"
+      GOTRUE_SMTP_PASS: "${GOTRUE_SMTP_PASS:?supply via Coolify environment}"
+      GOTRUE_SMTP_SENDER_NAME: "${GOTRUE_SMTP_SENDER_NAME:?supply via Coolify environment}"
+      GOTRUE_MAILER_URLPATHS_INVITE: "${GOTRUE_MAILER_URLPATHS_INVITE:?supply via Coolify environment}"
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: "${GOTRUE_MAILER_URLPATHS_CONFIRMATION:?supply via Coolify environment}"
+      GOTRUE_MAILER_URLPATHS_RECOVERY: "${GOTRUE_MAILER_URLPATHS_RECOVERY:?supply via Coolify environment}"
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: "${GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE:?supply via Coolify environment}"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "${GOTRUE_EXTERNAL_PHONE_ENABLED:?supply via Coolify environment}"
+      GOTRUE_SMS_AUTOCONFIRM: "${GOTRUE_SMS_AUTOCONFIRM:?supply via Coolify environment}"
+  rest:
+    container_name: supabase-rest
+    image: postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - postgrest
+      - --ready
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    environment:
+      PGRST_DB_URI: "${PGRST_DB_URI:?supply via Coolify environment}"
+      PGRST_DB_SCHEMAS: "${PGRST_DB_SCHEMAS:?supply via Coolify environment}"
+      PGRST_DB_MAX_ROWS: "${PGRST_DB_MAX_ROWS:?supply via Coolify environment}"
+      PGRST_DB_EXTRA_SEARCH_PATH: "${PGRST_DB_EXTRA_SEARCH_PATH:?supply via Coolify environment}"
+      PGRST_DB_ANON_ROLE: "${PGRST_DB_ANON_ROLE:?supply via Coolify environment}"
+      PGRST_ADMIN_SERVER_PORT: "${PGRST_ADMIN_SERVER_PORT:?supply via Coolify environment}"
+      PGRST_ADMIN_SERVER_HOST: "${PGRST_ADMIN_SERVER_HOST:?supply via Coolify environment}"
+      PGRST_JWT_SECRET: "${PGRST_JWT_SECRET:?supply via Coolify environment}"
+      PGRST_DB_USE_LEGACY_GUCS: "${PGRST_DB_USE_LEGACY_GUCS:?supply via Coolify environment}"
+      PGRST_APP_SETTINGS_JWT_SECRET: "${PGRST_APP_SETTINGS_JWT_SECRET:?supply via Coolify environment}"
+      PGRST_APP_SETTINGS_JWT_EXP: "${PGRST_APP_SETTINGS_JWT_EXP:?supply via Coolify environment}"
+    command:
+    - postgrest
+  realtime:
+    container_name: realtime-dev.supabase-realtime
+    image: supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -sSfL --head -o /dev/null http://localhost:4000/
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
+    environment:
+      PORT: "${PORT:?supply via Coolify environment}"
+      DB_HOST: "${DB_HOST:?supply via Coolify environment}"
+      DB_PORT: "${DB_PORT:?supply via Coolify environment}"
+      DB_USER: "${DB_USER:?supply via Coolify environment}"
+      DB_PASSWORD: "${DB_PASSWORD:?supply via Coolify environment}"
+      DB_NAME: "${DB_NAME:?supply via Coolify environment}"
+      DB_AFTER_CONNECT_QUERY: "${DB_AFTER_CONNECT_QUERY:?supply via Coolify environment}"
+      DB_ENC_KEY: "${DB_ENC_KEY:?supply via Coolify environment}"
+      API_JWT_SECRET: "${API_JWT_SECRET:?supply via Coolify environment}"
+      API_JWT_JWKS: "${API_JWT_JWKS:?supply via Coolify environment}"
+      SECRET_KEY_BASE: "${SECRET_KEY_BASE:?supply via Coolify environment}"
+      METRICS_JWT_SECRET: "${METRICS_JWT_SECRET:?supply via Coolify environment}"
+      ERL_AFLAGS: "${ERL_AFLAGS:?supply via Coolify environment}"
+      DNS_NODES: "${DNS_NODES:?supply via Coolify environment}"
+      RLIMIT_NOFILE: "${RLIMIT_NOFILE:?supply via Coolify environment}"
+      APP_NAME: "${APP_NAME:?supply via Coolify environment}"
+      SEED_SELF_HOST: "${SEED_SELF_HOST:?supply via Coolify environment}"
+      RUN_JANITOR: "${RUN_JANITOR:?supply via Coolify environment}"
+      DISABLE_HEALTHCHECK_LOGGING: "${DISABLE_HEALTHCHECK_LOGGING:?supply via Coolify environment}"
+  storage:
+    container_name: supabase-storage
+    image: supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --no-verbose
+      - --tries=1
+      - --spider
+      - http://storage:5000/status
+      timeout: 5s
+      interval: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      ANON_KEY: "${ANON_KEY:?supply via Coolify environment}"
+      SERVICE_KEY: "${SERVICE_KEY:?supply via Coolify environment}"
+      POSTGREST_URL: "${POSTGREST_URL:?supply via Coolify environment}"
+      AUTH_JWT_SECRET: "${AUTH_JWT_SECRET:?supply via Coolify environment}"
+      JWT_JWKS: "${JWT_JWKS:?supply via Coolify environment}"
+      DATABASE_URL: "${DATABASE_URL:?supply via Coolify environment}"
+      STORAGE_PUBLIC_URL: "${STORAGE_PUBLIC_URL:?supply via Coolify environment}"
+      REQUEST_ALLOW_X_FORWARDED_PATH: "${REQUEST_ALLOW_X_FORWARDED_PATH:?supply via Coolify environment}"
+      FILE_SIZE_LIMIT: "${FILE_SIZE_LIMIT:?supply via Coolify environment}"
+      STORAGE_BACKEND: "${STORAGE_BACKEND:?supply via Coolify environment}"
+      GLOBAL_S3_BUCKET: "${GLOBAL_S3_BUCKET:?supply via Coolify environment}"
+      FILE_STORAGE_BACKEND_PATH: "${FILE_STORAGE_BACKEND_PATH:?supply via Coolify environment}"
+      TENANT_ID: "${TENANT_ID:?supply via Coolify environment}"
+      REGION: "${REGION:?supply via Coolify environment}"
+      ENABLE_IMAGE_TRANSFORMATION: "${ENABLE_IMAGE_TRANSFORMATION:?supply via Coolify environment}"
+      IMGPROXY_URL: "${IMGPROXY_URL:?supply via Coolify environment}"
+      S3_PROTOCOL_ACCESS_KEY_ID: "${S3_PROTOCOL_ACCESS_KEY_ID:?supply via Coolify environment}"
+      S3_PROTOCOL_ACCESS_KEY_SECRET: "${S3_PROTOCOL_ACCESS_KEY_SECRET:?supply via Coolify environment}"
+    volumes:
+    - supabase-staging-storage:/var/lib/storage:z
+  imgproxy:
+    container_name: supabase-imgproxy
+    image: darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d
+    restart: unless-stopped
+    volumes:
+    - supabase-staging-storage:/var/lib/storage:z
+    healthcheck:
+      test:
+      - CMD
+      - imgproxy
+      - health
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      IMGPROXY_BIND: "${IMGPROXY_BIND:?supply via Coolify environment}"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: "${IMGPROXY_LOCAL_FILESYSTEM_ROOT:?supply via Coolify environment}"
+      IMGPROXY_USE_ETAG: "${IMGPROXY_USE_ETAG:?supply via Coolify environment}"
+      IMGPROXY_AUTO_WEBP: "${IMGPROXY_AUTO_WEBP:?supply via Coolify environment}"
+      IMGPROXY_MAX_SRC_RESOLUTION: "${IMGPROXY_MAX_SRC_RESOLUTION:?supply via Coolify environment}"
+  meta:
+    container_name: supabase-meta
+    image: supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300
+    restart: unless-stopped
+    init: true
+    mem_limit: 768m
+    memswap_limit: 1536m
+    cpus: 1.0
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: "${PG_META_PORT:?supply via Coolify environment}"
+      PG_META_DB_HOST: "${PG_META_DB_HOST:?supply via Coolify environment}"
+      PG_META_DB_PORT: "${PG_META_DB_PORT:?supply via Coolify environment}"
+      PG_META_DB_NAME: "${PG_META_DB_NAME:?supply via Coolify environment}"
+      PG_META_DB_USER: "${PG_META_DB_USER:?supply via Coolify environment}"
+      PG_META_DB_PASSWORD: "${PG_META_DB_PASSWORD:?supply via Coolify environment}"
+      CRYPTO_KEY: "${CRYPTO_KEY:?supply via Coolify environment}"
+  functions:
+    container_name: supabase-edge-functions
+    image: supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120
+    restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 2g
+    volumes:
+    - supabase-staging-functions:/home/deno/functions:z
+    - supabase-staging-deno-cache:/root/.cache/deno
+    depends_on:
+      api-gw:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - timeout 1 bash -c '</dev/tcp/127.0.0.1/9000'
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    environment:
+      SUPABASE_PUBLISHABLE_KEYS: "${SUPABASE_PUBLISHABLE_KEYS:?supply via Coolify environment}"
+      SUPABASE_SECRET_KEYS: "${SUPABASE_SECRET_KEYS:?supply via Coolify environment}"
+      JWT_SECRET: "${JWT_SECRET:?supply via Coolify environment}"
+      SUPABASE_JWKS: "${SUPABASE_JWKS:?supply via Coolify environment}"
+      SUPABASE_URL: "${SUPABASE_URL:?supply via Coolify environment}"
+      SUPABASE_PUBLIC_URL: "${SUPABASE_PUBLIC_URL:?supply via Coolify environment}"
+      SUPABASE_ANON_KEY: "${SUPABASE_ANON_KEY:?supply via Coolify environment}"
+      SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:?supply via Coolify environment}"
+      SUPABASE_DB_URL: "${SUPABASE_DB_URL:?supply via Coolify environment}"
+      VERIFY_JWT: "${VERIFY_JWT:?supply via Coolify environment}"
+    command:
+    - start
+    - --main-service
+    - /home/deno/functions/main
+  db:
+    container_name: supabase-db
+    image: supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    restart: unless-stopped
+    volumes:
+    - supabase-staging-db-realtime-sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:Z
+    - supabase-staging-db-webhooks-sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:Z
+    - supabase-staging-db-roles-sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:Z
+    - supabase-staging-db-jwt-sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:Z
+    - supabase-staging-db-data:/var/lib/postgresql/data:Z
+    - supabase-staging-db-supabase-sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:Z
+    - supabase-staging-db-logs-sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:Z
+    - supabase-staging-db-pooler-sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
+    - supabase-staging-db-config:/etc/postgresql-custom
+    healthcheck:
+      test:
+      - CMD
+      - pg_isready
+      - -U
+      - postgres
+      - -h
+      - localhost
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: "${POSTGRES_HOST:?supply via Coolify environment}"
+      PGPORT: "${PGPORT:?supply via Coolify environment}"
+      POSTGRES_PORT: "${POSTGRES_PORT:?supply via Coolify environment}"
+      PGPASSWORD: "${PGPASSWORD:?supply via Coolify environment}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?supply via Coolify environment}"
+      PGDATABASE: "${PGDATABASE:?supply via Coolify environment}"
+      POSTGRES_DB: "${POSTGRES_DB:?supply via Coolify environment}"
+      JWT_SECRET: "${JWT_SECRET:?supply via Coolify environment}"
+      JWT_EXP: "${JWT_EXP:?supply via Coolify environment}"
+    command:
+    - postgres
+    - -c
+    - config_file=/etc/postgresql/postgresql.conf
+    - -c
+    - log_min_messages=fatal
+  supavisor:
+    container_name: supabase-pooler
+    image: supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07
+    restart: unless-stopped
+    volumes:
+    - /data/coolify/mission/supabase-staging/pooler.exs:/etc/pooler/pooler.exs:ro
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -sSfL
+      - --head
+      - -o
+      - /dev/null
+      - http://127.0.0.1:4000/api/health
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "${PORT:?supply via Coolify environment}"
+      POSTGRES_PORT: "${POSTGRES_PORT:?supply via Coolify environment}"
+      POSTGRES_HOST: "${POSTGRES_HOST:?supply via Coolify environment}"
+      POSTGRES_DB: "${POSTGRES_DB:?supply via Coolify environment}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?supply via Coolify environment}"
+      DATABASE_URL: "${DATABASE_URL:?supply via Coolify environment}"
+      CLUSTER_POSTGRES: "${CLUSTER_POSTGRES:?supply via Coolify environment}"
+      SECRET_KEY_BASE: "${SECRET_KEY_BASE:?supply via Coolify environment}"
+      VAULT_ENC_KEY: "${VAULT_ENC_KEY:?supply via Coolify environment}"
+      API_JWT_SECRET: "${API_JWT_SECRET:?supply via Coolify environment}"
+      METRICS_JWT_SECRET: "${METRICS_JWT_SECRET:?supply via Coolify environment}"
+      REGION: "${REGION:?supply via Coolify environment}"
+      ERL_AFLAGS: "${ERL_AFLAGS:?supply via Coolify environment}"
+      POOLER_TENANT_ID: "${POOLER_TENANT_ID:?supply via Coolify environment}"
+      POOLER_DEFAULT_POOL_SIZE: "${POOLER_DEFAULT_POOL_SIZE:?supply via Coolify environment}"
+      POOLER_MAX_CLIENT_CONN: "${POOLER_MAX_CLIENT_CONN:?supply via Coolify environment}"
+      POOLER_POOL_MODE: "${POOLER_POOL_MODE:?supply via Coolify environment}"
+      DB_POOL_SIZE: "${DB_POOL_SIZE:?supply via Coolify environment}"
+    command:
+    - /bin/sh
+    - -c
+    - /app/bin/migrate && /app/bin/supavisor eval "$$(cat /etc/pooler/pooler.exs)"
+      && /app/bin/server
+volumes:
+  supabase-staging-api-envoy-cds-yaml: null
+  supabase-staging-api-envoy-docker-entrypoint-sh: null
+  supabase-staging-api-envoy-envoy-yaml: null
+  supabase-staging-api-envoy-lds-template-yaml: null
+  supabase-staging-db-config: null
+  supabase-staging-db-data: null
+  supabase-staging-db-jwt-sql: null
+  supabase-staging-db-logs-sql: null
+  supabase-staging-db-pooler-sql: null
+  supabase-staging-db-realtime-sql: null
+  supabase-staging-db-roles-sql: null
+  supabase-staging-db-supabase-sql: null
+  supabase-staging-db-webhooks-sql: null
+  supabase-staging-deno-cache: null
+  supabase-staging-functions: null
+  supabase-staging-pooler-pooler-exs: null
+  supabase-staging-snippets: null
+  supabase-staging-storage: null

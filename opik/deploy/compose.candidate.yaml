@@ -1,0 +1,297 @@
+# Versioned candidate reconstructed from live Coolify 2026-11-22; all ENV VALUES REDACTED.
+# NOT APPROVED FOR DEPLOYMENT. Verify registry manifest, data, secrets, mounts, live E2E and rollback.
+services:
+  mysql:
+    image: mysql@sha256:ac80b6e09e5b12b4f9d5cd4f6425e43464247aa4ba4f6169da5daf59e5877f7d
+    restart: unless-stopped
+    expose:
+    - '3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?supply via Coolify environment}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:?supply via Coolify environment}"
+      MYSQL_USER: "${MYSQL_USER:?supply via Coolify environment}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?supply via Coolify environment}"
+    healthcheck:
+      test:
+      - CMD
+      - mysqladmin
+      - ping
+      - -h
+      - 127.0.0.1
+      - --silent
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    volumes:
+    - opik-staging-mysql:/var/lib/mysql
+  redis:
+    image: redis@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a
+    restart: unless-stopped
+    expose:
+    - '6379'
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test:
+      - CMD
+      - nc
+      - -z
+      - localhost
+      - '6379'
+      interval: 2s
+      timeout: 4s
+      retries: 20
+      start_period: 30s
+    volumes:
+    - opik-staging-redis-data:/data
+  zookeeper:
+    image: zookeeper@sha256:dfa9ba46d14bd52bcb3c1dac3ba91f179cf4cebf7ee576e1c2df09c68fc1d30d
+    restart: unless-stopped
+    user: root
+    expose:
+    - '2181'
+    entrypoint:
+    - /bin/bash
+    - -c
+    - 'mkdir -p /bitnami/zookeeper/data
+
+      chown -R zookeeper:zookeeper /bitnami/zookeeper
+
+      exec gosu zookeeper /docker-entrypoint.sh zkServer.sh start-foreground
+
+      '
+    environment:
+      JVMFLAGS: "${JVMFLAGS:?supply via Coolify environment}"
+      ZOO_4LW_COMMANDS_WHITELIST: "${ZOO_4LW_COMMANDS_WHITELIST:?supply via Coolify environment}"
+      ZOO_DATA_DIR: "${ZOO_DATA_DIR:?supply via Coolify environment}"
+      ZOO_DATA_LOG_DIR: "${ZOO_DATA_LOG_DIR:?supply via Coolify environment}"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - echo ruok | nc localhost 2181 | grep -q imok
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    volumes:
+    - opik-staging-zookeeper:/bitnami/zookeeper
+  clickhouse:
+    image: clickhouse/clickhouse-server@sha256:b45ab149f0d331b944b4aa2ccdd47d0242238fd39e68ec524ad63338e4b9d8f8
+    restart: unless-stopped
+    expose:
+    - '8123'
+    - '9000'
+    environment:
+      CLICKHOUSE_DB: "${CLICKHOUSE_DB:?supply via Coolify environment}"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:?supply via Coolify environment}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:?supply via Coolify environment}"
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "${CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT:?supply via Coolify environment}"
+    configs:
+    - source: opik_clickhouse_macros
+      target: /etc/clickhouse-server/config.d/99-opik-macros.xml
+    volumes:
+    - opik-staging-clickhouse-data:/var/lib/clickhouse
+    - opik-staging-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --spider
+      - -q
+      - http://127.0.0.1:8123/ping
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+  minio:
+    image: cloudpirates/image-minio@sha256:8dc02a7e509336c8bbb67962086d691bdcde20a2c9327ed68e5081a681f6dbfc
+    restart: unless-stopped
+    expose:
+    - '9000'
+    - '9090'
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?supply via Coolify environment}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?supply via Coolify environment}"
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - mkdir -p /data && exec minio server --console-address ':9090' /data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - MC_HOST_local=http://localhost:9000 mc ready local
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    volumes:
+    - opik-staging-minio-data:/data
+  backend:
+    image: ghcr.io/comet-ml/opik/opik-backend@sha256:ad728306a10f850376405eba6569ddb936e0649782994007487d18c0e0e171b8
+    restart: unless-stopped
+    expose:
+    - '8080'
+    - '3003'
+    command:
+    - bash
+    - -c
+    - ./run_db_migrations.sh && ./provision_agent_insights_readonly_user.sh && ./entrypoint.sh
+    environment:
+      STATE_DB_PROTOCOL: "${STATE_DB_PROTOCOL:?supply via Coolify environment}"
+      STATE_DB_URL: "${STATE_DB_URL:?supply via Coolify environment}"
+      STATE_DB_DATABASE_NAME: "${STATE_DB_DATABASE_NAME:?supply via Coolify environment}"
+      STATE_DB_USER: "${STATE_DB_USER:?supply via Coolify environment}"
+      STATE_DB_PASS: "${STATE_DB_PASS:?supply via Coolify environment}"
+      ANALYTICS_DB_MIGRATIONS_URL: "${ANALYTICS_DB_MIGRATIONS_URL:?supply via Coolify environment}"
+      ANALYTICS_DB_MIGRATIONS_USER: "${ANALYTICS_DB_MIGRATIONS_USER:?supply via Coolify environment}"
+      ANALYTICS_DB_MIGRATIONS_PASS: "${ANALYTICS_DB_MIGRATIONS_PASS:?supply via Coolify environment}"
+      ANALYTICS_DB_PROTOCOL: "${ANALYTICS_DB_PROTOCOL:?supply via Coolify environment}"
+      ANALYTICS_DB_HOST: "${ANALYTICS_DB_HOST:?supply via Coolify environment}"
+      ANALYTICS_DB_PORT: "${ANALYTICS_DB_PORT:?supply via Coolify environment}"
+      ANALYTICS_DB_DATABASE_NAME: "${ANALYTICS_DB_DATABASE_NAME:?supply via Coolify environment}"
+      ANALYTICS_DB_USERNAME: "${ANALYTICS_DB_USERNAME:?supply via Coolify environment}"
+      ANALYTICS_DB_PASS: "${ANALYTICS_DB_PASS:?supply via Coolify environment}"
+      ANALYTICS_DB_READ_ONLY_FREEFORM_SQL_USER: "${ANALYTICS_DB_READ_ONLY_FREEFORM_SQL_USER:?supply via Coolify environment}"
+      ANALYTICS_DB_READ_ONLY_FREEFORM_SQL_PASS: "${ANALYTICS_DB_READ_ONLY_FREEFORM_SQL_PASS:?supply via Coolify environment}"
+      ANALYTICS_DB_HTTP_HEADERS_PROGRESS_INTERVAL_MS: "${ANALYTICS_DB_HTTP_HEADERS_PROGRESS_INTERVAL_MS:?supply via Coolify environment}"
+      JAVA_OPTS: "${JAVA_OPTS:?supply via Coolify environment}"
+      REDIS_URL: "${REDIS_URL:?supply via Coolify environment}"
+      OPIK_OTEL_SDK_ENABLED: "${OPIK_OTEL_SDK_ENABLED:?supply via Coolify environment}"
+      OPIK_USAGE_REPORT_ENABLED: "${OPIK_USAGE_REPORT_ENABLED:?supply via Coolify environment}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:?supply via Coolify environment}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:?supply via Coolify environment}"
+      IS_MINIO: "${IS_MINIO:?supply via Coolify environment}"
+      S3_URL: "${S3_URL:?supply via Coolify environment}"
+      PYTHON_EVALUATOR_URL: "${PYTHON_EVALUATOR_URL:?supply via Coolify environment}"
+      TOGGLE_OLLIE_ENABLED: "${TOGGLE_OLLIE_ENABLED:?supply via Coolify environment}"
+      TOGGLE_CUSTOM_CHARTS_ENABLED: "${TOGGLE_CUSTOM_CHARTS_ENABLED:?supply via Coolify environment}"
+      TOGGLE_OPIK_AI_ENABLED: "${TOGGLE_OPIK_AI_ENABLED:?supply via Coolify environment}"
+      TOGGLE_GUARDRAILS_ENABLED: "${TOGGLE_GUARDRAILS_ENABLED:?supply via Coolify environment}"
+      TOGGLE_WELCOME_WIZARD_ENABLED: "${TOGGLE_WELCOME_WIZARD_ENABLED:?supply via Coolify environment}"
+      TOGGLE_ANNOTATION_QUEUE_AUTOMATION_ENABLED: "${TOGGLE_ANNOTATION_QUEUE_AUTOMATION_ENABLED:?supply via Coolify environment}"
+      LLM_MODEL_REGISTRY_DEFAULT_RESOURCE: "${LLM_MODEL_REGISTRY_DEFAULT_RESOURCE:?supply via Coolify environment}"
+      LLM_MODEL_REGISTRY_REMOTE_ENABLED: "${LLM_MODEL_REGISTRY_REMOTE_ENABLED:?supply via Coolify environment}"
+      LLM_PROVIDER_TOKEN_AUTH_DESTINATION_GUARD: "${LLM_PROVIDER_TOKEN_AUTH_DESTINATION_GUARD:?supply via Coolify environment}"
+      LLM_PROVIDER_DESTINATION_GUARD: "${LLM_PROVIDER_DESTINATION_GUARD:?supply via Coolify environment}"
+      LLM_PROVIDER_DESTINATION_SCHEME: "${LLM_PROVIDER_DESTINATION_SCHEME:?supply via Coolify environment}"
+      LLM_PROVIDER_VIDEO_URL_DESTINATION_GUARD: "${LLM_PROVIDER_VIDEO_URL_DESTINATION_GUARD:?supply via Coolify environment}"
+      CORS: "${CORS:?supply via Coolify environment}"
+      ATTACHMENTS_STRIP_MIN_SIZE: "${ATTACHMENTS_STRIP_MIN_SIZE:?supply via Coolify environment}"
+      JACKSON_MAX_STRING_LENGTH: "${JACKSON_MAX_STRING_LENGTH:?supply via Coolify environment}"
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8080/health-check
+      interval: 10s
+      timeout: 10s
+      retries: 120
+      start_period: 30s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs:
+    - /tmp
+  python-backend:
+    image: ghcr.io/comet-ml/opik/opik-python-backend@sha256:cc810396b1c27a61678918ca2013d9a2792b5a45cf793a6a449113a4e4af47d9
+    restart: unless-stopped
+    privileged: true
+    expose:
+    - '8000'
+    environment:
+      OPIK_OTEL_SDK_ENABLED: "${OPIK_OTEL_SDK_ENABLED:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_IMAGE_TAG: "${PYTHON_CODE_EXECUTOR_IMAGE_TAG:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_STRATEGY: "${PYTHON_CODE_EXECUTOR_STRATEGY:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_CONTAINERS_NUM: "${PYTHON_CODE_EXECUTOR_CONTAINERS_NUM:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_EXEC_TIMEOUT_IN_SECS: "${PYTHON_CODE_EXECUTOR_EXEC_TIMEOUT_IN_SECS:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_ALLOW_NETWORK: "${PYTHON_CODE_EXECUTOR_ALLOW_NETWORK:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_CPU_SHARES: "${PYTHON_CODE_EXECUTOR_CPU_SHARES:?supply via Coolify environment}"
+      PYTHON_CODE_EXECUTOR_MEM_LIMIT: "${PYTHON_CODE_EXECUTOR_MEM_LIMIT:?supply via Coolify environment}"
+      OPIK_VERSION: "${OPIK_VERSION:?supply via Coolify environment}"
+      OPIK_REVERSE_PROXY_URL: "${OPIK_REVERSE_PROXY_URL:?supply via Coolify environment}"
+      PYTHON_BACKEND_PORT: "${PYTHON_BACKEND_PORT:?supply via Coolify environment}"
+      REDIS_URL: "${REDIS_URL:?supply via Coolify environment}"
+      RQ_WORKER_ENABLED: "${RQ_WORKER_ENABLED:?supply via Coolify environment}"
+      OPTSTUDIO_MAX_CONCURRENT_JOBS: "${OPTSTUDIO_MAX_CONCURRENT_JOBS:?supply via Coolify environment}"
+      OPTSTUDIO_LOG_LEVEL: "${OPTSTUDIO_LOG_LEVEL:?supply via Coolify environment}"
+      OPTSTUDIO_LLM_MAX_TOKENS: "${OPTSTUDIO_LLM_MAX_TOKENS:?supply via Coolify environment}"
+      RQ_WORKER_TTL_FAILURE: "${RQ_WORKER_TTL_FAILURE:?supply via Coolify environment}"
+      OPIK_URL_OVERRIDE: "${OPIK_URL_OVERRIDE:?supply via Coolify environment}"
+    tmpfs:
+    - /var/lib/docker
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import socket; socket.create_connection(('127.0.0.1',8000),2).close()
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  frontend:
+    image: ghcr.io/comet-ml/opik/opik-frontend@sha256:00e7669689e286a901844d576377b3dedcebce448ee6da0535a313158792a344
+    restart: unless-stopped
+    expose:
+    - '5173'
+    environment:
+      OPIK_VERSION: "${OPIK_VERSION:?supply via Coolify environment}"
+      NGINX_PORT: "${NGINX_PORT:?supply via Coolify environment}"
+      NGINX_CONF_SUFFIX: "${NGINX_CONF_SUFFIX:?supply via Coolify environment}"
+      OTEL_TRACE: "${OTEL_TRACE:?supply via Coolify environment}"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl --fail http://localhost:5173/health
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+    - type: bind
+      source: /data/coolify/mission/opik-staging-frontend/nginx_default_local.conf
+      target: /etc/nginx/templates/default.conf.template
+      read_only: true
+    ports:
+    - 0.0.0.0:5173:5173
+volumes:
+  opik-staging-mysql: null
+  opik-staging-clickhouse-data: null
+  opik-staging-clickhouse-logs: null
+  opik-staging-zookeeper: null
+  opik-staging-redis-data: null
+  opik-staging-minio-data: null
+
+configs:
+  opik_clickhouse_macros:
+    content: |
+      <clickhouse>
+        <macros>
+          <shard>1</shard>
+          <replica>clickhouse</replica>
+        </macros>
+        <zookeeper>
+          <node>
+            <host>zookeeper</host>
+            <port>2181</port>
+          </node>
+        </zookeeper>
+      </clickhouse>

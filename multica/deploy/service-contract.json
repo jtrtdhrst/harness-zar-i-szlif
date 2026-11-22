@@ -26,7 +26,7 @@
     }
   ],
   "source_build_ready": false,
-  "versioned_compose": null,
+  "versioned_compose": "multica/deploy/compose.candidate.yaml",
   "watched_paths": [
     "multica/"
   ],
