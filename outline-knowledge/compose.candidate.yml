@@ -9,7 +9,7 @@ services:
       SECRET_KEY: '${OUTLINE_SECRET_KEY}'
       UTILS_SECRET: '${OUTLINE_UTILS_SECRET}'
       DATABASE_URL: 'postgres://outline:${OUTLINE_DB_PASSWORD}@database:5432/outline?sslmode=disable'
-      REDIS_URL: 'redis://redis:6379'
+      REDIS_URL: 'redis://:${OUTLINE_REDIS_PASSWORD:?OUTLINE_REDIS_PASSWORD is required}@redis:6379'
       PGSSLMODE: disable
       FILE_STORAGE: local
       FILE_STORAGE_LOCAL_ROOT_DIR: /var/lib/outline/data
@@ -58,19 +58,20 @@ services:
   redis:
     image: "${PINNED_IMAGE_OUTLINE_KNOWLEDGE_3:?Set reviewed immutable OCI digest}"
     restart: unless-stopped
+    environment:
+      OUTLINE_REDIS_PASSWORD: '${OUTLINE_REDIS_PASSWORD:?OUTLINE_REDIS_PASSWORD is required}'
     command:
-      - redis-server
-      - '--appendonly'
-      - 'yes'
+      - sh
+      - -ec
+      - 'exec redis-server --appendonly yes --requirepass "$OUTLINE_REDIS_PASSWORD"'
     volumes:
       - 'outline-redis:/data'
     networks:
       - g16yynrbdpkab4hnmaoj7vxk
     healthcheck:
       test:
-        - CMD
-        - redis-cli
-        - ping
+        - CMD-SHELL
+        - 'REDISCLI_AUTH="$OUTLINE_REDIS_PASSWORD" redis-cli ping | grep -qx PONG'
       interval: 10s
       timeout: 5s
       retries: 10
