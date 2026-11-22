@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "repowise-mcp-runtime",
+  "uuid": "lecwi3emh9hjxir7gphmalie",
+  "root": "repowise-mcp-runtime",
+  "release_state": "BLOCKED",
+  "source_build_ready": false,
+  "observed_at": "2026-11-22",
+  "kind": "compose",
+  "candidate": "compose.candidate.yml",
+  "required_digest_images": [
+    {
+      "key": "PINNED_IMAGE_REPOWISE_MCP_RUNTIME_1",
+      "observed_image": "fciqzgceop7mqtqickkfomd7:HEAD"
+    }
+  ],
+  "observed_components": [
+    {
+      "name": "repowise-mcp",
+      "image": "fciqzgceop7mqtqickkfomd7:HEAD"
+    }
+  ],
+  "existing_app_volumes": [],
+  "external_host_binds": [],
+  "removed_unowned_build": false,
+  "secret_literals_replaced": 0,
+  "watch_paths": [
+    "repowise-mcp-runtime/",
+    "ops/repowise/"
+  ],
+  "required_release_gates": [
+    "independent exact SHA review",
+    "OCI digest verification",
+    "volume and secret parity",
+    "database backup/restore proof",
+    "authorized controller release",
+    "production positive and negative E2E",
+    "rollback proof"
+  ]
+}

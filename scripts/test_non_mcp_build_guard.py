@@ -18,6 +18,10 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("opik-mcp-access-guard.yml", "jwt-regression"),
     ("paperclip-core-review-recovery.yml", "validate"),
     ("mcp-images-ghcr.yml", "build-and-push"),
+    ("owned-runtime-images-ghcr.yml", "source-regressions"),
+    ("owned-runtime-images-ghcr.yml", "publish"),
+    ("source-build-roots-pr.yml", "verify-owned-source"),
+    ("source-build-roots-pr.yml", "build-all-10-owned-sources"),
 }
 DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@|buildah\s+bud\b")
 
@@ -41,6 +45,44 @@ def image_build_jobs(content):
 def compliant(workflow_name, job):
     if workflow_name in AUTO_MCP_IMAGE_WORKFLOWS:
         return True
+    if workflow_name == "source-build-roots-pr.yml":
+        # Premerge source verification is disposable GitHub-hosted, read-only
+        # to packages, and builds declared owned contexts only.
+        if "    runs-on: ubuntu-latest" not in job:
+            return False
+        if any(token in job for token in (
+                "docker push ", "packages: write", "/api/v1/deploy",
+                "curl -X PATCH", "coolify deploy", "/var/run/docker.sock")):
+            return False
+        if "docker build --pull -f ops/repowise/Dockerfile.publisher" in job:
+            return "ops/repowise" in job
+        return ('-f "$ROOT/$DOCKERFILE" "$ROOT"' in job
+                and 'test "$ROOT" != "."' in job
+                and 'test "$ROOT" != "/"' in job
+                and 'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"' in job)
+    if workflow_name == "owned-runtime-images-ghcr.yml":
+        # Explicit review of the new OWNED path. PR Docker smoke is isolated
+        # on a disposable GitHub-hosted runner with zero release permissions.
+        # Main publication may push SHA-bound OCI artifacts, never deploy.
+        forbidden = ("/api/v1/deploy", "curl -X PATCH", "coolify deploy",
+                     "/var/run/docker.sock", "GITHUB_TOKEN: write")
+        if any(needle in job for needle in forbidden):
+            return False
+        if "    if: github.event_name == 'pull_request'" in job:
+            return ("    runs-on: ubuntu-latest" in job
+                    and "docker build --pull -f integrations/hermes-paperclip/gateway/Dockerfile" in job
+                    and "hermes-paperclip/gateway" in job
+                    and "docker run --rm --network none" in job
+                    and "docker push " not in job)
+        return ("    if: github.ref == 'refs/heads/main'" in job
+                and "    runs-on: ubuntu-latest" in job
+                and "      packages: write" in job
+                and "context: ./${{ matrix.directory }}" in job
+                and "file: ./${{ matrix.dockerfile }}" in job
+                and "docker/build-push-action@v6" in job
+                and "push: true" in job
+                and "test \"$GITHUB_REF\" = \"refs/heads/main\"" in job
+                and "test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"" in job)
     if workflow_name == "mcp-images-ghcr.yml":
         # Trusted main builds inside a private rootless user namespace on the
         # existing local-build runner. The job must never reach a host or guest
@@ -91,6 +133,31 @@ class NonMcpBuildGuardTests(unittest.TestCase):
         self.assertIn("! test -w /run/zis-ci-guest/docker.sock", text)
         self.assertNotIn("curl -X PATCH", text)
         self.assertNotIn("/api/v1/deploy", text.lower())
+
+    def test_premerge_owned_root_builds_are_hosted_and_bounded(self):
+        workflow = (WORKFLOWS / "source-build-roots-pr.yml").read_text(encoding="utf8")
+        jobs = dict(image_build_jobs(workflow))
+        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-10-owned-sources"})
+        for job in jobs.values():
+            self.assertTrue(compliant("source-build-roots-pr.yml", job))
+            self.assertFalse(compliant("source-build-roots-pr.yml", job.replace(
+                "runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]")))
+            self.assertFalse(compliant("source-build-roots-pr.yml", job + "\n      - run: docker push ghcr.io/something"))
+
+    def test_owned_runtime_main_build_is_narrowly_allowed(self):
+        workflow = (WORKFLOWS / "owned-runtime-images-ghcr.yml").read_text(encoding="utf8")
+        jobs = dict(image_build_jobs(workflow))
+        self.assertEqual(set(jobs), {"source-regressions", "publish"})
+        self.assertTrue(compliant("owned-runtime-images-ghcr.yml", jobs["source-regressions"]))
+        self.assertTrue(compliant("owned-runtime-images-ghcr.yml", jobs["publish"]))
+        for mutated in (
+            jobs["publish"].replace("refs/heads/main", "refs/heads/feature"),
+            jobs["publish"].replace("context: ./${{ matrix.directory }}", "context: ."),
+            jobs["publish"].replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]"),
+            jobs["publish"].replace("test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"", "echo unchecked"),
+        ):
+            self.assertFalse(compliant("owned-runtime-images-ghcr.yml", mutated))
+        self.assertFalse(compliant("ordinary-service.yml", jobs["publish"]))
 
     def test_retired_paperclip_mcp_ci_stays_absent(self):
         self.assertFalse((WORKFLOWS / "paperclip-mcp-ci.yml").exists(),

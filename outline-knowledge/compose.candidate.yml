@@ -1,0 +1,88 @@
+services:
+  outline:
+    image: "${PINNED_IMAGE_OUTLINE_KNOWLEDGE_1:?Set reviewed immutable OCI digest}"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      URL: 'https://wiki.zariszlif.pl'
+      PORT: '3000'
+      SECRET_KEY: '${OUTLINE_SECRET_KEY}'
+      UTILS_SECRET: '${OUTLINE_UTILS_SECRET}'
+      DATABASE_URL: 'postgres://outline:${OUTLINE_DB_PASSWORD}@database:5432/outline?sslmode=disable'
+      REDIS_URL: 'redis://:${OUTLINE_REDIS_PASSWORD:?OUTLINE_REDIS_PASSWORD is required}@redis:6379'
+      PGSSLMODE: disable
+      FILE_STORAGE: local
+      FILE_STORAGE_LOCAL_ROOT_DIR: /var/lib/outline/data
+      FORCE_HTTPS: 'true'
+      OIDC_ISSUER_URL: '${OUTLINE_OIDC_ISSUER}'
+      OIDC_CLIENT_ID: '${OUTLINE_OIDC_CLIENT_ID}'
+      OIDC_CLIENT_SECRET: '${OUTLINE_OIDC_CLIENT_SECRET}'
+      OIDC_DISPLAY_NAME: 'Cloudflare Access'
+      OIDC_USERNAME_CLAIM: email
+      OIDC_SCOPES: 'openid profile email'
+    volumes:
+      - 'outline-files:/var/lib/outline/data'
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - g16yynrbdpkab4hnmaoj7vxk
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'wget -q -O /dev/null --header="X-Forwarded-Proto: https" --header="X-Forwarded-Host: wiki.zariszlif.pl" http://127.0.0.1:3000/_health || exit 1'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+  database:
+    image: "${PINNED_IMAGE_OUTLINE_KNOWLEDGE_2:?Set reviewed immutable OCI digest}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: outline
+      POSTGRES_PASSWORD: '${OUTLINE_DB_PASSWORD}'
+      POSTGRES_DB: outline
+    volumes:
+      - 'outline-db:/var/lib/postgresql/data'
+    networks:
+      - g16yynrbdpkab4hnmaoj7vxk
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U outline -d outline'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: "${PINNED_IMAGE_OUTLINE_KNOWLEDGE_3:?Set reviewed immutable OCI digest}"
+    restart: unless-stopped
+    environment:
+      OUTLINE_REDIS_PASSWORD: '${OUTLINE_REDIS_PASSWORD:?OUTLINE_REDIS_PASSWORD is required}'
+    command:
+      - sh
+      - -ec
+      - 'exec redis-server --appendonly yes --requirepass "$OUTLINE_REDIS_PASSWORD"'
+    volumes:
+      - 'outline-redis:/data'
+    networks:
+      - g16yynrbdpkab4hnmaoj7vxk
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'REDISCLI_AUTH="$OUTLINE_REDIS_PASSWORD" redis-cli ping | grep -qx PONG'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+volumes:
+  outline-files:
+    name: g16yynrbdpkab4hnmaoj7vxk_outline-files
+  outline-db:
+    name: g16yynrbdpkab4hnmaoj7vxk_outline-db
+  outline-redis:
+    name: g16yynrbdpkab4hnmaoj7vxk_outline-redis
+networks:
+  g16yynrbdpkab4hnmaoj7vxk:
+    name: g16yynrbdpkab4hnmaoj7vxk
+    external: true

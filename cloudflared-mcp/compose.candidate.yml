@@ -1,0 +1,21 @@
+services:
+  cloudflared:
+    image: "${PINNED_IMAGE_CLOUDFLARED_MCP_1:?Set reviewed immutable OCI digest}"
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+    - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    networks:
+    - coolify
+    healthcheck:
+      test:
+      - CMD
+      - cloudflared
+      - --version
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+networks:
+  coolify:
+    external: true
