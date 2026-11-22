@@ -114,7 +114,7 @@ class RepoAdmissionTests(unittest.TestCase):
             gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
 
     def test_uncompleted_reviewer_task_rejected(self):
-        with patch.object(gate, "task_record", return_value={"agent_id": CTO, "status": "running"}):
+        with patch.object(gate, "task_record", return_value={"agent_id": CTO, "issue_id": "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc", "status": "running"}):
             with self.assertRaisesRegex(gate.Denied, "reviewer_task_not_completed"):
                 gate.verify(self.approval_row(), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
 
