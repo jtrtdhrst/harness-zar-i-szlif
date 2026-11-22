@@ -28,17 +28,21 @@ class SafeRefreshPathTests(unittest.TestCase):
         self.target = self.parent / "roles"
         self.original_fstat = os.fstat
 
-    def run_refresh(self, *, uid=0, gid=0, lock_uid=0, writer_enabled='false'):
+    def run_refresh(self, *, uid=0, gid=0, lock_uid=0, writer_enabled='false', writer_denied=False):
         def root_fstat(fd):
             info = self.original_fstat(fd)
             owner = lock_uid if stat.S_ISREG(info.st_mode) else uid
             return types.SimpleNamespace(st_mode=info.st_mode, st_uid=owner,
                                          st_gid=gid, st_nlink=info.st_nlink)
+        def mint_role(role):
+            if writer_denied and role == refresh.WRITER_ROLE:
+                raise RuntimeError("GitHub App writer permission not granted")
+            return {"expires_at": "2099-01-01T00:00:00Z"}
         with patch.dict(refresh.os.environ, {refresh.WRITER_OPT_IN: writer_enabled}), \
              patch.object(refresh, "DEST", self.target), \
              patch.object(refresh.os, "geteuid", return_value=0), \
              patch.object(refresh.os, "fstat", side_effect=root_fstat), \
-             patch.object(refresh, "mint", return_value={"expires_at": "2099-01-01T00:00:00Z"}) as minted, \
+             patch.object(refresh, "mint", side_effect=mint_role) as minted, \
              patch.object(refresh, "write_token") as wrote:
             try:
                 refresh.main()
@@ -64,6 +68,30 @@ class SafeRefreshPathTests(unittest.TestCase):
             self.run_refresh(writer_enabled='yes')
         self.assertEqual(self.minted_count, 0)
         self.assertEqual(self.wrote_count, 0)
+
+    def test_refused_optional_writer_grant_does_not_break_reader_rotation(self):
+        self.run_refresh(writer_enabled='true', writer_denied=True)
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS))
+        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS) - 1)
+
+    def test_disabled_writer_revokes_stale_role_file(self):
+        self.target.mkdir(mode=0o700)
+        stale = self.target / 'github-ops-writer.json'
+        stale.write_text('nonsecret-test-marker')
+        stale.chmod(0o600)
+        self.run_refresh(writer_enabled='false')
+        self.assertFalse(stale.exists(), "opt-out must revoke the stale role file")
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS) - 1)
+
+    def test_disabled_writer_refuses_symlink_without_touching_target(self):
+        self.target.mkdir(mode=0o700)
+        victim = pathlib.Path(self.tmp.name) / 'victim-writer'
+        victim.write_text('unchanged')
+        (self.target / 'github-ops-writer.json').symlink_to(victim)
+        with self.assertRaises(OSError):
+            self.run_refresh(writer_enabled='false')
+        self.assertEqual(victim.read_text(), 'unchanged')
+        self.assertEqual(self.minted_count, 0)
 
     def test_symlinked_token_dir_refused_without_chmod_target(self):
         victim = pathlib.Path(self.tmp.name) / "victim"
