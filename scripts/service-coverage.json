@@ -5,21 +5,9 @@
       "mode": "manual_only",
       "reason": "Workflow definitions are validated by the workflow that invokes this checker."
     },
-    "cloudflare-ingress": {
-      "mode": "manual_only",
-      "reason": "Existing ingress is a protected runtime resource; no repository build or promotion workflow is authorized."
-    },
-    "cloudflared-mcp": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
     "comfy-mcp": {
       "mode": "manual_only",
-      "reason": "MCP release requires a separately reviewed immutable artifact and manual Coolify promotion."
-    },
-    "comfyui-mcp": {
-      "mode": "manual_only",
-      "reason": "Legacy combined build source is retained pending migration; no automatic release."
+      "reason": "Complete owned MCP source and Dockerfile now reside here. Pending reviewed image+Coolify release; no automatic promotion is claimed."
     },
     "coolify-mcp": {
       "mode": "manual_only",
@@ -49,17 +37,9 @@
       "mode": "manual_only",
       "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."
     },
-    "local-build-registry": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
     "mantic-mcp": {
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
-    },
-    "mcp-activation": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
     },
     "mcp-edge": {
       "mode": "manual_only",
@@ -95,10 +75,6 @@
         ".github/workflows/release-lanes-policy.yml"
       ]
     },
-    "outline-knowledge": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
     "plasmic": {
       "mode": "manual_only",
       "reason": "Multi-container WAB; reviewed component digests and dependency-aware rollback required."
@@ -115,23 +91,11 @@
       "mode": "manual_only",
       "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
     },
-    "repowise-mcp-runtime": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
     "scripts": {
       "mode": "workflow",
       "workflows": [
         ".github/workflows/release-lanes-policy.yml"
       ]
-    },
-    "shared-ingress": {
-      "mode": "manual_only",
-      "reason": "Shared runtime configuration is not automatically released from this repository."
-    },
-    "supabase": {
-      "mode": "manual_only",
-      "reason": "Upstream multi-container service; component digest and dependency-aware rollback required."
     },
     "supabase-mcp": {
       "mode": "manual_only",

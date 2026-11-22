@@ -44,22 +44,7 @@ jobs:
           while IFS= read -r file; do
             docker compose -f "$file" config --no-interpolate --quiet
           done < "$RUNNER_TEMP/compose-paths.txt"
-      - name: Outline Redis credential parity (synthetic positive and missing-secret negative)
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Fake test-only OCI references; never use them for a release.
-          dummy="example.invalid/ci-only@sha256:$(printf '%064d' 0)"
-          for i in 1 2 3; do
-            export "PINNED_IMAGE_OUTLINE_KNOWLEDGE_${i}=$dummy"
-          done
-          export OUTLINE_REDIS_PASSWORD="ci-only-not-a-real-secret"
-          docker compose -f outline-knowledge/compose.candidate.yml config --quiet
-          if env -u OUTLINE_REDIS_PASSWORD docker compose -f outline-knowledge/compose.candidate.yml config --quiet >/dev/null 2>&1; then
-            echo 'Outline candidate accepted missing Redis credential' >&2
-            exit 1
-          fi
-      - name: Validate all eleven MCP-related Compose candidates with synthetic positive and negative environments
+      - name: Validate all four source-pending Compose candidates with synthetic positive and negative environments
         shell: bash
         run: |
           set -euo pipefail
@@ -71,7 +56,7 @@ jobs:
           from pathlib import Path
 
           rows = json.loads(Path('ops/compose-migration-candidates.json').read_text(encoding='utf-8'))['resources']
-          assert len(rows) == 11, 'Expected eleven in-repo Harness Compose candidates'
+          assert len(rows) == 4, 'Expected four in-repo Harness Compose candidates'
           required = re.compile(r'(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^}]*\}')
           positive = 0
           negative = 0
@@ -101,7 +86,7 @@ jobs:
                       raise RuntimeError(f'FAIL_OPEN: {row["id"]} accepted missing required {missing}')
                   negative += 1
               print('COMPOSE_SYNTHETIC_OK', row['id'], 'mandatory_inputs', len(names))
-          assert positive == 11, f'Expected eleven positives, got {positive}'
+          assert positive == 4, f'Expected four positives, got {positive}'
           assert negative >= 1, f'Expected missing-input negative checks, got {negative}'
           print('SYNTHETIC_SUMMARY', json.dumps({'positive': positive, 'negative': negative}))
           PY

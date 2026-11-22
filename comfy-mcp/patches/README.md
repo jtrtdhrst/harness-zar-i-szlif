@@ -1,14 +1,14 @@
-# `comfyui-mcp/patches/` — canonical custom-node + MCP patches
+# `comfy-mcp/patches/` — canonical custom-node + MCP patches
 
 All patches are idempotent (safe to re-run). MCP `dist` patches apply at
 `comfyui-mcp` image build time via `Dockerfile` (the identical `Dockerfile.mcp` build alias); custom-node patches target
-the persistent `comfy-custom` volume. The recovery helper `comfyui-mcp/patches/apply.sh`
+the persistent `comfy-custom` volume. The recovery helper `comfy-mcp/patches/apply.sh`
 is a **manual operator command**, not automatically installed by `Dockerfile.comfyui`.
 Run it from a **complete source checkout** containing both `patches/` and sibling
 `canvas-bridge/`, after identifying the exact running target container:
 
 ```bash
-COMFY_CTN=<exact-container-name> bash comfyui-mcp/patches/apply.sh
+COMFY_CTN=<exact-container-name> bash comfy-mcp/patches/apply.sh
 ```
 
 The helper now refuses to mutate anything when a source file or Docker target is absent.
@@ -16,7 +16,7 @@ Do not assume `/opt/comfy/patches/apply.sh` exists on a recovered host, and do n
 apply patches against an unknown container. Manual recovery still requires authorized
 operator validation, rollback readiness and live E2E evidence.
 
-The former root-level `comfyui-mcp/patch-v1.mjs` and `comfyui-mcp/patch-color.mjs` were byte-for-byte duplicates; `Dockerfile` copies the canonical versions from `patches/`. Keep one editable implementation here.
+The former root-level `comfy-mcp/patch-v1.mjs` and `comfy-mcp/patch-color.mjs` were byte-for-byte duplicates; `Dockerfile` copies the canonical versions from `patches/`. Keep one editable implementation here.
 
 | File | Target | What it fixes |
 |---|---|---|

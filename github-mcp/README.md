@@ -1,5 +1,9 @@
 # GitHub Ops MCP — scoped augmentation (not a deployment controller)
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `t09dqe2eppn2eiqmhzlf8xzp`; katalog `github-mcp/`; Dockerfile `github-mcp/Dockerfile`; implementacja: `server.mjs`.
+> Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
+
+
 Canonical source and Docker build context: `github-mcp/` in `jtrtdhrst/harness-zar-i-szlif`. Coolify BGH application must use `base_directory=/github-mcp`, `dockerfile_location=/Dockerfile` and reviewed `main`; do not build from `github-ops-mcp/` or `coolify-mcp/`. The Docker verify stage runs both HTTP regression suites.
 
 

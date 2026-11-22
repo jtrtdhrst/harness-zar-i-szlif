@@ -1,5 +1,9 @@
 # opik-mcp
 
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `egasedqaofxnzcqppuxi805h`; katalog `opik-mcp/`; Dockerfile `opik-mcp/access-guard/Dockerfile`; implementacja: `access-guard/guard.py, proxy/mcp-proxy.conf`.
+> Repo posiada kod bramki OAuth/NGINX, a backend Opik MCP jest osobnym lokalnym obrazem.
+
+
 Coolify project/service folder. Runtime data volumes are owned by this
 project; only `volumes/` markers are committed.
 

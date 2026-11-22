@@ -1,4 +1,4 @@
-# ComfyUI MCP only. Build context: comfyui-mcp/ (not the entire repo).
+# ComfyUI MCP only. Build context: comfy-mcp/ (not the entire repo).
 # Pinned upstream + retained validation/image-management fixes from patches/.
 FROM node:22-bookworm-slim
 RUN npm i -g comfyui-mcp@0.52.206 && comfyui-mcp --version
