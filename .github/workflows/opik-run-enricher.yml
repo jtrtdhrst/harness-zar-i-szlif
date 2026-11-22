@@ -18,6 +18,6 @@ jobs:
         with:
           python-version: '3.13'
       - run: python3 -m unittest -q test_worker
-        working-directory: opik-run-enricher
+        working-directory: workers/opik-run-enricher
       - run: python3 -m py_compile worker.py
-        working-directory: opik-run-enricher
+        working-directory: workers/opik-run-enricher
