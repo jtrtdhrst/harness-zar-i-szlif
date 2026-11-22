@@ -59,6 +59,52 @@ jobs:
             echo 'Outline candidate accepted missing Redis credential' >&2
             exit 1
           fi
+      - name: Validate all twenty Compose candidates with synthetic positive and negative environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          rows = json.loads(Path('ops/compose-migration-candidates.json').read_text(encoding='utf-8'))['resources']
+          assert len(rows) == 20, 'Expected twenty canonical Harness Compose candidates'
+          required = re.compile(r'(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^}]*\}')
+          positive = 0
+          negative = 0
+          for row in rows:
+              path = row['compose']
+              names = sorted(set(required.findall(Path(path).read_text(encoding='utf-8'))))
+              env = {'PATH': os.environ['PATH'], 'HOME': os.environ.get('HOME', '/tmp')}
+              for name in names:
+                  if name.startswith('PINNED_IMAGE_'):
+                      value = 'example.invalid/fixture@sha256:' + '0' * 64
+                  elif 'BIND' in name or 'MOUNT' in name:
+                      value = '/tmp/fixture-data'
+                  elif name.endswith('_PORT'):
+                      value = '1234'
+                  else:
+                      value = 'synthetic-ci-only'
+                  env[name] = value
+              command = ['docker', 'compose', '-f', path, 'config', '--quiet']
+              subprocess.run(command, env=env, check=True, timeout=30)
+              positive += 1
+              if names:
+                  missing = names[0]
+                  negative_env = dict(env)
+                  del negative_env[missing]
+                  failed = subprocess.run(command, env=negative_env, capture_output=True, text=True, timeout=30)
+                  if failed.returncode == 0:
+                      raise RuntimeError(f'FAIL_OPEN: {row["id"]} accepted missing required {missing}')
+                  negative += 1
+              print('COMPOSE_SYNTHETIC_OK', row['id'], 'mandatory_inputs', len(names))
+          assert positive == 20, f'Expected twenty positives, got {positive}'
+          assert negative >= 16, f'Expected at least sixteen missing-input negatives, got {negative}'
+          print('SYNTHETIC_SUMMARY', json.dumps({'positive': positive, 'negative': negative}))
+          PY
       - name: Select changed resources; do not deploy
         shell: bash
         env:
