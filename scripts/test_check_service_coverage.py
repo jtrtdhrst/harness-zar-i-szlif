@@ -117,7 +117,7 @@ class ServiceCoverageTests(unittest.TestCase):
             "    steps:\n      - name: Trusted main-only runner admission\n"
             "        shell: bash\n        run: |\n"
             "          test \"$GITHUB_REF\" = 'refs/heads/main'\n"
-            "          test \"$GITHUB_REPOSITORY\" = 'miloszspyrka-code/harness-zar-i-szlif'\n"
+            "          test \"$GITHUB_REPOSITORY\" = 'jtrtdhrst/harness-zar-i-szlif'\n"
             "          test \"$(id -un)\" = actions-zis\n"
             "          ! test -w /var/run/docker.sock\n"
             "          ! test -r /opt/zis-actions-runner/.credentials\n"
