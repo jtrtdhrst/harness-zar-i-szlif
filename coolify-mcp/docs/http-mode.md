@@ -207,7 +207,7 @@ internet-facing service.
 | `MCP_REQUEST_STATE_KEY`   | generated at startup     | HMAC key for confirmation state (>=32 bytes)                                        |
 | `MCP_ALLOW_INSECURE_HTTP` | unset                    | Local development only: allow a non-https public URL                                |
 | `MCP_REDIRECT_HOSTS`      | unset (any host)         | Comma-separated hosts clients may redirect to; [hardening](#hardening-registration) |
-| `MCP_CLIENT_IP_HEADER`    | `X-Forwarded-For`        | Header your proxy sets to the caller's IP, e.g. `cf-connecting-ip`                  |
+| `MCP_CLIENT_IP_HEADER`    | unset (socket peer IP)   | Optional proxy header, ONLY if ingress overwrites it and direct origin access is blocked. |
 | `CF_ACCESS_CLIENT_ID`     | unset                    | Cloudflare Access service token id (pair required)                                  |
 | `CF_ACCESS_CLIENT_SECRET` | unset                    | Cloudflare Access service token secret (pair req.)                                  |
 | `COOLIFY_INSTANCES`       | unset                    | JSON array of extra instances ([fleet mode](fleet.md))                              |
