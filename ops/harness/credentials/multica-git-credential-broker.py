@@ -206,12 +206,16 @@ def scoped_role(base_role, scope, requested_repo=None):
         requested_repo = repo_slug(requested_repo)
         if requested_repo not in allowed:
             raise ValueError("repository outside task scope")
-    if len(allowed) == 1:
-        repo = next(iter(allowed))
-        for suffix, slug in PROJECT_REPOS.items():
-            if slug == repo:
-                return f"{base_role}-{suffix}"
-    return base_role
+    # Every authenticated task has a project ID. Never fall back to a
+    # workspace-wide token when a project claim unexpectedly contains both
+    # repositories: doing so would bypass per-project Git credential isolation.
+    if len(allowed) != 1:
+        raise ValueError("project task must authorize exactly one repository")
+    repo = next(iter(allowed))
+    for suffix, slug in PROJECT_REPOS.items():
+        if slug == repo:
+            return f"{base_role}-{suffix}"
+    raise ValueError("project repository has no scoped credential role")
 
 
 def role_base(role):
