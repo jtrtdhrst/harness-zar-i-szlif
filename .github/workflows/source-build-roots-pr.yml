@@ -68,9 +68,9 @@ jobs:
               dockerfile = Path(r["build_dockerfile"])
               if root.is_absolute() or ".." in root.parts or root.as_posix() in (".", ""):
                   raise SystemExit("unsafe_source_root:" + r["id"])
-              if dockerfile.parent != root or not dockerfile.is_file():
+              if not dockerfile.is_relative_to(root) or not dockerfile.is_file() or not dockerfile.resolve().is_relative_to(root.resolve()):
                   raise SystemExit("owned_Dockerfile_missing:" + r["id"])
-              matrix.append({"service": r["id"], "root": root.as_posix(), "file": dockerfile.name})
+              matrix.append({"service": r["id"], "root": root.as_posix(), "file": dockerfile.relative_to(root).as_posix()})
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
           print("Source root matrix:", [x["service"] for x in matrix])
