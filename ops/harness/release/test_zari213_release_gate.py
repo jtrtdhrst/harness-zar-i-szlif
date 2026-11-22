@@ -48,13 +48,14 @@ class RepoAdmissionTests(unittest.TestCase):
         return {
             "issue_id": "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc",
             "issue_number": 213,
+            "issue_description": "Canonical https://github.com/" + HARNESS + "/pull/215",
             "issue_status": status,
             "producer_id": producer,
             "producer_runs": 1,
             "comments": [{
                 "author_type": "agent",
                 "author_id": reviewer,
-                "content": "RELEASE_APPROVED " + HEAD + "\nPRODUCER " + producer,
+                "content": "RELEASE_APPROVED " + HEAD + "\nREPOSITORY " + HARNESS + "\nPR 215\nPRODUCER " + producer,
                 "source_task_id": TASK,
                 "created_at": "2026-11-22T15:00:00Z",
             }],
@@ -65,7 +66,7 @@ class RepoAdmissionTests(unittest.TestCase):
             gate.verify(self.approval_row(status="blocked"), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
 
     def test_independent_exact_sha_review_can_pass(self):
-        with patch.object(gate, "task_record", return_value={"agent_id": CTO, "status": "completed"}):
+        with patch.object(gate, "task_record", return_value={"agent_id": CTO, "issue_id": "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc", "status": "completed"}):
             outcome = gate.verify(self.approval_row(), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
         self.assertTrue(outcome["verified"])
         self.assertEqual(outcome["head_sha"], HEAD)
@@ -73,6 +74,44 @@ class RepoAdmissionTests(unittest.TestCase):
     def test_self_review_rejected(self):
         with self.assertRaisesRegex(gate.Denied, "not_independent"):
             gate.verify(self.approval_row(producer=CTO), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_cho_and_ceo_cannot_replace_cto(self):
+        for agent in ("19eb944f-ff52-4fbd-ba67-56924764591b",
+                      "b7948572-3cee-4ca5-84b9-8352f9375c4f"):
+            with self.subTest(agent=agent), self.assertRaisesRegex(gate.Denied, "reviewer_not_authorized"):
+                gate.verify(self.approval_row(reviewer=agent), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_foreign_reviewer_task_issue_denied(self):
+        with patch.object(gate, "task_record", return_value={
+            "agent_id": CTO, "issue_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "status": "completed"
+        }):
+            with self.assertRaisesRegex(gate.Denied, "reviewer_task_issue_mismatch"):
+                gate.verify(self.approval_row(), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_wrong_pr_in_issue_denied(self):
+        row = self.approval_row()
+        row["issue_description"] = "https://github.com/" + HARNESS + "/pull/2150"
+        with self.assertRaisesRegex(gate.Denied, "issue_pr_link_missing"):
+            gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_wrong_pr_in_approval_denied(self):
+        row = self.approval_row()
+        row["comments"][0]["content"] = row["comments"][0]["content"].replace("PR 215", "PR 216")
+        with self.assertRaisesRegex(gate.Denied, "missing_release_approval"):
+            gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_wrong_repo_in_approval_denied(self):
+        row = self.approval_row()
+        row["comments"][0]["content"] = row["comments"][0]["content"].replace("REPOSITORY " + HARNESS, "REPOSITORY " + PRODUCT)
+        with self.assertRaisesRegex(gate.Denied, "missing_release_approval"):
+            gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_wrong_issue_number_denied(self):
+        row = self.approval_row()
+        row["issue_number"] = 999
+        with self.assertRaisesRegex(gate.Denied, "issue_reference_mismatch"):
+            gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
 
     def test_uncompleted_reviewer_task_rejected(self):
         with patch.object(gate, "task_record", return_value={"agent_id": CTO, "status": "running"}):
