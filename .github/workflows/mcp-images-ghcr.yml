@@ -10,6 +10,7 @@ on:
       - 'mantic-mcp/**'
       - 'plasmic-mcp/**'
       - 'playwright-mcp/**'
+      - 'qdrant-mcp/**'
       - 'supabase-mcp/**'
       - 'ubuntu-mcp/**'
       - 'scripts/select_mcp_builds.py'
@@ -28,6 +29,7 @@ on:
           - mantic-mcp
           - plasmic-mcp
           - playwright-mcp
+          - qdrant-mcp
           - supabase-mcp
           - ubuntu-mcp
 

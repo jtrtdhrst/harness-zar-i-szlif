@@ -18,6 +18,7 @@ MCP_BUILD_CONTEXTS = {
     "mantic-mcp": "mantic-mcp",
     "plasmic-mcp": "plasmic-mcp",
     "playwright-mcp": "playwright-mcp",
+    "qdrant-mcp": "qdrant-mcp",
     "supabase-mcp": "supabase-mcp",
     "ubuntu-mcp": "ubuntu-mcp",
 }

@@ -12,7 +12,7 @@ class McpBuildSelectionTests(unittest.TestCase):
 
     def test_unrelated_or_held_external_paths_never_trigger_builds(self):
         self.assertEqual(images.select(
-            ["ops/repowise/Dockerfile.publisher", "qdrant-mcp/Dockerfile",
+            ["ops/repowise/Dockerfile.publisher", "docs/no-build.txt",
              "paperclip-mcp/Dockerfile", "comfy/engine/Dockerfile"],
             event_name="push"), [])
 
@@ -20,6 +20,9 @@ class McpBuildSelectionTests(unittest.TestCase):
         selected = images.select(["comfy-mcp/output-image-refs.js"], event_name="push")
         self.assertEqual(selected, [{"service":"comfy-mcp","directory":"comfy-mcp","dockerfile":"Dockerfile"}])
         self.assertEqual(images.EXPECTED_REPOSITORY,"jtrtdhrst/harness-zar-i-szlif")
+
+    def test_qdrant_source_selects_exactly_qdrant(self):
+        self.assertEqual([x["service"] for x in images.select(["qdrant-mcp/server.py"],event_name="push")],["qdrant-mcp"])
 
     def test_consecutive_pushes_do_not_lose_other_service_builds(self):
         # Every separate push must remain queued, even if an earlier build runs.
@@ -49,11 +52,11 @@ class McpBuildSelectionTests(unittest.TestCase):
                 [{"service": service, "directory": service,
                   "dockerfile": "Dockerfile.http" if service == "mantic-mcp" else "Dockerfile"}])
         self.assertEqual(len(images.select([], event_name="workflow_dispatch",
-                                           manual_service="all")), 7)
+                                           manual_service="all")), 8)
 
     def test_rejects_injected_service_and_untrusted_events(self):
         for candidate in ("../../etc", "ops", "mcp-all; touch /tmp/unsafe",
-                          "qdrant-mcp", ""):
+                          "unknown-mcp", ""):
             with self.subTest(service=candidate):
                 with self.assertRaisesRegex(ValueError,
                                             "invalid_manually_selected_service"):

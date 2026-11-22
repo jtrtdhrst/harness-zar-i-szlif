@@ -21,7 +21,7 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("owned-runtime-images-ghcr.yml", "source-regressions"),
     ("owned-runtime-images-ghcr.yml", "publish"),
     ("source-build-roots-pr.yml", "verify-owned-source"),
-    ("source-build-roots-pr.yml", "build-all-11-owned-sources"),
+    ("source-build-roots-pr.yml", "build-all-12-owned-sources"),
 }
 DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@|buildah\s+bud\b")
 
@@ -137,7 +137,7 @@ class NonMcpBuildGuardTests(unittest.TestCase):
     def test_premerge_owned_root_builds_are_hosted_and_bounded(self):
         workflow = (WORKFLOWS / "source-build-roots-pr.yml").read_text(encoding="utf8")
         jobs = dict(image_build_jobs(workflow))
-        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-11-owned-sources"})
+        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-12-owned-sources"})
         for job in jobs.values():
             self.assertTrue(compliant("source-build-roots-pr.yml", job))
             self.assertFalse(compliant("source-build-roots-pr.yml", job.replace(
