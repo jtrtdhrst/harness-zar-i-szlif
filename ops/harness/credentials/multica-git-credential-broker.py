@@ -16,6 +16,7 @@ import re
 import socket
 import socketserver
 import struct
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -28,7 +29,7 @@ EXPECTED_WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
 RUNTIME_UID = 997
 RUNTIME_GID = 981
 REFRESH = "/usr/local/libexec/multica-zar-github-app-refresh.py"
-AGENT_ROLES = {"implementer", "reviewer", "release"}
+AGENT_ROLES = set()
 ROLE_SCOPED_REPOS = {}
 for _base in ("implementer", "reviewer", "release"):
     for _suffix, _repo in (("harness", "jtrtdhrst/harness-zar-i-szlif"),
@@ -45,7 +46,9 @@ ROLE_PERMISSIONS = {
 
 
 def role_repo_allowed(role, repo):
-    return repo in ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+    if role == "cache-reader":
+        return repo in ALLOWED_REPOS
+    return repo in ROLE_SCOPED_REPOS.get(role, set())
 
 DEFAULT_ROOT = "/etc/multica-git-credential"
 DAEMON_UNIT = "multica-zar-daemon.service"
@@ -237,17 +240,52 @@ def is_authorized_daemon_cache_fetch(pid, unit, pidfile=None, allow_any_daemon=F
     return True
 
 
+
+# The broker runs as root; all credential inputs must remain root-only,
+# single-linked, non-symlink files in private root-owned directories.
+TRUSTED_UID = 0
+
+
+class UntrustedCredentialError(ValueError):
+    pass
+
+
+def read_private_json(path):
+    path = Path(path)
+    try:
+        parent = os.lstat(path.parent)
+        if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != TRUSTED_UID or
+                stat.S_IMODE(parent.st_mode) != 0o700):
+            raise UntrustedCredentialError("credential directory provenance invalid")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != TRUSTED_UID or
+                    stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                raise UntrustedCredentialError("credential file provenance invalid")
+            with os.fdopen(fd, "r", encoding="utf-8") as file:
+                fd = -1
+                return json.load(file)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except OSError as exc:
+        raise UntrustedCredentialError("credential source unavailable or untrusted") from exc
+
+
 def parse_expiry(value):
     return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def read_role_token(tokens_dir, role):
-    data = json.loads((tokens_dir / f"{role}.json").read_text(encoding="utf-8"))
+    if role not in AGENT_ROLES and role != "cache-reader":
+        raise ValueError("role not authorized for broker")
+    data = read_private_json(tokens_dir / f"{role}.json")
     if not isinstance(data.get("token"), str) or not data["token"].startswith("ghs_"):
         raise ValueError("role token malformed")
     if role not in AGENT_ROLES and role != "cache-reader":
         raise ValueError("role not authorized for broker")
-    expected_repos = ROLE_SCOPED_REPOS.get(role, ALLOWED_REPOS)
+    expected_repos = ALLOWED_REPOS if role == "cache-reader" else ROLE_SCOPED_REPOS[role]
     if set(data.get("repositories", [])) != expected_repos:
         raise ValueError("role token repository scope mismatch")
     base_role = role if role == "cache-reader" else role.split("-", 1)[0]
@@ -273,6 +311,8 @@ def refresh_tokens():
 def token_for_role(tokens_dir, role):
     try:
         return read_role_token(tokens_dir, role)
+    except UntrustedCredentialError:
+        raise  # Never rotate away evidence of unsafe credential-file provenance.
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         refresh_tokens()
         return read_role_token(tokens_dir, role)
@@ -312,7 +352,7 @@ class Handler(socketserver.StreamRequestHandler):
                 agent_id = "daemon-cache"
             else:
                 agent_id, task_id = identity
-                roles = json.loads(self.server.roles_file.read_text(encoding="utf-8"))
+                roles = read_private_json(self.server.roles_file)
                 role = roles.get(agent_id)
                 if role not in AGENT_ROLES:
                     self.reply({"ok": False, "error": "agent_not_mapped"})
