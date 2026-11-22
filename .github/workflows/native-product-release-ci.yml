@@ -12,7 +12,8 @@ on:
       - "scripts/product_image_delivery.py"
       - "scripts/test_product_image_delivery.py"
       - "ops/systemd/product-native-promotion.*"
-      - ".github/workflows/native-product-release-ci.yml"  push:
+      - ".github/workflows/native-product-release-ci.yml"
+  push:
     branches: [main]
     paths:
       - "scripts/paperclip_native_release_gate.py"
