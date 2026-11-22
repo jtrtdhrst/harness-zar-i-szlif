@@ -70,13 +70,13 @@ from harness_delivery_controller import git_changed_paths, load_artifacts, run_p
 from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
 from harness_release_parity import ParityFailure, check_source as check_upstream_source
 
-REPO = "miloszspyrka-code/harness-zar-i-szlif"
+REPO = "jtrtdhrst/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
 # Trusted-main GHCR publishing is owned by mcp-images-ghcr.yml (PR #186).
 # AUTO deployment consumes that immutable digest, NEVER builds a second image.
-GHCR = "ghcr.io/miloszspyrka-code"
+GHCR = "ghcr.io/jtrtdhrst"
 GHCR_SOURCE_SERVICES = frozenset({
-    "emailens-mcp", "mantic-mcp", "plasmic-mcp",
+    "coolify-mcp", "emailens-mcp", "mantic-mcp", "plasmic-mcp",
     "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
 })
 COOLIFY = "http://127.0.0.1:8001/api/v1"
@@ -93,6 +93,9 @@ HEALTH_DEADLINE = 240
 # UUID and kind are deliberately absent: they come from the reviewed manifest,
 # which is the single allowlist for what may be touched.
 SERVICES = {
+    "coolify-mcp": {"folder": "coolify-mcp", "dockerfile": "Dockerfile",
+                     "image_prefix": "ghcr.io/stumason/coolify-mcp",
+                     "health_url": None},
     "mantic-mcp": {"folder": "mantic-mcp", "dockerfile": "Dockerfile.http",
                    "image_prefix": "local/mantic-mcp", "health_url": None},
     "playwright-mcp": {"folder": "playwright-mcp", "dockerfile": "Dockerfile",
@@ -120,7 +123,10 @@ def image_tag(service, source_sha, registry=REGISTRY):
 
 
 def image_reference(service, digest, registry=REGISTRY):
-    return f"{registry}/harness-{service}@{digest}"
+    # Owned Coolify MCP publishes as /coolify-mcp; other Harness sources keep
+    # their existing /harness-<service> image names.
+    name = "coolify-mcp" if service == "coolify-mcp" and registry == GHCR else f"harness-{service}"
+    return f"{registry}/{name}@{digest}"
 
 
 class Host:
@@ -196,11 +202,14 @@ def verify_source(repo, source_sha):
 def image_pattern(service, spec, registry=REGISTRY):
     """Match the previously pinned image or this registry's image already deployed."""
     current = f"{registry}/harness-{service}"
-    prefixes = sorted({
+    prefixes = {
         spec["image_prefix"], current,
         f"{REGISTRY}/harness-{service}",
         f"{GHCR}/harness-{service}",
-    }, key=len, reverse=True)
+    }
+    if service == "coolify-mcp":
+        prefixes.add(f"{GHCR}/coolify-mcp")
+    prefixes = sorted(prefixes, key=len, reverse=True)
     alternation = "|".join(re.escape(prefix) for prefix in prefixes)
     return re.compile(r"(?m)^(\s*image:\s*)(['\"]?)(?:" + alternation + r")[^'\"\s]*\2")
 
@@ -711,9 +720,9 @@ def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
 
 
 TRUSTED_ORIGINS = (
-    r"https://github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-    r"git@github\.com:miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-    r"ssh://git@github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+    r"https://github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+    r"git@github\.com:jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+    r"ssh://git@github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
 )
 
 
