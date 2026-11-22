@@ -270,6 +270,28 @@ export function makeServer(config={}) {
     throw error('WRITE_CREDENTIAL_MISSING','A dedicated short-lived GitHub App writer credential is required');
   };
   const writerApi=githubClient({token:injectedWriterToken||injectedPushToken,getToken:readWriterToken,fetchImpl:config.fetchImpl});
+
+  // REST PATCH checks fast-forward ancestry only. GraphQL updateRefs.beforeOid
+  // binds the ref to its exact previous SHA, even after an ancestor rewind.
+  const writerGraphql=async input=>{
+    const token=await readWriterToken();
+    const operation='mutation BGHUpdateRefs($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }';
+    const response=await (config.fetchImpl??fetch)('https://api.github.com/graphql',{
+      method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),
+      headers:{Accept:'application/vnd.github+json',Authorization:'Bearer '+token,
+        'Content-Type':'application/json','X-GitHub-Api-Version':'2026-03-10',
+        'User-Agent':'github-ops-mcp/1.0'},
+      body:JSON.stringify({query:operation,variables:{input}})
+    });
+    if(!response.ok)throw error('CAS_PROVIDER_DENIED','Atomic GitHub ref update request was refused');
+    let payload;
+    try{payload=await response.json();}catch{throw error('CAS_RESPONSE_INVALID','Invalid GitHub GraphQL response');}
+    if(!payload || !Array.isArray(payload.errors??[]) || payload.errors?.length)
+      throw error('STALE_SHA','Exact ref SHA condition failed or atomic update was denied');
+    if(payload.data?.updateRefs?.clientMutationId!==input.clientMutationId)
+      throw error('CAS_UNCONFIRMED','GitHub did not confirm atomic expected-SHA update');
+  };
+
   const access=cloudflareJwtVerifier({
     issuer:config.accessIssuer??process.env.CF_ACCESS_ISSUER??'',
     audience:config.accessAudience??process.env.CF_ACCESS_AUD??'',
@@ -455,13 +477,16 @@ export function makeServer(config={}) {
       if(!SHA.test(tree.sha||''))throw error('TREE_CREATE_INVALID','GitHub returned no tree SHA');
       const commit=await writerApi('POST',`${root}/git/commits`,{message,tree:tree.sha,parents:[sha]});
       if(!SHA.test(commit.sha||''))throw error('COMMIT_CREATE_INVALID','GitHub returned no commit SHA');
-      try{
-        await writerApi('PATCH',`${root}/git/refs/heads/${branchQ(branch)}`,{sha:commit.sha,force:false});
-      }catch(e){
-        if(e.code==='GITHUB_HTTP_422'||e.code==='GITHUB_HTTP_409')
-          throw error('STALE_SHA','Non-fast-forward update rejected; branch moved concurrently');
-        throw e;
-      }
+
+      const repoIdentity=await api('GET',root);
+      if(repoIdentity.full_name!==repo || typeof repoIdentity.node_id!=='string' ||
+         !/^[A-Za-z0-9_=-]{8,256}$/.test(repoIdentity.node_id))
+        throw error('REPO_IDENTITY_INVALID','Cannot bind atomic ref update to verified repository');
+      await writerGraphql({
+        repositoryId:repoIdentity.node_id,
+        clientMutationId:'bgh-'+commit.sha,
+        refUpdates:[{name:'refs/heads/'+branch,beforeOid:sha,afterOid:commit.sha,force:false}]
+      });
       const readback=await api('GET',`${root}/branches/${branchQ(branch)}`);
       if(readback.commit?.sha?.toLowerCase()!==commit.sha.toLowerCase())
         throw error('BRANCH_MOVED_AFTER_COMMIT','Branch advanced after this commit; refresh before next write');
