@@ -23,6 +23,13 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertIsNone(p.GITHUB_PATH.fullmatch(
             "/repos/miloszspyrka-code/zar-i-szlif/commits/" + NEW))
 
+    def test_native_release_ci_uses_canonical_harness_owner(self):
+        from pathlib import Path
+        workflow = (Path(__file__).resolve().parent.parent / ".github" /
+                    "workflows" / "native-product-release-ci.yml").read_text(encoding="utf-8")
+        self.assertIn("test \\"$GITHUB_REPOSITORY\\" = 'jtrtdhrst/harness-zar-i-szlif'", workflow)
+        self.assertNotIn("miloszspyrka-code/harness-zar-i-szlif", workflow)
+
     def test_noop_when_main_already_deployed(self):
         with patch.object(p,"ref",side_effect=[OLD,OLD,OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
