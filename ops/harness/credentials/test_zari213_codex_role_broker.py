@@ -116,5 +116,73 @@ class RoleCapacityTests(unittest.IsolatedAsyncioTestCase):
         await capacity.release("cho")
 
 
+class RoleHTTPIsolationTests(unittest.IsolatedAsyncioTestCase):
+    """Real loopback HTTP handler, synthetic role keys, zero provider calls."""
+    async def asyncSetUp(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        self.keys = {"cto": "synthetic-cto-key", "cho": "synthetic-cho-key"}
+        self.provider_called = False
+
+        def key_resolver(role):
+            return self.keys.get(role, "")
+
+        def unavailable_provider():
+            self.provider_called = True
+            raise AssertionError("unauthorized HTTP must never call provider")
+
+        self.server = TestServer(broker.create_app(
+            key_resolver=key_resolver, credential_resolver=unavailable_provider
+        ))
+        self.client = TestClient(self.server)
+        await self.client.start_server()
+
+    async def asyncTearDown(self):
+        await self.client.close()
+
+    async def test_own_role_models_allowed(self):
+        r = await self.client.get("/p/cto/v1/models", headers={
+            "Authorization": "Bearer " + self.keys["cto"]
+        })
+        self.assertEqual(r.status, 200)
+        payload = await r.json()
+        self.assertIn("gpt-6-luna", [x["id"] for x in payload["data"]])
+        self.assertFalse(self.provider_called)
+
+    async def test_foreign_role_key_denied(self):
+        r = await self.client.get("/p/cho/v1/models", headers={
+            "Authorization": "Bearer " + self.keys["cto"]
+        })
+        self.assertEqual(r.status, 401)
+        self.assertFalse(self.provider_called)
+
+    async def test_missing_role_key_denied(self):
+        r = await self.client.get("/p/cto/v1/models")
+        self.assertEqual(r.status, 401)
+        self.assertFalse(self.provider_called)
+
+    async def test_unknown_role_denied(self):
+        r = await self.client.get("/p/unknown/v1/models", headers={
+            "Authorization": "Bearer " + self.keys["cto"]
+        })
+        self.assertEqual(r.status, 404)
+        self.assertFalse(self.provider_called)
+
+    async def test_foreign_role_post_does_not_call_provider(self):
+        r = await self.client.post("/p/cho/v1/responses", headers={
+            "Authorization": "Bearer " + self.keys["cto"]
+        }, json={"model": "gpt-6-luna", "input": "synthetic",
+                 "stream": True, "store": False})
+        self.assertEqual(r.status, 401)
+        self.assertFalse(self.provider_called)
+
+    async def test_invalid_model_never_calls_provider(self):
+        r = await self.client.post("/p/cto/v1/responses", headers={
+            "Authorization": "Bearer " + self.keys["cto"]
+        }, json={"model": "unapproved-model", "input": "synthetic",
+                 "stream": True, "store": False})
+        self.assertEqual(r.status, 403)
+        self.assertFalse(self.provider_called)
+
+
 if __name__ == "__main__":
     unittest.main()
