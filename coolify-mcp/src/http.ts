@@ -171,7 +171,7 @@ function main(): void {
 
   const server = createServer((req, res) => {
     toRequest(req, publicUrl)
-      .then((request) => app.fetch(request))
+      .then((request) => app.fetch(request, req.socket.remoteAddress))
       .then((response) => writeResponse(response, res))
       .catch((error: unknown) => {
         if (error instanceof BodyTooLarge) {
