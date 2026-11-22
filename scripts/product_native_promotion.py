@@ -30,6 +30,16 @@ REPO = "jtrtdhrst/zar-i-szlif"
 APP_ID = 5398752
 INSTALL_ID = 173456397
 RELEASE_REF = "ci-approved"
+# Source identity of newly built Product images. The previous deployed panel
+# used an inaccurate branch claim. Permit that label ONLY on these audited,
+# immutable pre-migration revisions so the existing ci-approved baseline and
+# a controlled rollback remain observable during migration.
+PRODUCT_RELEASE_SOURCE = "jtrtdhrst/zar-i-szlif"
+LEGACY_PRODUCT_RELEASE_SOURCE = "zar-i-szlif/main"
+LEGACY_PRODUCT_RELEASE_SHAS = frozenset({
+    "11a3ebbb8a0a034316eeb31deb7367b38571f0f8",
+    "4feef6903dc21be5da0433a77b10549bf0009661",
+})
 ROOT = Path("/var/lib/paperclip-gitops")
 STATE = ROOT / "zar-i-szlif.json"
 LOCK = ROOT / "zar-i-szlif.lock"
@@ -828,10 +838,27 @@ def live_release():
                 raise Denied("health_http_unhealthy")
     except (OSError, ValueError, TimeoutError):
         raise Denied("production_readback_unavailable") from None
-    sha = data.get("commit")
-    if not isinstance(sha, str) or not SHA.fullmatch(sha) or data.get("source") != "zar-i-szlif/main":
+    return validated_product_release_sha(data)
+
+
+def validated_product_release_sha(data):
+    """Require canonical source on NEW releases; permit only exact legacy SHAs.
+
+    A legacy branch claim was embedded in the previous approved nginx image.
+    This narrowly bounded transition does NOT accept that label for any new
+    source SHA, even when the HTTP response and healthcheck are successful.
+    """
+    if not isinstance(data, dict):
         raise Denied("production_provenance_invalid")
-    return sha
+    sha = data.get("commit")
+    source = data.get("source")
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise Denied("production_provenance_invalid")
+    if source == PRODUCT_RELEASE_SOURCE:
+        return sha
+    if source == LEGACY_PRODUCT_RELEASE_SOURCE and sha in LEGACY_PRODUCT_RELEASE_SHAS:
+        return sha
+    raise Denied("production_provenance_invalid")
 
 
 def save(data):
