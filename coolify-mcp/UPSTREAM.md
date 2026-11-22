@@ -37,3 +37,20 @@ canary proves OAuth, MCP tools, HTTP, configuration safety,
 negative authorization and rollback.
 
 The upstream marketing preview PNG docs/assets/social-preview.png is intentionally excluded; it is not application source, a build input, or test fixture.
+
+## Existing production migration compatibility (2026-11-22)
+
+The live 3.9.0 Compose service uses the persistent OAuth state volume at `/data`,
+owned by UID/GID 1000, and a legacy host bind mount overriding
+`/app/dist/lib/oauth.js`. The owned image intentionally runs as the standard
+Node.js Alpine `node` user (UID 1000) to retain write access to the state
+volume without changing ownership. The ChatGPT CIMD public-client PKCE
+compatibility patch previously supplied by the mounted 3.9.0 JavaScript file
+is now implemented in `src/lib/oauth.ts`, with positive and negative tests.
+
+**Cutover precondition:** authorized release must remove the obsolete
+`/app/dist/lib/oauth.js` bind mount before switching to the owned image,
+otherwise it would shadow the newly reviewed compiled OAuth module. Preserve
+`/data`, OAuth state, existing token configuration, endpoint and rollback
+image. Confirm exact SHA/digest and live authenticated + unauthorized E2E.
+Do not remove either mount or touch production under HOLD.
