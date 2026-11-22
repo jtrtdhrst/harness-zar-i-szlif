@@ -177,7 +177,7 @@ def live_sha():
         return json.load(response)["commit"]
 
 
-def target_readback(sha):
+def target_readback(sha, *, image=None, digest=None):
     """Read-only proof that the exact approved image is actually serving PUBLIC traffic.
 
     Fail closed. A release JSON value alone, a healthy container or a mutable
@@ -190,8 +190,18 @@ def target_readback(sha):
     if not isinstance(sha,str) or not re.fullmatch(r"[a-f0-9]{40}",sha):
         return deny("invalid_sha")
     try:
+        if (image is None) != (digest is None):
+            return deny("incomplete_candidate_proof")
         try:
-            proof = read_build_attestation()
+            if image is None:
+                proof = read_build_attestation()
+            else:
+                # Internal candidate readback: independently verify the live
+                # runtime before creating a persistent verified receipt.
+                proof = {"schema_version":1, "verified":True,
+                         "registry":REGISTRY, "runner":"zis-local-build",
+                         "coolify_image_app_uuid":APP_UUID,
+                         "sha":sha, "image":image, "digest":digest}
         except (OSError, ValueError, PermissionError):
             return deny("untrusted_build_attestation")
         image=f"{REGISTRY}/{IMAGE}:{sha}"
@@ -341,10 +351,10 @@ def deploy(sha):
     return status, body
 
 
-def wait_live(sha, attempts=90, interval=10):
+def wait_live(sha, attempts=90, interval=10, *, image=None, digest=None):
     for _ in range(attempts):
         try:
-            if target_readback(sha)["ok"]:
+            if target_readback(sha, image=image, digest=digest)["ok"]:
                 return True
         except (OSError, ValueError, KeyError):
             pass
@@ -407,10 +417,13 @@ def main():
         log = STATE_DIR / f"build-{target}.log"
         try:
             image, digest = build_and_push(target, log)
-            update_marker(target, image, digest)
             status, body = deploy(target)
             deployment = body.get("deployments", [{}])[0].get("deployment_uuid") if isinstance(body, dict) else None
-            healthy = wait_live(target)
+            healthy = wait_live(target, image=image, digest=digest)
+            if healthy:
+                # Never certify an unverified deployment. A crash or negative
+                # readback must leave the prior verified receipt unchanged.
+                update_marker(target, image, digest)
             save({"sha": target, "previous": current, "image": image, "digest": digest,
                   "deployment": deployment, "healthy": healthy,
                   "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
