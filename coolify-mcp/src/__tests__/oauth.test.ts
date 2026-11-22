@@ -2221,7 +2221,7 @@ describe('registration over HTTP', () => {
     const app = makeApp();
     const statuses: number[] = [];
     for (let i = 0; i < 31; i++) {
-      statuses.push((await register(app, { 'x-forwarded-for': `198.51.100.${i}` })).status);
+      statuses.push((await app.fetch(new Request(`${ISSUER}/register`, { method: 'POST', headers: { 'x-forwarded-for': `198.51.100.${i}` }, body: JSON.stringify({ redirect_uris: ['https://client.example.com/cb'] }) }), `203.0.113.${i}`)).status);
     }
     expect(statuses.slice(0, 30).every((s) => s === 201)).toBe(true);
     expect(statuses[30]).toBe(429);
