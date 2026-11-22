@@ -1,4 +1,7 @@
 import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 import unittest
 import worker
 from worker import safe_timeline
@@ -54,4 +57,42 @@ class StatsTests(unittest.TestCase):
    self.assertNotIn("credential",json.dumps(safe))
    self.assertNotIn("token_name",json.dumps(safe))
   finally:worker.api=original
+class SafeReaderTests(unittest.TestCase):
+ def make_log(self,root,content=b"{}\n"):
+  log=Path(root)/"11111111-1111-4111-8111-111111111111"/AGENT/(RUN+".ndjson")
+  log.parent.mkdir(parents=True,exist_ok=True)
+  log.write_bytes(content)
+  return log
+ def test_safe_regular_file(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   log=self.make_log(tmp)
+   self.assertEqual(worker.read_log_safely(log),b"{}\n")
+ def test_incomplete_final_ndjson_line_is_rejected(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   log=self.make_log(tmp,b"{}")
+   with self.assertRaisesRegex(RuntimeError,"unterminated_final_ndjson_line"):
+    worker.read_log_safely(log)
+ def test_symlink_leaf_is_rejected(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   log=self.make_log(tmp)
+   outside=Path(tmp)/"private.ndjson";outside.write_bytes(b"{}\n")
+   log.unlink();log.symlink_to(outside)
+   with self.assertRaises(OSError):worker.read_log_safely(log)
+ def test_symlink_parent_is_rejected(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)
+   company=root/"11111111-1111-4111-8111-111111111111"
+   company.mkdir()
+   outside=root/"outside";outside.mkdir()
+   (outside/(RUN+".ndjson")).write_bytes(b"{}\n")
+   (company/AGENT).symlink_to(outside,target_is_directory=True)
+   with self.assertRaises(OSError):
+    worker.read_log_safely(company/AGENT/(RUN+".ndjson"))
+ def test_overlarge_file_is_rejected_before_read(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   log=self.make_log(tmp,b"12345\n")
+   with patch.object(worker,"MAX_BYTES",3):
+    with self.assertRaisesRegex(RuntimeError,"invalid_log_file"):
+     worker.read_log_safely(log)
+
 if __name__=="__main__":unittest.main()
