@@ -47,9 +47,9 @@ def check_source(repo, expected_sha, *, runner=subprocess.run):
     origin = checked(["git", "-C", str(repo), "remote", "get-url", "origin"],
                      "source_remote_unverifiable", runner=runner)
     trusted = (
-        r"https://github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-        r"git@github\.com:miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-        r"ssh://git@github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+        r"https://github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+        r"git@github\.com:jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+        r"ssh://git@github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
     )
     if not any(re.fullmatch(pattern, origin, flags=re.IGNORECASE) for pattern in trusted):
         raise ParityFailure("source_remote_untrusted")

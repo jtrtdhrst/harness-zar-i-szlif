@@ -1,0 +1,139 @@
+name: Coolify MCP owned source build and E2E
+on:
+  pull_request:
+    paths:
+      - 'coolify-mcp/**'
+      - '.github/workflows/coolify-mcp-ci.yml'
+      - 'scripts/service-coverage.json'
+      - 'ops/release-lanes.json'
+      - 'scripts/harness_native_delivery.py'
+      - 'scripts/test_harness_native_delivery.py'
+      - 'scripts/harness_release_admission.py'
+      - 'scripts/harness_release_parity.py'
+      - 'scripts/test_harness_release_parity.py'
+  push:
+    branches: [main]
+    paths:
+      - 'coolify-mcp/**'
+      - '.github/workflows/coolify-mcp-ci.yml'
+      - 'scripts/service-coverage.json'
+      - 'ops/release-lanes.json'
+      - 'scripts/harness_native_delivery.py'
+      - 'scripts/test_harness_native_delivery.py'
+      - 'scripts/harness_release_admission.py'
+      - 'scripts/harness_release_parity.py'
+      - 'scripts/test_harness_release_parity.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: coolify-mcp/package-lock.json
+      - name: Install owned upstream
+        working-directory: coolify-mcp
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build owned runtime
+        working-directory: coolify-mcp
+        run: npm run build
+      - name: Coolify MCP E2E
+        working-directory: coolify-mcp
+        run: npm test -- --runInBand
+      - name: Release source coverage
+        run: python3 scripts/check_service_coverage.py
+      - name: Guarded Coolify MCP image routing and OAuth bind regressions
+        run: PYTHONPATH=scripts python3 -m unittest scripts.test_harness_native_delivery scripts.test_harness_release_parity scripts.test_harness_release_admission -v
+      - name: Verify release owner policy and exact main-only OCI publisher
+        run: |
+          python3 scripts/check-release-lanes.py --self-test
+          PYTHONPATH=scripts python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: ./coolify-mcp
+          file: ./coolify-mcp/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/coolify-mcp:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - name: Verify immutable GHCR digest and exact trusted source
+        id: provenance
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REPO: ${{ github.repository }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/coolify-mcp
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$SOURCE_REPO" = "jtrtdhrst/harness-zar-i-szlif"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "${#SOURCE_SHA}" -eq 40
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          test -f coolify-mcp/Dockerfile
+          mkdir -p "$RUNNER_TEMP/coolify-mcp-release"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          e = os.environ
+          assert re.fullmatch(r"[a-f0-9]{40}", e["SOURCE_SHA"])
+          assert re.fullmatch(r"sha256:[a-f0-9]{64}", e["DIGEST"])
+          data = {"schema_version": 1, "service": "coolify-mcp",
+                  "source_repository": e["SOURCE_REPO"], "source_sha": e["SOURCE_SHA"],
+                  "source_root": "coolify-mcp", "dockerfile": "coolify-mcp/Dockerfile",
+                  "image": e["IMAGE"], "image_digest": e["DIGEST"],
+                  "subject": e["IMAGE"] + "@" + e["DIGEST"],
+                  "release_authorized": False, "production_verified": False}
+          p = pathlib.Path(e["RUNNER_TEMP"]) / "coolify-mcp-release" / "release.json"
+          p.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          echo "manifest=$RUNNER_TEMP/coolify-mcp-release/release.json" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Owned Coolify MCP image: $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifact publication is not authorized production deployment." >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest SHA-bound OCI image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.provenance.outputs.image }}
+          subject-digest: ${{ steps.provenance.outputs.digest }}
+      - name: Retain immutable release record for independent admission
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coolify-mcp-oci-${{ github.sha }}
+          path: ${{ steps.provenance.outputs.manifest }}
+          if-no-files-found: error
+          retention-days: 30

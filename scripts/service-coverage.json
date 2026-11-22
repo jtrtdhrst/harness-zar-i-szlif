@@ -10,8 +10,16 @@
       "reason": "Complete owned MCP source and Dockerfile now reside here. Pending reviewed image+Coolify release; no automatic promotion is claimed."
     },
     "coolify-mcp": {
-      "mode": "manual_only",
-      "reason": "Upstream-pinned runtime has no repository build workflow; release requires digest review."
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/coolify-mcp-ci.yml"
+      ],
+      "required_test_step": {
+        "job": "verify",
+        "name": "Coolify MCP E2E",
+        "working_directory": "coolify-mcp",
+        "run": "npm test -- --runInBand"
+      }
     },
     "docs": {
       "mode": "workflow",

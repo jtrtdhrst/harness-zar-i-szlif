@@ -31,7 +31,7 @@ import stat
 import sys
 from datetime import datetime, timezone
 
-REPO = "miloszspyrka-code/harness-zar-i-szlif"
+REPO = "jtrtdhrst/harness-zar-i-szlif"
 RELEASE_BASE_REF = "main"
 MANIFEST_SCHEMA = 1
 ATTESTATION_SCHEMA = 1
