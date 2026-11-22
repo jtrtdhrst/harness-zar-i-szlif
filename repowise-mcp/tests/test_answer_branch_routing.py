@@ -1,5 +1,7 @@
 """Regression checks for RepoWise branch/build retrieval in the pinned 0.60.1 wheel."""
 import unittest
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -94,6 +96,57 @@ class AnchorTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(hits, [])
 
+
+    async def test_two_real_repo_roots_isolated(self):
+        """Harness-only branch row must never appear when product is selected."""
+        with TemporaryDirectory() as tmp:
+            roots = {name: Path(tmp) / name for name in ("harness", "product")}
+            for root in roots.values():
+                folder = root / "ops" / "repowise"
+                folder.mkdir(parents=True)
+            (roots["harness"] / "ops/repowise/BRANCH_BUILD_PROVENANCE.md").write_text(
+                "# Verified build source\n" + row() + "\n", encoding="utf-8"
+            )
+            (roots["product"] / "ops/repowise/README.md").write_text(
+                "# Product build instructions\nNo github-ops-mcp branch entry.\n", encoding="utf-8"
+            )
+            calls = []
+
+            async def local_source_search(*, query, limit, mode, repo):
+                self.assertIn(repo, roots)
+                calls.append(repo)
+                name = query.strip(chr(96))
+                lines = []
+                for source in (roots[repo] / "ops/repowise").glob("*.md"):
+                    for number, content in enumerate(
+                        source.read_text(encoding="utf-8").splitlines(), start=1
+                    ):
+                        if name in content:
+                            lines.append({
+                                "path": str(source.relative_to(roots[repo])),
+                                "line": number, "text": content,
+                            })
+                return {"lines": lines}
+
+            with patch(
+                "repowise.server.mcp_server.tool_search.tool.search_codebase",
+                new=local_source_search,
+            ), patch.object(
+                a, "filter_dicts_by_key", side_effect=lambda hits, key, spec: hits
+            ):
+                harness_hits = await a._literal_source_anchor_hits(
+                    "Which branch builds github-ops-mcp?",
+                    repo_alias="harness", scope=None, exclude_spec=None,
+                )
+                product_hits = await a._literal_source_anchor_hits(
+                    "Which branch builds github-ops-mcp?",
+                    repo_alias="product", scope=None, exclude_spec=None,
+                )
+            self.assertEqual(calls, ["harness", "product"])
+            self.assertEqual(len(harness_hits), 1)
+            self.assertEqual(product_hits, [])
+            self.assertIn("feat/github-ops-mcp-20261120", harness_hits[0]["excerpt"])
+
     async def test_absent_source_does_not_invent_branch(self):
         with patch("repowise.server.mcp_server.tool_search.tool.search_codebase",
                    new_callable=AsyncMock, return_value={"lines": []}):
@@ -148,6 +201,69 @@ class LiveMarkdownEvidenceTests(unittest.TestCase):
             self.assertIsNone(a._verified_markdown_source_excerpt(
                 h, Path(tmp), "Which branch builds github-ops-mcp?"
             ))
+
+
+
+
+class CacheFreshnessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_branch_answer_bypasses_stale_cache_and_rechecks_current_evidence(self):
+        """Even a pre-existing stale answer cannot override a newer branch mapping."""
+        @asynccontextmanager
+        async def session(_factory):
+            yield object()
+
+        context = SimpleNamespace(path=Path("."), session_factory=lambda: None)
+        repo = SimpleNamespace(id="harness", name="harness")
+        first = hit("github-ops-mcp", "feat/old")
+        second = hit("github-ops-mcp", "feat/new")
+        evidence = [
+            a._Retrieved([h], [h], set(), {}, [])
+            for h in (first, second)
+        ]
+        with patch.object(a, "_resolve_repo_context", new=AsyncMock(return_value=context)), \
+             patch.object(a, "_get_exclude_spec", return_value=None), \
+             patch.object(a, "get_session", new=session), \
+             patch.object(a, "_get_repo", new=AsyncMock(return_value=repo)), \
+             patch.object(a, "_data_shape_answer", new=AsyncMock(return_value=None)), \
+             patch.object(a, "_cache_disabled", return_value=False), \
+             patch.object(a, "_serve_cached_answer", new_callable=AsyncMock,
+                          return_value={"answer": "STALE"}) as cached, \
+             patch.object(a, "_run_retrieval_pipeline", new_callable=AsyncMock,
+                          side_effect=evidence) as search, \
+             patch.object(a, "_with_candidates", side_effect=lambda payload, pool: payload):
+            results = [
+                await a._get_answer_raw("Which branch builds github-ops-mcp?", repo="harness")
+                for _ in range(2)
+            ]
+        self.assertIn("feat/old", results[0]["answer"])
+        self.assertIn("feat/new", results[1]["answer"])
+        self.assertNotIn("feat/old", results[1]["answer"])
+        self.assertEqual(search.await_count, 2)
+        cached.assert_not_awaited()
+
+    async def test_unrelated_question_keeps_normal_cache_path(self):
+        @asynccontextmanager
+        async def session(_factory):
+            yield object()
+
+        context = SimpleNamespace(path=Path("."), session_factory=lambda: None)
+        repo = SimpleNamespace(id="harness", name="harness")
+        with patch.object(a, "_resolve_repo_context", new=AsyncMock(return_value=context)), \
+             patch.object(a, "_get_exclude_spec", return_value=None), \
+             patch.object(a, "get_session", new=session), \
+             patch.object(a, "_get_repo", new=AsyncMock(return_value=repo)), \
+             patch.object(a, "_data_shape_answer", new=AsyncMock(return_value=None)), \
+             patch.object(a, "_cache_disabled", return_value=False), \
+             patch.object(a, "_serve_cached_answer", new_callable=AsyncMock,
+                          return_value={"answer": "CACHED"}) as cached, \
+             patch.object(a, "_run_retrieval_pipeline", new_callable=AsyncMock) as search:
+            result = await a._get_answer_raw(
+                "Explain github-ops-mcp architecture", repo="harness"
+            )
+        self.assertEqual(result["answer"], "CACHED")
+        cached.assert_awaited_once()
+        search.assert_not_awaited()
+
 
 
 if __name__ == "__main__":
