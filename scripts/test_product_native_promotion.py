@@ -27,7 +27,7 @@ class ProductPromotionTests(unittest.TestCase):
         from pathlib import Path
         workflow = (Path(__file__).resolve().parent.parent / ".github" /
                     "workflows" / "native-product-release-ci.yml").read_text(encoding="utf-8")
-        self.assertIn("test \\"$GITHUB_REPOSITORY\\" = 'jtrtdhrst/harness-zar-i-szlif'", workflow)
+        self.assertIn("""test "$GITHUB_REPOSITORY" = 'jtrtdhrst/harness-zar-i-szlif'""", workflow)
         self.assertNotIn("miloszspyrka-code/harness-zar-i-szlif", workflow)
 
     def test_noop_when_main_already_deployed(self):
