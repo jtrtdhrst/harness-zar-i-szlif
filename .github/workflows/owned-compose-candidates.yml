@@ -1,0 +1,59 @@
+name: Harness Compose candidate contracts
+# This is a hosted, unprivileged validation and selection workflow.
+# It NEVER deploys, merges, bypasses HOLD, or approves any release.
+on:
+  pull_request:
+    paths:
+      - 'ops/service-build-roots.json'
+      - 'ops/compose-migration-candidates.json'
+      - 'scripts/select_owned_compose.py'
+      - 'scripts/test_owned_compose_candidates.py'
+      - 'scripts/verify_owned_image_digests.py'
+      - 'scripts/test_verify_owned_image_digests.py'
+      - 'ops/audits/**'
+      - '**/compose.candidate.yml'
+      - '**/release-contract.json'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-and-select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test exact resource isolation and negative selectors
+        run: python3 -m unittest discover -s scripts -p 'test_owned_compose_candidates.py' -v
+      - name: Test immutable image preflight, including missing/HEAD/latest negatives
+        run: python3 -m unittest discover -s scripts -p 'test_verify_owned_image_digests.py' -v
+      - name: Parse every candidate with real Docker Compose without resolving secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/compose-paths.txt"
+          import json
+          with open("ops/compose-migration-candidates.json", encoding="utf-8") as file:
+              for row in json.load(file)["resources"]:
+                  print(row["compose"])
+          PY
+          while IFS= read -r file; do
+            docker compose -f "$file" config --no-interpolate --quiet
+          done < "$RUNNER_TEMP/compose-paths.txt"
+      - name: Select changed resources; do not deploy
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$BASE_SHA"
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
+          fi
+          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed.txt"
+          python3 scripts/select_owned_compose.py --changed-file "$RUNNER_TEMP/changed.txt"
+          echo 'Only the existing release controller can authorize deployment.'

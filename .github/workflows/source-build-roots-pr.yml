@@ -1,0 +1,32 @@
+name: Owned Harness source build roots - safe PR validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ops/service-build-roots.json'
+      - 'scripts/test_service_build_roots.py'
+      - 'ops/repowise/compose.publisher.owned.yaml'
+      - 'ops/repowise/Dockerfile.publisher'
+      - '.github/workflows/source-build-roots-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-owned-source:
+    # Never use the production-adjacent self-hosted runner with unreviewed PR YAML.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify exactly 10 source-ready roots and staged Coolify root
+        run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
+      - name: Validate standalone RepoWise staging Compose rooted at its own folder
+        run: docker compose -f ops/repowise/compose.publisher.owned.yaml config --quiet
+      - name: Build staging publisher from owned context with protocol tests
+        run: |
+          set -euo pipefail
+          docker build --pull -f ops/repowise/Dockerfile.publisher -t repowise-publisher-pr:${{ github.sha }} ops/repowise
+          docker image inspect repowise-publisher-pr:${{ github.sha }} --format '{{.Id}}'
