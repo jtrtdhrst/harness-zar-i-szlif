@@ -105,6 +105,66 @@ def private_role_auth_file(shared_home: Path, role: str, uid: int) -> Path:
     return entry
 
 
+def role_model_provider(shared_home: Path, role: str, uid: int) -> str:
+    """Read only the trusted role-local provider selector; reject provider drift.
+
+    CTO may temporarily use the pre-approved OpenCode runtime for independent
+    review while its Codex OAuth login is unavailable. No other Codex role
+    silently inherits this exception.
+    """
+    if role not in CODEX_ROLES and role not in OPENCODE_ROLES:
+        raise ValueError("role has no model credential policy")
+    config = shared_home / "profiles" / role / "config.yaml"
+    fd = os.open(config, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1):
+            raise ValueError("untrusted role model config")
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as file:
+            lines = file.read(65536).splitlines()
+    finally:
+        os.close(fd)
+    found = []
+    inside = False
+    blocks = 0
+    for line in lines:
+        if line.startswith("model:"):
+            blocks += 1
+            inside = True
+        elif inside and line and not line[0].isspace() and not line.startswith("#"):
+            inside = False
+        elif inside:
+            match = re.fullmatch(r"  provider:\s*([a-z0-9-]+)\s*", line)
+            if match:
+                found.append(match.group(1))
+    if blocks != 1 or len(found) != 1:
+        raise ValueError("ambiguous role model provider")
+    provider = found[0]
+    approved = (
+        (role in CODEX_ROLES and provider == "openai-codex")
+        or (role in OPENCODE_ROLES and provider == "opencode-go")
+        or (role == "cto" and provider == "opencode-go")
+    )
+    if not approved:
+        raise ValueError("role model provider not approved")
+    return provider
+
+
+def private_role_env_file(shared_home: Path, role: str, uid: int) -> Path:
+    """Validate private role .env metadata, never expose the provider key."""
+    path = shared_home / "profiles" / role / ".env"
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1):
+            raise ValueError("role provider environment is not private")
+    finally:
+        os.close(fd)
+    return path
+
+
 def verified_hermes_home_profile(task: Path, home: Path, session_root: Path,
                                  agent: str, role: str, uid: int) -> str:
     """Accept only an owned task-private home or the exact persisted role session.
@@ -240,8 +300,12 @@ def restrict(task, tmpdir):
                            "context_length_cache.yaml")
         for name in bootstrap_names:
             grant(ruleset, shared_home / name, READ_FILE)
-        if role in CODEX_ROLES:
+        provider = role_model_provider(shared_home, role, os.getuid())
+        if provider == "openai-codex":
             grant(ruleset, private_role_auth_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
+        elif provider == "opencode-go":
+            grant(ruleset, private_role_env_file(shared_home, role, os.getuid()),
                   READ_FILE, require_regular_nofollow=True)
         # Hermes startup uses an existing per-install flock. Permit only
         # this single lock file to be opened for writing, never shared config
