@@ -32,12 +32,17 @@ RUNTIME_GID = 981
 REFRESH = "/usr/local/libexec/multica-zar-github-app-refresh.py"
 # No runner grants: administration/actions write is not a credential-broker role.
 AGENT_ROLES = {"implementer", "reviewer", "release"}
+ROLE_SCOPED_REPOS = {}
+for _base in ("implementer", "reviewer", "release"):
+    for _suffix, _repo in (("harness", HARNESS_REPO), ("product", PRODUCT_REPO)):
+        _role = f"{_base}-{_suffix}"
+        AGENT_ROLES.add(_role)
+        ROLE_SCOPED_REPOS[_role] = {_repo}
 ROLE_PERMISSIONS = {
     "implementer": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
     "reviewer": {"contents": "read", "pull_requests": "write", "checks": "read", "metadata": "read"},
     "release": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
-    "runner": {"actions": "write", "administration": "write", "contents": "read", "metadata": "read"},
-    "harness-reader": {"contents": "read", "metadata": "read"},
+    "cache-reader": {"contents": "read", "metadata": "read"},
 }
 DEFAULT_ROOT = "/etc/multica-git-credential"
 DAEMON_UNIT = "multica-zar-daemon.service"
@@ -351,6 +356,8 @@ def read_role_token(tokens_dir, role):
     data = json.loads((tokens_dir / f"{role}.json").read_text(encoding="utf-8"))
     if not isinstance(data.get("token"), str) or not data["token"].startswith("ghs_"):
         raise ValueError("role token malformed")
+    if role not in AGENT_ROLES and role != "cache-reader":
+        raise ValueError("role not authorized for broker")
     if set(data.get("repositories", [])) != role_repos(role):
         raise ValueError("role token repository scope mismatch")
     base = role_base(role)
