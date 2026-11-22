@@ -215,6 +215,84 @@ class ReadbackRegressionTests(unittest.TestCase):
             self.assertEqual(result["sha"], SHA, "must read the already opened inode")
             self.assertEqual(json.loads(file.read_text())["sha"], OLD_SHA)
 
+    def test_candidate_digest_readback_validates_runtime_without_premature_marker(self):
+        with mock.patch.object(delivery, "read_build_attestation",
+                               side_effect=AssertionError("no verified marker before QA")):
+            self.assertTrue(delivery.target_readback(
+                SHA, image=self.runtime_image, digest=DIGEST)["ok"])
+        self.assertEqual(delivery.target_readback(
+            SHA, image=self.runtime_image)["reason"], "incomplete_candidate_proof")
+        self.assertEqual(delivery.target_readback(
+            SHA, digest=DIGEST)["reason"], "incomplete_candidate_proof")
+
+    def test_readback_failure_restores_prior_release_without_marking_verified(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            old_image = f"{delivery.REGISTRY}/{delivery.IMAGE}:{SHA}"
+            with (mock.patch.object(delivery, "STATE_DIR", root),
+                  mock.patch.object(delivery, "LOCK", root / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha", return_value=SHA),
+                  mock.patch.object(delivery, "live_sha", return_value=OLD_SHA),
+                  mock.patch.object(delivery, "build_and_push", return_value=(old_image,DIGEST)),
+                  mock.patch.object(delivery, "deploy", side_effect=[
+                      (200, {"deployments":[{"deployment_uuid":"new"}]}),
+                      (200, {"deployments":[{"deployment_uuid":"rollback"}]})
+                  ]) as deploy,
+                  mock.patch.object(delivery, "wait_live", side_effect=[False,True]) as readback,
+                  mock.patch.object(delivery, "update_marker") as marker,
+                  mock.patch.object(delivery, "save") as save,
+                  mock.patch.object(sys, "argv", ["delivery"])):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(delivery.main(), 1)
+                self.assertEqual(deploy.call_args_list, [mock.call(SHA), mock.call(OLD_SHA)])
+                self.assertEqual(readback.call_args_list,
+                    [mock.call(SHA, image=old_image, digest=DIGEST),
+                     mock.call(OLD_SHA, attempts=12, interval=5)])
+                marker.assert_not_called()
+                self.assertEqual(save.call_args.args[0]["rollback"]["healthy"], True)
+
+    def test_successful_live_readback_precedes_verified_marker_write(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = f"{delivery.REGISTRY}/{delivery.IMAGE}:{SHA}"
+            with (mock.patch.object(delivery, "STATE_DIR", root),
+                  mock.patch.object(delivery, "LOCK", root / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha", return_value=SHA),
+                  mock.patch.object(delivery, "live_sha", return_value=OLD_SHA),
+                  mock.patch.object(delivery, "build_and_push", return_value=(image,DIGEST)),
+                  mock.patch.object(delivery, "deploy", return_value=(200,{})),
+                  mock.patch.object(delivery, "wait_live", side_effect=lambda *a,**k: events.append("readback") or True),
+                  mock.patch.object(delivery, "update_marker", side_effect=lambda *a: events.append("marker")),
+                  mock.patch.object(delivery, "save"),
+                  mock.patch.object(sys, "argv", ["delivery"])):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(delivery.main(), 0)
+            self.assertEqual(events, ["readback", "marker"])
+
+    def test_provider_exception_attempts_rollback_and_preserves_prior_marker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = f"{delivery.REGISTRY}/{delivery.IMAGE}:{SHA}"
+            with (mock.patch.object(delivery, "STATE_DIR", root),
+                  mock.patch.object(delivery, "LOCK", root / "delivery.lock"),
+                  mock.patch.object(delivery, "ref_sha", return_value=SHA),
+                  mock.patch.object(delivery, "live_sha", return_value=OLD_SHA),
+                  mock.patch.object(delivery, "build_and_push", return_value=(image,DIGEST)),
+                  mock.patch.object(delivery, "deploy", side_effect=[
+                      RuntimeError("provider patch interrupted"),
+                      (200,{"deployments":[{"deployment_uuid":"rollback"}]})]) as deploy,
+                  mock.patch.object(delivery, "wait_live", return_value=True) as readback,
+                  mock.patch.object(delivery, "update_marker") as marker,
+                  mock.patch.object(delivery, "save") as save,
+                  mock.patch.object(sys, "argv", ["delivery"])):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(delivery.main(), 1)
+                self.assertEqual(deploy.call_count, 2)
+                readback.assert_called_once_with(OLD_SHA, attempts=12, interval=5)
+                marker.assert_not_called()
+                self.assertEqual(save.call_args.args[0]["rollback"]["healthy"], True)
+
     def test_public_html_drift_rejected_even_if_release_json_claims_sha(self):
         self.public_html = b"<html>stale data</html>"
         proof = delivery.target_readback(SHA)
