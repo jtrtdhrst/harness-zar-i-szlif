@@ -134,7 +134,7 @@ jobs:
           "${RUNNER_TEMP}/zari213-candidate/multica" --version
           cd "${RUNNER_TEMP}/zari213-candidate"
           sha256sum multica > SHA256SUMS
-          printf 'UPSTREAM_BASE_SHA=b1ea927def6490c43bedff537b6f4ed9a47fa828\nPR_HEAD_SHA=%s\n' "$(git -C \"${GITHUB_WORKSPACE}\" rev-parse HEAD)" > PROVENANCE.txt
+          printf 'UPSTREAM_BASE_SHA=b1ea927def6490c43bedff537b6f4ed9a47fa828\nPR_HEAD_SHA=%s\n' "$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" > PROVENANCE.txt
       - name: Retain candidate checksum and executable for gated operator release
         uses: actions/upload-artifact@v4
         with:
