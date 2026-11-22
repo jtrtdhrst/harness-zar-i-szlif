@@ -39,6 +39,20 @@ for _base in ("implementer", "reviewer", "release"):
         ROLE_REPOS[f"{_base}-{_suffix}"] = (_repo,)
         ROLE_REPO_NAMES[f"{_base}-{_suffix}"] = (_name,)
 RUNTIME_GID = 981
+# The writer role is not automatically activated by a source deployment.
+# Until independent release authorization is present, the root-owned systemd
+# environment must explicitly opt in. The reader and existing agent roles
+# continue refreshing without requesting new GitHub App write scopes.
+WRITER_ROLE = "github-ops-writer"
+WRITER_OPT_IN = "GITHUB_OPS_WRITER_MINT_ENABLED"
+
+
+def selected_roles():
+    enabled = os.environ.get(WRITER_OPT_IN, "false")
+    if enabled not in ("true", "false"):
+        raise RuntimeError("Invalid writer mint gate")
+    return [role for role in ROLE_PERMISSIONS if role != WRITER_ROLE or enabled == "true"]
+
 
 PHP_TEMPLATE = r'''
 $a=App\Models\GithubApp::findOrFail(1);
@@ -160,11 +174,14 @@ def main():
     with os.fdopen(fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         summary = {}
-        for role in ROLE_PERMISSIONS:
+        roles = selected_roles()
+        for role in roles:
             payload = mint(role)
             write_token(role, payload)
             summary[role] = payload["expires_at"]
-        print(json.dumps({"refreshed": True, "roles": sorted(summary), "expiry": min(summary.values())}))
+        print(json.dumps({"refreshed": True, "roles": sorted(summary),
+                          "writer_mint_enabled": WRITER_ROLE in roles,
+                          "expiry": min(summary.values())}))
     return 0
 
 
