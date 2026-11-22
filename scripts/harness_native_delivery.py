@@ -229,6 +229,16 @@ def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     patched, count = pattern.subn(lambda match: f"{match.group(1)}{match.group(2)}{tag}{match.group(2)}", raw)
     if count != 1:
         raise RuntimeError(f"expected exactly one {spec['image_prefix']} image line, found {count}")
+    if service == "coolify-mcp":
+        # The legacy OAuth source-file bind shadows code in the owned image.
+        # Remove exactly this known obsolete line, never /data or any other
+        # mount; the full original Compose is snapshotted before provider write.
+        legacy_bind = re.compile(
+            r"(?m)^[ \\t]*-[ \\t]*/opt/coolify-mcp/oauth\\.js:/app/dist/lib/oauth\\.js:ro[ \\t]*(?:\\r?\\n|$)"
+        )
+        patched, removed = legacy_bind.subn("", patched)
+        if removed > 1 or "/app/dist/lib/oauth.js" in patched:
+            raise RuntimeError("coolify-mcp: unexpected OAuth shadow bind; refusing release")
     # A second promotion in the same second must never overwrite the first
     # snapshot. The controller is privileged; the raw compose may contain
     # secrets, so no world-readable file may exist even during the write.
