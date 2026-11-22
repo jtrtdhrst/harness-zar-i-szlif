@@ -6,7 +6,7 @@ export class MauticApiClient {
   public v1: AxiosInstance;
   public v2: AxiosInstance;
   private token: OAuth2Token | null = null;
-  private baseUrl: string;
+  private readonly baseUrl: string;
   private clientId: string;
   private clientSecret: string;
   private tokenEndpoint: string;
@@ -139,6 +139,15 @@ export class MauticApiClient {
       console.error('Failed to refresh token:', error);
       await this.getAccessToken();
     }
+  }
+
+  /**
+   * Configured API base URL (e.g. `https://mautic.example.pl/api/`).
+   * Exposed read-only so identity readback can name the instance without
+   * reaching into client credentials.
+   */
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   /**

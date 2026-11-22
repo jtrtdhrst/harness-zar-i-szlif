@@ -27,6 +27,7 @@ import axios from 'axios';
 
 import { MauticApiClient } from './api/client.js';
 import { allToolDefinitions, dispatchTool } from './tools/index.js';
+import { WriteGuard } from './security/write-guard.js';
 
 // Environment variables for Mautic configuration
 const MAUTIC_BASE_URL = process.env.MAUTIC_BASE_URL;
@@ -41,6 +42,7 @@ if (!MAUTIC_BASE_URL || !MAUTIC_CLIENT_ID || !MAUTIC_CLIENT_SECRET || !MAUTIC_TO
 class MauticServer {
   private server: Server;
   private apiClient: MauticApiClient;
+  private writeGuard: WriteGuard;
 
   constructor() {
     this.server = new Server(
@@ -62,6 +64,11 @@ class MauticServer {
       tokenEndpoint: MAUTIC_TOKEN_ENDPOINT!,
     });
 
+    // Fail-closed by construction: no grant in the deployment environment means
+    // every provider-mutating tool is refused before a request is built.
+    this.writeGuard = new WriteGuard(process.env);
+    console.error(`[write-guard] ${this.writeGuard.describe()}`);
+
     this.setupToolHandlers();
 
     this.server.onerror = (error) => console.error('[MCP Error]', error);
@@ -82,6 +89,7 @@ class MauticServer {
           request.params.name,
           this.apiClient,
           request.params.arguments,
+          this.writeGuard,
         );
       } catch (error) {
         if (error instanceof ToolError) {

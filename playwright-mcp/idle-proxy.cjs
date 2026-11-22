@@ -22,6 +22,7 @@ const REQUEST_TIMEOUT_MS = (() => {
 // regression suite can drive a stub backend; the shipped default is unchanged.
 const BACKEND_ENTRY = process.env.BACKEND_ENTRY || "/app/cli.js";
 const BACKEND_ARGS = ["--headless", "--browser", "chromium", "--no-sandbox",
+  "--isolated", // separate in-memory browser profile; no persistent profile lock
   "--port", "0", "--host", "127.0.0.1", "--allowed-hosts", "*"];
 
 const log = (...a) => console.error("[proxy]", ...a);
@@ -46,10 +47,38 @@ function markDead(code, sig) {
   sharedSid = null;
 }
 
+function backendSpawnOptions(overrides = {}) {
+  // detached: the backend becomes a process-group leader so its Chromium
+  // grandchildren are reachable with a single group signal. Without it a
+  // SIGTERM to the node process leaves the browser alive, holding its profile.
+  return { stdio: ["ignore", "pipe", "pipe"], detached: true, ...overrides };
+}
+
+/**
+ * Signal the backend and everything it spawned.
+ * Negative pid targets the whole process group; the fallback keeps a plain
+ * child.kill for environments where the group signal is not available.
+ */
+function killTree(child, signal, kill = process.kill) {
+  const pid = child && child.pid;
+  if (!pid || pid <= 0) return false;
+  try {
+    kill(-pid, signal);
+    return true;
+  } catch {
+    try {
+      child.kill(signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 function spawnBackend() {
   // Random port per spawn (--port 0): no EADDRINUSE races with a previous
   // backend that is still shutting down. Port discovered from stderr.
-  const child = spawn("node", [BACKEND_ENTRY, ...BACKEND_ARGS], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("node", [BACKEND_ENTRY, ...BACKEND_ARGS], backendSpawnOptions());
   let port = 0;
   child.stderr.on("data", (d) => {
     process.stderr.write(`[pw] ${d}`);
@@ -62,7 +91,9 @@ function spawnBackend() {
 
 function backendRequest(be, options, body, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port: be.port, timeout: timeoutMs, ...options }, (res) => {
+    // agent:false keeps the session-less path on the same rule as the proxied
+    // paths: one socket per request, never a reused keep-alive socket.
+    const req = http.request({ host: "127.0.0.1", port: be.port, timeout: timeoutMs, agent: false, ...options }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -89,8 +120,12 @@ async function backendInitialize(be) {
 }
 
 function ensureBackend(cb) {
-  if (backend) return cb(null);
+  // A spawned process is not a ready backend. While cold-start initialization
+  // is in progress, every caller must join the same readiness queue; otherwise
+  // concurrent requests can observe `backend` before its port/shared session
+  // exists and fail spuriously with 502.
   if (starting) return starting.push(cb);
+  if (backend) return cb(null);
   starting = [cb];
   touch(); // a spawn counts as activity
   const be = spawnBackend();
@@ -123,8 +158,8 @@ function killBackend() {
   if (be) {
     // SIGTERM now, SIGKILL after grace; the handle is retained so a lingerer
     // can still be reaped (no orphaned browsers holding resources).
-    try { be.child.kill("SIGTERM"); } catch {}
-    setTimeout(() => { try { be.child.kill("SIGKILL"); } catch {} }, 10000).unref();
+    killTree(be.child, "SIGTERM");
+    setTimeout(() => { killTree(be.child, "SIGKILL"); }, 10000).unref();
   }
 }
 
@@ -152,7 +187,12 @@ async function handleMcp(clientReq, clientRes, chunks) {
       inFlight++;
       let released = false;
       const release = () => { if (released) return; released = true; inFlight--; };
-      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: "POST", path: "/mcp", headers, timeout: REQUEST_TIMEOUT_MS },
+      // agent:false = one fresh socket per proxied request. The MCP backend
+      // keeps a POST response stream (SSE) open per connection, so reusing a
+      // keep-alive socket made every second call on a session fail with a bare
+      // empty-body HTTP 400 and made GET /mcp unusable. Measured: 200/400/200/400
+      // through a reusing socket vs 4/4 200 with a dedicated socket.
+      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: "POST", path: "/mcp", headers, timeout: REQUEST_TIMEOUT_MS, agent: false },
         (bRes) => {
           const h = { ...bRes.headers };
           delete h["connection"]; delete h["transfer-encoding"];
@@ -226,6 +266,9 @@ function handler(clientReq, clientRes) {
       let released = false;
       const release = () => { if (released) return; released = true; openStreams--; };
       const proxy = http.request({ host: "127.0.0.1", port: be.port, method: clientReq.method, path: "/mcp",
+        // Same dedicated-socket rule as the POST path: a client-held SSE channel
+        // must not share a keep-alive socket with request/response traffic.
+        agent: false,
         // No `timeout` here on purpose. A GET stream is client-held and may stay
         // silent for as long as the server has no event to send; imposing the
         // POST deadline on it severed live event channels and dropped
@@ -249,21 +292,22 @@ function handler(clientReq, clientRes) {
   clientRes.writeHead(405).end('{"error":"method not allowed"}');
 }
 
-for (const p of LISTEN_PORTS) {
-  http.createServer(handler).listen(p, "0.0.0.0", () => log(`listening on :${p}/mcp (idle ${IDLE_SECONDS}s)`));
-}
-
-// idle watcher: kill ONLY the backend (proxy stays, respawns on demand).
-// Never while a request is in flight or a client holds a stream: that would
-// terminate a live MCP session and reset its browser context to about:blank.
-setInterval(() => {
-  if (closing || !backend || busy()) return;
-  const idle = (Date.now() - lastActive) / 1000;
-  if (idle > IDLE_SECONDS) {
-    log(`idle ${Math.round(idle)}s > ${IDLE_SECONDS}s, stopping backend`);
-    killBackend();
+function startServers() {
+  for (const p of LISTEN_PORTS) {
+    http.createServer(handler).listen(p, "0.0.0.0", () => log(`listening on :${p}/mcp (idle ${IDLE_SECONDS}s)`));
   }
-}, 5000).unref();
+  // Never stop an actively used backend or client-held SSE stream.
+  setInterval(() => {
+    if (closing || !backend || busy()) return;
+    const idle = (Date.now() - lastActive) / 1000;
+    if (idle > IDLE_SECONDS) {
+      log(`idle ${Math.round(idle)}s > ${IDLE_SECONDS}s, stopping backend`);
+      killBackend();
+    }
+  }, 5000).unref();
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
 
 function shutdown(sig) {
   if (closing) return;
@@ -272,5 +316,9 @@ function shutdown(sig) {
   killBackend();
   setTimeout(() => process.exit(0), 500).unref();
 }
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Tests may import this without binding ports or spawning Chromium.
+if (require.main === module) startServers();
+
+module.exports = { BACKEND_ARGS, BACKEND_ENTRY, IDLE_SECONDS, LISTEN_PORTS,
+  backendSpawnOptions, killTree, startServers };
