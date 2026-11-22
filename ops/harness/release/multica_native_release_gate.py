@@ -16,9 +16,7 @@ import sys
 ALLOWED_REPOS = {"jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"}
 WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
 REVIEWERS = {
-    "3a54e0b4-6526-4de5-a1fd-e66e205cb3b4",  # CTO
-    "b7948572-3cee-4ca5-84b9-8352f9375c4f",  # CEO
-    "19eb944f-ff52-4fbd-ba67-56924764591b",  # CHO
+    "3a54e0b4-6526-4de5-a1fd-e66e205cb3b4",  # independent CTO only
 }
 SHA = re.compile(r"^[a-f0-9]{40}$")
 ISSUE_REF = re.compile(r"^[A-Z][A-Z0-9]*-([0-9]{1,7})$")
@@ -51,7 +49,7 @@ def query(repo, pr, issue_ref):
         )
     return f"""
 SELECT row_to_json(t)::text FROM (
- SELECT i.id issue_id, i.number issue_number, i.status issue_status,
+ SELECT i.id issue_id, i.number issue_number, i.status issue_status, i.description issue_description,
         i.assignee_id producer_id, i.title issue_title,
         (SELECT json_agg(json_build_object(
             'id', c.id, 'author_type', c.author_type, 'author_id', c.author_id,
@@ -101,6 +99,16 @@ def verify(row, repo, pr, head_sha, merge_sha, issue_ref, db_container):
         raise Denied("missing_or_ambiguous_issue")
     if row.get("issue_status") not in ("done", "in_review"):
         raise Denied("issue_not_reviewable")
+    if issue_ref is not None and row.get("issue_number") != int(ISSUE_REF.fullmatch(issue_ref).group(1)):
+        raise Denied("issue_reference_mismatch")
+    # A task number alone does not bind an issue to the canonical repository
+    # and PR: independently validate the issue's owner-authored description.
+    expected_url = f"https://github.com/{repo}/pull/{pr}"
+    description = row.get("issue_description")
+    if not isinstance(description, str) or not re.search(
+        re.escape(expected_url) + r"(?![0-9])", description
+    ):
+        raise Denied("issue_pr_link_missing")
     producer = row.get("producer_id")
     if not isinstance(producer, str) or not UUID.fullmatch(producer):
         raise Denied("invalid_producer")
@@ -112,7 +120,7 @@ def verify(row, repo, pr, head_sha, merge_sha, issue_ref, db_container):
         raise Denied("missing_release_approval")
 
     pattern = re.compile(
-        r"^\s*RELEASE_APPROVED\s+([a-f0-9]{40})\b.*?^\s*PRODUCER\s+([0-9a-f-]{36})\b",
+        r"^\s*RELEASE_APPROVED\s+([a-f0-9]{40})\b.*?^\s*REPOSITORY\s+([a-z0-9_.-]+/[a-z0-9_.-]+)\s*$.*?^\s*PR\s+([0-9]+)\s*$.*?^\s*PRODUCER\s+([0-9a-f-]{36})\b",
         re.IGNORECASE | re.MULTILINE | re.DOTALL,
     )
     approval = None
@@ -124,7 +132,9 @@ def verify(row, repo, pr, head_sha, merge_sha, issue_ref, db_container):
             continue
         if match.group(1).lower() != head_sha.lower():
             continue
-        approval = (comment, match.group(1).lower(), match.group(2).lower())
+        if match.group(2).lower() != repo.lower() or int(match.group(3)) != pr:
+            continue
+        approval = (comment, match.group(1).lower(), match.group(4).lower())
         break
     if approval is None:
         raise Denied("missing_release_approval")
@@ -141,6 +151,8 @@ def verify(row, repo, pr, head_sha, merge_sha, issue_ref, db_container):
     reviewer_task = task_record(comment.get("source_task_id"), db_container)
     if reviewer_task.get("agent_id") != reviewer:
         raise Denied("reviewer_task_agent_mismatch")
+    if reviewer_task.get("issue_id") != row.get("issue_id"):
+        raise Denied("reviewer_task_issue_mismatch")
     if reviewer_task.get("status") != "completed":
         raise Denied("reviewer_task_not_completed")
 
