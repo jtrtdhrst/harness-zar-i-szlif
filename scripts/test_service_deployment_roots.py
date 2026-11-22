@@ -34,7 +34,9 @@ class TestOwnedComposeCandidates(unittest.TestCase):
                     self.assertTrue(f.is_relative_to(root))
                     data=f.read_text()
                     self.assertIn("NOT APPROVED FOR DEPLOYMENT",data)
-                    for ref in re.findall(r"(?m)^\\s*image:\\s*(.+)$",data):
+                    refs = re.findall(r"(?m)^\s*image:\s*(.+)$", data)
+                    self.assertTrue(refs)
+                    for ref in refs:
                         self.assertRegex(ref,r"@sha256:[0-9a-f]{64}$")
     def test_exact_changes_only(self):
         self.assertEqual(select(["qdrant/anything"]),["qdrant"])
