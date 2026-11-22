@@ -5,12 +5,16 @@ on:
       - 'coolify-mcp/**'
       - '.github/workflows/coolify-mcp-ci.yml'
       - 'scripts/service-coverage.json'
+      - 'scripts/harness_native_delivery.py'
+      - 'scripts/test_harness_native_delivery.py'
   push:
     branches: [main]
     paths:
       - 'coolify-mcp/**'
       - '.github/workflows/coolify-mcp-ci.yml'
       - 'scripts/service-coverage.json'
+      - 'scripts/harness_native_delivery.py'
+      - 'scripts/test_harness_native_delivery.py'
   workflow_dispatch:
 
 permissions:
@@ -40,6 +44,8 @@ jobs:
         run: npm test -- --runInBand
       - name: Release source coverage
         run: python3 scripts/check_service_coverage.py
+      - name: Guarded Coolify MCP image routing and OAuth bind regressions
+        run: PYTHONPATH=scripts python3 -m unittest scripts.test_harness_native_delivery.OwnedCoolifyMcpRoutingTests -v
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
