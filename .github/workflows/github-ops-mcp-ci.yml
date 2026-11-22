@@ -18,6 +18,7 @@ on:
       - 'ops/multica/patches/zari213e-fresh-checkout-scope.patch'
       - '.github/workflows/github-ops-mcp-ci.yml'
   push:
+    branches: [main]
     paths:
       - 'github-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
