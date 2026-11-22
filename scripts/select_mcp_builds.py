@@ -17,6 +17,7 @@ MCP_BUILD_CONTEXTS = {
     "mantic-mcp": "mantic-mcp",
     "plasmic-mcp": "plasmic-mcp",
     "playwright-mcp": "playwright-mcp",
+    "repowise-mcp": "repowise-mcp",
     "supabase-mcp": "supabase-mcp",
     "ubuntu-mcp": "ubuntu-mcp",
 }
@@ -24,7 +25,7 @@ BUILD_CONFIG_PATHS = {
     ".github/workflows/mcp-images-ghcr.yml",
     "scripts/select_mcp_builds.py",
 }
-EXPECTED_REPOSITORY = "miloszspyrka-code/harness-zar-i-szlif"
+EXPECTED_REPOSITORY = "jtrtdhrst/harness-zar-i-szlif"
 
 
 def select(changed_paths, *, event_name, manual_service="all"):
