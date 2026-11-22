@@ -3,7 +3,7 @@
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "branch": "main",
   "observed_at": "2026-11-22",
-  "description": "Every Coolify app/service has one declared owned root. Source-build readiness indicates only self-contained Dockerfile existence, not actual image build, CI, release approval or production E2E. Missing source roots are explicitly blocked; never substitute repository root. Twenty additional Harness resources have versioned migration candidates. Source-build readiness is intentionally unchanged; Compose candidates must not be deployed until digest, backup, independent review and rollback gates pass.",
+  "description": "Owned build roots for in-repository Harness integrations and MCP services. Upstream-image-only Coolify services are deliberately not in this build inventory. Each ready root must contain an owned Dockerfile. Production release remains governed by independent review and release admission.",
   "resources": [
     {
       "id": "github-ops-mcp",
@@ -41,17 +41,6 @@
       "reason": "Coolify Git source already builds from /multica-mcp."
     },
     {
-      "id": "repowise",
-      "uuid": "oea9obpkhzbgkmipxwqmz2hj",
-      "source_root": "repowise",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Runtime code is in third-party repowise-dev/repowise pinned v0.60.1, not an owned source folder.",
-      "compose_candidate": "repowise/compose.candidate.yml",
-      "release_contract": "repowise/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
       "id": "repowise-deployment-publisher-staging",
       "uuid": "gl8bvfjtw2af8hkox4mguzzr",
       "source_root": "ops/repowise",
@@ -71,17 +60,6 @@
       "compose_release_ready": false
     },
     {
-      "id": "hindsight-core",
-      "uuid": "hjda7ckq5z4luhd1vpdepi0r",
-      "source_root": "hindsight-core",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Upstream Hindsight image and database; own Compose source folder missing.",
-      "compose_candidate": "hindsight-core/compose.candidate.yml",
-      "release_contract": "hindsight-core/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
       "id": "hindsight-mcp",
       "uuid": "aglen8ervlo2lpi30oz8iii9",
       "source_root": "hindsight-mcp",
@@ -90,28 +68,6 @@
       "reason": "Caddy proxy Compose configuration remains only in Coolify; dedicated source folder missing.",
       "compose_candidate": "hindsight-mcp/compose.candidate.yml",
       "release_contract": "hindsight-mcp/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
-      "id": "opik",
-      "uuid": "s7a4rwqbij7w4fxlnauriblo",
-      "source_root": "opik",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Only wrapper metadata exists; upstream Opik components require pinned multi-image Compose source.",
-      "compose_candidate": "opik/compose.candidate.yml",
-      "release_contract": "opik/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
-      "id": "mautic",
-      "uuid": "8byf8qjxdixpwp7lsnr8zpto",
-      "source_root": "mautic",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Only project wrapper metadata; real Compose, Cron/worker and DB secret-safe reconstruction pending.",
-      "compose_candidate": "mautic/compose.candidate.yml",
-      "release_contract": "mautic/release-contract.json",
       "compose_release_ready": false
     },
     {
@@ -180,17 +136,6 @@
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     },
     {
-      "id": "qdrant",
-      "uuid": "eciprwgeyol4znmdd0dpu3xc",
-      "source_root": "qdrant",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Pinned upstream image but dedicated owned Compose folder is missing; preserve data volume.",
-      "compose_candidate": "qdrant/compose.candidate.yml",
-      "release_contract": "qdrant/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
       "id": "comfy-mcp",
       "uuid": "kkhfw0napmeaqewgdirwhc1h",
       "source_root": "comfy-mcp",
@@ -202,34 +147,12 @@
       "compose_release_ready": false
     },
     {
-      "id": "opencode",
-      "uuid": "26aqp0flyvdinjn6dklxnb1c",
-      "source_root": "opencode",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Local OpenCode runtime image; dedicated in-repo Dockerfile and Compose absent.",
-      "compose_candidate": "opencode/compose.candidate.yml",
-      "release_contract": "opencode/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
       "id": "ubuntu-mcp",
       "uuid": "lcnjb3vreec7saihkhan6akh",
       "source_root": "ubuntu-mcp",
       "build_dockerfile": "ubuntu-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
-    },
-    {
-      "id": "comfy",
-      "uuid": "hdn0rl4wznbvaoizna61bbyy",
-      "source_root": "comfy",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "ComfyUI runtime only project metadata in this folder; source lives in comfyui-mcp, separate image ownership required.",
-      "compose_candidate": "comfy/compose.candidate.yml",
-      "release_contract": "comfy/release-contract.json",
-      "compose_release_ready": false
     },
     {
       "id": "cloudflared-mcp",
@@ -279,28 +202,6 @@
       "build_dockerfile": "playwright-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
-    },
-    {
-      "id": "multica-stack",
-      "uuid": "6ihjnudsifbcvklz5hqxdldc",
-      "source_root": "multica",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "multica/ contains project wrapper and reference compose only, production multi-image build/release not owned here yet.",
-      "compose_candidate": "multica/compose.candidate.yml",
-      "release_contract": "multica/release-contract.json",
-      "compose_release_ready": false
-    },
-    {
-      "id": "multica-edge",
-      "uuid": "vwe5lv4bniosxug34uhyf0ag",
-      "source_root": "multica-edge",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Tunnel app currently upstream cloudflared; no dedicated source folder.",
-      "compose_candidate": "multica-edge/compose.candidate.yml",
-      "release_contract": "multica-edge/release-contract.json",
-      "compose_release_ready": false
     },
     {
       "id": "repowise-mcp-runtime",

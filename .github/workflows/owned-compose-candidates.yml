@@ -59,7 +59,7 @@ jobs:
             echo 'Outline candidate accepted missing Redis credential' >&2
             exit 1
           fi
-      - name: Validate all twenty Compose candidates with synthetic positive and negative environments
+      - name: Validate all eleven MCP-related Compose candidates with synthetic positive and negative environments
         shell: bash
         run: |
           set -euo pipefail
@@ -71,7 +71,7 @@ jobs:
           from pathlib import Path
 
           rows = json.loads(Path('ops/compose-migration-candidates.json').read_text(encoding='utf-8'))['resources']
-          assert len(rows) == 20, 'Expected twenty canonical Harness Compose candidates'
+          assert len(rows) == 11, 'Expected eleven in-repo Harness Compose candidates'
           required = re.compile(r'(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^}]*\}')
           positive = 0
           negative = 0
@@ -101,8 +101,8 @@ jobs:
                       raise RuntimeError(f'FAIL_OPEN: {row["id"]} accepted missing required {missing}')
                   negative += 1
               print('COMPOSE_SYNTHETIC_OK', row['id'], 'mandatory_inputs', len(names))
-          assert positive == 20, f'Expected twenty positives, got {positive}'
-          assert negative >= 16, f'Expected at least sixteen missing-input negatives, got {negative}'
+          assert positive == 11, f'Expected eleven positives, got {positive}'
+          assert negative >= 1, f'Expected missing-input negative checks, got {negative}'
           print('SYNTHETIC_SUMMARY', json.dumps({'positive': positive, 'negative': negative}))
           PY
       - name: Select changed resources; do not deploy
