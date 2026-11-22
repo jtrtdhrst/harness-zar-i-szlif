@@ -15,6 +15,7 @@ on:
       - 'ops/harness/credentials/test_zari263_projector_scope.py'
       - 'scripts/service-coverage.json'
       - 'scripts/check_service_coverage.py'
+      - 'ops/multica/patches/zari213e-fresh-checkout-scope.patch'
       - '.github/workflows/github-ops-mcp-ci.yml'
   push:
     paths:
@@ -27,6 +28,7 @@ on:
       - 'ops/harness/credentials/test_zari263_projector_scope.py'
       - 'scripts/service-coverage.json'
       - 'scripts/check_service_coverage.py'
+      - 'ops/multica/patches/zari213e-fresh-checkout-scope.patch'
       - '.github/workflows/github-ops-mcp-ci.yml'
 
 permissions:
@@ -69,3 +71,45 @@ jobs:
         run: docker build -t github-ops-mcp:ci ./github-mcp
       - name: Validate packaged server syntax
         run: docker run --rm --entrypoint node github-ops-mcp:ci --check /app/server.mjs
+  
+  verify-daemon-patch:
+    name: Verify pinned Multica daemon isolation patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR source without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch immutable upstream Multica baseline and apply patch
+        shell: bash
+        env:
+          BASE_SHA: b1ea927def6490c43bedff537b6f4ed9a47fa828
+        run: |
+          set -euo pipefail
+          source_dir="${RUNNER_TEMP}/zari213-multica"
+          mkdir -p "${source_dir}"
+          git -C "${source_dir}" init --quiet
+          git -C "${source_dir}" -c protocol.version=2 fetch --no-tags --depth=1 https://github.com/multica-ai/multica.git "${BASE_SHA}"
+          git -C "${source_dir}" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "${source_dir}" rev-parse HEAD)" = "${BASE_SHA}"
+          patch_file="${GITHUB_WORKSPACE}/ops/multica/patches/zari213e-fresh-checkout-scope.patch"
+          git -C "${source_dir}" apply --check "${patch_file}"
+          git -C "${source_dir}" apply "${patch_file}"
+          echo "ZARI213_GO_SOURCE=${source_dir}/server" >> "${GITHUB_ENV}"
+      - name: Set up pinned Go toolchain
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.9'
+          cache: false
+      - name: Run daemon positive and negative scope and checkout tests
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          cd "${ZARI213_GO_SOURCE}"
+          go version
+          go test -count=1 -run 'TestCreateWorktreeFreshFailsWhenFetchFails|TestCreateWorktreeReportsFailedFetch' ./internal/daemon/repocache
+          go test -count=1 -run 'TestProjectRepoScopeFailClosed|TestRepoCheckout|TestZARI213|TestRepoCheckoutModeFor' ./internal/daemon
