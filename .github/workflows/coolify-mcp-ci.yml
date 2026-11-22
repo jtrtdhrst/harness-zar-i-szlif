@@ -42,13 +42,13 @@ jobs:
           cache: npm
           cache-dependency-path: mcp/coolify-mcp/package-lock.json
       - name: Install owned upstream
-        working-directory: coolify-mcp
+        working-directory: mcp/coolify-mcp
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build owned runtime
-        working-directory: coolify-mcp
+        working-directory: mcp/coolify-mcp
         run: npm run build
       - name: Coolify MCP E2E
-        working-directory: coolify-mcp
+        working-directory: mcp/coolify-mcp
         run: npm test -- --runInBand
       - name: Release source coverage
         run: python3 scripts/check_service_coverage.py
@@ -113,7 +113,7 @@ jobs:
           assert re.fullmatch(r"sha256:[a-f0-9]{64}", e["DIGEST"])
           data = {"schema_version": 1, "service": "coolify-mcp",
                   "source_repository": e["SOURCE_REPO"], "source_sha": e["SOURCE_SHA"],
-                  "source_root": "coolify-mcp", "dockerfile": "mcp/coolify-mcp/Dockerfile",
+                  "source_root": "mcp/coolify-mcp", "dockerfile": "mcp/coolify-mcp/Dockerfile",
                   "image": e["IMAGE"], "image_digest": e["DIGEST"],
                   "subject": e["IMAGE"] + "@" + e["DIGEST"],
                   "release_authorized": False, "production_verified": False}
