@@ -64,7 +64,8 @@ def role_secret(role: str, root: Path = KEY_ROOT) -> str:
             try:
                 metadata = os.fstat(key_fd)
                 if (not stat.S_ISREG(metadata.st_mode)
-                        or metadata.st_uid != owner or (metadata.st_mode & 0o077)):
+                        or metadata.st_uid != owner or (metadata.st_mode & 0o077)
+                        or metadata.st_nlink != 1):
                     raise ValueError("role_key_permissions_invalid")
                 # Read from the same already validated inode; no second path lookup.
                 with os.fdopen(key_fd, "r", encoding="utf-8", closefd=False) as handle:
