@@ -1,0 +1,29 @@
+{
+  "id": "cloudflared-mcp",
+  "uuid": "3byzyvjxsycixyzcpxbujzev",
+  "root": "cloudflared-mcp",
+  "mode": "upstream-compose",
+  "observed_images": [
+    {
+      "ref": "cloudflare/cloudflared:latest",
+      "known_cached_digest": "cloudflare/cloudflared@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339",
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": "cloudflared-mcp/deploy/compose.candidate.yaml",
+  "watched_paths": [
+    "cloudflared-mcp/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

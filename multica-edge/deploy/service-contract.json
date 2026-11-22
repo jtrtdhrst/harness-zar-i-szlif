@@ -1,0 +1,29 @@
+{
+  "id": "multica-edge",
+  "uuid": "vwe5lv4bniosxug34uhyf0ag",
+  "root": "multica-edge",
+  "mode": "upstream-compose",
+  "observed_images": [
+    {
+      "ref": "cloudflare/cloudflared:2026.9.3",
+      "known_cached_digest": "cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c",
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "multica-edge/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

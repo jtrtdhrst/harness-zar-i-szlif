@@ -1,0 +1,34 @@
+{
+  "id": "opencode",
+  "uuid": "26aqp0flyvdinjn6dklxnb1c",
+  "root": "opencode",
+  "mode": "mixed-or-local-image",
+  "observed_images": [
+    {
+      "ref": "local/opencode-standalone:2.2.5-custom",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "alpine/socat",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "opencode/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

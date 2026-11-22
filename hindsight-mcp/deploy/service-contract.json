@@ -1,0 +1,29 @@
+{
+  "id": "hindsight-mcp",
+  "uuid": "aglen8ervlo2lpi30oz8iii9",
+  "root": "hindsight-mcp",
+  "mode": "upstream-compose",
+  "observed_images": [
+    {
+      "ref": "caddy:2-alpine",
+      "known_cached_digest": "caddy@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f",
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "hindsight-mcp/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

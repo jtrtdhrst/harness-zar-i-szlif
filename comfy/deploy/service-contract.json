@@ -1,0 +1,35 @@
+{
+  "id": "comfy",
+  "uuid": "hdn0rl4wznbvaoizna61bbyy",
+  "root": "comfy",
+  "mode": "mixed-or-local-image",
+  "observed_images": [
+    {
+      "ref": "local/comfyui-cpu:KOMAA1599-fe26d14f",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "local/comfyui-mcp:0.52.206",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "comfy/",
+    "comfyui-mcp/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

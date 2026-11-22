@@ -1,0 +1,29 @@
+{
+  "id": "local-build-registry",
+  "uuid": "g0xdkztpmjnhgwms7qelzxqd",
+  "root": "local-build-registry",
+  "mode": "upstream-app",
+  "observed_images": [
+    {
+      "ref": "registry:2",
+      "known_cached_digest": "registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373",
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "local-build-registry/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

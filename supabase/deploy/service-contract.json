@@ -1,0 +1,79 @@
+{
+  "id": "supabase",
+  "uuid": "r2gnunvpkqwmuew1tupbf7lx",
+  "root": "supabase",
+  "mode": "upstream-compose",
+  "observed_images": [
+    {
+      "ref": "envoyproxy/envoy:v1.39.0",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/studio:2026.08.03-sha-022b374",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "darthsim/imgproxy:v3.30.1",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/storage-api:v1.60.4",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/postgres-meta:v0.96.6",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/realtime:v2.102.3",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/gotrue:v2.189.0",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "postgrest/postgrest:v14.12",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/supavisor:2.9.5",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/edge-runtime:v1.74.0",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "supabase/postgres:17.6.1.136",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "supabase/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

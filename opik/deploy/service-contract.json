@@ -1,0 +1,64 @@
+{
+  "id": "opik",
+  "uuid": "s7a4rwqbij7w4fxlnauriblo",
+  "root": "opik",
+  "mode": "upstream-compose",
+  "observed_images": [
+    {
+      "ref": "ghcr.io/comet-ml/opik/opik-python-backend:2.2.121",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "docker.io/cloudpirates/image-minio:RELEASE.2025-10-15T17-29-55Z-hardened",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "ghcr.io/comet-ml/opik/opik-frontend:2.2.121",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "ghcr.io/comet-ml/opik/opik-backend:2.2.121",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "clickhouse/clickhouse-server:26.3.16.16-alpine",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "zookeeper:3.9.4",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "redis:7.2.4-alpine3.19",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    },
+    {
+      "ref": "mysql:8.4.2",
+      "known_cached_digest": null,
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": null,
+  "watched_paths": [
+    "opik/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}

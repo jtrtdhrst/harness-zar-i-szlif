@@ -1,0 +1,20 @@
+# Snapshot of existing Coolify Compose; image pinned to local observed RepoDigest.
+# NOT APPROVED FOR DEPLOYMENT. Requires remote manifest digest / token injection verification.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:51c9cefcb4569df44e1ad403ab1d3d8065aa8e84339bcfc6aee75502e1140339
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    networks:
+      - coolify
+    healthcheck:
+      test: [CMD, cloudflared, --version]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+networks:
+  coolify:
+    external: true

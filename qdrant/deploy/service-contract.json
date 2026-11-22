@@ -1,0 +1,29 @@
+{
+  "id": "qdrant",
+  "uuid": "eciprwgeyol4znmdd0dpu3xc",
+  "root": "qdrant",
+  "mode": "upstream-compose",
+  "observed_images": [
+    {
+      "ref": "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
+      "known_cached_digest": "qdrant/qdrant@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
+      "release_digest_verified": false
+    }
+  ],
+  "source_build_ready": false,
+  "versioned_compose": "qdrant/deploy/compose.candidate.yaml",
+  "watched_paths": [
+    "qdrant/"
+  ],
+  "release_gate": "HOLD",
+  "production_source_verified": false,
+  "e2e_verified": false,
+  "rollback_verified": false,
+  "blockers": [
+    "reconcile source context or vendor Compose",
+    "pin all runtime OCI images to verifiable distributable digests",
+    "preserve secrets and persistent data",
+    "independent SHA review and authorized release",
+    "live positive+negative E2E and rollback"
+  ]
+}
