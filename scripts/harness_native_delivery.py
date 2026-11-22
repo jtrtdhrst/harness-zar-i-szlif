@@ -200,7 +200,11 @@ def verify_source(repo, source_sha):
 
 
 def image_pattern(service, spec, registry=REGISTRY):
-    """Match the previously pinned image or this registry's image already deployed."""
+    """Match only an exact allowed image repository plus a valid tag or digest.
+
+    A prefix such as coolify-mcp must NEVER match coolify-mcp-attacker or
+    coolify-mcp.evil. Match to the end of the YAML scalar (optional comment).
+    """
     current = f"{registry}/harness-{service}"
     prefixes = {
         spec["image_prefix"], current,
@@ -209,9 +213,12 @@ def image_pattern(service, spec, registry=REGISTRY):
     }
     if service == "coolify-mcp":
         prefixes.add(f"{GHCR}/coolify-mcp")
-    prefixes = sorted(prefixes, key=len, reverse=True)
-    alternation = "|".join(re.escape(prefix) for prefix in prefixes)
-    return re.compile(r"(?m)^(\s*image:\s*)(['\"]?)(?:" + alternation + r")[^'\"\s]*\2")
+    alternation = "|".join(re.escape(prefix) for prefix in sorted(prefixes, key=len, reverse=True))
+    tag_or_digest = r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]*|@sha256:[a-f0-9]{64})?"
+    return re.compile(
+        r"(?m)^([ \t]*image:[ \t]*)(['\"]?)(?:" + alternation + r")"
+        + tag_or_digest + r"\2(?=[ \t]*(?:#.*)?$)"
+    )
 
 
 def compose_for(host, uuid):
@@ -222,6 +229,54 @@ def compose_for(host, uuid):
     return raw
 
 
+def remove_coolify_oauth_shadow_bind(compose):
+    """Remove only the known legacy mount inside services.coolify-mcp.volumes.
+
+    Strictly supports the Coolify-emitted two-space service / four-space field
+    indentation. Unknown layouts fail closed, rather than modifying another
+    service or silently retaining an OAuth shadow over the new image. The
+    caller snapshots the untouched original Compose before any provider write.
+    """
+    lines = compose.splitlines(keepends=True)
+    clean = [line.rstrip("\r\n") for line in lines]
+    roots = [i for i, line in enumerate(clean)
+             if re.fullmatch(r"services:[ \t]*(?:#.*)?", line)]
+    if len(roots) != 1:
+        raise RuntimeError("coolify-mcp: Compose services block missing or ambiguous")
+    root = roots[0]
+    root_end = next((i for i in range(root + 1, len(lines))
+                     if clean[i].strip() and not clean[i].lstrip().startswith("#")
+                     and not clean[i][0].isspace()), len(lines))
+    targets = [i for i in range(root + 1, root_end)
+               if re.fullmatch(r"  coolify-mcp:[ \t]*(?:#.*)?", clean[i])]
+    if len(targets) != 1:
+        raise RuntimeError("coolify-mcp: target Compose service missing or ambiguous")
+    start = targets[0]
+    end = next((i for i in range(start + 1, root_end)
+                if clean[i].startswith("  ") and not clean[i].startswith("   ")
+                and not clean[i].lstrip().startswith("#")
+                and clean[i].split("#", 1)[0].rstrip().endswith(":")), root_end)
+    exact_bind = re.compile(
+        r"[ ]{4,}-[ \t]*/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro[ \t]*"
+    )
+    hits = [i for i, line in enumerate(clean) if exact_bind.fullmatch(line)]
+    shadow_count = sum("/app/dist/lib/oauth.js" in line for line in clean)
+    if not hits and not shadow_count:
+        return compose
+    if len(hits) != 1 or shadow_count != 1 or not (start < hits[0] < end):
+        raise RuntimeError("coolify-mcp: unexpected OAuth shadow bind; refusing release")
+    volume_headers = [i for i in range(start + 1, end)
+                      if re.fullmatch(r"    volumes:[ \t]*(?:#.*)?", clean[i])]
+    if len(volume_headers) != 1 or not (volume_headers[0] < hits[0]):
+        raise RuntimeError("coolify-mcp: OAuth shadow is not in target volumes")
+    for line in clean[volume_headers[0] + 1:hits[0]]:
+        plain = line.split("#", 1)[0].rstrip()
+        if (plain.startswith("    ") and not plain.startswith("     ")
+                and plain.endswith(":") and not plain.lstrip().startswith("-")):
+            raise RuntimeError("coolify-mcp: ambiguous volumes section")
+    return "".join(lines[:hits[0]] + lines[hits[0] + 1:])
+
+
 def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     """Patch one image and persist a unique, private snapshot for this attempt."""
     raw = compose_for(host, uuid)
@@ -230,15 +285,7 @@ def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     if count != 1:
         raise RuntimeError(f"expected exactly one {spec['image_prefix']} image line, found {count}")
     if service == "coolify-mcp":
-        # The legacy OAuth source-file bind shadows code in the owned image.
-        # Remove exactly this known obsolete line, never /data or any other
-        # mount; the full original Compose is snapshotted before provider write.
-        legacy_bind = re.compile(
-            r"(?m)^[ \t]*-[ \t]*/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro[ \t]*(?:\r?\n|$)"
-        )
-        patched, removed = legacy_bind.subn("", patched)
-        if removed > 1 or "/app/dist/lib/oauth.js" in patched:
-            raise RuntimeError("coolify-mcp: unexpected OAuth shadow bind; refusing release")
+        patched = remove_coolify_oauth_shadow_bind(patched)
     # A second promotion in the same second must never overwrite the first
     # snapshot. The controller is privileged; the raw compose may contain
     # secrets, so no world-readable file may exist even during the write.
