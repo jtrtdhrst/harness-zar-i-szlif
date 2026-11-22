@@ -19,12 +19,12 @@ class HarnessBuildRootsTests(unittest.TestCase):
         cls.data = json.loads(MANIFEST.read_text(encoding="utf-8"))
         cls.rows = cls.data["resources"]
 
-    def test_exactly_all_31_coolify_harness_resources(self):
+    def test_exactly_22_in_repo_build_root_resources(self):
         self.assertEqual(self.data["schema_version"], 1)
         self.assertEqual(self.data["repo"], "jtrtdhrst/harness-zar-i-szlif")
-        self.assertEqual(len(self.rows), 31)
-        self.assertEqual(len({r["id"] for r in self.rows}), 31)
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 31)
+        self.assertEqual(len(self.rows), 22)
+        self.assertEqual(len({r["id"] for r in self.rows}), 22)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 22)
 
     def test_every_source_root_is_non_root_and_explicit(self):
         for r in self.rows:
@@ -107,7 +107,7 @@ class HarnessBuildRootsTests(unittest.TestCase):
 
     def test_missing_or_external_sources_are_never_marked_as_ready(self):
         for service in ("coolify-mcp", "qdrant-mcp", "hindsight-mcp", "comfy-mcp",
-                        "opencode", "plasmic", "multica-stack"):
+                        "plasmic"):
             row = next(r for r in self.rows if r["id"] == service)
             self.assertFalse(row["source_build_ready"], service)
         self.assertTrue(next(r for r in self.rows if r["id"] == "github-ops-mcp")["source_build_ready"])

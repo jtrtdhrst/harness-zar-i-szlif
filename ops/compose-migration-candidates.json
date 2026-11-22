@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "source_pr": 223,
-  "scope": "20 source_build_ready=false resources except coolify-mcp",
+  "scope": "11 in-repository candidate-only Harness resources; upstream-image-only Coolify services intentionally excluded",
   "release_status": "BLOCKED_CANDIDATES_ONLY",
   "resources": [
     {
@@ -13,17 +13,6 @@
       "contract": "local-build-registry/release-contract.json",
       "watch_paths": [
         "local-build-registry/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "repowise",
-      "uuid": "oea9obpkhzbgkmipxwqmz2hj",
-      "root": "repowise",
-      "compose": "repowise/compose.candidate.yml",
-      "contract": "repowise/release-contract.json",
-      "watch_paths": [
-        "repowise/"
       ],
       "release_ready": false
     },
@@ -39,17 +28,6 @@
       "release_ready": false
     },
     {
-      "id": "hindsight-core",
-      "uuid": "hjda7ckq5z4luhd1vpdepi0r",
-      "root": "hindsight-core",
-      "compose": "hindsight-core/compose.candidate.yml",
-      "contract": "hindsight-core/release-contract.json",
-      "watch_paths": [
-        "hindsight-core/"
-      ],
-      "release_ready": false
-    },
-    {
       "id": "hindsight-mcp",
       "uuid": "aglen8ervlo2lpi30oz8iii9",
       "root": "hindsight-mcp",
@@ -57,28 +35,6 @@
       "contract": "hindsight-mcp/release-contract.json",
       "watch_paths": [
         "hindsight-mcp/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "opik",
-      "uuid": "s7a4rwqbij7w4fxlnauriblo",
-      "root": "opik",
-      "compose": "opik/compose.candidate.yml",
-      "contract": "opik/release-contract.json",
-      "watch_paths": [
-        "opik/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "mautic",
-      "uuid": "8byf8qjxdixpwp7lsnr8zpto",
-      "root": "mautic",
-      "compose": "mautic/compose.candidate.yml",
-      "contract": "mautic/release-contract.json",
-      "watch_paths": [
-        "mautic/"
       ],
       "release_ready": false
     },
@@ -116,17 +72,6 @@
       "release_ready": false
     },
     {
-      "id": "qdrant",
-      "uuid": "eciprwgeyol4znmdd0dpu3xc",
-      "root": "qdrant",
-      "compose": "qdrant/compose.candidate.yml",
-      "contract": "qdrant/release-contract.json",
-      "watch_paths": [
-        "qdrant/"
-      ],
-      "release_ready": false
-    },
-    {
       "id": "comfy-mcp",
       "uuid": "kkhfw0napmeaqewgdirwhc1h",
       "root": "comfy-mcp",
@@ -134,29 +79,6 @@
       "contract": "comfy-mcp/release-contract.json",
       "watch_paths": [
         "comfy-mcp/",
-        "comfyui-mcp/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "opencode",
-      "uuid": "26aqp0flyvdinjn6dklxnb1c",
-      "root": "opencode",
-      "compose": "opencode/compose.candidate.yml",
-      "contract": "opencode/release-contract.json",
-      "watch_paths": [
-        "opencode/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "comfy",
-      "uuid": "hdn0rl4wznbvaoizna61bbyy",
-      "root": "comfy",
-      "compose": "comfy/compose.candidate.yml",
-      "contract": "comfy/release-contract.json",
-      "watch_paths": [
-        "comfy/",
         "comfyui-mcp/"
       ],
       "release_ready": false
@@ -191,28 +113,6 @@
       "contract": "outline-knowledge/release-contract.json",
       "watch_paths": [
         "outline-knowledge/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "multica-stack",
-      "uuid": "6ihjnudsifbcvklz5hqxdldc",
-      "root": "multica",
-      "compose": "multica/compose.candidate.yml",
-      "contract": "multica/release-contract.json",
-      "watch_paths": [
-        "multica/"
-      ],
-      "release_ready": false
-    },
-    {
-      "id": "multica-edge",
-      "uuid": "vwe5lv4bniosxug34uhyf0ag",
-      "root": "multica-edge",
-      "compose": "multica-edge/compose.candidate.yml",
-      "contract": "multica-edge/release-contract.json",
-      "watch_paths": [
-        "multica-edge/"
       ],
       "release_ready": false
     },

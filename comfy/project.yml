@@ -1,5 +1,0 @@
-name: comfy
-description: Production project for the ComfyUI platform
-environment: production
-service: comfy
-data: [comfy-models, comfy-input, comfy-output, comfy-user, comfy-custom]

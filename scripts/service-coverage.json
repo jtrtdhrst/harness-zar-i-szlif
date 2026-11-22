@@ -5,12 +5,6 @@
       "mode": "manual_only",
       "reason": "Workflow definitions are validated by the workflow that invokes this checker."
     },
-    ".repowise": {
-      "mode": "workflow",
-      "workflows": [
-        ".github/workflows/release-lanes-policy.yml"
-      ]
-    },
     "cloudflare-ingress": {
       "mode": "manual_only",
       "reason": "Existing ingress is a protected runtime resource; no repository build or promotion workflow is authorized."
@@ -18,10 +12,6 @@
     "cloudflared-mcp": {
       "mode": "manual_only",
       "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
-    "comfy": {
-      "mode": "manual_only",
-      "reason": "Engine release requires a separately reviewed immutable artifact and manual Coolify promotion."
     },
     "comfy-mcp": {
       "mode": "manual_only",
@@ -51,10 +41,6 @@
         ".github/workflows/github-ops-mcp-ci.yml"
       ]
     },
-    "hindsight-core": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
     "hindsight-mcp": {
       "mode": "manual_only",
       "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
@@ -71,10 +57,6 @@
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
-    "mautic": {
-      "mode": "manual_only",
-      "reason": "Upstream application and data service; no repository build or automatic promotion."
-    },
     "mcp-activation": {
       "mode": "manual_only",
       "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
@@ -82,14 +64,6 @@
     "mcp-edge": {
       "mode": "manual_only",
       "reason": "Retained legacy service; no targeted CI/release workflow."
-    },
-    "multica": {
-      "mode": "manual_only",
-      "reason": "Non-MCP Multica source is retained for agent context; it must not trigger automatic image builds or production promotion."
-    },
-    "multica-edge": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
     },
     "multica-mcp": {
       "mode": "workflow",
@@ -102,14 +76,6 @@
         "working_directory": "multica-mcp",
         "run": "npm test"
       }
-    },
-    "opencode": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
-    "opik": {
-      "mode": "manual_only",
-      "reason": "Upstream multi-container service; component digest and dependency-aware review required."
     },
     "opik-mcp": {
       "mode": "workflow",
@@ -145,15 +111,7 @@
       "mode": "manual_only",
       "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."
     },
-    "qdrant": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
     "qdrant-mcp": {
-      "mode": "manual_only",
-      "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
-    },
-    "repowise": {
       "mode": "manual_only",
       "reason": "Owned Compose candidate only; no source build is authorized. Production HOLD until a reviewed immutable digest, backup and rollback are verified."
     },
