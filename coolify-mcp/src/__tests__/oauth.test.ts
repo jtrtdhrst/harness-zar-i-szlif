@@ -2227,6 +2227,49 @@ describe('registration over HTTP', () => {
     expect(statuses[30]).toBe(429);
   });
 
+  it('ignores forged X-Forwarded-For and uses the trusted socket peer by default', async () => {
+    const app = makeApp();
+    const statuses: number[] = [];
+    for (let i = 0; i < 21; i++) {
+      statuses.push(
+        (
+          await app.fetch(
+            new Request(`${ISSUER}/register`, {
+              method: 'POST',
+              headers: { 'x-forwarded-for': `198.51.100.${i}` },
+              body: JSON.stringify({ redirect_uris: ['https://client.example.com/cb'] }),
+            }),
+            '203.0.113.9',
+          )
+        ).status,
+      );
+    }
+    expect(statuses.slice(0, 20).every((s) => s === 201)).toBe(true);
+    expect(statuses[20]).toBe(429);
+
+    // A different actual socket peer gets its own bucket even when
+    // the attacker makes its untrusted X-Forwarded-For match the first.
+    const distinctPeer = await app.fetch(
+      new Request(`${ISSUER}/register`, {
+        method: 'POST',
+        headers: { 'x-forwarded-for': '203.0.113.9' },
+        body: JSON.stringify({ redirect_uris: ['https://client.example.com/cb'] }),
+      }),
+      '203.0.113.10',
+    );
+    expect(distinctPeer.status).toBe(201);
+  });
+
+  it('defaults direct fetch without a socket peer to one shared safe bucket', async () => {
+    const app = makeApp();
+    let last = 0;
+    for (let i = 0; i < 21; i++) {
+      const result = await register(app, { 'x-forwarded-for': `198.51.100.${i}` });
+      last = result.status;
+    }
+    expect(last).toBe(429);
+  });
+
   it('keys the per-IP limit on MCP_CLIENT_IP_HEADER when set, ignoring X-Forwarded-For', async () => {
     const app = makeApp({ clientIpHeader: 'CF-Connecting-IP' });
     const statuses: number[] = [];
