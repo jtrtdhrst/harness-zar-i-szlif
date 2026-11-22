@@ -16,6 +16,13 @@ MID="c"*40
 SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
+    def test_only_canonical_owner_admitted_to_github_paths(self):
+        self.assertEqual(p.REPO, "jtrtdhrst/zar-i-szlif")
+        self.assertIsNotNone(p.GITHUB_PATH.fullmatch(
+            "/repos/jtrtdhrst/zar-i-szlif/commits/" + NEW))
+        self.assertIsNone(p.GITHUB_PATH.fullmatch(
+            "/repos/miloszspyrka-code/zar-i-szlif/commits/" + NEW))
+
     def test_noop_when_main_already_deployed(self):
         with patch.object(p,"ref",side_effect=[OLD,OLD,OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
