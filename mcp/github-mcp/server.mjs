@@ -239,6 +239,8 @@ async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
     return v.token;
   } catch(e) {
     if(e.code?.startsWith('AUTH_'))throw e;
+    if(e.code==='ELOOP')
+      throw error('AUTH_FILE_UNTRUSTED','GitHub credential file symlink is forbidden');
     throw error('AUTH_NOT_CONFIGURED','GitHub installation credential file unavailable');
   }
 }
