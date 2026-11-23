@@ -14,7 +14,7 @@ permissions:
   contents: read
 jobs:
   verify:
-    name: Verify pinned RepoWise Docker source
+    name: Verify pinned RepoWise source and policy
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -31,5 +31,9 @@ jobs:
           python3 scripts/check_service_coverage.py
           python3 -m unittest discover -s scripts -p test_select_mcp_builds.py -v
           python3 -m unittest discover -s scripts -p test_service_build_roots.py -v
-      - name: Build pinned RepoWise and run behavioral tests in image
-        run: docker build --pull --progress=plain --tag repowise-mcp:ci ./mcp/repowise-mcp
+      - name: Validate pinned override source is syntactically sound
+        run: |
+          python3 -m py_compile mcp/repowise-mcp/apply_overrides.py
+          python3 -m py_compile mcp/repowise-mcp/overrides/server/mcp_server/tool_answer/answer.py
+      # The existing source-build-roots-pr workflow runs the pinned RepoWise
+      # Dockerfile and embedded behavioral tests from the owned source context.
