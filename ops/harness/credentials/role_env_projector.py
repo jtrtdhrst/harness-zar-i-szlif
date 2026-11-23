@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 """Root-operated, fail-closed projection of provider-scoped Hermes .env files.
 
-Never logs credential content. This does not solve shared Codex OAuth token
-isolation; that requires an independent model-credential broker.
+Never logs credential content. Projects only pre-authorized OpenCode provider
+configuration into role-private files. Never reads shared Codex OAuth.
 """
 import argparse
 import os
@@ -13,9 +13,11 @@ import stat
 import tempfile
 
 ROOT = pathlib.Path("/srv/multica-zar/.hermes")
+# A policy admission precondition: these 14 root-operated role projections must
+# match the protected launch allowlist exactly; the test enforces this invariant.
 ROLE_PROVIDER = {
-    "ceo": "openai-codex", "cho": "openai-codex", "cmo": "openai-codex",
-    "coo": "openai-codex", "cpo": "openai-codex", "cto": "openai-codex",
+    "ceo": "opencode-go", "cho": "opencode-go", "cmo": "opencode-go",
+    "coo": "opencode-go", "cpo": "opencode-go", "cto": "opencode-go",
     "designer": "opencode-go", "email-creative": "opencode-go",
     "engineer": "opencode-go", "harness-engineer": "opencode-go",
     "lifecycle-ops": "opencode-go", "mascot-designer": "opencode-go",
