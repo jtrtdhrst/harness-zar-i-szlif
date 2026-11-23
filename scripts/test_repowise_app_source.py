@@ -34,6 +34,19 @@ class RepoWiseAppSourceTests(unittest.TestCase):
         self.assertEqual(len(paths), x["upstream_tracked_file_count"])
         self.assertNotIn(x["source_root"] + "/.git", paths)
 
+    def test_main_sha_bound_oci_publisher_does_not_deploy(self):
+        workflow = (ROOT / ".github/workflows/vendor-repowise-source.yml").read_text()
+        self.assertIn("publish-reviewed-main-image:", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', workflow)
+        self.assertIn("context: ./apps/repowise", workflow)
+        self.assertIn("ghcr.io/jtrtdhrst/harness-repowise:sha-", workflow)
+        self.assertIn("org.opencontainers.image.revision=", workflow)
+        self.assertIn("steps.image.outputs.digest", workflow)
+        self.assertIn("Production promotion: NOT AUTHORIZED", workflow)
+        self.assertNotIn("coolify deploy", workflow.lower())
+
     def test_no_production_release_claim(self):
         self.assertEqual(self.meta["status"], "LOCAL_PRE_RELEASE_ONLY")
         self.assertTrue(self.meta["inventory_reconciliation_required_before_cutover"])
