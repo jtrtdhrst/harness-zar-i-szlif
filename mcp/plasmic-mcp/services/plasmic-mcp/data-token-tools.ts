@@ -35,9 +35,47 @@ const kindOf = (v: unknown): Kind => {
   return "code";
 };
 const codeForbidden = /\b(?:fetch|XMLHttpRequest|WebSocket|require|import|process|globalThis|window|document|navigator|eval|Function|constructor|localStorage|sessionStorage|service_role|api[_-]?key|password|secret)\b/i;
+// A DataToken is rendered into the deployed site, so its value must never carry credential
+// material. This check is deliberately fail-closed: a false positive costs a rename, a false
+// negative publishes a secret to every visitor of the site.
+const SECRET_MATERIAL = new RegExp([
+  "secret|password|passwd|passphrase|credential|private[_-]?key|api[_-]?key|service[_-]?role",
+  "access[_-]?token|refresh[_-]?token|auth[_-]?token|session[_-]?key",
+  String.raw`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}`,
+  String.raw`\bgh[pousr]_[A-Za-z0-9]{16,}`,
+  String.raw`\bgithub_pat_[A-Za-z0-9_]{20,}`,
+  String.raw`\bxox[baprs]-[A-Za-z0-9-]{10,}`,
+  String.raw`\bAKIA[0-9A-Z]{16}\b`,
+  String.raw`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`,
+  String.raw`-----BEGIN [A-Z ]*PRIVATE KEY-----`,
+  String.raw`\bbearer\s+[A-Za-z0-9._-]{12,}`,
+].join("|"), "i");
+const RANDOM_MATERIAL = /^[A-Za-z0-9_+/=-]{32,}$/;
+export function isSecretMaterial(raw: string): boolean {
+  if (SECRET_MATERIAL.test(raw)) return true;
+  const bounded = raw.trim();
+  return RANDOM_MATERIAL.test(bounded) && /[a-z]/.test(bounded) && /[A-Z]/.test(bounded) && /\d/.test(bounded);
+}
+export function assertNoSecretMaterial(raw: string, field: "NAME" | "VALUE"): void {
+  if (isSecretMaterial(raw)) {
+    throw new Error(
+      `DATA_TOKEN_SECRET_${field}_REJECTED: DataTokens are rendered into the deployed site, so credential material is refused. ` +
+      `Keep secrets in WAB project settings or an allowlisted data query, never in a DataToken.`,
+    );
+  }
+}
+const unwrapText = (stored: string): string => {
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return typeof parsed === "string" ? parsed : stored;
+  } catch {
+    return stored;
+  }
+};
 export function tokenValue(value: unknown, kind: Kind): string {
   if (kind === "text") {
-    if (typeof value !== "string" || value.length > 4000) fail("INVALID_DATA_TOKEN_TEXT");
+    if (typeof value !== "string" || value.length > 4000) return fail("INVALID_DATA_TOKEN_TEXT");
+    assertNoSecretMaterial(value, "VALUE");
     return JSON.stringify(value);
   }
   if (kind === "number") {
@@ -57,6 +95,7 @@ function safeName(name: unknown): string {
       ["__proto__", "prototype", "constructor"].includes(name.toLowerCase())) {
     return fail("INVALID_DATA_TOKEN_NAME");
   }
+  assertNoSecretMaterial(name, "NAME");
   return name;
 }
 function siteOf(bundle: BundleDoc): { iid: string; site: Json; refs: string[] } {
@@ -207,18 +246,24 @@ export function plasmicDataTokenTools(ctx: PlasmicCtx): ToolDef[] {
         return { revision: rev.revision, tokens: inspectDataTokens(rev.bundle) };
       } },
     { name: "plasmic_get_data_token", annotations: { readOnlyHint: true },
-      description: "Read one WAB DataToken under the service account's WAB project permissions.",
+      description: "Read one WAB DataToken under the service account's WAB project permissions; credential-shaped or unsafe values are redacted, never returned.",
       schema: { ...common, tokenId: z.string().min(1) }, handler: async (a) => {
         const rev = await ctx.client.getProjectRev(a.projectId as string, a.branchId as string | undefined);
         const token = locate(rev.bundle, a.tokenId as string);
-        const value = String(token.token.value);
+        const stored = String(token.token.value);
+        const kind = kindOf(stored);
+        // Existing tokens may predate the create/update guard, so redact on read as well:
+        // code expressions are never echoed and text values are withheld when they look like
+        // credential material.
+        const sensitive = codeForbidden.test(stored) ||
+          (kind === "text" && isSecretMaterial(unwrapText(stored)));
         return { id: token.iid, name: token.token.name, revision: rev.revision,
-          valueType: kindOf(value), value: codeForbidden.test(value) ? undefined : value,
-          valueRedacted: codeForbidden.test(value), registered: token.token.isRegistered === true };
+          valueType: kind, value: sensitive ? undefined : stored,
+          valueRedacted: sensitive, registered: token.token.isRegistered === true };
       } },
     { name: "plasmic_create_data_token",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-      description: "Create WAB DataToken; dryRun by default, live writes require existing design branch, revision CAS and idempotency key. No publish.",
+      description: "Create WAB DataToken; credential-shaped names/values are refused; dryRun by default, live writes require existing design branch, revision CAS and idempotency key. No publish.",
       schema: { ...writeCommon, ...nameValue },
       handler: (a) => change(ctx, "create", a as Args) },
     { name: "plasmic_update_data_token",

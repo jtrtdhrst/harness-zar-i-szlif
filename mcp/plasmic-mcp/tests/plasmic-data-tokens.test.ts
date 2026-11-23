@@ -99,3 +99,52 @@ test("Production writes have explicit operator project grant and never auto-run 
     else process.env.PLASMIC_MCP_WRITABLE_PROJECT_IDS = old;
   }
 });
+
+// A DataToken is rendered into the deployed site, so credential material must never enter one
+// (create/update) and must never be echoed back from an existing one (read).
+const secretText = "CLIENT_SECRET_CANARY_ONLY_NOT_REAL";
+test("Text values with credential material are rejected on create and update", () => {
+  assert.throws(() => tokenValue(secretText, "text"), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  assert.throws(() => tokenValue("Bearer abcdefghijklmnop", "text"), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  assert.throws(() => tokenValue("eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmF0dXJlMTIzNA", "text"), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  assert.throws(() => tokenValue("AKIAIOSFODNN7EXAMPLE", "text"), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  assert.throws(() => tokenValue("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", "text"), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  const { bundle, insert } = created();
+  assert.throws(() => planDataToken(bundle, "create", { projectId: "fixture", name: "api", valueType: "text", value: secretText }), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  assert.throws(() => planDataToken(bundle, "update", { projectId: "fixture", tokenId: insert.tokenId, value: secretText }), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+});
+test("Token names that announce a credential are refused", () => {
+  const { bundle } = created();
+  assert.throws(() => planDataToken(bundle, "create", { projectId: "fixture", name: "client_secret", valueType: "text", value: "Hello" }), /DATA_TOKEN_SECRET_NAME_REJECTED/);
+  assert.throws(() => planDataToken(bundle, "create", { projectId: "fixture", name: "SUPABASE_SERVICE_ROLE", valueType: "text", value: "Hello" }), /DATA_TOKEN_SECRET_NAME_REJECTED/);
+});
+test("Ordinary site text still round-trips through the same guards", () => {
+  const { bundle, insert } = created();
+  assert.equal(tokenValue("Brand Color #6C47FF", "text"), '"Brand Color #6C47FF"');
+  assert.equal(tokenValue("Hello, world", "text"), '"Hello, world"');
+  assert.equal(bundle.map[insert.tokenId]!.value, '"Hello"');
+  const update = planDataToken(bundle, "update", { projectId: "fixture", tokenId: insert.tokenId, value: "Summer sale — 20% off" });
+  assert.equal(applied(bundle, update).map[insert.tokenId]!.value, '"Summer sale — 20% off"');
+});
+test("get_data_token withholds credential-shaped existing values and returns safe ones", async () => {
+  const legacySecret: BundleDoc = {
+    version: "test", root: "site", deps: [],
+    map: {
+      site: { __type: "Site", dataTokens: [{ __ref: "tokSecret" }, { __ref: "tokSafe" }], components: [] },
+      tokSecret: { __type: "DataToken", uuid: "u1", name: "legacy", type: "Data", value: JSON.stringify(secretText), variantedValues: [], isRegistered: false, regKey: null },
+      tokSafe: { __type: "DataToken", uuid: "u2", name: "greeting", type: "Data", value: JSON.stringify("Hello"), variantedValues: [], isRegistered: false, regKey: null },
+    },
+  };
+  const ctx = { client: { getProjectRev: async () => ({ revision: 4, bundle: legacySecret, modelVersion: 30 }) } as any, stateDir: "/tmp/unused", auditFile: "/tmp/unused/audit" };
+  const get = plasmicDataTokenTools(ctx).find((x) => x.name === "plasmic_get_data_token")!;
+  const unsafe = await get.handler({ projectId: "fixture", tokenId: "legacy" }) as Record<string, unknown>;
+  assert.equal(unsafe.valueRedacted, true);
+  assert.equal(unsafe.value, undefined);
+  assert.ok(!JSON.stringify(unsafe).includes(secretText), "redacted read must not carry the secret anywhere in the result");
+  const safe = await get.handler({ projectId: "fixture", tokenId: "greeting" }) as Record<string, unknown>;
+  assert.equal(safe.valueRedacted, false);
+  assert.equal(safe.value, '"Hello"');
+  const list = plasmicDataTokenTools(ctx).find((x) => x.name === "plasmic_list_data_tokens")!;
+  const listed = await list.handler({ projectId: "fixture" }) as Record<string, unknown>;
+  assert.ok(!JSON.stringify(listed).includes(secretText), "list must never return values");
+});
