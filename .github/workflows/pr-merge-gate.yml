@@ -30,7 +30,8 @@ jobs:
           # Vendor source is byte-pinned to a reviewed upstream Git tree.
           # Do NOT rewrite the vendor's native whitespace or silently skip validation:
           # validate its complete immutable source tree, then lint all authored paths.
-          if git diff --name-only HEAD^1 HEAD -- apps/repowise | grep -q .; then
+          vendor_changed_paths="$(git diff --name-only HEAD^1 HEAD -- apps/repowise)"
+          if [[ -n "$vendor_changed_paths" ]]; then
             python3 -m unittest discover -s scripts -p test_repowise_app_source.py -v
           fi
           git diff --check HEAD^1 HEAD -- . ':(exclude)apps/repowise/**'
