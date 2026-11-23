@@ -50,7 +50,7 @@ SECURITY_HOLD_CTO = "3a54e0b4-6526-4de5-a1fd-e66e205cb3b4"
 SECURITY_HOLD_COO = "774ab8a9-4e60-42a1-af03-c1c09860c15f"
 
 
-def _read_clearance_comment(value, db_container, actor_type, actor_id, markers):
+def _read_clearance_comment(value, db_container, actor_type, actor_id, expected_content):
     if not isinstance(value, str) or not UUID.fullmatch(value):
         raise Denied("security_hold_evidence_id_invalid")
     sql = ("SELECT row_to_json(t)::text FROM (SELECT author_type, author_id, "
@@ -64,7 +64,7 @@ def _read_clearance_comment(value, db_container, actor_type, actor_id, markers):
     content = item.get("content")
     if (item.get("author_type") != actor_type or item.get("author_id") != actor_id
             or not isinstance(content, str)
-            or not all(marker in content for marker in markers)):
+            or content not in (expected_content, expected_content + "\n")):
         raise Denied("security_hold_evidence_comment_untrusted")
     if actor_type == "agent":
         task = task_record(item.get("source_task_id"), db_container)
@@ -131,14 +131,17 @@ def enforce_persistent_security_hold(db_container, hold_path=None):
     _read_clearance_comment(
         clearance.get("isolation_e2e_comment_id"), db_container, "member",
         SECURITY_HOLD_OWNER, (
-            "ISOLATION_E2E_PASS", "HARNESS_OWN_REPO_PASS",
-            "PRODUCT_OWN_REPO_PASS", "CROSS_REPO_DENIED", "ROLLBACK_PASS"))
+            "ISOLATION_CLEARANCE " + sha + "\n"
+            "HARNESS_OWN_REPO_PASS\n"
+            "PRODUCT_OWN_REPO_PASS\n"
+            "CROSS_REPO_DENIED\n"
+            "ROLLBACK_PASS"))
     _read_clearance_comment(
         clearance.get("cto_review_comment_id"), db_container, "agent",
-        SECURITY_HOLD_CTO, ("CODE_ONLY_APPROVED", sha))
+        SECURITY_HOLD_CTO, "CODE_ONLY_APPROVED " + sha)
     _read_clearance_comment(
         clearance.get("coo_authorization_comment_id"), db_container, "agent",
-        SECURITY_HOLD_COO, ("RELEASE_APPROVED", sha))
+        SECURITY_HOLD_COO, "RELEASE_APPROVED " + sha)
     return True
 
 
