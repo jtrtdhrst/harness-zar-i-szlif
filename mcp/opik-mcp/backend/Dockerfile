@@ -1,6 +1,10 @@
 FROM python:3.13-slim-bookworm
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
+# Coolify's configured HTTP healthcheck invokes curl inside the container.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.lock /app/requirements.lock
 RUN python -m pip install --no-cache-dir -r /app/requirements.lock
 COPY backend/source-parts/ /app/source-parts/
