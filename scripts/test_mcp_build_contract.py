@@ -79,7 +79,7 @@ class McpSourceBuildContract(unittest.TestCase):
     def test_every_owned_mcp_has_exactly_one_owned_source_and_publisher(self):
         services = owned_services()
         roots = build_roots()
-        self.assertEqual(len(services), 13, "Review the fleet change and update this known baseline")
+        self.assertEqual(len(services), 12, "Review the fleet change and update this known baseline")
         self.assertEqual(set(services), set(GENERAL) |
                          (set(RUNTIME) & set(services)) | {"coolify-mcp"})
         for name, row in services.items():
@@ -112,6 +112,15 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertIn("push:", yaml)
                 self.assertIn("ghcr.io/", yaml)
                 self.assertIn("org.opencontainers.image.revision", yaml)
+
+    def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
+        services = owned_services()
+        self.assertNotIn("qdrant-mcp", services)
+        self.assertNotIn("qdrant-mcp", GENERAL)
+        self.assertNotIn("qdrant-mcp", RUNTIME)
+        self.assertNotIn("qdrant-mcp", build_roots())
+        self.assertFalse((ROOT / "mcp/qdrant-mcp").exists())
+        self.assertIn("qdrant", {r["name"] for r in json.loads(REGISTRY.read_text())["resources"]})
 
     def test_publishers_gate_exact_source_sha_and_output_digest(self):
         for flow in (GENERAL_FLOW, RUNTIME_FLOW, COOLIFY_FLOW):
