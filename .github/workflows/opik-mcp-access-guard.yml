@@ -46,8 +46,15 @@ jobs:
         run: |
           set -euo pipefail
           test "$(docker image inspect opik-mcp-health:pr --format '{{.Config.User}}')" = "10001"
-          cid="$(docker run --rm -d --network none --read-only \
-            --tmpfs /tmp:rw,nosuid,size=64m opik-mcp-health:pr)"
+          # The backend defaults to stdio. Coolify explicitly enables HTTP.
+          # This isolated probe has no credentials, persistent mounts or published port.
+          cid="$(docker run -d --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,size=64m \
+            -e OPIK_MCP_TRANSPORT=http \
+            -e OPIK_MCP_HOST=127.0.0.1 \
+            -e OPIK_MCP_PORT=8080 \
+            -e OPIK_URL=http://127.0.0.1:9999 \
+            opik-mcp-health:pr)"
           trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do
             if docker exec "$cid" curl --fail --silent --show-error --max-time 2 \
@@ -56,7 +63,9 @@ jobs:
               exit 0
             fi
             test "$(docker inspect "$cid" --format '{{.State.Running}}')" = "true" || {
-              echo "FAIL: backend exited before HTTP health became ready"; exit 1;
+              echo "FAIL: backend exited before HTTP health became ready"
+              docker logs --tail 25 "$cid" || true
+              exit 1;
             }
             sleep 1
           done
