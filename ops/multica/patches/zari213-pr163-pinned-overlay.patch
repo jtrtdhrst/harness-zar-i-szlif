@@ -1,0 +1,479 @@
+diff --git a/server/internal/daemon/daemon.go b/server/internal/daemon/daemon.go
+index 9ed1d38..b6710c6 100644
+--- a/server/internal/daemon/daemon.go
++++ b/server/internal/daemon/daemon.go
+@@ -137,7 +137,7 @@ var pendingWorkHintMinInterval = time.Second
+ // sandbox config is known, one workdir is reused across tasks whose policies
+ // can differ, and task-local metadata is correct under either policy.
+ func repoCheckoutModeFor(provider, goos string) string {
+-	if provider != "codex" {
++	if provider != "codex" && provider != "hermes" {
+ 		return ""
+ 	}
+ 	switch goos {
+@@ -3533,13 +3533,71 @@ func (d *Daemon) registerTaskRepos(workspaceID, taskID string, repos []RepoData)
+ 	}
+ }
+ 
+-// taskRepoURLs snapshots the authoritative project-scoped claim for the
+-// authenticated checkout endpoint. Never infer eligibility from cache state.
+-func taskRepoURLs(repos []RepoData) []string {
+-	urls := make([]string, 0, len(repos))
+-	for _, repo := range repos {
+-		if url := strings.TrimSpace(repo.URL); url != "" {
+-			urls = append(urls, url)
++// scopedRepoClaimKey distinguishes remote repository identity from exact local
++// paths. An unrecognized URL/relative path is never an authorization key.
++func scopedRepoClaimKey(rawURL string) string {
++	trimmed := strings.TrimSpace(rawURL)
++	if trimmed == "" {
++		return ""
++	}
++	if identity := repoIdentity(trimmed); identity != "" {
++		return "repo:" + identity
++	}
++	// Local paths are byte-exact grants; never normalize whitespace into
++	// permission to access a different on-disk path.
++	if rawURL != trimmed {
++		return ""
++	}
++	if filepath.IsAbs(rawURL) && filepath.Clean(rawURL) == rawURL {
++		return "local:" + rawURL
++	}
++	return ""
++}
++
++// taskRepoURLs binds checkout authorization to the project resource manifest
++// supplied by the trusted task claim, not to the workspace fallback. The server
++// intentionally supplies workspace repos to projects without github_repo
++// resources for legacy context; those fallback URLs must never authorize a
++// cross-project checkout. A task without a project keeps workspace semantics.
++func taskRepoURLs(task Task) []string {
++	claimed := make(map[string]string, len(task.Repos))
++	for _, repo := range task.Repos {
++		if key := scopedRepoClaimKey(repo.URL); key != "" {
++			// Safe to trim remote origins; local paths with surrounding
++			// whitespace were rejected by scopedRepoClaimKey.
++			claimed[key] = strings.TrimSpace(repo.URL)
++		}
++	}
++	if task.ProjectID == "" {
++		urls := make([]string, 0, len(claimed))
++		for _, repo := range task.Repos {
++			if url := strings.TrimSpace(repo.URL); url != "" {
++				urls = append(urls, url)
++			}
++		}
++		return urls
++	}
++	urls := make([]string, 0, len(task.ProjectResources))
++	seen := make(map[string]struct{})
++	for _, resource := range task.ProjectResources {
++		if resource.ResourceType != "github_repo" {
++			continue
++		}
++		var ref struct {
++			URL string `json:"url"`
++		}
++		if err := json.Unmarshal(resource.ResourceRef, &ref); err != nil {
++			continue
++		}
++		id := scopedRepoClaimKey(ref.URL)
++		if id == "" {
++			continue
++		}
++		if url, ok := claimed[id]; ok {
++			if _, duplicate := seen[id]; !duplicate {
++				urls = append(urls, url)
++				seen[id] = struct{}{}
++			}
+ 		}
+ 	}
+ 	return urls
+@@ -9370,10 +9428,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 		WorkspaceID: task.WorkspaceID,
+ 		TaskID:      task.ID,
+ 		IssueID:     task.IssueID,
++		ProjectID:   task.ProjectID,
+ 		AgentID:     task.AgentID,
+ 		AgentName:   task.Agent.Name,
+ 		WorkDir:     env.WorkDir,
+-		RepoURLs:    taskRepoURLs(task.Repos),
++		RepoURLs:    taskRepoURLs(task),
+ 	})
+ 	defer d.clearActiveRepoCheckoutTask(agentToken)
+ 	defer d.environments.trackTask(env.RootDir, localenv.Task{
+@@ -11526,6 +11585,9 @@ func codexShellAuthorizedCustomEnvNames(customEnv map[string]string) []string {
+ // Failure is fatal: launching with an unowned or malformed policy could either
+ // drop the task-scoped token again or expose inherited daemon credentials.
+ func configureCodexTaskShellEnvironment(provider, codexHome string, inherited []string, agentEnv, agentCustomEnv map[string]string, logger *slog.Logger) error {
++	// This policy is read by Codex only. Hermes uses the native per-task
++	// environment and HermesHome; it does not create or read CodexHome.
++	// Requiring CODEX_HOME for Hermes prevents all Hermes tasks from starting.
+ 	if provider != "codex" {
+ 		return nil
+ 	}
+diff --git a/server/internal/daemon/daemon_test.go b/server/internal/daemon/daemon_test.go
+index ef67a2e..80679b4 100644
+--- a/server/internal/daemon/daemon_test.go
++++ b/server/internal/daemon/daemon_test.go
+@@ -329,6 +329,9 @@ func TestRepoCheckoutModeFor(t *testing.T) {
+ 		{name: "Linux Codex isolates Git metadata", provider: "codex", goos: "linux", want: repoCheckoutModeIsolated},
+ 		{name: "Windows Codex isolates Git metadata", provider: "codex", goos: "windows", want: repoCheckoutModeIsolated},
+ 		{name: "macOS Codex keeps worktree", provider: "codex", goos: "darwin"},
++		{name: "Linux Hermes isolates Git metadata", provider: "hermes", goos: "linux", want: repoCheckoutModeIsolated},
++		{name: "Windows Hermes isolates Git metadata", provider: "hermes", goos: "windows", want: repoCheckoutModeIsolated},
++		{name: "macOS Hermes keeps worktree", provider: "hermes", goos: "darwin"},
+ 		{name: "Linux Claude keeps worktree", provider: "claude", goos: "linux"},
+ 		{name: "Windows Claude keeps worktree", provider: "claude", goos: "windows"},
+ 	}
+@@ -398,6 +401,15 @@ func TestConfigureCodexTaskShellEnvironment(t *testing.T) {
+ 		}
+ 	})
+ 
++	t.Run("Hermes does not require unused CodexHome", func(t *testing.T) {
++		t.Parallel()
++		err := configureCodexTaskShellEnvironment("hermes", "", nil,
++			map[string]string{"MULTICA_TASK_ID": "task", "MULTICA_TOKEN": "mat_task"}, nil, slog.Default())
++		if err != nil {
++			t.Fatalf("Hermes must not require CODEX_HOME: %v", err)
++		}
++	})
++
+ 	t.Run("Codex without task home fails closed", func(t *testing.T) {
+ 		t.Parallel()
+ 		err := configureCodexTaskShellEnvironment("codex", "", nil, map[string]string{"MULTICA_TOKEN": "mat_task"}, nil, slog.Default())
+diff --git a/server/internal/daemon/health.go b/server/internal/daemon/health.go
+index b687af4..18b519d 100644
+--- a/server/internal/daemon/health.go
++++ b/server/internal/daemon/health.go
+@@ -127,6 +127,7 @@ type activeRepoCheckoutTask struct {
+ 	WorkspaceID string
+ 	TaskID      string
+ 	IssueID     string
++	ProjectID   string
+ 	AgentID     string
+ 	AgentName   string
+ 	WorkDir     string
+@@ -153,12 +154,19 @@ func (d *Daemon) registerActiveRepoCheckoutTask(token string, task activeRepoChe
+ // workspace-wide cache union (which may include another project's sources).
+ // Compare repository identities to preserve supported scp/https aliases.
+ func taskRepoCheckoutAllowed(task activeRepoCheckoutTask, requested string) bool {
+-	identity := repoIdentity(strings.TrimSpace(requested))
+-	if identity == "" {
++	trimmed := strings.TrimSpace(requested)
++	if trimmed == "" {
+ 		return false
+ 	}
++	identity := repoIdentity(trimmed)
+ 	for _, allowed := range task.RepoURLs {
+-		if repoIdentity(strings.TrimSpace(allowed)) == identity {
++		// Remote URL identity supports scp/HTTPS aliases and surrounding
++		// whitespace, but local filesystem paths MUST match byte-for-byte.
++		if identity != "" && identity == repoIdentity(strings.TrimSpace(allowed)) {
++			return true
++		}
++		if identity == "" && requested == allowed &&
++			filepath.IsAbs(requested) && filepath.Clean(requested) == requested {
+ 			return true
+ 		}
+ 	}
+@@ -470,6 +478,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
+ 	mux.HandleFunc("/health", d.healthHandler(startedAt))
+ 	mux.HandleFunc("/shutdown", d.shutdownHandler())
+ 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
++	mux.HandleFunc("/repo/scope", d.repoScopeHandler())
+ 	mux.HandleFunc("/environments/start", d.environmentStartHandler())
+ 	mux.HandleFunc("/environments/stop", d.environmentStopHandler())
+ 	mux.HandleFunc("/environments/list", d.environmentListHandler())
+@@ -488,6 +497,44 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
+ 	}
+ }
+ 
++// repoScopeResponse is the trusted, token-bound task scope consumed by the
++// root Git credential broker. It exposes no secret, only the repositories the
++// active task may use.
++type repoScopeResponse struct {
++	WorkspaceID string   `json:"workspace_id"`
++	TaskID      string   `json:"task_id"`
++	ProjectID   string   `json:"project_id"`
++	AgentID     string   `json:"agent_id"`
++	AgentName   string   `json:"agent_name"`
++	RepoURLs    []string `json:"repo_urls"`
++}
++
++// repoScopeHandler lets the local root broker resolve a task token to the
++// same project-scoped repository claim that /repo/checkout enforces. It is
++// bound to the task's bearer token, exactly like /repo/checkout.
++func (d *Daemon) repoScopeHandler() http.HandlerFunc {
++	return func(w http.ResponseWriter, r *http.Request) {
++		if r.Method != http.MethodGet {
++			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
++			return
++		}
++		activeTask, authResult := d.activeRepoCheckoutTask(r)
++		if authResult != repoCheckoutAuthOK {
++			d.writeRepoCheckoutAuthError(w, authResult)
++			return
++		}
++		w.Header().Set("Content-Type", "application/json")
++		_ = json.NewEncoder(w).Encode(repoScopeResponse{
++			WorkspaceID: activeTask.WorkspaceID,
++			TaskID:      activeTask.TaskID,
++			ProjectID:   activeTask.ProjectID,
++			AgentID:     activeTask.AgentID,
++			AgentName:   activeTask.AgentName,
++			RepoURLs:    activeTask.RepoURLs,
++		})
++	}
++}
++
+ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
+ 	return func(w http.ResponseWriter, r *http.Request) {
+ 		if r.Method != http.MethodPost {
+diff --git a/server/internal/daemon/health_test.go b/server/internal/daemon/health_test.go
+index 15c1a40..bc4d6de 100644
+--- a/server/internal/daemon/health_test.go
++++ b/server/internal/daemon/health_test.go
+@@ -703,6 +703,7 @@ func newRepoCheckoutHarness(t *testing.T, isolated bool, urls ...string) *repoCh
+ 		TaskID:      "task-1",
+ 		AgentName:   "Test Agent",
+ 		WorkDir:     root,
++		RepoURLs:    urls,
+ 	})
+ 	return &repoCheckoutHarness{d: d, root: root, isolated: isolated}
+ }
+@@ -1009,6 +1010,7 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+ 		AgentID:     "agent-1",
+ 		AgentName:   "Test Agent",
+ 		WorkDir:     workDir,
++		RepoURLs:    []string{repoURL},
+ 	})
+ 	return d
+ }
+diff --git a/server/internal/daemon/repocache/cache.go b/server/internal/daemon/repocache/cache.go
+index b58c186..3dc1aa0 100644
+--- a/server/internal/daemon/repocache/cache.go
++++ b/server/internal/daemon/repocache/cache.go
+@@ -960,9 +960,14 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
+ 		if ctx.Err() != nil {
+ 			return nil, context.Cause(ctx)
+ 		}
+-		// Non-fatal: preserve cached state and continue. The agent will
+-		// receive an older snapshot than the remote head, so the result
+-		// carries the error back to the CLI as well as the daemon log.
++		// A fresh checkout is an explicit request for the remote state. Never
++		// turn a failed fetch into a successful checkout from the cached copy.
++		if params.Fresh {
++			return nil, fmt.Errorf("fresh checkout requires a successful remote fetch: %w", err)
++		}
++		// Non-fatal for reused checkouts: preserve cached state and continue.
++		// The agent will receive an older snapshot than the remote head, so the
++		// result carries the error back to the CLI as well as the daemon log.
+ 		fetchErr = redact.Text(err.Error())
+ 		c.logger.Warn("repo checkout: fetch failed, agent will see possibly stale code",
+ 			"url", params.RepoURL,
+@@ -1342,10 +1347,9 @@ func sameResolvedPath(a, b string) bool {
+ // sandbox makes writable — from re-permissioning the daemon-owned cache's
+ // object files. The cost is extra disk and a slower first checkout on Windows.
+ func localCloneArgs(goos, barePath, checkoutPath string) []string {
+-	args := []string{"clone", "--local", "--no-checkout", "--no-tags"}
+-	if goos == "windows" {
+-		args = append(args, "--no-hardlinks")
+-	}
++	// Every OS must copy Git objects. Hardlinking a daemon-owned bare mirror
++	// into an agent-writable checkout crosses the task/cache isolation boundary.
++	args := []string{"clone", "--local", "--no-hardlinks", "--no-checkout", "--no-tags"}
+ 	return append(args, "--origin", isolatedCacheRemoteName, barePath, checkoutPath)
+ }
+ 
+diff --git a/server/internal/daemon/repocache/cache_test.go b/server/internal/daemon/repocache/cache_test.go
+index ec745ac..fe03883 100644
+--- a/server/internal/daemon/repocache/cache_test.go
++++ b/server/internal/daemon/repocache/cache_test.go
+@@ -861,6 +861,31 @@ func TestCreateWorktreeReportsFailedFetch(t *testing.T) {
+ 	}
+ }
+ 
++func TestCreateWorktreeFreshFailsWhenFetchFails(t *testing.T) {
++	t.Parallel()
++	sourceRepo := createTestRepo(t)
++	cache := New(t.TempDir(), testLogger())
++	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
++		t.Fatalf("sync failed: %v", err)
++	}
++	if err := os.RemoveAll(sourceRepo); err != nil {
++		t.Fatalf("remove origin: %v", err)
++	}
++
++	params := WorktreeParams{
++		WorkspaceID: "ws-1",
++		RepoURL:     sourceRepo,
++		WorkDir:     t.TempDir(),
++		AgentName:   "QA",
++		TaskID:      "d4e5f6a7-b8c9-0123-def0-234567890123",
++		Fresh:       true,
++	}
++	if _, err := cache.CreateWorktree(params); err == nil ||
++		!strings.Contains(err.Error(), "fresh checkout requires a successful remote fetch") {
++		t.Fatalf("fresh checkout error = %v, want a failed-fetch error", err)
++	}
++}
++
+ func TestCreateWorktreeWithIsolatedGitMetadata(t *testing.T) {
+ 	t.Parallel()
+ 	sourceRepo := createTestRepo(t)
+@@ -1151,7 +1176,7 @@ func TestCreateWorktreeMigratesLinkedWorktreeToIsolatedMetadata(t *testing.T) {
+ 	}
+ }
+ 
+-func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
++func TestLocalCloneArgsAlwaysDisablesHardlinks(t *testing.T) {
+ 	t.Parallel()
+ 	const barePath, checkoutPath = "/cache/repo.git", "/task/repo"
+ 
+@@ -1160,8 +1185,8 @@ func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
+ 		wantNoHardlnk bool
+ 	}{
+ 		{goos: "windows", wantNoHardlnk: true},
+-		{goos: "linux"},
+-		{goos: "darwin"},
++		{goos: "linux", wantNoHardlnk: true},
++		{goos: "darwin", wantNoHardlnk: true},
+ 	} {
+ 		t.Run(tt.goos, func(t *testing.T) {
+ 			t.Parallel()
+diff --git a/server/internal/daemon/zari213_repo_scope_test.go b/server/internal/daemon/zari213_repo_scope_test.go
+index 8b8b0f4..6b9ec4a 100644
+--- a/server/internal/daemon/zari213_repo_scope_test.go
++++ b/server/internal/daemon/zari213_repo_scope_test.go
+@@ -1,6 +1,7 @@
+ package daemon
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"log/slog"
+ 	"net/http"
+@@ -53,3 +54,121 @@ func TestZARI213CheckoutRejectsOtherProjectBeforeCacheAccess(t *testing.T) {
+ 		t.Fatalf("response=%d body=%q want project scope 403", response.Code, response.Body.String())
+ 	}
+ }
++
++// A project with no github_repo resource receives a workspace fallback from
++// the upstream claim handler. That fallback is NOT project authorization.
++func TestZARI213ProjectRepoManifestOverridesWorkspaceFallback(t *testing.T) {
++	product := "https://github.com/example/product.git"
++	harness := "https://github.com/example/harness.git"
++	repos := []RepoData{{URL: product}, {URL: harness}}
++	for _, tc := range []struct {
++		name string
++		task Task
++		want []string
++	}{
++		{"harness-resource-only", Task{ProjectID: "harness", Repos: repos, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://github.com/example/harness.git"}`)},
++		}}, []string{harness}},
++		{"zero-resource-project-denies", Task{ProjectID: "security", Repos: repos}, nil},
++		{"invalid-resource-denies", Task{ProjectID: "harness", Repos: repos, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":`)},
++		}}, nil},
++		{"unclaimed-resource-denies", Task{ProjectID: "harness", Repos: []RepoData{{URL: product}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://github.com/example/harness.git"}`)},
++		}}, nil},
++		{"exact-local-path-allowed", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, []string{"/srv/repos/harness"}},
++		{"different-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/other"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, nil},
++		{"relative-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"repos/harness"}`)},
++		}}, nil},
++		{"unclean-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/../harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/../harness"}`)},
++		}}, nil},
++		{"local-resource-leading-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":" /srv/repos/harness"}`)},
++		}}, nil},
++		{"local-resource-trailing-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness "}`)},
++		}}, nil},
++		{"local-task-trailing-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness "}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, nil},
++		{"workspace-without-project", Task{Repos: repos}, []string{product, harness}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			got := taskRepoURLs(tc.task)
++			if len(got) != len(tc.want) {
++				t.Fatalf("repo URLs: got=%q want=%q", got, tc.want)
++			}
++			for i := range got {
++				if got[i] != tc.want[i] {
++					t.Fatalf("repo[%d] got=%q want=%q", i, got[i], tc.want[i])
++				}
++			}
++		})
++	}
++}
++
++// The checkout endpoint must not interpret a path prefix as permission.
++func TestZARI213LocalPathCheckoutExactOnly(t *testing.T) {
++	task := activeRepoCheckoutTask{RepoURLs: []string{"/srv/repos/harness"}}
++	if !taskRepoCheckoutAllowed(task, "/srv/repos/harness") {
++		t.Fatal("exact local checkout denied")
++	}
++	for _, bad := range []string{"/srv/repos/other", "/srv/repos/harness-copy", "/srv/repos/harness/../other", "repos/harness", " /srv/repos/harness", "/srv/repos/harness "} {
++		if taskRepoCheckoutAllowed(task, bad) {
++			t.Fatalf("unexpected local path permission: %q", bad)
++		}
++	}
++}
++
++// TestZARI213ScopeHandlerBrokerContract proves the exact JSON shape consumed
++// by the root Git credential broker for a REAL active task token. A rogue
++// token cannot recover another task's repository grant.
++func TestZARI213ScopeHandlerBrokerContract(t *testing.T) {
++	const token = "zari213-bound-task-token"
++	const harness = "https://github.com/jtrtdhrst/harness-zar-i-szlif.git"
++	d := &Daemon{logger: slog.Default()}
++	d.registerActiveRepoCheckoutTask(token, activeRepoCheckoutTask{
++		WorkspaceID: "ws", TaskID: "task", ProjectID: "harness-project",
++		AgentID: "harness-agent", AgentName: "Harness Engineer",
++		RepoURLs: []string{harness},
++	})
++	own := httptest.NewRequest(http.MethodGet, "/repo/scope", nil)
++	own.Header.Set("Authorization", "Bearer "+token)
++	ownResponse := httptest.NewRecorder()
++	d.repoScopeHandler().ServeHTTP(ownResponse, own)
++	if ownResponse.Code != http.StatusOK {
++		t.Fatalf("own repo scope HTTP %d: %s", ownResponse.Code, ownResponse.Body.String())
++	}
++	var got repoScopeResponse
++	if err := json.Unmarshal(ownResponse.Body.Bytes(), &got); err != nil {
++		t.Fatal(err)
++	}
++	if got.WorkspaceID != "ws" || got.TaskID != "task" || got.AgentID != "harness-agent" ||
++		got.ProjectID != "harness-project" || len(got.RepoURLs) != 1 || got.RepoURLs[0] != harness {
++		t.Fatalf("unexpected project-scoped broker contract: %#v", got)
++	}
++	for _, authorization := range []string{"", "Bearer other-task-token"} {
++		denied := httptest.NewRequest(http.MethodGet, "/repo/scope", nil)
++		if authorization != "" {
++			denied.Header.Set("Authorization", authorization)
++		}
++		rec := httptest.NewRecorder()
++		d.repoScopeHandler().ServeHTTP(rec, denied)
++		if rec.Code != http.StatusUnauthorized {
++			t.Fatalf("unbound token unexpectedly revealed scope: HTTP %d", rec.Code)
++		}
++	}
++	wrongMethod := httptest.NewRequest(http.MethodPost, "/repo/scope", nil)
++	wrongMethod.Header.Set("Authorization", "Bearer "+token)
++	rec := httptest.NewRecorder()
++	d.repoScopeHandler().ServeHTTP(rec, wrongMethod)
++	if rec.Code != http.StatusMethodNotAllowed {
++		t.Fatalf("unexpected scope method: HTTP %d", rec.Code)
++	}
++}
