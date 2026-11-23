@@ -33,7 +33,8 @@ class SmokeFailure extends Error {
 }
 const fail = (code, detail) => { throw new SmokeFailure(code, detail); };
 
-async function run() {
+async function run(setStage = () => {}) {
+  setStage("resolve-dependencies");
   const coreDir = path.join(__dirname, "..", "node_modules", "playwright-core");
   const browsersJsonPath = path.join(coreDir, "browsers.json");
   if (!fs.existsSync(browsersJsonPath)) {
@@ -60,10 +61,14 @@ async function run() {
     fail("REVISION_MISMATCH", `installed browser directory ${revisionDir} does not match pinned revision ${expected.chromium}`);
   }
 
+  setStage("launch-chromium");
   const browser = await chromium.launch({ args: ["--no-sandbox"] });
+  setStage("browser-launched");
   try {
+    setStage("open-page");
     const page = await browser.newPage();
     await page.setContent(`<title>${PAGE_TITLE}</title><p id=v>1</p>`);
+    setStage("evaluate-page");
     const value = await page.evaluate(() => 1 + 1);
     const title = await page.title();
     const version = browser.version();
@@ -81,6 +86,7 @@ async function run() {
     };
   } finally {
     // Always release the browser, on success and on every failure path.
+    setStage("close-chromium");
     await browser.close().catch(() => {});
     if (browser.isConnected && browser.isConnected()) {
       // close() failing would leave a live Chromium behind: that is a defect
@@ -90,14 +96,28 @@ async function run() {
   }
 }
 
+// Fail closed even if an awaited browser promise never resolves and no I/O
+// remains. A refed watchdog prevents a silent process exit with status 0.
+process.exitCode = 1;
+const requestedWatchdogMs = Number(process.env.SMOKE_CHROMIUM_WATCHDOG_MS || 90000);
+const watchdogMs = Number.isFinite(requestedWatchdogMs) && requestedWatchdogMs >= 1000 && requestedWatchdogMs <= 600000
+  ? requestedWatchdogMs : 90000;
+let lastStage = "startup";
+const watchdog = setTimeout(() => {
+  console.error(JSON.stringify({ ok: false, code: "SMOKE_WATCHDOG_TIMEOUT", stage: lastStage, timeoutMs: watchdogMs }));
+  // A stalled launch cannot safely complete the normal finally cleanup path.
+  // Fail the build instead of emitting a false-green result or hanging forever.
+  process.kill(process.pid, "SIGTERM");
+}, watchdogMs);
 (async () => {
   let outcome = null;
   let failure = null;
   try {
-    outcome = await run();
+    outcome = await run((stage) => { lastStage = stage; console.error("SMOKE_STAGE " + stage); });
   } catch (e) {
     failure = e instanceof SmokeFailure ? e : new SmokeFailure("SMOKE_ERROR", String((e && e.message) || e));
   }
+  clearTimeout(watchdog);
   if (failure) {
     console.error(JSON.stringify({ ok: false, code: failure.code, detail: failure.detail }, null, 2));
     process.exitCode = 1;

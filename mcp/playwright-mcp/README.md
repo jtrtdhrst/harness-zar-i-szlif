@@ -68,3 +68,13 @@ npm test           # lifecycle regression suite (stub backend, no Chromium)
   browser_snapshot and browser_tabs in the deployed image, then repeat from
   each permitted agent's Hermes MCP identity. HTTP 200 alone, a container
   healthcheck or a direct backend test is insufficient.
+
+### Fail-closed build smoke
+
+`smoke-chromium.cjs` begins with `process.exitCode = 1`, emits
+`SMOKE_STAGE` markers, and runs a **refed** watchdog (default 90 s). A
+never-settling browser promise cannot silently exit 0: the watchdog emits
+`SMOKE_WATCHDOG_TIMEOUT` with the last stage and terminates unsuccessfully.
+`tests/smoke-chromium-watchdog.test.mjs` verifies success, bad-title and
+never-settling-launch paths, including nonzero exit on the stalled promise.
+The Docker build runs this smoke alongside the real proxy navigation smoke.
