@@ -20,7 +20,7 @@
 
 **Zacznij od [AGENTS.md](AGENTS.md).** Znajdziesz tam kanoniczne katalogi, zakres odpowiedzialności, sposób weryfikacji produkcji i regułę: kod w repo ≠ wdrożona wersja.
 
-- **Qdrant:** jedyny kod MCP znajduje się w `mcp/qdrant-mcp/`. Dawny główny katalog `qdrant-mcp/` został wycofany — usługa Qdrant MCP, baza i wolumeny produkcyjne pozostają.
+- **Qdrant MCP WYCOFANY:** katalog `mcp/qdrant-mcp/` i pipeline jego obrazu usunięto w PR #182, a trasę i konfigurację Workera w PR #234. Zasób Coolify `a4zgmthjspz8hwvyu6llr8dh` pozostaje zatrzymanym wpisem oczekującym na autoryzowane usunięcie. Osobna baza Qdrant, jej kolekcje i wolumeny pozostają bez zmian.
 - **Opik MCP** (`mcp/opik-mcp/`) przyjmuje autoryzowane żądania narzędzi Opik. **Opik run enricher** (`workers/opik-run-enricher/`) dopisuje bezpieczne metryki do zakończonych trace; to osobny worker, nie drugi serwer MCP.
 - **`ops/`** przechowuje mapowanie Coolify, kontrakty wydań i infrastrukturę; nie jest usługą ani katalogiem implementacji MCP. Pliki README i `project.yml` bez kodu nie świadczą o źródłach działającego kontenera.
 - **Ścieżki Coolify:** samo przeniesienie kodu do `mcp/` nie zmienia `base_directory` ani `watch_paths` produkcyjnej aplikacji. Agent ma sprawdzić je przed deploymentem, zwłaszcza dla `github-ops-mcp` i `multica-mcp`.
