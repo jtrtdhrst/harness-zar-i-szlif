@@ -2,7 +2,6 @@
 // The engine URLs remain unchanged during cutover; only the edge execution moves to Coolify.
 export const SERVICES = Object.freeze({
   "paperclip-mcp.zariszlif.pl": { id: "paperclip", upstream: "https://paperclip-engine.zariszlif.pl/mcp", oauth: true },
-  "qdrant-mcp.zariszlif.pl": { id: "qdrant", upstream: "https://qdrant-engine.zariszlif.pl/mcp", auth: true, upstreamAuth: true },
   "supabase-mcp.zariszlif.pl": { id: "supabase", upstream: "https://supabase-engine.zariszlif.pl/mcp", auth: true, upstreamAuth: true },
   "ubuntu-mcp.zariszlif.pl": { id: "ubuntu", upstream: "https://ubuntu-engine.zariszlif.pl/mcp", auth: true, upstreamAuth: true },
   "plasmic-mcp.zariszlif.pl": { id: "plasmic", upstream: "https://plasmic-engine.zariszlif.pl/mcp", auth: true, upstreamAuth: true },
