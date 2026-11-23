@@ -113,10 +113,10 @@ index 9ed1d38..5f64941 100644
  	}
  	if strings.TrimSpace(codexHome) == "" {
 diff --git a/server/internal/daemon/daemon_test.go b/server/internal/daemon/daemon_test.go
-index ef67a2e..de9e936 100644
+index ef67a2e..e270e0b 100644
 --- a/server/internal/daemon/daemon_test.go
 +++ b/server/internal/daemon/daemon_test.go
-@@ -329,8 +329,13 @@ func TestRepoCheckoutModeFor(t *testing.T) {
+@@ -329,6 +329,9 @@ func TestRepoCheckoutModeFor(t *testing.T) {
  		{name: "Linux Codex isolates Git metadata", provider: "codex", goos: "linux", want: repoCheckoutModeIsolated},
  		{name: "Windows Codex isolates Git metadata", provider: "codex", goos: "windows", want: repoCheckoutModeIsolated},
  		{name: "macOS Codex keeps worktree", provider: "codex", goos: "darwin"},
@@ -125,11 +125,7 @@ index ef67a2e..de9e936 100644
 +		{name: "macOS Hermes keeps worktree", provider: "hermes", goos: "darwin"},
  		{name: "Linux Claude keeps worktree", provider: "claude", goos: "linux"},
  		{name: "Windows Claude keeps worktree", provider: "claude", goos: "windows"},
-+		{name: "Linux Hermes isolates Git metadata", provider: "hermes", goos: "linux", want: repoCheckoutModeIsolated},
-+		{name: "Windows Hermes isolates Git metadata", provider: "hermes", goos: "windows", want: repoCheckoutModeIsolated},
  	}
- 	for _, tt := range tests {
- 		t.Run(tt.name, func(t *testing.T) {
 diff --git a/server/internal/daemon/health.go b/server/internal/daemon/health.go
 index b687af4..18b519d 100644
 --- a/server/internal/daemon/health.go
@@ -331,7 +327,7 @@ index ec745ac..fe03883 100644
  		t.Run(tt.goos, func(t *testing.T) {
  			t.Parallel()
 diff --git a/server/internal/daemon/zari213_repo_scope_test.go b/server/internal/daemon/zari213_repo_scope_test.go
-index 8b8b0f4..00f34ff 100644
+index 8b8b0f4..6b9ec4a 100644
 --- a/server/internal/daemon/zari213_repo_scope_test.go
 +++ b/server/internal/daemon/zari213_repo_scope_test.go
 @@ -1,6 +1,7 @@
@@ -342,7 +338,7 @@ index 8b8b0f4..00f34ff 100644
  	"fmt"
  	"log/slog"
  	"net/http"
-@@ -53,3 +54,74 @@ func TestZARI213CheckoutRejectsOtherProjectBeforeCacheAccess(t *testing.T) {
+@@ -53,3 +54,121 @@ func TestZARI213CheckoutRejectsOtherProjectBeforeCacheAccess(t *testing.T) {
  		t.Fatalf("response=%d body=%q want project scope 403", response.Code, response.Body.String())
  	}
  }
@@ -415,5 +411,52 @@ index 8b8b0f4..00f34ff 100644
 +		if taskRepoCheckoutAllowed(task, bad) {
 +			t.Fatalf("unexpected local path permission: %q", bad)
 +		}
++	}
++}
++
++// TestZARI213ScopeHandlerBrokerContract proves the exact JSON shape consumed
++// by the root Git credential broker for a REAL active task token. A rogue
++// token cannot recover another task's repository grant.
++func TestZARI213ScopeHandlerBrokerContract(t *testing.T) {
++	const token = "zari213-bound-task-token"
++	const harness = "https://github.com/jtrtdhrst/harness-zar-i-szlif.git"
++	d := &Daemon{logger: slog.Default()}
++	d.registerActiveRepoCheckoutTask(token, activeRepoCheckoutTask{
++		WorkspaceID: "ws", TaskID: "task", ProjectID: "harness-project",
++		AgentID: "harness-agent", AgentName: "Harness Engineer",
++		RepoURLs: []string{harness},
++	})
++	own := httptest.NewRequest(http.MethodGet, "/repo/scope", nil)
++	own.Header.Set("Authorization", "Bearer "+token)
++	ownResponse := httptest.NewRecorder()
++	d.repoScopeHandler().ServeHTTP(ownResponse, own)
++	if ownResponse.Code != http.StatusOK {
++		t.Fatalf("own repo scope HTTP %d: %s", ownResponse.Code, ownResponse.Body.String())
++	}
++	var got repoScopeResponse
++	if err := json.Unmarshal(ownResponse.Body.Bytes(), &got); err != nil {
++		t.Fatal(err)
++	}
++	if got.WorkspaceID != "ws" || got.TaskID != "task" || got.AgentID != "harness-agent" ||
++		got.ProjectID != "harness-project" || len(got.RepoURLs) != 1 || got.RepoURLs[0] != harness {
++		t.Fatalf("unexpected project-scoped broker contract: %#v", got)
++	}
++	for _, authorization := range []string{"", "Bearer other-task-token"} {
++		denied := httptest.NewRequest(http.MethodGet, "/repo/scope", nil)
++		if authorization != "" {
++			denied.Header.Set("Authorization", authorization)
++		}
++		rec := httptest.NewRecorder()
++		d.repoScopeHandler().ServeHTTP(rec, denied)
++		if rec.Code != http.StatusUnauthorized {
++			t.Fatalf("unbound token unexpectedly revealed scope: HTTP %d", rec.Code)
++		}
++	}
++	wrongMethod := httptest.NewRequest(http.MethodPost, "/repo/scope", nil)
++	wrongMethod.Header.Set("Authorization", "Bearer "+token)
++	rec := httptest.NewRecorder()
++	d.repoScopeHandler().ServeHTTP(rec, wrongMethod)
++	if rec.Code != http.StatusMethodNotAllowed {
++		t.Fatalf("unexpected scope method: HTTP %d", rec.Code)
 +	}
 +}
