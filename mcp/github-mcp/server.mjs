@@ -1,5 +1,6 @@
 import http from 'node:http';
-import { readFile, lstat } from 'node:fs/promises';
+import { open as openFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { timingSafeEqual, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -194,10 +195,22 @@ function assertBranch(branch){
 }
 async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
   try {
-    const st=await lstat(path);
-    if(!st.isFile() || st.isSymbolicLink() || st.uid!==0 || st.nlink!==1 || (st.mode & 0o007)!==0)
-      throw error('AUTH_FILE_UNTRUSTED','GitHub credential file is not root-owned and private');
-    const v=JSON.parse(await readFile(path,'utf8'));
+    // Open with O_NOFOLLOW, then validate the very inode we read. This avoids
+    // a path-substitution race between a separate lstat() and readFile().
+    const file=await openFile(path,fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
+    let v;
+    try {
+      const st=await file.stat();
+      // Group READ is necessary for the node:1000 process to consume a
+      // root:1000 mode 0640 projected grant; group write and all other
+      // non-owner bits remain forbidden.
+      if(!st.isFile() || st.uid!==0 || st.nlink!==1 || (st.mode & 0o037)!==0 ||
+         ((st.mode & 0o040)!==0 && st.gid!==process.getgid()))
+        throw error('AUTH_FILE_UNTRUSTED','GitHub credential file is not root-owned and private');
+      v=JSON.parse(await file.readFile({encoding:'utf8'}));
+    } finally {
+      await file.close();
+    }
     if(!v || typeof v.token!=='string' || v.token.length<40 || /\s/.test(v.token))
       throw error('AUTH_FILE_INVALID','GitHub installation token invalid');
     if(!v.expires_at || !Number.isFinite(Date.parse(v.expires_at)) || Date.parse(v.expires_at)<=Date.now()+120000)
@@ -255,6 +268,10 @@ export function makeServer(config={}) {
     throw error('AUTH_SCOPE_INVALID','Unsupported read-only GitHub App credential role');
   const writerTokenFile=config.writerTokenFile??process.env.GITHUB_OPS_WRITER_TOKEN_FILE??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
+  if(tokenFileRole==='github-ops-reader-harness' && writesEnabled)
+    throw error('WRITE_DISABLED','Single-repository read-only role cannot enable writes');
+  const readerRepositories=tokenFileRole==='github-ops-reader-harness'
+    ? new Set(['jtrtdhrst/harness-zar-i-szlif']) : REPOS;
   // Only explicit in-process test injection may use a static token. Production
   // mutating calls resolve the short-lived GitHub App writer grant from a file.
   const injectedPushToken=config.pushToken??'';
@@ -357,6 +374,8 @@ export function makeServer(config={}) {
   }
   async function execute(name,p={}){
     const repo=assertRepo(p.repo);
+    if(!readerRepositories.has(repo))
+      throw error('REPO_DENIED','Repository outside the configured reader role');
     const root=`/repos/${repo}`;
     if(name==='github_repo_info'){
       const r=await api('GET',root);return {full_name:r.full_name,default_branch:r.default_branch,permissions:r.permissions,allow_auto_merge:r.allow_auto_merge};
