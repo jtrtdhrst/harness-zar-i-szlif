@@ -7,6 +7,8 @@ Multica reviewer comment, reviewer task identity, producer task identity and
 issue state (done or in_review); it never deploys.
 """
 import argparse
+from pathlib import Path
+from datetime import datetime
 import json
 import os
 import re
@@ -26,6 +28,67 @@ CONTAINER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$")
 
 class Denied(Exception):
     pass
+
+# Release fail-closed security HOLD: independent of workflow issue status.
+# Persisted as reviewed main source and independently corroborated with live
+# Multica issue metadata. Never infer a cleared hold from a status transition.
+SECURITY_HOLD_FILE = Path(__file__).with_name("security-hold.json")
+SECURITY_HOLD_ISSUE = "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc"
+SECURITY_HOLD_OWNER = "1f18ef41-ce12-4074-984f-6cb12e971040"
+
+
+def _iso_time(value):
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return False
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        return False
+
+
+def enforce_persistent_security_hold(db_container, hold_path=None):
+    path = Path(hold_path) if hold_path is not None else SECURITY_HOLD_FILE
+    if path.is_symlink() or not path.is_file():
+        raise Denied("security_hold_record_missing")
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        raise Denied("security_hold_record_unreadable") from None
+    if not isinstance(record, dict):
+        raise Denied("security_hold_record_invalid")
+    if (record.get("owner") != SECURITY_HOLD_OWNER
+            or not isinstance(record.get("reason"), str)
+            or not record["reason"].strip()
+            or not _iso_time(record.get("activated_at"))
+            or record.get("clearing_authority") != "workspace_owner_and_independent_CTO_COO"):
+        raise Denied("security_hold_record_invalid")
+    if record.get("active") is True:
+        raise Denied("security_hold_active")
+    if record.get("active") is not False:
+        raise Denied("security_hold_not_explicitly_cleared")
+    clearance = record.get("clearance")
+    if not isinstance(clearance, dict):
+        raise Denied("security_hold_clearance_missing")
+    if clearance.get("cleared_by") != SECURITY_HOLD_OWNER or not _iso_time(clearance.get("cleared_at")):
+        raise Denied("security_hold_clearance_not_authorized")
+    if not isinstance(clearance.get("isolation_e2e_evidence"), str) or not clearance["isolation_e2e_evidence"].strip():
+        raise Denied("security_hold_isolation_e2e_missing")
+    if not isinstance(clearance.get("ctocoo_review_sha"), str) or not SHA.fullmatch(clearance["ctocoo_review_sha"]):
+        raise Denied("security_hold_independent_review_missing")
+
+    # The issue metadata survives blocked -> in_review -> done and supplies a
+    # second independent live source of truth (not a comment or task status).
+    sql = ("SELECT row_to_json(t)::text FROM (SELECT metadata FROM issue "
+           f"WHERE id='{SECURITY_HOLD_ISSUE}' AND workspace_id='{WORKSPACE}') t")
+    rows = read_rows(sql, db_container)
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        raise Denied("security_hold_live_record_missing")
+    meta = rows[0].get("metadata")
+    if not isinstance(meta, dict) or meta.get("security_hold") is not False:
+        raise Denied("security_hold_live_not_cleared")
+    return True
+
+
 
 
 def validate_input(repo, pr, head_sha, merge_sha, issue_ref):
@@ -95,6 +158,7 @@ def task_record(task_id, db_container):
 
 def verify(row, repo, pr, head_sha, merge_sha, issue_ref, db_container):
     validate_input(repo, pr, head_sha, merge_sha, issue_ref)
+    enforce_persistent_security_hold(db_container)
     if not isinstance(row, dict):
         raise Denied("missing_or_ambiguous_issue")
     if row.get("issue_status") not in ("done", "in_review"):
