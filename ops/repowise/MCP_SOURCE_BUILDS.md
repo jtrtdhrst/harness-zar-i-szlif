@@ -31,7 +31,7 @@ Every row below is derived from `ops/coolify-service-registry.json` and `ops/ser
 
 Additional owned non-MCP runtime image roots (Hermes Gateway and RepoWise deployment publisher staging) use `owned-runtime-images-ghcr.yml`; this table excludes them because their service identifiers are not MCPs.
 
-- Retired `qdrant-mcp` (source retirement merged as PR #182): `mcp/qdrant-mcp` and its MCP image build selection were removed from `main`; the separate `qdrant` database is preserved. Do not treat the exited legacy MCP service as a source-owned build target or revive its deployment.
+Qdrant MCP was retired in Harness PR #182, source removed from `main` at commit `2c69fb89ed9b94068e729d5bc94fc278325d81db`. Its old Coolify service UUID `a4zgmthjspz8hwvyu6llr8dh` must remain explicitly non-buildable/retired in the resource inventory until Coolify deletion is independently verified. This does not remove the separate Qdrant vector database or its data.
 
 ## Exceptions, not evidence of source ownership
 
