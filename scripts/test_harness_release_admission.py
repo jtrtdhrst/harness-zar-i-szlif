@@ -70,7 +70,7 @@ def attestation(**overrides):
         "source_sha": SOURCE,
         "image_digest": DIGEST,
         "tests": [{"command": "python -m pytest -q", "exit": 0}],
-        "changed_paths": ["mantic-mcp/src/server.ts"],
+        "changed_paths": ["mcp/mantic-mcp/src/server.ts"],
         "artifact_manifest_digest": "sha256:" + "d" * 64,
     }
     base.update(overrides)
@@ -194,7 +194,7 @@ class AdmissionTests(unittest.TestCase):
 
     def test_denies_path_traversal_in_changed_paths(self):
         self.deny("changed_paths_outside_service",
-                  attestation=attestation(changed_paths=["mantic-mcp/../paperclip-mcp/x.py"]))
+                  attestation=attestation(changed_paths=["mcp/mantic-mcp/../paperclip-mcp/x.py"]))
 
     def test_denies_absolute_changed_path(self):
         self.deny("changed_paths_outside_service",
@@ -238,16 +238,21 @@ class AdmissionTests(unittest.TestCase):
         foreign["other_resources"][0]["repository"] = "miloszspyrka-code/zar-i-szlif"
         self.deny("service_not_in_harness_repository", manifest=foreign)
 
-    def test_real_repo_manifest_holds_every_mcp_service(self):
+    def test_real_repo_manifest_holds_or_auto_deploys_every_mcp_service(self):
         data = json.loads(Path("ops/release-lanes.json").read_text(encoding="utf-8"))
         entries = {e["id"]: e for e in data["lanes"] + data["other_resources"]}
-        mcp = {"mantic-mcp", "plasmic-mcp", "playwright-mcp", "supabase-mcp", "paperclip-mcp"}
+        auto = {"emailens-mcp", "mantic-mcp", "plasmic-mcp",
+                "playwright-mcp", "supabase-mcp", "ubuntu-mcp"}
+        mcp = auto | {"paperclip-mcp"}
         self.assertTrue(mcp.issubset(entries), "MCP services must stay in the release manifest")
         for service in sorted(mcp):
             entry = entries[service]
-            # Hold-by-default: an explicit "hold" or an absent promotion_state.
-            self.assertIn(entry.get("promotion_state", "hold"), ("hold",),
-                          service + " must stay on hold in ops/release-lanes.json")
+            if service in auto:
+                self.assertEqual(entry.get("promotion_state"), "auto_main", service)
+                self.assertIs(entry.get("auto_deploy_expected"), True, service)
+                continue
+            self.assertEqual(entry.get("promotion_state", "hold"), "hold",
+                             service + " must stay on hold in ops/release-lanes.json")
             with self.assertRaises(gate.Denied) as caught:
                 gate.evaluate(data, request(service=service, coolify_uuid=entry["coolify_uuid"],
                                             coolify_kind=entry["coolify_kind"]),
@@ -338,7 +343,7 @@ class AttestationVerificationTests(unittest.TestCase):
 
         return attester.build_attestation(
             "mantic-mcp", SOURCE, [{"command": "true", "exit": 0}],
-            ["mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
+            ["mcp/mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
             policy_digest=attestation()["policy_digest"])
 
     def test_a_verified_attestation_is_admitted(self):

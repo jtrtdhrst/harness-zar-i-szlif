@@ -71,7 +71,7 @@ def attestation(**overrides):
     base = {"schema_version": 1, "signature_verified": True, "attestor_uid": 0, "runner_uid": 1000,
             "policy_digest": "sha256:" + "e" * 64, "service": "mantic-mcp", "source_sha": SOURCE,
             "image_digest": DIGEST, "tests": [{"command": "true", "exit": 0}],
-            "changed_paths": ["mantic-mcp/src/server.ts"],
+            "changed_paths": ["mcp/mantic-mcp/src/server.ts"],
             "artifact_manifest_digest": "sha256:" + "d" * 64}
     base.update(overrides)
     # Only an attestation verified against real key material is admitted; the
@@ -111,6 +111,8 @@ class FakeHost:
         if args[0] == "ps":
             return self.container_status
         if args[0] == "push":
+            return ""
+        if args[0] == "pull":
             return ""
         raise AssertionError(f"unexpected docker call {args}")
 
@@ -201,8 +203,8 @@ class BuildStageTests(unittest.TestCase):
     def test_prepare_builds_and_pushes_only_after_admission(self):
         host = FakeHost()
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "mantic-mcp").mkdir()
-            (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
+            (Path(tmp) / "mcp" / "mantic-mcp").mkdir(parents=True,exist_ok=True)
+            (Path(tmp) / "mcp" / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
             with patch.object(delivery, "STATE_ROOT", Path(tmp)), \
                     patch.object(delivery, "verify_source", lambda *a: True):
                 tag, digest = delivery.prepare(host, tmp, "mantic-mcp", SOURCE)
@@ -224,7 +226,7 @@ class DeployStageTests(unittest.TestCase):
     def run_deploy(self, host, bundle, state_path=None, lock_path=None, promotion_state="approved"):
         with patch.object(delivery, "STATE_ROOT", Path(tempfile.mkdtemp())), \
                 patch.object(delivery, "POLL_SECONDS", 0):
-            return controller.run_promotion(manifest(promotion_state), ["mantic-mcp/src/server.ts"],
+            return controller.run_promotion(manifest(promotion_state), ["mcp/mantic-mcp/src/server.ts"],
                                             lambda service: bundle, transport_for(host),
                                             now=NOW, state_path=state_path, lock_path=lock_path,
                                             source_sha=SOURCE)
@@ -276,7 +278,7 @@ class DeployStageTests(unittest.TestCase):
             state = Path(tmp) / "state.json"
             with patch.object(delivery, "STATE_ROOT", Path(tmp)), patch.object(delivery, "POLL_SECONDS", 0):
                 report = controller.run_promotion(
-                    manifest("approved"), ["mantic-mcp/src/server.ts"], lambda service: self.bundle(),
+                    manifest("approved"), ["mcp/mantic-mcp/src/server.ts"], lambda service: self.bundle(),
                     transport_for(host), now=NOW, state_path=state, source_sha=SOURCE)
             self.assertTrue(state.exists())
         self.assertTrue(report["promoted"], report)
@@ -496,8 +498,8 @@ class SourceVerificationTests(unittest.TestCase):
         run("git", "init", "-q")
         run("git", "config", "user.email", "t@example.invalid")
         run("git", "config", "user.name", "test")
-        (Path(tmp) / "mantic-mcp").mkdir()
-        (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
+        (Path(tmp) / "mcp" / "mantic-mcp").mkdir(parents=True,exist_ok=True)
+        (Path(tmp) / "mcp" / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
         run("git", "add", "-A")
         run("git", "commit", "-q", "-m", "reviewed tree")
         sha = run("git", "rev-parse", "HEAD").stdout.strip()
@@ -515,7 +517,7 @@ class SourceVerificationTests(unittest.TestCase):
 
     def test_dirty_worktree_is_refused(self):
         repo, sha, _ = self.repo()
-        (Path(repo) / "mantic-mcp" / "Dockerfile.http").write_text("FROM busybox\n", encoding="utf-8")
+        (Path(repo) / "mcp" / "mantic-mcp" / "Dockerfile.http").write_text("FROM busybox\n", encoding="utf-8")
         with self.assertRaises(Denied) as caught:
             delivery.verify_source(repo, sha)
         self.assertEqual(str(caught.exception), "source_worktree_dirty")
@@ -523,7 +525,7 @@ class SourceVerificationTests(unittest.TestCase):
     def test_untracked_build_context_file_is_refused(self):
         repo, sha, _ = self.repo()
         # An untracked file is not in the reviewed SHA but may enter COPY .
-        (Path(repo) / "mantic-mcp" / "unreviewed.js").write_text(
+        (Path(repo) / "mcp" / "mantic-mcp" / "unreviewed.js").write_text(
             "process.exit(1)\n", encoding="utf-8")
         host = FakeHost()
         with self.assertRaises(Denied) as caught:
@@ -536,8 +538,8 @@ class SourceVerificationTests(unittest.TestCase):
         # .git/info/exclude is not committed; this file would be invisible
         # to ordinary git status but still present in a Docker COPY context.
         (Path(repo) / ".git" / "info" / "exclude").write_text(
-            "mantic-mcp/ignored-build-input.js\n", encoding="utf-8")
-        (Path(repo) / "mantic-mcp" / "ignored-build-input.js").write_text(
+            "mcp/mantic-mcp/ignored-build-input.js\n", encoding="utf-8")
+        (Path(repo) / "mcp" / "mantic-mcp" / "ignored-build-input.js").write_text(
             "console.log('unreviewed');\n", encoding="utf-8")
         with self.assertRaises(Denied) as caught:
             delivery.verify_source(repo, sha)
@@ -584,7 +586,7 @@ class TransportMapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "git_changed_paths",
-                             lambda *a, **k: ["mantic-mcp/src/server.ts", "mcp-edge/src/x.ts"]), \
+                             lambda *a, **k: ["mcp/mantic-mcp/src/server.ts", "gateways/mcp-edge/src/x.ts"]), \
                 patch.object(delivery, "load_gate_file",
                              side_effect=lambda path, label, require_root=False: (
                                  man if label == "manifest" else documents.get(label))):
@@ -611,7 +613,7 @@ def signed_attestation(source_sha=SOURCE, results=None, **overrides):
     document = attester.build_attestation(
         "mantic-mcp", source_sha,
         results if results is not None else [{"command": "true", "exit": 0}],
-        ["mantic-mcp/src/server.ts"], DIGEST, KEY, runner_uid=1000,
+        ["mcp/mantic-mcp/src/server.ts"], DIGEST, KEY, runner_uid=1000,
         policy_digest="sha256:" + "e" * 64)
     document.update(overrides)
     return document
@@ -626,12 +628,13 @@ def deliverables(documents):
 class MainWiringTests(unittest.TestCase):
     """main() must route prepare through evaluate_build and deploy through run_promotion."""
 
-    def run_main(self, mode, host, *, documents=None, changed=("mantic-mcp/src/server.ts",),
+    def run_main(self, mode, host, *, documents=None, changed=("mcp/mantic-mcp/src/server.ts",),
                  extra=(), source_sha=SOURCE, attestation_key=True,
                  manifest_override=None):
         documents = documents if documents is not None else {
             "request": request(), "grant": grant(), "attestation": signed_attestation()}
         with tempfile.TemporaryDirectory() as tmp, patch.object(delivery, "STATE_ROOT", Path(tmp)), \
+                patch.object(delivery, "DELIVERY_LEDGER_OWNER_UID", os.geteuid()), \
                 patch.object(delivery, "Host", lambda *a, **k: host), \
                 patch.object(delivery, "git_changed_paths", lambda *a, **k: list(changed)), \
                 patch.object(delivery, "load_gate_file",
@@ -640,9 +643,14 @@ class MainWiringTests(unittest.TestCase):
                 deliverables(documents), \
                 patch.object(controller, "read_trusted_bytes",
                              lambda path, label, require_root=True: KEY):
-            (Path(tmp) / "mantic-mcp").mkdir()
-            if mode == "prepare":
-                (Path(tmp) / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
+            (Path(tmp) / "mcp" / "mantic-mcp").mkdir(parents=True,exist_ok=True)
+            if "--auto" in extra:
+                (Path(tmp) / "delivery").mkdir(mode=0o700)
+                if documents.get("request") is not None:
+                    # Synthetic request fixture; never a production grant.
+                    (Path(tmp) / "mantic-mcp-request.json").write_text("{}", encoding="utf-8")
+            if mode == "prepare" or "--auto" in extra:
+                (Path(tmp) / "mcp" / "mantic-mcp" / "Dockerfile.http").write_text("FROM scratch\n", encoding="utf-8")
             argv = ["--mode", mode, "--repo", tmp, "--base-sha", "0" * 40,
                     "--source-sha", source_sha, "--artifact-dir", tmp]
             if attestation_key:
@@ -652,6 +660,139 @@ class MainWiringTests(unittest.TestCase):
             with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", io.StringIO()):
                 code = delivery.main(argv)
         return code, stdout.getvalue()
+
+
+    def test_auto_missing_ci_policy_refuses_before_build(self):
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy", side_effect=Denied("service_not_in_policy")), \
+                patch.object(delivery, "auto_prepare_and_attest") as auto:
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(), "attestation": None},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("service_not_in_policy", out)
+        self.assertEqual(host.mutations(), [])
+        auto.assert_not_called()
+
+    def test_auto_signed_attestation_still_requires_live_ci_policy(self):
+        # A valid old HMAC must NOT bypass the current root-owned policy.
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy",
+                             side_effect=Denied("policy_unavailable")):
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(),
+                           "attestation": signed_attestation()},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("policy_unavailable", out)
+        self.assertEqual(host.mutations(), [])
+        self.assertEqual(host.calls, [])
+
+    def test_auto_signed_attestation_rejects_revoked_policy_digest(self):
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy",
+                             return_value={"out_dir": "/tmp",
+                                           "_verified_digest": "sha256:" + "f" * 64}):
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(),
+                           "attestation": signed_attestation()},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertIn("auto_ci_policy_digest_mismatch", out)
+        self.assertEqual(host.mutations(), [])
+        self.assertEqual(host.calls, [])
+
+    def test_auto_ci_preflights_root_private_key_before_docker(self):
+        import harness_local_ci_attest as ci
+
+        host = FakeHost()
+        root_policy = {"repo_root": "/tmp/approved-repo",
+                       "key_file": "/tmp/root-owned-key", "out_dir": "/tmp"}
+        with patch.object(delivery.os, "geteuid", return_value=0), \
+                patch.object(ci, "read_trusted_file",
+                             side_effect=[b"{}", Denied("signing_key_unavailable")]), \
+                patch.object(ci, "validate_policy", return_value=root_policy), \
+                patch.object(ci, "policy_commands", return_value=[["/bin/true"]]):
+            with self.assertRaisesRegex(Denied, "signing_key_unavailable"):
+                delivery.auto_ci_policy("mantic-mcp", "/tmp/approved-repo",
+                                        "/tmp/root-owned-key")
+        self.assertEqual(host.mutations(), [])
+        self.assertEqual(host.calls, [])
+
+    def test_auto_ci_preflights_weak_signing_key(self):
+        import harness_local_ci_attest as ci
+
+        root_policy = {"repo_root": "/tmp/approved-repo",
+                       "key_file": "/tmp/root-owned-key", "out_dir": "/tmp"}
+        with patch.object(delivery.os, "geteuid", return_value=0), \
+                patch.object(ci, "read_trusted_file",
+                             side_effect=[b"{}", b"short"]), \
+                patch.object(ci, "validate_policy", return_value=root_policy), \
+                patch.object(ci, "policy_commands", return_value=[["/bin/true"]]):
+            with self.assertRaisesRegex(Denied, "signing_key_weak"):
+                delivery.auto_ci_policy("mantic-mcp", "/tmp/approved-repo",
+                                        "/tmp/root-owned-key")
+
+    def test_auto_approved_release_builds_and_attests_before_promotion(self):
+        host = FakeHost(images={
+            f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}": DIGEST})
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy", return_value={"out_dir": "/tmp"}), \
+                patch.object(delivery, "auto_prepare_and_attest",
+                             return_value=(attestation(), DIGEST)) as auto:
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": grant(), "attestation": None},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 0, out)
+        report = json.loads(out)
+        self.assertTrue(report["prepared"]["mantic-mcp"]["signed_local_ci"])
+        self.assertEqual(report["deployed"]["decisions"][0]["decision"], "promoted")
+        auto.assert_called_once()
+        self.assertIn(
+            ("docker", "pull", f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"),
+            host.calls)
+        self.assertFalse(any(call[0] == "build" or (call[0] == "docker" and call[1] in ("build", "push")) for call in host.calls), "GHCR artifact consumer must never rebuild or repush")
+
+    def test_ghcr_transport_denies_missing_digest_before_pull(self):
+        host = FakeHost()
+        tx = delivery.Transport(host, registry=delivery.GHCR)
+        with self.assertRaisesRegex(RuntimeError, "auto_ghcr_digest_unavailable"):
+            tx.build("mantic-mcp", SOURCE)
+        self.assertEqual(host.calls, [])
+
+    def test_ghcr_transport_denies_retargeted_digest_before_deploy(self):
+        pinned = f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"
+        host = FakeHost(images={pinned: PREVIOUS})
+        tx = delivery.Transport(
+            host, registry=delivery.GHCR, expected_digests={"mantic-mcp": DIGEST})
+        with self.assertRaisesRegex(RuntimeError, "auto_ghcr_repo_digest_mismatch"):
+            tx.build("mantic-mcp", SOURCE)
+        self.assertFalse(any(x[0] == "coolify" for x in host.calls))
+
+    def test_ghcr_transport_denies_image_with_wrong_revision(self):
+        pinned = f"{delivery.GHCR}/harness-mantic-mcp@{DIGEST}"
+        host = FakeHost(revision="f" * 40, images={pinned: DIGEST})
+        tx = delivery.Transport(
+            host, registry=delivery.GHCR, expected_digests={"mantic-mcp": DIGEST})
+        with self.assertRaisesRegex(RuntimeError, "auto_ghcr_source_revision_mismatch"):
+            tx.build("mantic-mcp", SOURCE)
+        self.assertFalse(any(x[0] == "coolify" for x in host.calls))
+
+    def test_auto_unapproved_release_never_builds(self):
+        host = FakeHost()
+        with patch.object(delivery, "check_upstream_source", return_value=SOURCE), \
+                patch.object(delivery, "auto_ci_policy") as policy, \
+                patch.object(delivery, "auto_prepare_and_attest") as auto:
+            code, out = self.run_main("deploy", host,
+                documents={"request": request(), "grant": None, "attestation": None},
+                extra=["--auto", "--now", NOW.isoformat()])
+        self.assertEqual(code, 1, out)
+        self.assertEqual(host.mutations(), [])
+        policy.assert_not_called()
+        auto.assert_not_called()
 
     def test_prepare_mode_denies_a_held_lane_and_builds_nothing(self):
         host = FakeHost()
@@ -674,7 +815,7 @@ class MainWiringTests(unittest.TestCase):
     def test_multi_service_batch_denial_prevents_any_partial_release(self):
         # One authorized service + an unregistered changed service must not
         # build/push/deploy even the authorized one before the full preflight.
-        changes = ("mantic-mcp/src/server.ts", "playwright-mcp/src/unreviewed.js")
+        changes = ("mcp/mantic-mcp/src/server.ts", "mcp/playwright-mcp/src/unreviewed.js")
         for mode in ("prepare", "deploy"):
             host = FakeHost()
             code, out = self.run_main(mode, host, changed=changes,
@@ -702,12 +843,12 @@ class MainWiringTests(unittest.TestCase):
             "id": "plasmic", "promotion_state": "hold",
             "auto_deploy_expected": False, "review_required": True})
         code, out = self.run_main("plan", host,
-            changed=("mantic-mcp/src/server.ts", "plasmic/studio/Dockerfile"),
+            changed=("mcp/mantic-mcp/src/server.ts", "apps/plasmic/studio/Dockerfile"),
             extra=["--now", NOW.isoformat()], manifest_override=data)
         payload = json.loads(out)
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["held_outside_transport"], ["plasmic"])
-        self.assertEqual(payload["pending_paths"], ["plasmic/studio/Dockerfile"])
+        self.assertEqual(payload["pending_paths"], ["apps/plasmic/studio/Dockerfile"])
         self.assertEqual(list(payload["services"]), ["mantic-mcp"])
         self.assertEqual(payload["result"], "partial_manual_pending")
         self.assertFalse(payload["release_complete"])
@@ -734,7 +875,7 @@ class MainWiringTests(unittest.TestCase):
         for mode in ("plan", "deploy"):
             host = FakeHost()
             code, out = self.run_main(mode, host,
-                changed=("mantic-mcp/src/server.ts", "rogue-service/Dockerfile"),
+                changed=("mcp/mantic-mcp/src/server.ts", "rogue-service/Dockerfile"),
                 extra=["--now", NOW.isoformat()])
             self.assertEqual(code, 1, (mode, out))
             self.assertEqual(host.mutations(), [])
@@ -743,13 +884,15 @@ class MainWiringTests(unittest.TestCase):
     def test_unclassified_build_denial_explicitly_reports_incomplete(self):
         host = FakeHost()
         err = io.StringIO()
-        with patch.object(delivery, "Host", return_value=host), \
+        with tempfile.TemporaryDirectory() as repo, \
+             patch.object(delivery, "Host", return_value=host), \
              patch.object(delivery, "load_gate_file", return_value=manifest()), \
              patch.object(delivery, "git_changed_paths", return_value=[
-                 "mantic-mcp/src/server.ts", "rogue-service/Dockerfile"]), \
+                 "mcp/mantic-mcp/src/server.ts", "rogue-service/Dockerfile"]), \
              patch.object(sys, "stderr", err):
+            (Path(repo) / "mcp" / "mantic-mcp").mkdir(parents=True,exist_ok=True)
             code = delivery.main([
-                "--mode", "deploy", "--repo", ".", "--base-sha", "0" * 40,
+                "--mode", "deploy", "--repo", repo, "--base-sha", "0" * 40,
                 "--source-sha", SOURCE])
         self.assertEqual(code, 1)
         response = json.loads(err.getvalue())
@@ -761,7 +904,7 @@ class MainWiringTests(unittest.TestCase):
     def test_unclassified_nonbuild_change_remains_pending_and_not_complete(self):
         host = FakeHost()
         code, out = self.run_main("plan", host,
-            changed=("mantic-mcp/src/server.ts", "docs/README.md"),
+            changed=("mcp/mantic-mcp/src/server.ts", "docs/README.md"),
             extra=["--now", NOW.isoformat()])
         payload = json.loads(out)
         self.assertEqual(code, 0, payload)
@@ -775,7 +918,7 @@ class MainWiringTests(unittest.TestCase):
         # runtime service root; it must remain pending and never count as delivered.
         host = FakeHost()
         code, out = self.run_main("plan", host,
-            changed=("mantic-mcp/src/server.ts",
+            changed=("mcp/mantic-mcp/src/server.ts",
                      "ops/repowise/Dockerfile.publisher"),
             extra=["--now", NOW.isoformat()])
         self.assertEqual(code, 0, out)
@@ -823,7 +966,7 @@ class MainWiringTests(unittest.TestCase):
             "id": "plasmic", "promotion_state": "hold",
             "auto_deploy_expected": True, "review_required": False})
         code, out = self.run_main("plan", host,
-            changed=("plasmic/README.md",), manifest_override=data)
+            changed=("apps/plasmic/README.md",), manifest_override=data)
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
         self.assertEqual(host.mutations(), [])
@@ -834,8 +977,8 @@ class MainWiringTests(unittest.TestCase):
         host = FakeHost()
         code, out = self.run_main(
             "plan", host,
-            changed=("mantic-mcp/src/server.ts", "playwright-mcp/src/unreviewed.ts",
-                     "plasmic/src/core.ts", "qdrant/data/index.ts"),
+            changed=("mcp/mantic-mcp/src/server.ts", "mcp/playwright-mcp/src/unreviewed.ts",
+                     "apps/plasmic/src/core.ts", "qdrant/data/index.ts"),
             extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
         report = json.loads(out)
         self.assertEqual(code, 0, report)
@@ -844,7 +987,7 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(list(report["services"]), ["mantic-mcp"])
         self.assertEqual(report["admitted"], ["mantic-mcp"])
         self.assertEqual(report["pending_paths"],
-                         ["plasmic/src/core.ts", "playwright-mcp/src/unreviewed.ts",
+                         ["apps/plasmic/src/core.ts", "mcp/playwright-mcp/src/unreviewed.ts",
                           "qdrant/data/index.ts"])
         self.assertEqual(host.calls, [])
 
@@ -854,7 +997,7 @@ class MainWiringTests(unittest.TestCase):
             "plan", host,
             documents={"request": request(), "grant": None,
                        "attestation": signed_attestation()},
-            changed=("mantic-mcp/src/server.ts", "playwright-mcp/src/x.ts"),
+            changed=("mcp/mantic-mcp/src/server.ts", "mcp/playwright-mcp/src/x.ts"),
             extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
         self.assertEqual(code, 1)
         self.assertIn("release_lane_on_hold", out)
@@ -863,7 +1006,7 @@ class MainWiringTests(unittest.TestCase):
     def test_scoped_service_must_exist_in_exact_diff(self):
         host = FakeHost()
         code, out = self.run_main("plan", host,
-                                  changed=("plasmic-mcp/src/index.ts",),
+                                  changed=("mcp/plasmic-mcp/src/index.ts",),
                                   extra=["--service", "mantic-mcp"])
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
@@ -875,15 +1018,15 @@ class MainWiringTests(unittest.TestCase):
         with patch.object(delivery.os, "geteuid", return_value=0):
             code, out = self.run_main(
                 "deploy", host,
-                changed=("mantic-mcp/src/server.ts",
-                         "playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"),
+                changed=("mcp/mantic-mcp/src/server.ts",
+                         "mcp/playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"),
                 extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
         report = json.loads(out)
         self.assertEqual(code, 0, report)
         self.assertEqual(report["scope"], "mantic-mcp")
         self.assertEqual(report["result"], "ok_scoped")
         self.assertEqual(report["pending_paths"],
-                         ["playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"])
+                         ["mcp/playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"])
         decisions = report["deployed"]["decisions"]
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0]["service"], "mantic-mcp")
@@ -893,7 +1036,7 @@ class MainWiringTests(unittest.TestCase):
         host = FakeHost()
         with patch.object(delivery.os, "geteuid", return_value=1000):
             code, out = self.run_main(
-                "deploy", host, changed=("mantic-mcp/src/server.ts",),
+                "deploy", host, changed=("mcp/mantic-mcp/src/server.ts",),
                 extra=["--service", "mantic-mcp"])
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
@@ -902,7 +1045,7 @@ class MainWiringTests(unittest.TestCase):
     def test_unattended_timer_cannot_use_scoped_release_flag(self):
         host = FakeHost()
         code, out = self.run_main(
-            "plan", host, changed=("mantic-mcp/src/server.ts",),
+            "plan", host, changed=("mcp/mantic-mcp/src/server.ts",),
             extra=["--service", "mantic-mcp", "--auto"])
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
@@ -978,8 +1121,8 @@ class AutoModeTests(unittest.TestCase):
         run("git", "init", "-q")
         run("git", "config", "user.email", "t@example.invalid")
         run("git", "config", "user.name", "test")
-        (Path(tmp) / "mantic-mcp").mkdir()
-        target = Path(tmp) / "mantic-mcp" / "Dockerfile.http"
+        (Path(tmp) / "mcp" / "mantic-mcp").mkdir(parents=True,exist_ok=True)
+        target = Path(tmp) / "mcp" / "mantic-mcp" / "Dockerfile.http"
         target.write_text("FROM scratch\n", encoding="utf-8")
         run("git", "add", "-A")
         run("git", "commit", "-q", "-m", "base")
@@ -1228,7 +1371,7 @@ class AutoModeTests(unittest.TestCase):
 
     def test_auto_promotes_only_granted_service_and_preserves_other_backlog(self):
         repo, base, head = self.repo(commits=1)
-        second = Path(repo) / "playwright-mcp"
+        second = Path(repo) / "mcp" / "playwright-mcp"
         second.mkdir()
         (second / "Dockerfile").write_text("FROM scratch\\n", encoding="utf-8")
         subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
@@ -1242,10 +1385,14 @@ class AutoModeTests(unittest.TestCase):
         policy["other_resources"].append(other)
         host = FakeHost(revision=head, images={
             f"127.0.0.1:5000/harness-mantic-mcp:{head[:12]}": DIGEST})
-        code, out, host = self.run_auto(
-            repo, state_dir, mode="deploy", source_sha=head,
-            documents=self.documents_for(head), host=host, manifest_override=policy,
-            environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
+        # The old signed fixture is paired with the current trusted policy.
+        with patch.object(delivery, "auto_ci_policy",
+                          return_value={"out_dir": state_dir,
+                                        "_verified_digest": "sha256:" + "e" * 64}):
+            code, out, host = self.run_auto(
+                repo, state_dir, mode="deploy", source_sha=head,
+                documents=self.documents_for(head), host=host, manifest_override=policy,
+                environ={"HARNESS_BASE_SHA": head, "HARNESS_SOURCE_SHA": head})
         report = json.loads(out)
         self.assertEqual(code, 0, out)
         self.assertEqual(report["result"], "partial_release_pending")
@@ -1342,3 +1489,326 @@ class AutoModeTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class AutoMainCycleTests(unittest.TestCase):
+    """Trusted-main lane: changed auto services only, plan mutates nothing."""
+
+    BASE = "e" * 40
+    DEPLOY_DIGEST = "sha256:" + "d" * 64
+
+    def manifest(self):
+        return {"lanes": [], "other_resources": [{
+            "id": "mantic-mcp", "platform": "coolify", "coolify_kind": "service",
+            "coolify_uuid": UUID, "auto_deploy_expected": True,
+        }]}
+
+    def cycle(self, mode, *, prepare_error=None):
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+        args = SimpleNamespace(repo="/repo", mode=mode, state_dir="/state",
+                               manifest="ops/release-lanes.json")
+        out = io.StringIO()
+        with patch.object(delivery, "sync_checkout_to_main", return_value=SOURCE) as sync, \
+                patch.object(delivery, "load_gate_file",
+                             return_value=self.manifest()) as load_manifest, \
+                patch.object(delivery, "read_private_delivery_ledger",
+                             return_value={"mantic-mcp": {"source_sha": self.BASE}}), \
+                patch.object(delivery, "git_changed_paths",
+                             return_value=["mcp/mantic-mcp/Dockerfile"]), \
+                patch.object(delivery, "SERVICES", {"mantic-mcp": {
+                    "folder": "mcp/mantic-mcp", "dockerfile": "Dockerfile",
+                    "image_prefix": "local/mantic-mcp", "health_url": None}}), \
+                patch.object(delivery, "Transport", return_value=object()), \
+                patch.object(delivery, "prepare", side_effect=prepare_error,
+                             return_value=("tag", self.DEPLOY_DIGEST)) as prepare, \
+                patch.object(delivery, "run_promotion",
+                             return_value={"result": "promoted",
+                                           "decisions": [{"service": "mantic-mcp",
+                                                          "decision": "promoted"}]}) as promote:
+            with redirect_stdout(out):
+                try:
+                    code = delivery.auto_main_cycle(args, self.manifest(), object())
+                except Denied as exc:
+                    code = 1
+                    print(json.dumps({"result": "denied", "reason": str(exc),
+                                      "mode": mode}))
+        if mode == "plan":
+            load_manifest.assert_called_once_with(
+                "/repo/ops/release-lanes.json", "manifest", require_root=False)
+            sync.assert_called_once_with("/repo")
+        else:
+            load_manifest.assert_not_called()
+            sync.assert_not_called()
+        return code, json.loads(out.getvalue()), prepare, promote
+
+    def test_auto_main_deploy_does_not_build_without_signed_release(self):
+        code, report, prepare, promote = self.cycle("deploy")
+        self.assertEqual(code, 1)
+        self.assertEqual(report["reason"],
+                         "auto_main_requires_signed_release_artifacts")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_auto_main_prepare_does_not_build_or_promote(self):
+        code, report, prepare, promote = self.cycle("prepare")
+        self.assertEqual(code, 1)
+        self.assertEqual(report["reason"],
+                         "auto_main_requires_signed_release_artifacts")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_plan_reports_change_and_never_builds(self):
+        code, report, prepare, promote = self.cycle("plan")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["services"][0]["decision"], "would_deploy")
+        self.assertEqual(report["result"], "plan")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+    def test_plan_does_not_create_a_pre_admitted_release(self):
+        code, report, prepare, promote = self.cycle("plan")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["result"], "plan")
+        prepare.assert_not_called()
+        promote.assert_not_called()
+
+
+class OwnedCoolifyMcpRoutingTests(unittest.TestCase):
+    """Source routing is owner-scoped; the running legacy image is matchable."""
+
+    def test_canonical_owner_and_owned_digest(self):
+        self.assertEqual(delivery.REPO, "jtrtdhrst/harness-zar-i-szlif")
+        self.assertEqual(delivery.GHCR, "ghcr.io/jtrtdhrst")
+        self.assertIn("coolify-mcp", delivery.GHCR_SOURCE_SERVICES)
+        spec = delivery.SERVICES["coolify-mcp"]
+        self.assertEqual((spec["folder"], spec["dockerfile"]),
+                         ("mcp/coolify-mcp", "Dockerfile"))
+        self.assertIsNone(spec["health_url"])
+        self.assertEqual(delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR),
+                         f"ghcr.io/jtrtdhrst/coolify-mcp@{DIGEST}")
+        self.assertEqual(delivery.image_reference("mantic-mcp", DIGEST, delivery.GHCR),
+                         f"ghcr.io/jtrtdhrst/harness-mantic-mcp@{DIGEST}")
+
+    def test_target_compose_images_and_unrelated_image_refusal(self):
+        pattern = delivery.image_pattern(
+            "coolify-mcp", delivery.SERVICES["coolify-mcp"], delivery.GHCR)
+        self.assertIsNotNone(pattern.search(
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"))
+        self.assertIsNotNone(pattern.search(
+            f"    image: ghcr.io/jtrtdhrst/coolify-mcp@{DIGEST}\n"))
+        self.assertIsNone(pattern.search(
+            "    image: ghcr.io/jtrtdhrst/unrelated@sha256:bad\n"))
+
+    def test_trusted_origin_denies_previous_owner(self):
+        import re
+        good = "https://github.com/jtrtdhrst/harness-zar-i-szlif.git"
+        old = "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git"
+        self.assertTrue(any(re.fullmatch(expr, good, flags=re.IGNORECASE)
+                            for expr in delivery.TRUSTED_ORIGINS))
+        self.assertFalse(any(re.fullmatch(expr, old, flags=re.IGNORECASE)
+                             for expr in delivery.TRUSTED_ORIGINS))
+
+    def test_cutover_preserves_state_volume_and_removes_only_legacy_bind(self):
+        original = (
+            "services:\n"
+            "  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "    - coolify-mcp-oauth:/data\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+            "volumes:\n"
+            "  coolify-mcp-oauth:\n"
+        )
+        host = FakeHost(compose=original)
+        target = delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                delivery, "STATE_ROOT", Path(tmp)):
+            raw, snapshot = delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"], target)
+            self.assertEqual(raw, original)
+            self.assertEqual(snapshot.read_text(encoding="utf-8"), original)
+        self.assertIn(f"image: {target}", host.compose)
+        self.assertIn("- coolify-mcp-oauth:/data", host.compose)
+        self.assertIn("  coolify-mcp-oauth:", host.compose)
+        self.assertNotIn("/app/dist/lib/oauth.js", host.compose)
+
+    def test_coolify_emitted_quoted_oauth_shadow_bind_and_image(self):
+        # Real Coolify-generated Compose wraps scalar image and mount in
+        # single quotes. Preserve the OAuth state volume, remove only the
+        # legacy mount, and keep exact private rollback snapshot bytes.
+        for quote in ("'", '"'):
+            with self.subTest(quote=quote):
+                original = (
+                    "services:\n"
+                    "  coolify-mcp:\n"
+                    f"    image: {quote}ghcr.io/stumason/coolify-mcp:3.9.0{quote}\n"
+                    "    volumes:\n"
+                    f"      - {quote}coolify-mcp-oauth:/data{quote}\n"
+                    f"      - {quote}/opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro{quote}\n"
+                    "volumes:\n"
+                    "  coolify-mcp-oauth:\n"
+                )
+                host = FakeHost(compose=original)
+                target = delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR)
+                with tempfile.TemporaryDirectory() as tmp, patch.object(
+                        delivery, "STATE_ROOT", Path(tmp)):
+                    raw, snapshot = delivery.patch_compose(
+                        host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"], target)
+                    self.assertEqual(raw, original)
+                    self.assertEqual(snapshot.read_text(encoding="utf-8"), original)
+                self.assertIn(f"image: {quote}{target}{quote}", host.compose)
+                self.assertIn(f"- {quote}coolify-mcp-oauth:/data{quote}", host.compose)
+                self.assertNotIn("/app/dist/lib/oauth.js", host.compose)
+
+    def test_mixed_quote_legacy_bind_denies_before_write(self):
+        original = (
+            "services:\n  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "      - coolify-mcp-oauth:/data\n"
+            "      - '/opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\"\n"
+        )
+        host = FakeHost(compose=original)
+        with self.assertRaisesRegex(RuntimeError, "unexpected OAuth shadow bind"):
+            delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+        self.assertEqual(host.compose, original)
+
+    def test_unrecognized_oauth_shadow_bind_denies_before_provider_write(self):
+        original = (
+            "services:\n"
+            "  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "    - coolify-mcp-oauth:/data\n"
+            "    - /unexpected/oauth.js:/app/dist/lib/oauth.js:ro\n"
+        )
+        host = FakeHost(compose=original)
+        with self.assertRaisesRegex(RuntimeError, "unexpected OAuth shadow bind"):
+            delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+        self.assertEqual(host.compose, original)
+        self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
+                             for call in host.calls))
+
+    def test_multiple_legacy_oauth_binds_deny_before_provider_write(self):
+        original = (
+            "services:\n"
+            "  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "    - coolify-mcp-oauth:/data\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+        )
+        host = FakeHost(compose=original)
+        with self.assertRaisesRegex(RuntimeError, "unexpected OAuth shadow bind"):
+            delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+        self.assertEqual(host.compose, original)
+        self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
+                             for call in host.calls))
+
+    def test_rejects_repository_prefix_collisions_and_invalid_digests(self):
+        pattern = delivery.image_pattern(
+            "coolify-mcp", delivery.SERVICES["coolify-mcp"], delivery.GHCR)
+        invalid = (
+            "ghcr.io/jtrtdhrst/coolify-mcp-attacker:latest",
+            "ghcr.io/jtrtdhrst/coolify-mcp.evil:latest",
+            "ghcr.io/stumason/coolify-mcp-evil:3.9.0",
+            "ghcr.io/jtrtdhrst/coolify-mcp@sha256:bad",
+            "ghcr.io/jtrtdhrst/coolify-mcp@sha256:" + "a" * 63 + "X",
+            "ghcr.io/jtrtdhrst/coolify-mcp:tag/other",
+        )
+        for image in invalid:
+            with self.subTest(image=image):
+                self.assertIsNone(pattern.search(f"    image: {image}\n"))
+                host = FakeHost(compose=(
+                    "services:\n  coolify-mcp:\n"
+                    f"    image: {image}\n"
+                    "    volumes:\n"
+                    "    - coolify-mcp-oauth:/data\n"
+                    "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+                ))
+                with self.assertRaisesRegex(RuntimeError, "expected exactly one"):
+                    delivery.patch_compose(
+                        host, UUID, "coolify-mcp",
+                        delivery.SERVICES["coolify-mcp"],
+                        delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+                self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
+                                     for call in host.calls))
+
+    def test_foreign_service_duplicate_legacy_bind_denied_with_zero_write(self):
+        original = (
+            "services:\n"
+            "  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "    - coolify-mcp-oauth:/data\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+            "  unrelated-service:\n"
+            "    image: example/other:stable\n"
+            "    volumes:\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+        )
+        host = FakeHost(compose=original)
+        with self.assertRaisesRegex(RuntimeError, "unexpected OAuth shadow bind"):
+            delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+        self.assertEqual(host.compose, original)
+        self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
+                             for call in host.calls))
+
+    def test_only_target_mount_removed_sibling_service_unchanged(self):
+        sibling = (
+            "  unrelated-service:\n"
+            "    image: example/other:stable\n"
+            "    volumes:\n"
+            "    - /opt/other/config.yml:/app/config.yml:ro\n"
+        )
+        original = (
+            "services:\n"
+            "  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "    - coolify-mcp-oauth:/data\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+            + sibling
+            + "volumes:\n"
+            "  coolify-mcp-oauth:\n"
+        )
+        host = FakeHost(compose=original)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                delivery, "STATE_ROOT", Path(tmp)):
+            source, backup = delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+            self.assertEqual(source, original)
+            self.assertEqual(backup.read_text(encoding="utf-8"), original)
+        self.assertIn(sibling, host.compose)
+        self.assertIn("    - coolify-mcp-oauth:/data", host.compose)
+        self.assertNotIn("/app/dist/lib/oauth.js", host.compose)
+
+    def test_shadow_outside_target_volumes_denied_without_write(self):
+        original = (
+            "services:\n"
+            "  coolify-mcp:\n"
+            "    image: ghcr.io/stumason/coolify-mcp:3.9.0\n"
+            "    volumes:\n"
+            "    - coolify-mcp-oauth:/data\n"
+            "    environment:\n"
+            "    - /opt/coolify-mcp/oauth.js:/app/dist/lib/oauth.js:ro\n"
+        )
+        host = FakeHost(compose=original)
+        with self.assertRaisesRegex(RuntimeError, "ambiguous volumes section"):
+            delivery.patch_compose(
+                host, UUID, "coolify-mcp", delivery.SERVICES["coolify-mcp"],
+                delivery.image_reference("coolify-mcp", DIGEST, delivery.GHCR))
+        self.assertEqual(host.compose, original)
+        self.assertFalse(any(call[0] == "coolify" and call[1] == "PATCH"
+                             for call in host.calls))

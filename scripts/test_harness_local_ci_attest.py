@@ -22,7 +22,7 @@ BASE = "b" * 40
 DIGEST = "sha256:" + "c" * 64
 POLICY_DIGEST = "sha256:" + "e" * 64
 RESULTS = [{"command": "/usr/bin/python3 -m unittest -q", "exit": 0}]
-PATHS = ["mantic-mcp/src/server.ts"]
+PATHS = ["mcp/mantic-mcp/src/server.ts"]
 NONROOT = os.geteuid() or 1000
 
 
@@ -90,7 +90,7 @@ class AttesterTests(unittest.TestCase):
             self.build(changed_paths=["paperclip-mcp/gitops/paperclip-mcp-auto-release.py"])
 
     def test_rejects_traversal_and_absolute_paths(self):
-        for paths in (["mantic-mcp/../paperclip-mcp/x.py"], ["/etc/passwd"]):
+        for paths in (["mcp/mantic-mcp/../paperclip-mcp/x.py"], ["/etc/passwd"]):
             with self.assertRaises(attest.Denied):
                 self.build(changed_paths=paths)
 
@@ -254,6 +254,7 @@ class AttesterTests(unittest.TestCase):
                                    ".", os.geteuid(), os.getegid())
         self.assertEqual([r["exit"] for r in results], [0, 3])
 
+    @unittest.skipIf(os.geteuid() == 0, "root can explicitly drop to the requested UID")
     def test_run_tests_fails_closed_when_uid_cannot_be_assumed(self):
         other = 65534 if os.geteuid() != 65534 else 65533
         with self.assertRaisesRegex(attest.Denied, "test_runner_uid_unavailable"):
@@ -313,9 +314,9 @@ class AttesterTests(unittest.TestCase):
             self.assertTrue(attest.verify_checkout(".", SOURCE))
 
     def test_changed_paths_uses_git_and_fails_closed(self):
-        completed = type("R", (), {"returncode": 0, "stdout": "mantic-mcp/a.ts\nmantic-mcp/b.ts\n"})()
+        completed = type("R", (), {"returncode": 0, "stdout": "mcp/mantic-mcp/a.ts\nmcp/mantic-mcp/b.ts\n"})()
         with patch.object(attest.subprocess, "run", return_value=completed):
-            self.assertEqual(attest.changed_paths(".", BASE, SOURCE), ["mantic-mcp/a.ts", "mantic-mcp/b.ts"])
+            self.assertEqual(attest.changed_paths(".", BASE, SOURCE), ["mcp/mantic-mcp/a.ts", "mcp/mantic-mcp/b.ts"])
         for result, reason in ((type("R", (), {"returncode": 0, "stdout": ""})(), "changed_paths_unbounded"),
                                (type("R", (), {"returncode": 128, "stdout": ""})(), "git_diff_failed")):
             with patch.object(attest.subprocess, "run", return_value=result):

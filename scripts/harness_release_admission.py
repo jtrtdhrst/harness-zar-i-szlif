@@ -30,8 +30,9 @@ import re
 import stat
 import sys
 from datetime import datetime, timezone
+from harness_source_roots import source_path_prefix
 
-REPO = "miloszspyrka-code/harness-zar-i-szlif"
+REPO = "jtrtdhrst/harness-zar-i-szlif"
 RELEASE_BASE_REF = "main"
 MANIFEST_SCHEMA = 1
 ATTESTATION_SCHEMA = 1
@@ -201,7 +202,7 @@ def _check_attestation(entry, request, attestation, source_sha):
     changed = attestation.get("changed_paths")
     if not isinstance(changed, list) or not changed:
         raise Denied("attestation_changed_paths_missing")
-    prefix = entry["id"] + "/"
+    prefix = source_path_prefix(entry["id"])
     for path in changed:
         if not _text(path) or path.startswith("/") or "/../" in path or not path.startswith(prefix):
             raise Denied("changed_paths_outside_service")
@@ -280,7 +281,7 @@ def _common_request(manifest, request, grant, now, expected_source_sha):
     # Hold is a manifest-level gate and is evaluated before any artifact, so a
     # held resource can never be promoted by satisfying later evidence checks.
     state = entry.get("promotion_state", HELD)
-    if state not in (HELD, "approved"):
+    if state not in (HELD, "approved", "auto_main"):
         raise Denied("invalid_promotion_state")
     if state == HELD and not isinstance(grant, dict):
         raise Denied("release_lane_on_hold")

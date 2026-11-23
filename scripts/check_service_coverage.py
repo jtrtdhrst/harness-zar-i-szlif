@@ -42,7 +42,7 @@ def trusted_main_only_release_policy(path):
         "    runs-on: [self-hosted, linux, x64, local-build]",
         "      - name: Trusted main-only runner admission",
         "          test \"$GITHUB_REF\" = 'refs/heads/main'",
-        "          test \"$GITHUB_REPOSITORY\" = 'miloszspyrka-code/harness-zar-i-szlif'",
+        "          test \"$GITHUB_REPOSITORY\" = 'jtrtdhrst/harness-zar-i-szlif'",
         "          test \"$(id -un)\" = actions-zis",
         "          ! test -w /var/run/docker.sock",
         "          ! test -r /opt/zis-actions-runner/.credentials",
@@ -143,7 +143,18 @@ def check(root=ROOT, config_path=CONFIG):
     if config.get("schema_version") != 1 or not isinstance(config.get("entries"), dict):
         raise ValueError("invalid service coverage schema")
 
+    # Classify every canonical service root, not just the repository's top level.
+    # Without nested roots a migration to mcp/<service>/ silently drops the
+    # per-service PR workflow/test gate (fail-open).
     roots = {p.name for p in root.iterdir() if p.is_dir() and p.name != ".git"}
+    for group in ("mcp", "workers"):
+        parent = root / group
+        if parent.is_dir():
+            roots.update(
+                f"{group}/{child.name}"
+                for child in parent.iterdir()
+                if child.is_dir()
+            )
     entries = config["entries"]
     missing, stale = roots - entries.keys(), entries.keys() - roots
     if missing or stale:

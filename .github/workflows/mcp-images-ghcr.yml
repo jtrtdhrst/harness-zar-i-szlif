@@ -5,13 +5,17 @@ on:
   push:
     branches: [main]
     paths:
-      - 'emailens-mcp/**'
-      - 'mantic-mcp/**'
-      - 'plasmic-mcp/**'
-      - 'playwright-mcp/**'
-      - 'repowise-mcp/**'
-      - 'supabase-mcp/**'
-      - 'ubuntu-mcp/**'
+      - 'mcp/comfy-mcp/**'
+      - 'mcp/emailens-mcp/**'
+      - 'mcp/mantic-mcp/**'
+      - 'mcp/plasmic-mcp/**'
+      - 'mcp/playwright-mcp/**'
+      - 'mcp/opik-mcp/**'
+      - 'mcp/hindsight-mcp/**'
+      - 'mcp/qdrant-mcp/**'
+      - 'mcp/repowise-mcp/**'
+      - 'mcp/supabase-mcp/**'
+      - 'mcp/ubuntu-mcp/**'
       - 'scripts/select_mcp_builds.py'
       - '.github/workflows/mcp-images-ghcr.yml'
   workflow_dispatch:
@@ -23,10 +27,14 @@ on:
         default: all
         options:
           - all
+          - comfy-mcp
           - emailens-mcp
           - mantic-mcp
           - plasmic-mcp
           - playwright-mcp
+          - opik-mcp
+          - hindsight-mcp
+          - qdrant-mcp
           - repowise-mcp
           - supabase-mcp
           - ubuntu-mcp

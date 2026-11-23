@@ -54,6 +54,7 @@ field is ever executed: the only commands this module runs are its own fixed
 """
 import argparse
 import base64
+import hashlib
 import json
 import os
 import stat
@@ -61,6 +62,7 @@ import re
 import secrets
 import subprocess
 import sys
+from harness_source_roots import source_path_prefix
 import time
 import urllib.request
 from pathlib import Path
@@ -69,8 +71,15 @@ from harness_delivery_controller import git_changed_paths, load_artifacts, run_p
 from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
 from harness_release_parity import ParityFailure, check_source as check_upstream_source
 
-REPO = "miloszspyrka-code/harness-zar-i-szlif"
+REPO = "jtrtdhrst/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
+# Trusted-main GHCR publishing is owned by mcp-images-ghcr.yml (PR #186).
+# AUTO deployment consumes that immutable digest, NEVER builds a second image.
+GHCR = "ghcr.io/jtrtdhrst"
+GHCR_SOURCE_SERVICES = frozenset({
+    "coolify-mcp", "emailens-mcp", "mantic-mcp", "plasmic-mcp",
+    "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
+})
 COOLIFY = "http://127.0.0.1:8001/api/v1"
 COOLIFY_TOKEN = Path("/root/coolify-secrets/coolify_api_token")
 STATE_ROOT = Path("/var/lib/harness-image-delivery")
@@ -85,6 +94,9 @@ HEALTH_DEADLINE = 240
 # UUID and kind are deliberately absent: they come from the reviewed manifest,
 # which is the single allowlist for what may be touched.
 SERVICES = {
+    "coolify-mcp": {"folder": "coolify-mcp", "dockerfile": "Dockerfile",
+                     "image_prefix": "ghcr.io/stumason/coolify-mcp",
+                     "health_url": None},
     "mantic-mcp": {"folder": "mantic-mcp", "dockerfile": "Dockerfile.http",
                    "image_prefix": "local/mantic-mcp", "health_url": None},
     "playwright-mcp": {"folder": "playwright-mcp", "dockerfile": "Dockerfile",
@@ -107,12 +119,22 @@ SERVICES = {
 }
 
 
+# The source-only migration relocates code, not Coolify names or UUIDs.
+# Runtime path attribution must use the same strict reviewed ownership map
+# as the signed-CI attester and release admission checker.
+for _service, _spec in SERVICES.items():
+    _spec["folder"] = source_path_prefix(_service).rstrip("/")
+
+
 def image_tag(service, source_sha, registry=REGISTRY):
     return f"{registry}/harness-{service}:{source_sha[:12]}"
 
 
 def image_reference(service, digest, registry=REGISTRY):
-    return f"{registry}/harness-{service}@{digest}"
+    # Owned Coolify MCP publishes as /coolify-mcp; other Harness sources keep
+    # their existing /harness-<service> image names.
+    name = "coolify-mcp" if service == "coolify-mcp" and registry == GHCR else f"harness-{service}"
+    return f"{registry}/{name}@{digest}"
 
 
 class Host:
@@ -186,11 +208,25 @@ def verify_source(repo, source_sha):
 
 
 def image_pattern(service, spec, registry=REGISTRY):
-    """Match the previously pinned image or this registry's image already deployed."""
+    """Match only an exact allowed image repository plus a valid tag or digest.
+
+    A prefix such as coolify-mcp must NEVER match coolify-mcp-attacker or
+    coolify-mcp.evil. Match to the end of the YAML scalar (optional comment).
+    """
     current = f"{registry}/harness-{service}"
-    prefixes = sorted({spec["image_prefix"], current}, key=len, reverse=True)
-    alternation = "|".join(re.escape(prefix) for prefix in prefixes)
-    return re.compile(r"(?m)^(\s*image:\s*)(['\"]?)(?:" + alternation + r")[^'\"\s]*\2")
+    prefixes = {
+        spec["image_prefix"], current,
+        f"{REGISTRY}/harness-{service}",
+        f"{GHCR}/harness-{service}",
+    }
+    if service == "coolify-mcp":
+        prefixes.add(f"{GHCR}/coolify-mcp")
+    alternation = "|".join(re.escape(prefix) for prefix in sorted(prefixes, key=len, reverse=True))
+    tag_or_digest = r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]*|@sha256:[a-f0-9]{64})?"
+    return re.compile(
+        r"(?m)^([ \t]*image:[ \t]*)(['\"]?)(?:" + alternation + r")"
+        + tag_or_digest + r"\2(?=[ \t]*(?:#.*)?$)"
+    )
 
 
 def compose_for(host, uuid):
@@ -201,6 +237,54 @@ def compose_for(host, uuid):
     return raw
 
 
+def remove_coolify_oauth_shadow_bind(compose):
+    """Remove only the known legacy mount inside services.coolify-mcp.volumes.
+
+    Strictly supports the Coolify-emitted two-space service / four-space field
+    indentation. Unknown layouts fail closed, rather than modifying another
+    service or silently retaining an OAuth shadow over the new image. The
+    caller snapshots the untouched original Compose before any provider write.
+    """
+    lines = compose.splitlines(keepends=True)
+    clean = [line.rstrip("\r\n") for line in lines]
+    roots = [i for i, line in enumerate(clean)
+             if re.fullmatch(r"services:[ \t]*(?:#.*)?", line)]
+    if len(roots) != 1:
+        raise RuntimeError("coolify-mcp: Compose services block missing or ambiguous")
+    root = roots[0]
+    root_end = next((i for i in range(root + 1, len(lines))
+                     if clean[i].strip() and not clean[i].lstrip().startswith("#")
+                     and not clean[i][0].isspace()), len(lines))
+    targets = [i for i in range(root + 1, root_end)
+               if re.fullmatch(r"  coolify-mcp:[ \t]*(?:#.*)?", clean[i])]
+    if len(targets) != 1:
+        raise RuntimeError("coolify-mcp: target Compose service missing or ambiguous")
+    start = targets[0]
+    end = next((i for i in range(start + 1, root_end)
+                if clean[i].startswith("  ") and not clean[i].startswith("   ")
+                and not clean[i].lstrip().startswith("#")
+                and clean[i].split("#", 1)[0].rstrip().endswith(":")), root_end)
+    exact_bind = re.compile(
+        r"[ ]{4,}-[ \t]*(?P<quote>[\'\"]?)/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro(?P=quote)[ \t]*"
+    )
+    hits = [i for i, line in enumerate(clean) if exact_bind.fullmatch(line)]
+    shadow_count = sum("/app/dist/lib/oauth.js" in line for line in clean)
+    if not hits and not shadow_count:
+        return compose
+    if len(hits) != 1 or shadow_count != 1 or not (start < hits[0] < end):
+        raise RuntimeError("coolify-mcp: unexpected OAuth shadow bind; refusing release")
+    volume_headers = [i for i in range(start + 1, end)
+                      if re.fullmatch(r"    volumes:[ \t]*(?:#.*)?", clean[i])]
+    if len(volume_headers) != 1 or not (volume_headers[0] < hits[0]):
+        raise RuntimeError("coolify-mcp: OAuth shadow is not in target volumes")
+    for line in clean[volume_headers[0] + 1:hits[0]]:
+        plain = line.split("#", 1)[0].rstrip()
+        if (plain.startswith("    ") and not plain.startswith("     ")
+                and plain.endswith(":") and not plain.lstrip().startswith("-")):
+            raise RuntimeError("coolify-mcp: ambiguous volumes section")
+    return "".join(lines[:hits[0]] + lines[hits[0] + 1:])
+
+
 def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     """Patch one image and persist a unique, private snapshot for this attempt."""
     raw = compose_for(host, uuid)
@@ -208,6 +292,8 @@ def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     patched, count = pattern.subn(lambda match: f"{match.group(1)}{match.group(2)}{tag}{match.group(2)}", raw)
     if count != 1:
         raise RuntimeError(f"expected exactly one {spec['image_prefix']} image line, found {count}")
+    if service == "coolify-mcp":
+        patched = remove_coolify_oauth_shadow_bind(patched)
     # A second promotion in the same second must never overwrite the first
     # snapshot. The controller is privileged; the raw compose may contain
     # secrets, so no world-readable file may exist even during the write.
@@ -265,9 +351,12 @@ class Transport:
     a deploy must ship exactly the image the root attester observed.
     """
 
-    def __init__(self, host, registry=REGISTRY):
+    def __init__(self, host, registry=REGISTRY, expected_digests=None):
         self.host = host
         self.registry = registry
+        # Approved digest comes from independently reviewed root-owned request;
+        # never infer a release identity from mutable GHCR SHA-looking tags.
+        self.expected_digests = dict(expected_digests or {})
         # Transaction-scoped snapshots: never guess using the newest glob on
         # disk, which can belong to another release or Coolify service UUID.
         self._rollback_snapshots = {}
@@ -295,6 +384,23 @@ class Transport:
 
     def build(self, service, source_sha):
         self._known(service)
+        if self.registry == GHCR:
+            if service not in GHCR_SOURCE_SERVICES:
+                raise RuntimeError("auto_ghcr_source_unavailable")
+            expected = self.expected_digests.get(service)
+            if not isinstance(expected, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+                raise RuntimeError("auto_ghcr_digest_unavailable")
+            pinned = image_reference(service, expected, self.registry)
+            # Pull only the operator-approved digest. A retargeted mutable tag
+            # can never change which image the controller promotes.
+            self.host.docker("pull", pinned)
+            reference = self.host.docker(
+                "image", "inspect", "--format", "{{index .RepoDigests 0}}", pinned)
+            if reference != pinned:
+                raise RuntimeError("auto_ghcr_repo_digest_mismatch")
+            if running_revision(self.host, service, expected, self.registry) != source_sha:
+                raise RuntimeError("auto_ghcr_source_revision_mismatch")
+            return expected
         tag = image_tag(service, source_sha, self.registry)
         reference = self.host.docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", tag)
         if "@" not in reference:
@@ -410,6 +516,62 @@ def prepare(host, repo, service, source_sha, registry=REGISTRY, log_dir=None):
     if "@" not in reference:
         raise RuntimeError(f"{service}: pushed image has no repository digest")
     return tag, reference.split("@", 1)[1]
+
+
+def auto_ci_policy(service, repo, attestation_key):
+    """Reject missing or wrong root-owned CI policy before any Docker build."""
+    import harness_local_ci_attest as ci
+
+    if os.geteuid() != 0:
+        raise Denied("auto_ci_requires_root")
+    if not attestation_key:
+        raise Denied("attestation_key_missing")
+    raw = ci.read_trusted_file(ci.DEFAULT_POLICY, "policy", require_root=True)
+    policy = ci.validate_policy(json.loads(raw))
+    if service not in GHCR_SOURCE_SERVICES:
+        raise Denied("auto_ghcr_source_unavailable")
+    ci.policy_commands(policy, service)
+    if Path(policy["repo_root"]).resolve() != Path(repo).resolve():
+        raise Denied("auto_ci_repo_mismatch")
+    if Path(policy["key_file"]).resolve() != Path(attestation_key).resolve():
+        raise Denied("auto_ci_key_mismatch")
+    # Preflight the root-owned private signing key BEFORE GHCR Docker pull,
+    # even when the current request has no attestation artifact yet.
+    key = ci.read_trusted_file(attestation_key, "signing_key", require_root=True)
+    if len(key) < 32:
+        raise Denied("signing_key_weak")
+    # Existing signed attestations must match the CURRENT root-owned policy;
+    # an older valid HMAC does not authorize a service after policy revocation.
+    policy["_verified_digest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    return policy
+
+
+def auto_prepare_and_attest(host, repo, base_sha, source_sha, service,
+                            bundle, attestation_key, *, policy):
+    """Pull the GHCR-published immutable image and sign local CI; never rebuild."""
+    import harness_local_ci_attest as ci
+    from harness_release_admission import read_trusted_bytes, verified_attestation
+
+    verify_source(repo, source_sha)
+    digest = bundle["request"].get("image_digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise Denied("auto_ghcr_digest_missing")
+    pinned = image_reference(service, digest, GHCR)
+    host.docker("pull", pinned)
+    actual = host.docker("image", "inspect", "--format",
+                         "{{index .RepoDigests 0}}", pinned)
+    if actual != pinned:
+        raise Denied("auto_ghcr_repo_digest_mismatch")
+    if running_revision(host, service, digest, GHCR) != source_sha:
+        raise Denied("auto_ghcr_source_revision_mismatch")
+    code = ci.main(["--service", service, "--base-sha", base_sha,
+                    "--source-sha", source_sha, "--image-digest", digest])
+    if code != 0:
+        raise Denied("auto_ci_tests_failed")
+    artifact_path = ci.attestation_path(policy["out_dir"], service, source_sha)
+    artifact = load_gate_file(artifact_path, "attestation", require_root=True)
+    key = read_trusted_bytes(attestation_key, "attestation_key", require_root=True)
+    return verified_attestation(artifact, key), digest
 
 
 def resolve_source_range(args, environ=None):
@@ -622,6 +784,267 @@ def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
     return tip
 
 
+TRUSTED_ORIGINS = (
+    r"https://github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+    r"git@github\.com:jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+    r"ssh://git@github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+)
+
+
+def _git(repo, *args, timeout=120):
+    return subprocess.run(["git", "-C", str(repo), *args],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def sync_checkout_to_main(repo):
+    """Fast-forward the delivery checkout to the real GitHub main tip.
+
+    This replaces the operator-written EnvironmentFile pin. It only advances a
+    clean checkout by fast-forward; a dirty tree, divergent history or
+    unverifiable origin fails closed before any build.
+    """
+    try:
+        origin = _git(repo, "remote", "get-url", "origin")
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("source_remote_unverifiable") from None
+    if origin.returncode != 0 or not any(
+            re.fullmatch(pattern, origin.stdout.strip(), flags=re.IGNORECASE)
+            for pattern in TRUSTED_ORIGINS):
+        raise Denied("source_remote_untrusted")
+    try:
+        ls = _git(repo, "ls-remote", "--exit-code", "origin", "refs/heads/main")
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("upstream_main_unverifiable") from None
+    lines = ls.stdout.splitlines()
+    if (ls.returncode != 0 or len(lines) != 1
+            or not re.fullmatch(r"[0-9a-f]{40}\trefs/heads/main", lines[0])):
+        raise Denied("upstream_main_unverifiable")
+    source_sha = lines[0].split("\t", 1)[0]
+    try:
+        # A shallow operator checkout cannot diff an older deployed baseline.
+        # Unshallow once; this repo is small and full history is required for
+        # exact per-service change detection.
+        if _git(repo, "rev-parse", "--is-shallow-repository").stdout.strip() == "true":
+            unshallow = _git(repo, "fetch", "--quiet", "--unshallow", "origin", "main",
+                             timeout=300)
+            if unshallow.returncode != 0:
+                raise Denied("checkout_unshallow_failed")
+        fetch = _git(repo, "fetch", "--quiet", "origin", "main")
+        status = _git(repo, "status", "--porcelain", "--untracked-files=all")
+    except (OSError, subprocess.TimeoutExpired):
+        raise Denied("checkout_fetch_failed") from None
+    if fetch.returncode != 0:
+        raise Denied("checkout_fetch_failed")
+    if status.returncode != 0:
+        raise Denied("checkout_unverifiable")
+    if status.stdout.strip():
+        raise Denied("checkout_dirty")
+    head = _git(repo, "rev-parse", "HEAD")
+    if head.returncode != 0 or not SHA.fullmatch(head.stdout.strip()):
+        raise Denied("checkout_unverifiable")
+    if head.stdout.strip() != source_sha:
+        probe = _git(repo, "merge-base", "--is-ancestor", head.stdout.strip(), source_sha)
+        if probe.returncode != 0:
+            raise Denied("checkout_not_fast_forward")
+        checkout = _git(repo, "checkout", "--quiet", "--detach", source_sha)
+        if checkout.returncode != 0:
+            raise Denied("checkout_update_failed")
+    if _git(repo, "rev-parse", "HEAD").stdout.strip() != source_sha:
+        raise Denied("checkout_stale")
+    return source_sha
+
+
+CI_TOKEN = Path("/etc/multica-git-credential/roles/runner.json")
+CI_WORKFLOW = "MCP OCI images - trusted source builds"
+
+
+def ci_run_success(source_sha):
+    """Require the trusted-main OCI workflow to be green for this exact SHA.
+
+    The timer is the last line of defence: a red or missing CI run must never
+    become a production deployment just because the merge landed on main.
+    """
+    try:
+        payload = json.loads(CI_TOKEN.read_text(encoding="utf-8"))
+        token = payload.get("token")
+    except (OSError, ValueError, TypeError):
+        raise Denied("ci_token_unavailable") from None
+    if not isinstance(token, str) or not token:
+        raise Denied("ci_token_unavailable")
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/actions/runs?head_sha={source_sha}&per_page=50",
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.load(response)
+    except Exception:
+        raise Denied("ci_status_unavailable") from None
+    return any(isinstance(run, dict)
+               and run.get("name") == CI_WORKFLOW
+               and run.get("conclusion") == "success"
+               for run in data.get("workflow_runs", []))
+
+
+def deployed_source_sha(host, transport, repo, service, uuid):
+    """Resolve the source SHA actually running for one service.
+
+    The release ledger wins when present. Otherwise the OCI revision label of
+    the running image is used; a legacy 12-hex image tag is accepted only when
+    git resolves it uniquely. An unknown baseline never guesses a deployment.
+    """
+    try:
+        health = transport.health(service, uuid)
+    except Exception:
+        health = {}
+    sha = health.get("source_sha") if isinstance(health, dict) else None
+    if isinstance(sha, str) and SHA.fullmatch(sha):
+        return sha, health
+    try:
+        raw = compose_for(host, uuid)
+        match = image_pattern(service, SERVICES[service]).search(raw)
+    except Exception:
+        match = None
+    if match:
+        reference = match.group(0).split("image:", 1)[-1].strip().strip("'\"")
+        tag = reference.rsplit(":", 1)[-1]
+        if re.fullmatch(r"[0-9a-f]{12,40}", tag):
+            probe = _git(repo, "rev-parse", "--verify", tag + "^{commit}")
+            if probe.returncode == 0 and SHA.fullmatch(probe.stdout.strip()):
+                return probe.stdout.strip(), health
+    raise Denied("auto_baseline_unavailable:" + service)
+
+
+def auto_main_cycle(args, manifest, host):
+    """Build and promote every auto service whose source changed on main.
+
+    The merge to trusted main is the release authorization for entries with
+    ``auto_deploy_expected: true``. Exact source SHA, a locally built immutable
+    digest, live health/source readback and one rollback remain mandatory.
+    """
+    # This lane can inventory a release but cannot bypass the per-UUID
+    # operator grant, independent review, and root-signed CI attestation.
+    # Use the existing --auto release path for authorized promotion.
+    if args.mode != "plan":
+        raise Denied("auto_main_requires_signed_release_artifacts")
+    source_sha = sync_checkout_to_main(args.repo)
+    # The caller loaded the manifest before the checkout advanced. Reload it
+    # from the exact tree this cycle is about to build, never from stale HEAD.
+    manifest_path = Path(args.manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = Path(args.repo) / manifest_path
+    manifest = load_gate_file(str(manifest_path), "manifest", require_root=False)
+    transport = Transport(host)
+    ledger = read_private_delivery_ledger(args.state_dir)
+    entries = {entry.get("id"): entry
+               for entry in (manifest.get("lanes") or []) +
+                            (manifest.get("other_resources") or [])
+               if isinstance(entry, dict)}
+    plan, pre, changed_paths = [], {}, []
+    for service, spec in sorted(SERVICES.items()):
+        entry = entries.get(service)
+        if not entry or entry.get("auto_deploy_expected") is not True:
+            continue
+        if (entry.get("platform", "coolify") != "coolify"
+                or entry.get("coolify_kind") != "service"):
+            plan.append({"service": service, "decision": "unsupported_kind"})
+            continue
+        uuid = entry.get("coolify_uuid")
+        if not isinstance(uuid, str) or not re.fullmatch(r"[a-z0-9]{10,40}", uuid):
+            plan.append({"service": service, "decision": "invalid_uuid"})
+            continue
+        previous = None
+        record = ledger.get(service)
+        if isinstance(record, dict):
+            previous = record.get("source_sha")
+        if not (isinstance(previous, str) and SHA.fullmatch(previous)):
+            try:
+                previous, _ = deployed_source_sha(host, transport, args.repo, service, uuid)
+            except Denied as exc:
+                plan.append({"service": service, "decision": "denied",
+                             "reason": str(exc)})
+                continue
+        if previous == source_sha:
+            plan.append({"service": service, "decision": "current",
+                         "source_sha": previous})
+            continue
+        bootstrap = False
+        try:
+            paths = [path for path in git_changed_paths(args.repo, previous, source_sha)
+                     if path == spec["folder"] or path.startswith(spec["folder"] + "/")]
+        except Exception as exc:
+            # A legacy image label may name a commit that is not in this
+            # repository (pre-history rewrite or foreign build). One bounded
+            # bootstrap rebuild at exact main is allowed; the ledger then
+            # records a verifiable baseline for every later diff.
+            known = _git(args.repo, "cat-file", "-e", previous).returncode == 0
+            if known:
+                plan.append({"service": service, "decision": "denied",
+                             "reason": "diff_failed:" + type(exc).__name__})
+                continue
+            paths = [f"{spec['folder']}/{spec['dockerfile']}"]
+            bootstrap = True
+        if not paths:
+            plan.append({"service": service, "decision": "source_unchanged",
+                         "source_sha": previous})
+            continue
+        item = {"service": service, "decision": "would_deploy",
+                "baseline": previous, "changed_paths": sorted(paths)}
+        if bootstrap:
+            item["bootstrap"] = "unverifiable_baseline"
+        plan.append(item)
+        if args.mode == "plan":
+            continue
+        try:
+            if not ci_run_success(source_sha):
+                item.update(decision="ci_not_green")
+                continue
+        except Denied as exc:
+            item.update(decision="ci_check_failed", reason=str(exc))
+            continue
+        try:
+            _, digest = prepare(host, args.repo, service, source_sha)
+        except Exception as exc:
+            item.update(decision="build_failed", reason=type(exc).__name__)
+            continue
+        pre[service] = {"service": service, "coolify_uuid": uuid,
+                        "coolify_kind": "service", "source_sha": source_sha,
+                        "image_digest": digest}
+        changed_paths.extend(paths)
+        item.update(decision="built", image_digest=digest)
+    report = {"mode": args.mode, "source_sha": source_sha, "services": plan}
+    # A skipped/failed admission or build must never look like a clean no-op.
+    # In a mixed batch, keep the successful promotion evidence but fail the
+    # cycle so the failed service is retried and monitoring remains truthful.
+    failures = any(item.get("decision") in {
+        "denied", "invalid_uuid", "unsupported_kind", "build_failed",
+        "ci_not_green", "ci_check_failed"
+    } for item in plan)
+    if args.mode == "plan":
+        report["result"] = "plan"
+        print(json.dumps(report, sort_keys=True))
+        return 0
+    if not pre:
+        report["result"] = "build_failed" if failures else "no_service_change"
+        print(json.dumps(report, sort_keys=True))
+        return 1 if failures else 0
+    promotion = run_promotion(
+        manifest, changed_paths, lambda service: {}, transport,
+        state_path=str(Path(args.state_dir) / "delivery.json"),
+        lock_path=str(Path(args.state_dir) / "delivery.lock"),
+        source_sha=source_sha, pre_admitted=pre)
+    report["promotion"] = promotion
+    good = {"promoted", "already_delivered"}
+    decisions = promotion.get("decisions", [])
+    ok = (len(decisions) == len(pre) and not failures
+          and all(decision.get("decision") in good for decision in decisions)
+          and promotion.get("result") != "denied")
+    report["result"] = "ok" if ok else "partial_failure" if failures else "denied"
+    print(json.dumps(report, sort_keys=True))
+    return 0 if ok else 1
+
+
 def build_parser():
     """The adapter's only CLI surface.
 
@@ -639,6 +1062,10 @@ def build_parser():
                         help="timer mode: take --base-sha/--source-sha from the unit's "
                              "EnvironmentFile (HARNESS_BASE_SHA/HARNESS_SOURCE_SHA); "
                              "absent or malformed = denied, never reconstructed")
+    parser.add_argument("--auto-main", action="store_true",
+                        help="trusted-main auto lane: verified main tip replaces the "
+                             "operator pin; every changed auto service is built and "
+                             "promoted with digest, health and rollback")
     parser.add_argument("--service", choices=sorted(SERVICES),
                         help="explicit operator-only lane: release one admitted service while"
                              " reporting other paths as pending; incompatible with --auto")
@@ -660,6 +1087,10 @@ def main(argv=None):
         from harness_release_admission import parse_time
 
         now = parse_time(args.now) if args.now else None
+        if args.auto_main:
+            if args.auto or args.service:
+                raise Denied("auto_main_exclusive")
+            return auto_main_cycle(args, manifest, host)
         base_sha, source_sha = resolve_source_range(args)
         if args.auto and not args.source_sha:
             # Explicit --source-sha is an operator pin and must never be
@@ -718,7 +1149,7 @@ def main(argv=None):
         # controller. Report it as pending; never pretend it was deployed.
         unmodelled = sorted(service for service in entries
                             if service not in SERVICES
-                            and any(path == service or path.startswith(service + "/") for path in paths))
+                            and any(path == source_path_prefix(service).rstrip("/") or path.startswith(source_path_prefix(service)) for path in paths))
         held = [service for service in unmodelled
                 if (entries[service].get("promotion_state") == "hold"
                     and entries[service].get("auto_deploy_expected") is False
@@ -727,7 +1158,7 @@ def main(argv=None):
         if unsupported:
             raise Denied("service_not_in_transport:" + ",".join(unsupported))
         manual_paths = {p for p in paths for service in held
-                        if p == service or p.startswith(service + "/")}
+                        if p == source_path_prefix(service).rstrip("/") or p.startswith(source_path_prefix(service))}
         paths = [p for p in paths if p not in manual_paths]
         pending_paths = sorted((set(all_paths) - set(paths)) if args.service
                                else manual_paths)
@@ -811,6 +1242,8 @@ def main(argv=None):
         # production release. Plan mode checks the same real evidence as deploy
         # (including an HMAC-verified attestation), without touching the host.
         bundles = {}
+        auto_missing = []
+        policies = {}
         for service in sorted(attributed):
             if not entries.get(service):
                 report["denied"][service] = "unknown_service"
@@ -819,19 +1252,35 @@ def main(argv=None):
             if args.artifact_dir:
                 try:
                     bundle = load_artifacts(args.artifact_dir, service, args.attestation_key,
-                                            allow_missing_attestation=args.mode == "prepare")
+                                            allow_missing_attestation=(args.mode == "prepare" or
+                                                (args.auto and args.mode == "deploy")))
                 except Denied as exc:
                     report["denied"][service] = str(exc)
                     continue
             bundles[service] = bundle
             try:
-                if args.mode == "prepare":
+                if args.mode == "prepare" or (args.auto and args.mode == "deploy"
+                        and bundle.get("attestation") is None):
                     evaluate_build(manifest, bundle.get("request"), grant=bundle.get("grant"),
                                    now=now, expected_source_sha=source_sha)
+                    if args.auto and args.mode == "deploy":
+                        policies[service] = auto_ci_policy(
+                            service, args.repo, args.attestation_key)
+                        auto_missing.append(service)
                 else:
                     evaluate(manifest, bundle.get("request"), grant=bundle.get("grant"),
                              attestation=bundle.get("attestation"), now=now,
                              expected_source_sha=source_sha)
+                    if args.auto and args.mode == "deploy":
+                        # The HMAC verifies integrity, not freshness of host CI
+                        # policy. Fail closed before any Docker/Coolify call if
+                        # a policy or key is revoked, absent, or changed.
+                        policy = auto_ci_policy(service, args.repo, args.attestation_key)
+                        policies[service] = policy
+                        existing = bundle.get("attestation")
+                        if (not isinstance(existing, dict)
+                                or existing.get("policy_digest") != policy["_verified_digest"]):
+                            raise Denied("auto_ci_policy_digest_mismatch")
                 report["admitted"].append(service)
             except Denied as exc:
                 report["denied"][service] = str(exc)
@@ -844,15 +1293,45 @@ def main(argv=None):
         # Phase 2: mutate only after complete admission. In particular, an
         # automation runner must never interpret an admission refusal as a
         # successful exit status (the old code returned 0 for held lanes).
+        if args.mode == "deploy" and auto_missing:
+            # Preflight ALL changed services first. Build only once every
+            # review, exact-SHA grant, and CI policy has passed.
+            for service in auto_missing:
+                try:
+                    attested, digest = auto_prepare_and_attest(
+                        host, args.repo, base_sha, source_sha, service,
+                        bundles[service], args.attestation_key,
+                        policy=policies[service])
+                    bundles[service]["attestation"] = attested
+                    evaluate(manifest, bundles[service].get("request"),
+                             grant=bundles[service].get("grant"),
+                             attestation=attested, now=now,
+                             expected_source_sha=source_sha)
+                    report["prepared"][service] = {
+                        "image_digest": digest, "signed_local_ci": True}
+                except (Denied, OSError, RuntimeError, ValueError) as exc:
+                    report["denied"][service] = (
+                        str(exc) if isinstance(exc, Denied)
+                        else "auto_ci_or_prepare_failed")
+                    report["result"] = "denied"
+                    print(json.dumps(report, sort_keys=True))
+                    return 1
+
         if args.mode == "prepare":
             for service in report["admitted"]:
                 tag, digest = prepare(host, args.repo, service, source_sha)
                 report["prepared"][service] = {"tag": tag, "image_digest": digest}
         elif args.mode == "deploy":
+            transport = (Transport(host, registry=GHCR,
+                           expected_digests={
+                               name: value["request"]["image_digest"]
+                               for name, value in bundles.items()
+                               if isinstance(value.get("request"), dict)
+                           }) if args.auto else Transport(host))
             report["deployed"] = run_promotion(
                 manifest,
                 [path for changed in attributed.values() for path in changed],
-                lambda service: bundles[service], Transport(host),
+                lambda service: bundles[service], transport,
                 now=now,
                 lock_path=str(Path(args.state_dir) / "delivery.lock"),
                 state_path=str(Path(args.state_dir) / "delivery.json"),

@@ -1,0 +1,35 @@
+name: RepoWise MCP pinned source CI
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mcp/repowise-mcp/**'
+      - 'ops/repowise/**'
+      - 'ops/service-build-roots.json'
+      - 'ops/coolify-service-registry.json'
+      - 'scripts/select_mcp_builds.py'
+      - 'scripts/service-coverage.json'
+      - '.github/workflows/repowise-mcp-ci.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Verify pinned RepoWise Docker source
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact PR SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Validate service mapping and build selector
+        run: |
+          python3 scripts/check_service_coverage.py
+          python3 -m unittest discover -s scripts -p test_select_mcp_builds.py -v
+          python3 -m unittest discover -s scripts -p test_service_build_roots.py -v
+      - name: Build pinned RepoWise and run behavioral tests in image
+        run: docker build --pull --progress=plain --tag repowise-mcp:ci ./mcp/repowise-mcp
