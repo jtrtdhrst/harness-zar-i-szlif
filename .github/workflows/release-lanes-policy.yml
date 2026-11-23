@@ -1,33 +1,53 @@
 name: Release Lanes Policy
 
-# The root-folder coverage check is part of check-release-lanes.py.
-# Run it on EVERY PR and every main commit, including changes to newly added
-# service folders; a path filter here would leave unclassified roots unchecked.
+# Do not run PR-controlled YAML on the persistent self-hosted runner.
+# Premerge exact-source validation is independent/rootless; run the complete
+# path and release-policy contract on trusted main pushes or main dispatch.
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: release-lanes-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: release-lanes-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   validate-release-lanes:
-    # Keep using the existing local-build runner; GitHub-hosted minutes are blocked.
+    # Only the reviewed main ref may execute on this persistent runner.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, x64, local-build]
     timeout-minutes: 10
     steps:
+      - name: Trusted main-only runner admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main'
+          [[ "$GITHUB_EVENT_NAME" == 'push' || "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]
+          test "$GITHUB_REPOSITORY" = 'jtrtdhrst/harness-zar-i-szlif'
+          test "$(id -un)" = actions-zis
+          ! test -w /var/run/docker.sock
+          ! test -r /opt/zis-actions-runner/.credentials
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Validate release contract, every root disposition and regressions
         run: python scripts/check-release-lanes.py --self-test
+      - name: Verify 31 owned-source Harness build roots
+        run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
+      - name: Verify every owned MCP has a source-root and main SHA-bound image publisher
+        run: python3 -m unittest discover -s scripts -p 'test_mcp_build_contract.py' -v
+      - name: Test auto-build, independent review and signed-CI admission
+        run: python3 -m unittest discover -s scripts -p 'test_harness_native_delivery.py' -v
+      - name: Enforce persisted security HOLD independently of issue status
+        run: python3 -m unittest discover -s scripts -p test_zari213_security_hold_gate.py -v
       - name: Guard against non-MCP automatic image builds
         run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
       # Catch truncated or malformed security sources before approving a merge.
@@ -50,8 +70,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Test Multica MCP adapter (required on every PR)
-        working-directory: multica-mcp
+      - name: Test Multica MCP adapter on trusted main
+        working-directory: mcp/multica-mcp
         env:
           MULTICA_MCP_HOME: ${{ runner.temp }}/multica-mcp-ci-home
         run: npm test

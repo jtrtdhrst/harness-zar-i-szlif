@@ -63,8 +63,77 @@ LEGACY_KNOWLEDGE_SHA = "81c4b068b89f4c035098c6c9107f755f56919a87"
 LEGACY_KNOWLEDGE_PR = 164
 LEGACY_CI_ONLY_FILES = frozenset({"scripts/ci-path-coverage.mjs", "tests/ci-path-coverage.test.mjs"})
 
+
+# An immutable, independently reviewed CI-only source change. This fixes the
+# PR183 staging deadlock without allowing arbitrary workflow edits or future PR
+# heads to evade runtime release admission. It can never deploy an application.
+CI_ONLY_REVIEWED_PR = 183
+CI_ONLY_REVIEWED_HEAD = "c96007a1cd09227d9815457ada4bb70f8e4b2624"
+CI_ONLY_REVIEWED_FILES = {
+    ".github/workflows/product-ci.yml": "modified",
+    "ops/coolify/Dockerfile.ci": "added",
+    "tests/ci-path-coverage.test.mjs": "modified",
+    "tests/test_release_promotion_contract.py": "modified",
+}
+
 class Denied(Exception):
     pass
+
+
+# These three exact historical changes altered neither tracked product runtime
+# source nor build definitions. They were accidentally pushed directly to main
+# on 2026-11-19. This one-time waiver only allows the history walker to pass
+# these exact Git commits as NO-DEPLOY metadata. No future SHA is admitted.
+# Every runtime PR still requires the original independent approval + CI gates.
+HISTORIC_METADATA_ONLY = {
+    "e6fea9b1b81d7afae9086983160723084cdc2ead": {
+        "parent": "4feef6903dc21be5da0433a77b10549bf0009661",
+        "files": (("modified", ".gitignore"),),
+    },
+    "54f3db248ff35cce3a40b5de99270d8ed283d402": {
+        "parent": "e6fea9b1b81d7afae9086983160723084cdc2ead",
+        "files": (("removed", "docs/dag-e2e-nonhost.md"),),
+    },
+    "63441d5d3056f4845d4bfcaf908429f8f09d620f": {
+        "parent": "54f3db248ff35cce3a40b5de99270d8ed283d402",
+        "files": (
+            ("removed", "mcp/.gitkeep"),
+            ("removed", "product/.gitkeep"),
+            ("removed", "www/landing/.gitkeep"),
+            ("removed", "www/mcp/.gitkeep"),
+        ),
+    },
+}
+
+
+def known_metadata_only_direct_commit(sha, node, first_parent):
+    """Allow only the three audited immutable non-runtime Git commits.
+
+    The commit SHA, parent, and complete changed-file inventory are checked.
+    This never creates a release; the caller advances only the history cursor.
+    A different direct commit or incomplete GitHub response remains denied.
+    """
+    spec = HISTORIC_METADATA_ONLY.get(sha)
+    if spec is None:
+        return False
+    if node.get("sha") != sha or first_parent != spec["parent"]:
+        raise Denied("historic_metadata_identity_mismatch")
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(spec["files"]):
+        raise Denied("historic_metadata_inventory_mismatch")
+    actual = []
+    for entry in files:
+        if (not isinstance(entry, dict)
+                or entry.get("status") not in ("modified", "removed")
+                or not isinstance(entry.get("filename"), str)
+                or entry.get("previous_filename") is not None):
+            raise Denied("historic_metadata_inventory_mismatch")
+        actual.append((entry["status"], entry["filename"]))
+    if sorted(actual) != sorted(spec["files"]):
+        raise Denied("historic_metadata_inventory_mismatch")
+    return True
+
+
 
 
 def run(argv, timeout=30, allow_fail=False):
@@ -231,6 +300,85 @@ def never_started_billing_blocked(run):
     return all(BILLING_BLOCKED.search(str(x.get("message", ""))) for x in failures)
 
 
+# One historically failed Cloudflare Workers build on the CI-only Product PR
+# #183 squash must not veto the independently green Product CI test.  This
+# exception is immutable (commit, run ID, provider identity and status) and
+# never applies to app/runtime releases or any other failure.
+def historical_foreign_check(sha, row):
+    return (
+        sha == "e21fb799a4360f8becb5b5e0a5fcc62881813782"
+        and isinstance(row, dict)
+        and type(row.get("id")) is int
+        and row["id"] == 136273095146
+        and row.get("head_sha") == sha
+        and row.get("name") == "Workers Builds: stronaglowna"
+        and row.get("status") == "completed"
+        and row.get("conclusion") == "failure"
+        and isinstance(row.get("app"), dict)
+        and row["app"].get("slug") == "cloudflare-workers-and-pages"
+        and type(row["app"].get("id")) is int
+        and row["app"]["id"] == 85455
+    )
+
+
+# Check run name and Actions app identity are insufficient: a separate, PR-
+# controlled workflow can reuse both. Bind the check job to the one trusted,
+# main-only Product CI workflow via its authoritative GitHub Actions run.
+TRUSTED_PRODUCT_WORKFLOW_ID = 405924339
+TRUSTED_PRODUCT_WORKFLOW = ".github/workflows/product-ci.yml"
+PRODUCT_JOB_URL = re.compile(
+    r"^https://github\.com/miloszspyrka-code/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
+)
+
+
+def verified_product_workflow(sha, check):
+    details = check.get("details_url")
+    found = PRODUCT_JOB_URL.fullmatch(details) if isinstance(details, str) else None
+    suite = check.get("check_suite")
+    if (found is None or type(check.get("id")) is not int
+            or int(found.group(2)) != check["id"]
+            or not isinstance(suite, dict) or type(suite.get("id")) is not int):
+        raise Denied("product_ci_untrusted_workflow")
+    run_id = int(found.group(1))
+    if run_id <= 0:
+        raise Denied("product_ci_untrusted_workflow")
+    doc = github_api("/repos/" + REPO + "/actions/runs/" + str(run_id))
+    if (not isinstance(doc, dict)
+            or type(doc.get("id")) is not int or doc["id"] != run_id
+            or type(doc.get("workflow_id")) is not int
+            or doc["workflow_id"] != TRUSTED_PRODUCT_WORKFLOW_ID
+            or doc.get("path") != TRUSTED_PRODUCT_WORKFLOW
+            or doc.get("name") != "Product CI"
+            or doc.get("head_sha") != sha
+            or doc.get("head_branch") != "main"
+            or doc.get("event") not in ("push", "workflow_dispatch")
+            or doc.get("status") != "completed"
+            or doc.get("conclusion") != "success"
+            or type(doc.get("check_suite_id")) is not int
+            or doc["check_suite_id"] != suite["id"]
+            or not isinstance(doc.get("repository"), dict)
+            or doc["repository"].get("full_name") != REPO):
+        raise Denied("product_ci_untrusted_workflow")
+    job = github_api("/repos/" + REPO + "/actions/jobs/" + str(check["id"]))
+    if (not isinstance(job, dict)
+            or type(job.get("id")) is not int or job["id"] != check["id"]
+            or type(job.get("run_id")) is not int or job["run_id"] != run_id
+            or type(job.get("run_attempt")) is not int
+            or type(doc.get("run_attempt")) is not int
+            or job["run_attempt"] != doc["run_attempt"]
+            or job.get("head_sha") != sha
+            or job.get("name") != "validate-product"
+            or job.get("workflow_name") != "Product CI"
+            or job.get("status") != "completed"
+            or job.get("conclusion") != "success"
+            or job.get("html_url") != details
+            or job.get("check_run_url") != (
+                "https://api.github.com/repos/" + REPO +
+                "/check-runs/" + str(check["id"]))):
+        raise Denied("product_ci_untrusted_job")
+    return True
+
+
 def checks(sha):
     """Every check must pass; a billing-blocked job is "CI never executed".
 
@@ -244,7 +392,12 @@ def checks(sha):
     if not isinstance(checks, list) or not isinstance(total, int) or total != len(checks) or total > 100:
         raise Denied("checks_incomplete")
     matches = [x for x in checks if x.get("name") == "validate-product"]
-    if len(matches) != 1 or matches[0].get("status") != "completed":
+    if (len(matches) != 1 or matches[0].get("status") != "completed"
+            or matches[0].get("head_sha") != sha
+            or not isinstance(matches[0].get("app"), dict)
+            or matches[0]["app"].get("slug") != "github-actions"
+            or type(matches[0]["app"].get("id")) is not int
+            or matches[0]["app"]["id"] != 15368):
         raise Denied("product_ci_not_green")
     product = matches[0]
     billed = False
@@ -252,8 +405,14 @@ def checks(sha):
         if not never_started_billing_blocked(product):
             raise Denied("product_ci_not_green")
         billed = True
+    else:
+        verified_product_workflow(sha, product)
     for check in checks:
         if check is product:
+            continue
+        if not isinstance(check, dict) or check.get("head_sha") != sha:
+            raise Denied("nonpassing_checks")
+        if historical_foreign_check(sha, check):
             continue
         if check.get("status") != "completed" or check.get("conclusion") not in ("success", "skipped", "neutral"):
             if not never_started_billing_blocked(check):
@@ -457,6 +616,69 @@ def native_approval(pr, head_sha, merge_sha):
         raise Denied("native_approval_unverified")
 
 
+
+# Immutable, merged Product main commits with zero application runtime changes.
+# Their GitHub SHA, first parent, exact mapped PR and complete file inventory
+# must match. This does NOT advance ci-approved or bypass runtime approval.
+# The final current-main Product CI must be green before they may be skipped.
+VERIFIED_MAINTENANCE_MERGES = {
+    "1b211f95d4d67659fa06ca8fede7e87bc260c7b9": {
+        "parent": "e21fb799a4360f8becb5b5e0a5fcc62881813782",
+        "pr": 185,
+        "files": (("added", ".github/workflows/prune-verified-merged-branches.yml"),),
+    },
+    "6de38738a285fce42a4401fedd16848bfc62ba83": {
+        "parent": "1b211f95d4d67659fa06ca8fede7e87bc260c7b9",
+        "pr": 186,
+        "files": (
+            ("removed", ".github/workflows/prune-verified-merged-branches.yml"),
+            ("modified", ".gitignore"),
+        ),
+    },
+    "9974009ed208e3586892a3839d57704424f70f51": {
+        "parent": "6de38738a285fce42a4401fedd16848bfc62ba83",
+        "pr": 153,
+        "files": (
+            ("modified", "README.md"),
+            ("modified", "ops/coolify/CI_GATED_RELEASE.md"),
+        ),
+    },
+    "c38e011a8df91ec910534928ee26d90e3435247a": {
+        "parent": "9974009ed208e3586892a3839d57704424f70f51",
+        "pr": 187,
+        "files": (("modified", "README.md"),),
+    },
+}
+
+
+def verified_maintenance_merge(sha, node, first_parent, pr):
+    """Match only three immutable non-runtime main squashes; fail closed on drift.
+
+    These are history-only skips: no ci-approved move, no deployment, and no
+    relaxation for unknown cleanup workflow edits or application source.
+    """
+    spec = VERIFIED_MAINTENANCE_MERGES.get(sha)
+    if spec is None:
+        return False
+    if (node.get("sha") != sha or first_parent != spec["parent"]
+            or pr != spec["pr"]):
+        raise Denied("maintenance_commit_identity_mismatch")
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(spec["files"]):
+        raise Denied("maintenance_file_inventory_mismatch")
+    actual = []
+    for item in files:
+        if (not isinstance(item, dict)
+                or item.get("status") not in ("added", "modified", "removed")
+                or not isinstance(item.get("filename"), str)
+                or item.get("previous_filename") is not None):
+            raise Denied("maintenance_file_inventory_mismatch")
+        actual.append((item["status"], item["filename"]))
+    if sorted(actual) != sorted(spec["files"]):
+        raise Denied("maintenance_file_inventory_mismatch")
+    return True
+
+
 def non_runtime_files_only(pr_number, commit_sha, node):
     """True only when all PR files are non-runtime docs/metadata changes.
 
@@ -483,6 +705,29 @@ def non_runtime_files_only(pr_number, commit_sha, node):
     return True
 
 
+
+def reviewed_ci_only_pr(pr_number, head_sha, node):
+    """Only the exact CTO-reviewed PR183 four-file CI patch may skip runtime.
+
+    The caller still requires a trusted rootless exact-tree premerge receipt,
+    green merged-main GitHub CI and a single-parent squash. No other PR or
+    changed SHA inherits this exception; Docker runtime resources are untouched.
+    """
+    if pr_number != CI_ONLY_REVIEWED_PR or head_sha != CI_ONLY_REVIEWED_HEAD:
+        return False
+    files = node.get("files")
+    if not isinstance(files, list) or len(files) != len(CI_ONLY_REVIEWED_FILES):
+        return False
+    found = {}
+    for file in files:
+        if not isinstance(file, dict):
+            return False
+        name, status = file.get("filename"), file.get("status")
+        if not isinstance(name, str) or name in found or status not in ("added", "modified"):
+            return False
+        found[name] = status
+    return found == CI_ONLY_REVIEWED_FILES
+
 def candidate_history(release_sha, main_sha):
     """Walk first-parent main history and verify *every* new merged PR."""
     if release_sha == main_sha:
@@ -505,9 +750,34 @@ def candidate_history(release_sha, main_sha):
         first = parents[0].get("sha")
         if not isinstance(first, str) or not SHA.fullmatch(first):
             raise Denied("invalid_first_parent")
+        # A strictly allowlisted historical metadata cleanup is not a release.
+        if len(parents) == 1 and known_metadata_only_direct_commit(current, node, first):
+            current = first
+            continue
         pr, head = provenance(current)
+        # Source-only maintenance is not a deployable Product artifact. Its
+        # specific merged SHA/parent/PR/files are immutable-allowlisted; do not
+        # require a PR-head tree to equal a later squash-merge main tree.
+        # Still demand actual trusted Product CI on the CURRENT main tip.
+        if len(parents) == 1 and verified_maintenance_merge(current, node, first, pr):
+            final_ci = checks(main_sha)
+            if final_ci["billing_blocked"]:
+                raise Denied("maintenance_current_main_ci_not_green")
+            current = first
+            continue
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
+        # Exact reviewed CI-only PR183 must never cause an unnecessary
+        # application rollout. Unlike docs-only PRs this exceptional workflow
+        # change requires a root-controlled, exact-tree, full rootless E2E
+        # attestation BEFORE merge, plus GREEN main CI AFTER merge.
+        if len(parents) == 1 and reviewed_ci_only_pr(pr, head, node):
+            if (head_ci.get("rootless_premerge") is not True
+                    or head_ci.get("billing_blocked")
+                    or merge_ci.get("billing_blocked")):
+                raise Denied("ci_only_rootless_proof_or_main_ci_missing")
+            current = first
+            continue
         # Docs-only squash PRs are NOT releases and do not require a Multica
         # runtime work product. Everything else, including runtime squashes,
         # still requires the original independent native approval gate.
@@ -595,9 +865,17 @@ def process(plan=False):
     if live != release:
         raise Denied("production_not_at_current_release_ref")
     if current == release:
+        # Recheck the refs after the live HTTP read: main may have advanced
+        # while that read was in flight, invalidating the no-change result.
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
         return {"result":"already_released", "sha":current,"live":live}
     verified = candidate_history(release, current)
     if not verified:
+        # Do not report a source-only no-op against an outdated snapshot.
+        # A runtime commit may have appeared while walking first-parent history.
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
         # Main only advanced through independently verified documentation PRs.
         # No Docker build, no branch advancement and no production deployment.
         return {"result": "no_runtime_release_required", "main": current,

@@ -20,7 +20,6 @@ The install itself, the timer stop and the negative canaries on the live host ar
 OPERATOR_ONLY steps documented in ``ops/harness/INSTALL-RUNBOOK.md``.
 """
 import argparse
-import importlib.util
 import json
 import os
 import shlex
@@ -41,8 +40,11 @@ ADAPTER = "harness_native_delivery.py"
 SOURCE_RANGE = STATE / "source-range.env"
 CHECKOUT = STATE / "checkout"
 GATES = STATE / "gates"
+LEGACY_ENTRYPOINT = "harness_image_delivery.py"
+LEGACY_SHIM_SOURCE = "scripts/harness_legacy_disabled.py"
 MODULES = ("harness_release_admission.py", "harness_local_ci_attest.py",
-           "harness_delivery_controller.py", "harness_native_delivery.py")
+           "harness_delivery_controller.py", "harness_native_delivery.py",
+           "harness_release_parity.py")
 UNITS = (REVIEWED_UNIT,)
 
 
@@ -114,46 +116,27 @@ def parse_execstart(unit_text):
     return []
 
 
-def adapter_parser(script_path):
-    """Load ``build_parser`` from the adapter file the unit actually runs.
-
-    The module is executed from the path in ``ExecStart``, so the check validates
-    the installed adapter, not a repository copy. Importing is side-effect free:
-    the adapter reads no secret at import time.
-    """
-    script = Path(script_path)
-    if not script.is_file():
-        raise ImportError("adapter missing")
-    parent = str(script.parent)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
-    spec = importlib.util.spec_from_file_location("_harness_adapter_under_test", script)
-    if spec is None or spec.loader is None:
-        raise ImportError("adapter not loadable")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.build_parser()
+# Fixed, reviewed timer invocation. Never import host-installed adapter source
+# during root preflight: a mismatched adapter could execute at module import time.
+# Unit SHA/owner checks below independently require the approved bytes on disk.
+APPROVED_EXECSTART = (
+    "/usr/bin/python3", str(LIBEXEC / ADAPTER),
+    "--mode", "deploy", "--auto",
+    "--artifact-dir", str(GATES),
+    "--attestation-key", str(KEY),
+    "--state-dir", str(STATE / "delivery"),
+)
 
 
 def execstart_problem(argv):
-    """None when the adapter's own parser accepts this invocation, else a reason.
-
-    This is the wiring gate: an installed ``ExecStart`` the adapter would reject
-    (as the legacy ``--auto``-only invocation was) can never be reported ready.
-    """
+    """Validate exact root-reviewed unattended invocation without executing code."""
     if len(argv) < 2:
         return "execstart_missing_or_unparsable"
-    script, rest = argv[1], argv[2:]
-    if Path(script).name != ADAPTER:
+    if Path(argv[1]).name != ADAPTER:
         return "execstart_runs_the_hold_blind_controller"
-    try:
-        adapter_parser(script).parse_args(rest)
-    except SystemExit:
+    if tuple(argv) != APPROVED_EXECSTART:
         return "adapter_rejects_execstart_arguments"
-    except (ImportError, OSError, AttributeError):
-        return "adapter_not_importable"
     return None
-
 
 def blob_sha256(repo, sha, path):
     """sha256 of one file as committed at an exact SHA (no checkout needed)."""
@@ -170,6 +153,9 @@ def expected_hashes(repo, sha, modules=MODULES, units=UNITS):
     """Immutable expected digests for the modules and units approved at ``sha``."""
     digests = {name: blob_sha256(repo, sha, f"scripts/{name}") for name in modules}
     digests.update({unit: blob_sha256(repo, sha, unit) for unit in units})
+    # The old executable path is ALSO part of the approved install contract.
+    # New unit wiring alone cannot stop manual invocation of the HOLD-blind code.
+    digests[LEGACY_ENTRYPOINT] = blob_sha256(repo, sha, LEGACY_SHIM_SOURCE)
     return digests
 
 
@@ -214,9 +200,13 @@ def check(probe, repo, sha):
         digest = probe.sha256(path) if info["exists"] else None
         installed[name] = {"exists": info["exists"], "uid": info["uid"],
                            "mode": info["mode"], "sha256": digest}
+        # Absence is not success: missing imports would crash the wired unit.
+        # Installing a missing reviewed file is an operator install step, so
+        # report it as pending (never ready), not silently skip the module.
+        install_assertion(f"{name}_present", info["exists"], str(path), False)
         if info["exists"]:
-            record(f"{name}_root_owned", info["uid"] == 0,
-                   f"uid={info['uid']} mode={oct(info['mode'] or 0)}")
+            record(f"{name}_root_owned", info["uid"] == 0 and info["mode"] == 0o644,
+                   f"uid={info['uid']} mode={oct(info['mode'] or 0)} (expected root:root 0644)")
             record(f"{name}_matches_approved_sha", digest == expected.get(name),
                    "installed=%s expected=%s" % (digest, expected.get(name)))
 
@@ -237,8 +227,9 @@ def check(probe, repo, sha):
                       "installed=%s expected=%s" % (unit_digest, expected_unit),
                       wired_to_adapter)
     if unit_info["exists"]:
-        record("delivery_unit_root_owned", unit_info["uid"] == 0,
-               f"uid={unit_info['uid']} mode={oct(unit_info['mode'] or 0)}")
+        record("delivery_unit_root_owned",
+               unit_info["uid"] == 0 and unit_info["mode"] == 0o644,
+               f"uid={unit_info['uid']} mode={oct(unit_info['mode'] or 0)} (expected root:root 0644)")
     # The unit's ExecStart is only meaningful together with the operator-written
     # range it reads; --auto denies the cycle when that file is absent.
     source_range = probe.stat(SOURCE_RANGE)
@@ -248,10 +239,17 @@ def check(probe, repo, sha):
                source_range["uid"] == 0 and source_range["mode"] == 0o600,
                f"uid={source_range['uid']} mode={oct(source_range['mode'] or 0)}")
 
-    legacy = LIBEXEC / "harness_image_delivery.py"
+    legacy = LIBEXEC / LEGACY_ENTRYPOINT
     info = probe.stat(legacy)
     record("legacy_controller_present_to_back_up", info["exists"],
-           "the hold-blind controller must be backed up before replacement")
+           "the legacy path must exist for an operator-controlled backup/replacement")
+    legacy_digest = probe.sha256(legacy) if info["exists"] else None
+    install_assertion("legacy_controller_disabled",
+                      bool(info["exists"] and info["uid"] == 0 and info["mode"] == 0o755 and
+                           legacy_digest == expected.get(LEGACY_ENTRYPOINT)),
+                      "installed=%s expected=%s" % (
+                          legacy_digest, expected.get(LEGACY_ENTRYPOINT)),
+                      wired_to_adapter)
 
     policy = probe.stat(POLICY)
     install_assertion("policy_present", policy["exists"], str(POLICY), False)
@@ -283,10 +281,12 @@ def install_plan(sha, expected):
          "legacy_controller_present_to_back_up"),
         ("03_stage_modules",
          [f"git -C <repo> show {sha}:scripts/{name} | install -o root -g root -m 0644 /dev/stdin {LIBEXEC / name}"
-          for name in MODULES],
+          for name in MODULES] +
+         [f"git -C <repo> show {sha}:{LEGACY_SHIM_SOURCE} | install -o root -g root -m 0755 /dev/stdin {LIBEXEC / LEGACY_ENTRYPOINT}"],
          "approved_sha_present"),
         ("04_verify_staged_hashes",
-         [f"test \"$(sha256sum {LIBEXEC / name} | cut -d' ' -f1)\" = {expected[name]}" for name in MODULES],
+         [f"test \"$(sha256sum {LIBEXEC / name} | cut -d' ' -f1)\" = {expected[name]}" for name in MODULES] +
+         [f"test \"$(sha256sum {LIBEXEC / LEGACY_ENTRYPOINT} | cut -d' ' -f1)\" = {expected[LEGACY_ENTRYPOINT]}"],
          "every staged module matches the exact approved SHA digest"),
         ("05_install_policy_and_key",
          [f"install -o root -g root -m 0700 -d {ETC}",
@@ -306,7 +306,8 @@ def install_plan(sha, expected):
           "expect: decision=denied reason=release_lane_on_hold; zero docker/coolify calls in the log",
           "expect: unattested merge -> local_ci_attestation_missing; wrong UUID -> coolify_uuid_mismatch",
           "expect: python3 /usr/local/libexec/harness_native_delivery.py --mode plan --auto "
-          "-> no_change or denied with zero docker/coolify calls"],
+          "-> no_change or denied with zero docker/coolify calls",
+          f"python3 {LIBEXEC / LEGACY_ENTRYPOINT} --auto  # MUST exit 78, zero provider calls"],
          "all negative canaries denied before the timer is re-enabled"),
         ("08_enable_after_canary",
          ["systemctl start harness-image-delivery.timer",
@@ -315,11 +316,11 @@ def install_plan(sha, expected):
          "canaries denied AND one authorized lane promoted with digest readback"),
         ("09_rollback",
          [f"systemctl stop harness-image-delivery.timer",
-          f"install -o root -g root -m 0755 {backup} {LIBEXEC / 'harness_image_delivery.py'}",
+          f"test \"$(sha256sum {LIBEXEC / LEGACY_ENTRYPOINT} | cut -d' ' -f1)\" = {expected[LEGACY_ENTRYPOINT]}",
           f"install -o root -g root -m 0644 {STATE / 'backups' / ('harness-image-delivery.service-' + sha[:12] + '.bak')} {UNIT}",
           "systemctl daemon-reload",
           "systemctl is-active harness-image-delivery.timer  # must remain inactive"],
-         "restore backup for emergency recovery only; keep timer STOPPED because the legacy controller bypasses HOLD"),
+         "restore old unit only; KEEP THE FAIL-CLOSED SHIM at the legacy executable path; timer STOPPED"),
     ]
     return steps
 

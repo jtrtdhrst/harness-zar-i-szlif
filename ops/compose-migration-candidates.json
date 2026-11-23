@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "repo": "jtrtdhrst/harness-zar-i-szlif",
+  "source_pr": 223,
+  "scope": "Three source-pending in-repository candidates: Plasmic, Hindsight MCP and Opik MCP. Retired Qdrant MCP excluded; Qdrant DB remains independent.",
+  "release_status": "BLOCKED_CANDIDATES_ONLY",
+  "resources": [
+    {
+      "id": "plasmic",
+      "uuid": "mzmlcorgkfgdy44hqfmmtxgw",
+      "root": "apps/plasmic",
+      "compose": "apps/plasmic/compose.candidate.yml",
+      "contract": "apps/plasmic/release-contract.json",
+      "watch_paths": [
+        "apps/plasmic/"
+      ],
+      "release_ready": false
+    },
+    {
+      "id": "hindsight-mcp",
+      "uuid": "aglen8ervlo2lpi30oz8iii9",
+      "root": "mcp/hindsight-mcp",
+      "compose": "mcp/hindsight-mcp/compose.candidate.yml",
+      "contract": "mcp/hindsight-mcp/release-contract.json",
+      "watch_paths": [
+        "mcp/hindsight-mcp/"
+      ],
+      "release_ready": false
+    },
+    {
+      "id": "opik-mcp",
+      "uuid": "egasedqaofxnzcqppuxi805h",
+      "root": "mcp/opik-mcp",
+      "compose": "mcp/opik-mcp/compose.candidate.yml",
+      "contract": "mcp/opik-mcp/release-contract.json",
+      "watch_paths": [
+        "mcp/opik-mcp/"
+      ],
+      "release_ready": false
+    }
+  ]
+}

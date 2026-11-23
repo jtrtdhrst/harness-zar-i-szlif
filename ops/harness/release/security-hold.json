@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "active": false,
+  "owner": "1f18ef41-ce12-4074-984f-6cb12e971040",
+  "reason": "ZARI-213 cross-task Git/role isolation and dual-repository E2E passed; HOLD cleared only after owner plus independent CTO/COO evidence.",
+  "activated_at": "2026-11-23T16:05:29Z",
+  "clearing_authority": "workspace_owner_and_independent_CTO_COO",
+  "clearance": {
+    "cleared_by": "1f18ef41-ce12-4074-984f-6cb12e971040",
+    "cleared_at": "2026-11-23T21:24:22Z",
+    "ctocoo_review_sha": "128c5ebce22dd3e26fe27507134fda7d8026d65e",
+    "isolation_e2e_comment_id": "01a20a44-4a5a-79fa-a590-c16c4565ebb4",
+    "cto_review_comment_id": "01a20a48-97e6-7892-aded-fbdc8016346b",
+    "coo_authorization_comment_id": "01a20a4b-b2ba-7984-a83f-165ddb46622f"
+  },
+  "evidence_issue": "ZARI-213",
+  "source": "controlled_reviewed_git_main"
+}

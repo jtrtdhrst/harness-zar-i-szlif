@@ -1,5 +1,14 @@
 # RepoWise GitHub sync
 
+## Canonical MCP source build contract (2026-11-23)
+
+See [MCP_SOURCE_BUILDS.md](MCP_SOURCE_BUILDS.md) for the authoritative
+13 source-owned MCP-to-Coolify UUID, Dockerfile, GitHub `main`, GHCR image
+publisher and release-evidence mapping. This is indexed source knowledge,
+not an assertion that a new image is deployed. The contract is checked by
+`scripts/test_mcp_build_contract.py` on PRs and trusted `main`.
+
+
 Host-side sync between the protected GitHub `main` branches and the RepoWise
 workspace volume. RepoWise's `index_behind` compares the index with its mounted
 checkout, so a stale checkout makes a stale index look healthy; the sync and the

@@ -20,6 +20,8 @@ grant, the independent exact-SHA approval or the root-owned local-CI attestation
 | `scripts/harness_local_ci_attest.py` | `/usr/local/libexec/harness_local_ci_attest.py` | `0644 root:root` |
 | `scripts/harness_delivery_controller.py` | `/usr/local/libexec/harness_delivery_controller.py` | `0644 root:root` |
 | `scripts/harness_native_delivery.py` | `/usr/local/libexec/harness_native_delivery.py` | `0644 root:root` |
+| `scripts/harness_release_parity.py` | `/usr/local/libexec/harness_release_parity.py` | `0644 root:root` |
+| `scripts/harness_legacy_disabled.py` | `/usr/local/libexec/harness_image_delivery.py` (REPLACES old entrypoint) | `0755 root:root` |
 | `ops/systemd/harness-image-delivery.service` | `/etc/systemd/system/harness-image-delivery.service` | `0644 root:root` |
 | operator-written source range | `/var/lib/harness-image-delivery/source-range.env` | `0600 root:root` |
 | operator-authored policy | `/etc/paperclip-gitops/harness-ci-policy.json` | `0600 root:root` |
@@ -103,9 +105,11 @@ attestation bound to that exact SHA.
    Then run `install -o root -g root -m 0600 /usr/local/libexec/harness_image_delivery.py /var/lib/harness-image-delivery/backups/harness_image_delivery-<sha12>.py`
    `install -o root -g root -m 0600 /etc/systemd/system/harness-image-delivery.service /var/lib/harness-image-delivery/backups/harness-image-delivery.service-<sha12>.bak`
    `sha256sum` every file and record the digests in the issue.
-3. **Stage the four reviewed modules** from the exact SHA, not from a branch head:
+3. **Stage the five reviewed modules and permanently disable the old executable path** from the exact approved SHA (after step 2 backups):
    `git -C <approved checkout> show <sha>:scripts/<module> | install -o root -g root -m 0644 /dev/stdin /usr/local/libexec/<module>`
-4. **Verify the four staged modules** against the expected digests printed by
+   `git -C <approved checkout> show <sha>:scripts/harness_legacy_disabled.py | install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/harness_image_delivery.py`
+   Direct calls of the **old** controller must now exit 78 without Docker/Coolify, even if the old systemd unit is accidentally restored.
+4. **Verify the five staged modules plus the old-path denial shim** against the expected digests printed by
    preflight (step 0). Do not verify the replacement systemd unit yet: it is
    deliberately installed in step 6. Any mismatch = stop and roll back.
 5. **Install the policy and key** you authored: per-service fixed argv commands,
@@ -124,10 +128,14 @@ attestation bound to that exact SHA.
    the controller or an agent):
    `printf 'HARNESS_BASE_SHA=%s\nHARNESS_SOURCE_SHA=%s\n' <previous-main> <approved-main> > /var/lib/harness-image-delivery/source-range.env`
    `chown root:root /var/lib/harness-image-delivery/source-range.env && chmod 0600 /var/lib/harness-image-delivery/source-range.env`.
-   Only **now**, once the unit, policy, key, directories and range exist,
-   rerun `scripts/harness_install_preflight.py --sha <sha>` and require
-   `ready: true` with no `blockers` and no `pending`.
+   Only **now**, once the unit, policy, key, directories, range and old-path
+   denial shim exist, rerun `scripts/harness_install_preflight.py --sha <sha>`
+   and require `ready: true` with no `blockers` and no `pending`, especially
+   `legacy_controller_disabled=true` and `delivery_unit_wired=true`.
 7. **Negative canaries before re-enabling anything** (root, no secrets printed):
+   - `python3 /usr/local/libexec/harness_image_delivery.py --auto` MUST exit 78 with
+     `legacy_hold_blind_controller_disabled` and **zero** Docker/Coolify calls.
+     If not, leave the timer disabled and mark installation FAIL.
    - `harness_delivery_controller.py --plan` on a **held** lane → `denied`,
      `release_lane_on_hold`, and **zero** docker build/push and zero Coolify
      PATCH/POST in the log.
@@ -149,24 +157,71 @@ attestation bound to that exact SHA.
    with digest/health readback recorded. Attested `local_ci` must appear in
    `multica-release-status --sha <sha>`.
 9. **Rollback** if any of the above fails: stop the timer and service, restore
-   the backed-up controller and unit, and `systemctl daemon-reload`. **Leave the
-   timer stopped**. The legacy controller bypasses HOLD and must never be
-   automatically reactivated by rollback. Record restored digests and verify
+   the backed-up **unit only**, retaining the denial shim at the legacy executable
+   path, then `systemctl daemon-reload`. **Leave the timer stopped**. Do NOT
+   restore the old hold-blind executable to its old callable path. Record restored digests and verify
    `systemctl is-active harness-image-delivery.timer` remains `inactive`.
    A new production activation requires a separately approved safe controller.
 
 ## Rollback
 
 1. `systemctl stop harness-image-delivery.timer`
-2. `install -o root -g root -m 0755 /var/lib/harness-image-delivery/backups/harness_image_delivery-<sha12>.py /usr/local/libexec/harness_image_delivery.py`
+2. `python3 /usr/local/libexec/harness_image_delivery.py --auto` MUST still deny with exit 78 (do **not** restore the unsafe backup to this path).
 3. `install -o root -g root -m 0644 /var/lib/harness-image-delivery/backups/harness-image-delivery.service-<sha12>.bak /etc/systemd/system/harness-image-delivery.service`
 4. `systemctl daemon-reload`
 5. `systemctl is-active harness-image-delivery.timer` must report `inactive`.
 6. Record restored digests and disabled timer state; keep the release lane `BLOCKED`.
 
-Restoring the backup reinstates the **hold-blind code on disk**, but keeping
-its timer stopped prevents the rollback itself from reactivating that unsafe
-release path. Never restart it without an independently approved replacement.
+The old controller is retained only in a **root-private, non-executable backup**
+for forensics. Its original entrypoint remains the reviewed fail-closed shim,
+including after restoring the old unit. A disabled timer alone is insufficient
+protection against accidental manual invocation; the shim must remain in place.
+
+## Explicit scoped release of an independently admitted MCP lane
+
+When a reviewed main SHA changes several unrelated manifest resources, the
+unattended timer MUST continue to deny a global batch that contains an
+unimplemented transport (for example `apps/plasmic/` or `qdrant/`). Do not
+silently skip those resources, forge a wider approval or mark the whole SHA
+delivered.
+
+An authorized root operator can instead invoke the existing controller with
+`--service plasmic-mcp` and an **explicit** exact base/source SHA pair, after
+the existing per-UUID request, independent head review, grant, root-owned HMAC
+attestation and image digest are verified. Run `--mode plan` first and record
+the `scope` and `pending_paths` fields. The result marker is
+`ok_scoped`, **not** the global `ok`: downstream automation must never treat
+this as a complete-main release. The pending paths are **not deployed** and
+must remain open in the release ledger. Then use `--mode prepare` and
+`--mode deploy` only under separately approved build/release grants.
+
+This switch is intentionally incompatible with `--auto`; systemd is not
+permitted to guess which of several held services was authorized. A missing
+scoped service in the exact diff, or a missing/stale grant, fails closed before
+any Docker or Coolify mutation.
+
+## Immutable image and rollback acceptance
+
+The transport MUST patch the Coolify Compose image using an exact immutable
+`127.0.0.1:5000/harness-<service>@sha256:<64-hex>` reference, NEVER the
+mutable `harness-<service>:<sha12>` tag. A pushed tag is only a build locator.
+The root-owned local-CI attestation must bind to the **same digest** found in
+the running image. A tag-only Compose deployment is an E2E FAIL even when its
+repository SHA label happens to match.
+
+Live image health MUST also be attributed to the actual Coolify Service UUID
+using `docker ps --filter label=coolify.serviceUuid=<uuid>` together with the
+expected image ancestor. A healthy container from another service, even if it
+uses the identical image, is not evidence that this service was deployed.
+Older unlabeled containers fail closed; confirm UUID labels on the approved
+redeployment rather than guessing a healthy container from the whole host.
+
+Rollback acceptance is likewise not a Coolify API POST 200/201: the controller
+must read back the exact previous Compose bytes and independently verify live
+healthy service state. On timeout, `rollback_failed` is the required verdict,
+not a PASS, and the timer must remain disabled pending manual remediation.
+Independent authenticated MCP positive/negative QA and safe recovery evidence
+are additional requirements before a delivery issue becomes Done.
 
 ## Not claimed by the source change
 
@@ -177,3 +232,4 @@ release path. Never restart it without an independently approved replacement.
 - The checkout this unit builds from, and the `source-range.env` SHA pair, must
   be maintained by an operator or an existing scheduler; this change installs no
   fetcher, no new timer, no baseline state and no SHA reconstruction.
+

@@ -1,60 +1,38 @@
-# Harness — active services only
+# Żar i Szlif — Harness: serwery MCP i infrastruktura
 
-This repository owns **infrastructure services and standalone integration MCPs**, not the Żar i Szlif product application or its own product MCP. Infrastructure services are maintained in their own source folders.
+**Zasada:** kod jednej usługi MCP znajduje się wyłącznie w **`mcp/<nazwa>-mcp/`**. W każdym katalogu jest implementacja, Dockerfile (lub osobne Dockerfile dla składników), testy i opis właściciela wdrożenia. Dane, sekrety, obrazy kontenerów i wolumeny nie trafiają do Git.
 
-**Repository boundary (2026-11-02):** code for the Żar i Szlif product, product websites and **only its application-specific MCP** belongs in [`miloszspyrka-code/zar-i-szlif`](https://github.com/miloszspyrka-code/zar-i-szlif), under `product/`, `www/` and `mcp/` respectively. General-purpose MCP servers, VPS integrations and Hermes Gateway integration belong here. Do not recreate `zar-i-szlif/mcp-bridges/`: its obsolete copies were deleted from the product `main` in PR #139 and are recoverable from Git history. The former `kod-aplikacji/` and `kod-mcp/` inventories, including their legacy Paperclip sources, were removed from this repository; Żar i Szlif product code remains in its separate product repository. The Hermes Gateway receiver and adapter are under review in [PR #36](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/36), with execution evidence and release gates tracked in the [Hermes E2E runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md). The historical source-binding PR #6 was closed without merge. Source security review of H01 alone does not constitute approval of H02/H05 or production cutover; require a real Paperclip-issued, issue-scoped authenticated E2E run before promotion.
+## Mapa repo
 
-## Hermes adapter documentation (canonical)
+| Katalog | Co zawiera | Co się tam buduje |
+| --- | --- | --- |
+| [`mcp/`](mcp/) | **13 serwerów MCP**: kod, Dockerfile, testy, README | Oddzielny OCI obraz na serwer MCP lub jego backend |
+| [`gateways/`](gateways/) | Bramka edge dla tras MCP, autoryzacja, ruch HTTP/SSE | Osobne bramki, bez kopiowania kodu MCP |
+| [`workers/`](workers/) | Pracownicy asynchroniczni (Opik run enricher) | Worker, nie serwer MCP |
+| [`apps/`](apps/) | Plasmic WAB / Studio — aplikacja self-hosted | Wieloskładnikowa aplikacja, nie MCP |
+| [`integrations/`](integrations/) | Hermes–Paperclip, gateway, adaptery, testy E2E i historie integracji | Hermes Gateway i integracje agenta |
+| [`ops/`](ops/) | Mapa Coolify UUID, katalog obrazów, polityka wydań, systemd, kontrakty i dowody | Konfiguracja i system operacyjny, nie sama aplikacja |
+| [`scripts/`](scripts/) | Skrypty CI, testy, selektory buildów, kontrolery wydań | Narzędzia repozytorium |
+| [`docs/`](docs/) | Architektura, bieżące runbooki, decyzje, archiwum | Dokumentacja |
+| [`.github/workflows/`](.github/workflows/) | Przypisane źródłom workflow CI i publikacji OCI | Build z katalogu wskazanego przez mapę |
 
-The canonical [Paperclip ↔ Hermes adapter runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md), [candidate receiver API contract](integrations/hermes-paperclip/gateway/RUN_SCOPED_RECEIVER_CANDIDATE.md), [Paperclip overlay specification](integrations/hermes-paperclip/paperclip-core-overlay/README.md) and [historical evidence index](integrations/hermes-paperclip/README.md) are maintained on `main`. For work involving Hermes, Paperclip Named MCP, per-run authorization, agent isolation or release, consult this runbook before action and verify the real issue/PR/runtime state. **Docs-only publication does not mean PR #36 code was merged or production is ready.**
+## Instrukcje dla agentów i podział usług
 
-## Service folders
+**Zacznij od [AGENTS.md](AGENTS.md).** Znajdziesz tam kanoniczne katalogi, zakres odpowiedzialności, sposób weryfikacji produkcji i regułę: kod w repo ≠ wdrożona wersja.
 
-- `plasmic/` — Plasmic self-hosted application
-- `plasmic-mcp/` — Plasmic MCP
-- `integrations/hermes-paperclip/` — source-pinned Hermes Gateway receiver, Paperclip adapter and [runbook](integrations/hermes-paperclip/OPERATIONS-STATUS.md)
-- `comfyui-mcp/` — ComfyUI engine + MCP (independently versioned image builds; verify each active deployment)
-- `mantic-mcp/` — Mantic MCP
-- `emailens-mcp/` — Emailens MCP bridge
-- `playwright-mcp/` — Playwright MCP with idle HTTP proxy
-- `supabase-mcp/` — Supabase MCP
-- `ubuntu-mcp/` — Ubuntu MCP
-- `mcp-edge/` — Edge gateway service (retain until deployment retirement is verified)
-- `multica-mcp/` — Multica v0.8.1 MCP control plane (Git-built Coolify application)
-- `multica/` — Multica platform metadata (upstream images, owned volumes)
+- **Qdrant:** jedyny kod MCP znajduje się w `mcp/qdrant-mcp/`. Dawny główny katalog `qdrant-mcp/` został wycofany — usługa Qdrant MCP, baza i wolumeny produkcyjne pozostają.
+- **Opik MCP** (`mcp/opik-mcp/`) przyjmuje autoryzowane żądania narzędzi Opik. **Opik run enricher** (`workers/opik-run-enricher/`) dopisuje bezpieczne metryki do zakończonych trace; to osobny worker, nie drugi serwer MCP.
+- **`ops/`** przechowuje mapowanie Coolify, kontrakty wydań i infrastrukturę; nie jest usługą ani katalogiem implementacji MCP. Pliki README i `project.yml` bez kodu nie świadczą o źródłach działającego kontenera.
+- **Ścieżki Coolify:** samo przeniesienie kodu do `mcp/` nie zmienia `base_directory` ani `watch_paths` produkcyjnej aplikacji. Agent ma sprawdzić je przed deploymentem, zwłaszcza dla `github-ops-mcp` i `multica-mcp`.
 
-Project folders without vendored source are metadata-only; their runtime
-source/image is recorded in `docs/COOLIFY-PROJECTS.md`. Each service folder
-owns its `volumes/` directory. Runtime data stays in the
-same Coolify project; only `.gitkeep` and documentation are committed. See
-[`docs/COOLIFY-PROJECTS.md`](docs/COOLIFY-PROJECTS.md) for the project/service/
-volume map and pending structural cleanup.
+**Szczegóły każdej usługi:** [mcp/README.md](mcp/README.md).
+**Architektura i zakres zmian:** [docs/REPOSITORY-ARCHITECTURE.md](docs/REPOSITORY-ARCHITECTURE.md).
+**38 Coolify UUID:** [ops/coolify-service-registry.json](ops/coolify-service-registry.json).
+**Katalog uruchomionych obrazów i ich pochodzenia:** [ops/mcp-images/](ops/mcp-images/).
+**Źródło prawdy dla kontekstów Docker:** [ops/service-build-roots.json](ops/service-build-roots.json).
 
-Historical files were transferred to `miloszspyrka-code/kompaszbiorek-archiwum` under `harness-legacy-20261029/`, preserving each file's relative path. Verified archived source SHA matches were removed from this repository.
+## Warunek ukończenia (dla każdej usługi oddzielnie)
 
-## Source ownership and candidate build layout — not a production deployment claim
+Dokładny commit źródła → lokalne testy i GitHub CI → OCI image z niezmiennym digestem → niezależny review tego SHA → autoryzowany release → potwierdzenie obraz/digest/katalogu w Coolify → pozytywny i negatywny test MCP/E2E → bezpieczny rollback.
 
-**Source owner:** `miloszspyrka-code/harness-zar-i-szlif`. `main` is an integration branch, **not** a universal production release ref. Existing infrastructure MCP services include image-only/upstream-pinned Coolify resources. A folder, Dockerfile or green GitHub Action alone does not prove automatic deployment. Promote an exact reviewed image/ref per service only after its own Git-backed canary, health, authenticated MCP test, immutable digest, runtime readback and rollback. Current per-service policies and observed baselines are tracked in [release-lane PR #41](https://github.com/miloszspyrka-code/harness-zar-i-szlif/pull/41); review/merge and live acceptance remain separate.
-
-The **unified Paperclip Core + Hermes adapter candidate** deliberately uses the repository-root build context to apply pinned Core review-recovery and Hermes adapter overlays together. This special case does not imply a general rule to deploy other infrastructure MCPs from the repo root. Only a reviewed, tested source SHA may be promoted; the 14-agent migration remains gated by real Wiki/Skills, Hindsight, Opik and rollback validation.
-
-The table below is a **candidate source layout** for independently verified service bindings, not an assertion that every production resource already builds from Git. Do not point general-purpose infrastructure MCPs to `zar-i-szlif` or the repo root. The **product MCP** belongs exclusively in the separate product repository.
-
-| Service | Candidate build directory | Dockerfile / build source | Watch paths after verified Git binding |
-| --- | --- | --- | --- |
-| Plasmic MCP | `/plasmic-mcp` | Dockerfile `/Dockerfile` | `plasmic-mcp/**` |
-| ComfyUI MCP | `/comfyui-mcp` | Dockerfile `/Dockerfile` | `comfyui-mcp/**` |
-| Mantic MCP (HTTP) | `/mantic-mcp` | Dockerfile `/Dockerfile.http` | `mantic-mcp/**` |
-| Emailens MCP | `/emailens-mcp` | Dockerfile `/Dockerfile` | `emailens-mcp/**` |
-| Playwright MCP | `/playwright-mcp` | Dockerfile `/Dockerfile` | `playwright-mcp/**` |
-| Supabase MCP | `/supabase-mcp` | Dockerfile `/Dockerfile` | `supabase-mcp/**` |
-| Ubuntu MCP | `/ubuntu-mcp` | Dockerfile `/Dockerfile` | `ubuntu-mcp/**` |
-| MCP edge (temporary) | `/mcp-edge` | Dockerfile `/Dockerfile.coolify` | `mcp-edge/**` |
-| Multica MCP | `/multica-mcp` | Dockerfile `/Dockerfile` | `multica-mcp/**` |
-
-Plasmic Studio (non-MCP) uses `/plasmic` and Docker Compose `/docker-compose.yml`.
-The ComfyUI engine (non-MCP) is separately built from `comfyui-mcp/Dockerfile.comfyui`.
-
-The Coolify GitHub App can now read this private repository (verified 2026-11-02). Enable per-service path-based auto-deploy only after each app passes build + health + MCP tools/list and authorized tools/call tests. The migration-paused watch-path placeholder intentionally blocks auto-deploy until then.
-
-This repository organization does not by itself validate or change live deployments, volumes, secrets, DNS, or routing.
+**Ważne:** umieszczenie kodu i zielony Docker build nie oznaczają, że nowy obraz jest już w produkcji. Bieżący obraz każdej usługi należy odczytać z Coolify/Dockera, nie domniemywać go z wersji w Git.

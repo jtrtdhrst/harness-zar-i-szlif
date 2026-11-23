@@ -1,0 +1,226 @@
+diff --git a/server/internal/daemon/daemon.go b/server/internal/daemon/daemon.go
+index 9ed1d38..e8b3f97 100644
+--- a/server/internal/daemon/daemon.go
++++ b/server/internal/daemon/daemon.go
+@@ -3533,13 +3533,71 @@ func (d *Daemon) registerTaskRepos(workspaceID, taskID string, repos []RepoData)
+ 	}
+ }
+ 
+-// taskRepoURLs snapshots the authoritative project-scoped claim for the
+-// authenticated checkout endpoint. Never infer eligibility from cache state.
+-func taskRepoURLs(repos []RepoData) []string {
+-	urls := make([]string, 0, len(repos))
+-	for _, repo := range repos {
+-		if url := strings.TrimSpace(repo.URL); url != "" {
+-			urls = append(urls, url)
++// scopedRepoClaimKey distinguishes remote repository identity from exact local
++// paths. An unrecognized URL/relative path is never an authorization key.
++func scopedRepoClaimKey(rawURL string) string {
++	trimmed := strings.TrimSpace(rawURL)
++	if trimmed == "" {
++		return ""
++	}
++	if identity := repoIdentity(trimmed); identity != "" {
++		return "repo:" + identity
++	}
++	// Local paths are byte-exact grants; never normalize whitespace into
++	// permission to access a different on-disk path.
++	if rawURL != trimmed {
++		return ""
++	}
++	if filepath.IsAbs(rawURL) && filepath.Clean(rawURL) == rawURL {
++		return "local:" + rawURL
++	}
++	return ""
++}
++
++// taskRepoURLs binds checkout authorization to the project resource manifest
++// supplied by the trusted task claim, not to the workspace fallback. The server
++// intentionally supplies workspace repos to projects without github_repo
++// resources for legacy context; those fallback URLs must never authorize a
++// cross-project checkout. A task without a project keeps workspace semantics.
++func taskRepoURLs(task Task) []string {
++	claimed := make(map[string]string, len(task.Repos))
++	for _, repo := range task.Repos {
++		if key := scopedRepoClaimKey(repo.URL); key != "" {
++			// Safe to trim remote origins; local paths with surrounding
++			// whitespace were rejected by scopedRepoClaimKey.
++			claimed[key] = strings.TrimSpace(repo.URL)
++		}
++	}
++	if task.ProjectID == "" {
++		urls := make([]string, 0, len(claimed))
++		for _, repo := range task.Repos {
++			if url := strings.TrimSpace(repo.URL); url != "" {
++				urls = append(urls, url)
++			}
++		}
++		return urls
++	}
++	urls := make([]string, 0, len(task.ProjectResources))
++	seen := make(map[string]struct{})
++	for _, resource := range task.ProjectResources {
++		if resource.ResourceType != "github_repo" {
++			continue
++		}
++		var ref struct {
++			URL string `json:"url"`
++		}
++		if err := json.Unmarshal(resource.ResourceRef, &ref); err != nil {
++			continue
++		}
++		id := scopedRepoClaimKey(ref.URL)
++		if id == "" {
++			continue
++		}
++		if url, ok := claimed[id]; ok {
++			if _, duplicate := seen[id]; !duplicate {
++				urls = append(urls, url)
++				seen[id] = struct{}{}
++			}
+ 		}
+ 	}
+ 	return urls
+@@ -9373,7 +9431,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 		AgentID:     task.AgentID,
+ 		AgentName:   task.Agent.Name,
+ 		WorkDir:     env.WorkDir,
+-		RepoURLs:    taskRepoURLs(task.Repos),
++		RepoURLs:    taskRepoURLs(task),
+ 	})
+ 	defer d.clearActiveRepoCheckoutTask(agentToken)
+ 	defer d.environments.trackTask(env.RootDir, localenv.Task{
+diff --git a/server/internal/daemon/health.go b/server/internal/daemon/health.go
+index b687af4..8ff8edf 100644
+--- a/server/internal/daemon/health.go
++++ b/server/internal/daemon/health.go
+@@ -153,12 +153,19 @@ func (d *Daemon) registerActiveRepoCheckoutTask(token string, task activeRepoChe
+ // workspace-wide cache union (which may include another project's sources).
+ // Compare repository identities to preserve supported scp/https aliases.
+ func taskRepoCheckoutAllowed(task activeRepoCheckoutTask, requested string) bool {
+-	identity := repoIdentity(strings.TrimSpace(requested))
+-	if identity == "" {
++	trimmed := strings.TrimSpace(requested)
++	if trimmed == "" {
+ 		return false
+ 	}
++	identity := repoIdentity(trimmed)
+ 	for _, allowed := range task.RepoURLs {
+-		if repoIdentity(strings.TrimSpace(allowed)) == identity {
++		// Remote URL identity supports scp/HTTPS aliases and surrounding
++		// whitespace, but local filesystem paths MUST match byte-for-byte.
++		if identity != "" && identity == repoIdentity(strings.TrimSpace(allowed)) {
++			return true
++		}
++		if identity == "" && requested == allowed &&
++			filepath.IsAbs(requested) && filepath.Clean(requested) == requested {
+ 			return true
+ 		}
+ 	}
+diff --git a/server/internal/daemon/health_test.go b/server/internal/daemon/health_test.go
+index 15c1a40..bc4d6de 100644
+--- a/server/internal/daemon/health_test.go
++++ b/server/internal/daemon/health_test.go
+@@ -703,6 +703,7 @@ func newRepoCheckoutHarness(t *testing.T, isolated bool, urls ...string) *repoCh
+ 		TaskID:      "task-1",
+ 		AgentName:   "Test Agent",
+ 		WorkDir:     root,
++		RepoURLs:    urls,
+ 	})
+ 	return &repoCheckoutHarness{d: d, root: root, isolated: isolated}
+ }
+@@ -1009,6 +1010,7 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+ 		AgentID:     "agent-1",
+ 		AgentName:   "Test Agent",
+ 		WorkDir:     workDir,
++		RepoURLs:    []string{repoURL},
+ 	})
+ 	return d
+ }
+diff --git a/server/internal/daemon/zari213_repo_scope_test.go b/server/internal/daemon/zari213_repo_scope_test.go
+index 8b8b0f4..00f34ff 100644
+--- a/server/internal/daemon/zari213_repo_scope_test.go
++++ b/server/internal/daemon/zari213_repo_scope_test.go
+@@ -1,6 +1,7 @@
+ package daemon
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"log/slog"
+ 	"net/http"
+@@ -53,3 +54,74 @@ func TestZARI213CheckoutRejectsOtherProjectBeforeCacheAccess(t *testing.T) {
+ 		t.Fatalf("response=%d body=%q want project scope 403", response.Code, response.Body.String())
+ 	}
+ }
++
++// A project with no github_repo resource receives a workspace fallback from
++// the upstream claim handler. That fallback is NOT project authorization.
++func TestZARI213ProjectRepoManifestOverridesWorkspaceFallback(t *testing.T) {
++	product := "https://github.com/example/product.git"
++	harness := "https://github.com/example/harness.git"
++	repos := []RepoData{{URL: product}, {URL: harness}}
++	for _, tc := range []struct {
++		name string
++		task Task
++		want []string
++	}{
++		{"harness-resource-only", Task{ProjectID: "harness", Repos: repos, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://github.com/example/harness.git"}`)},
++		}}, []string{harness}},
++		{"zero-resource-project-denies", Task{ProjectID: "security", Repos: repos}, nil},
++		{"invalid-resource-denies", Task{ProjectID: "harness", Repos: repos, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":`)},
++		}}, nil},
++		{"unclaimed-resource-denies", Task{ProjectID: "harness", Repos: []RepoData{{URL: product}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"https://github.com/example/harness.git"}`)},
++		}}, nil},
++		{"exact-local-path-allowed", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, []string{"/srv/repos/harness"}},
++		{"different-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/other"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, nil},
++		{"relative-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"repos/harness"}`)},
++		}}, nil},
++		{"unclean-local-path-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/../harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/../harness"}`)},
++		}}, nil},
++		{"local-resource-leading-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":" /srv/repos/harness"}`)},
++		}}, nil},
++		{"local-resource-trailing-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness"}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness "}`)},
++		}}, nil},
++		{"local-task-trailing-space-denied", Task{ProjectID: "harness", Repos: []RepoData{{URL: "/srv/repos/harness "}}, ProjectResources: []ProjectResourceData{
++			{ResourceType: "github_repo", ResourceRef: json.RawMessage(`{"url":"/srv/repos/harness"}`)},
++		}}, nil},
++		{"workspace-without-project", Task{Repos: repos}, []string{product, harness}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			got := taskRepoURLs(tc.task)
++			if len(got) != len(tc.want) {
++				t.Fatalf("repo URLs: got=%q want=%q", got, tc.want)
++			}
++			for i := range got {
++				if got[i] != tc.want[i] {
++					t.Fatalf("repo[%d] got=%q want=%q", i, got[i], tc.want[i])
++				}
++			}
++		})
++	}
++}
++
++// The checkout endpoint must not interpret a path prefix as permission.
++func TestZARI213LocalPathCheckoutExactOnly(t *testing.T) {
++	task := activeRepoCheckoutTask{RepoURLs: []string{"/srv/repos/harness"}}
++	if !taskRepoCheckoutAllowed(task, "/srv/repos/harness") {
++		t.Fatal("exact local checkout denied")
++	}
++	for _, bad := range []string{"/srv/repos/other", "/srv/repos/harness-copy", "/srv/repos/harness/../other", "repos/harness", " /srv/repos/harness", "/srv/repos/harness "} {
++		if taskRepoCheckoutAllowed(task, bad) {
++			t.Fatalf("unexpected local path permission: %q", bad)
++		}
++	}
++}
