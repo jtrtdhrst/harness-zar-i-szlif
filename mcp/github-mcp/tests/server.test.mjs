@@ -684,10 +684,10 @@ test('parity image reader serves both legacy repositories, rejects third and all
      }});
    await new Promise(r=>s.listen(0,'127.0.0.1',r));
    const base='http://127.0.0.1:'+s.address().port;
-   const call=async(name,repo)=>{
+   const call=async(name,repo,extra={})=>{
      const r=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
        body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
-         params:{name,arguments:{repo}}})});
+         params:{name,arguments:{repo,...extra}}})});
      return (await r.json()).result;
    };
    const tools=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
@@ -696,7 +696,8 @@ test('parity image reader serves both legacy repositories, rejects third and all
    assert.equal((await call('github_repo_info',REPO)).structuredContent.full_name,REPO);
    assert.equal((await call('github_repo_info','jtrtdhrst/zar-i-szlif')).structuredContent.full_name,'jtrtdhrst/zar-i-szlif');
    assert.match((await call('github_repo_info','another/repo')).content[0].text,/REPO_DENIED/);
-   assert.match((await call('github_create_branch',REPO)).content[0].text,/WRITE_DISABLED/);
+   assert.match((await call('github_create_branch',REPO,
+     {branch:'feature/parity-test',expected_sha:'a'.repeat(40)})).content[0].text,/WRITE_DISABLED/);
    assert.equal(providerCalls,2,'no GitHub traffic for unknown repo or denied write');
    for(const altered of [
      {repositories:[REPO]},
