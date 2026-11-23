@@ -12,7 +12,7 @@ on:
       - 'mcp/playwright-mcp/**'
       - 'mcp/opik-mcp/**'
       - 'mcp/hindsight-mcp/**'
-      - 'mcp/repowise-mcp/**'
+      - 'apps/repowise/**'
       - 'mcp/supabase-mcp/**'
       - 'mcp/ubuntu-mcp/**'
       - 'scripts/select_mcp_builds.py'

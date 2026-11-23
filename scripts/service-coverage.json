@@ -124,6 +124,13 @@
       "workflows": [
         ".github/workflows/repowise-mcp-ci.yml"
       ]
+    },
+    "apps/repowise": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/vendor-repowise-source.yml",
+        ".github/workflows/repowise-mcp-ci.yml"
+      ]
     }
   }
 }

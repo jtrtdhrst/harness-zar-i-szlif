@@ -751,9 +751,9 @@
         ],
         "source_build_ready": true,
         "release_eligible": false,
-        "provenance_note": "GitHub source ownership candidate in mcp/repowise-mcp. Production STILL uses locally built :HEAD image; no verified source SHA/digest, no approved release, no production E2E. Source presence is not runtime attestation.",
-        "source_root": "mcp/repowise-mcp",
-        "build_dockerfile": "mcp/repowise-mcp/Dockerfile"
+        "provenance_note": "Code-owning GitHub build context apps/repowise; production image remains local :HEAD, source-to-running SHA/digest not established, release_eligible=false. All app/MCP code stays in one vendored source tree.",
+        "source_root": "apps/repowise",
+        "build_dockerfile": "apps/repowise/docker/Dockerfile.mcp"
       }
     ]
   },
@@ -793,10 +793,10 @@
     {
       "id": "repowise-mcp-runtime",
       "uuid": "lecwi3emh9hjxir7gphmalie",
-      "source_root": "mcp/repowise-mcp",
-      "build_dockerfile": "mcp/repowise-mcp/Dockerfile",
+      "source_root": "apps/repowise",
+      "build_dockerfile": "apps/repowise/docker/Dockerfile.mcp",
       "source_build_ready": true,
-      "reason": "Source-controlled RepoWise MCP wrapper and reviewed overrides candidate; Coolify production still uses unverified local :HEAD image; GHCR publication and live release require independent attestation and security HOLD clearance."
+      "reason": "Single canonical full vendored RepoWise 0.60.1 source in apps/repowise builds both the full app and its separate HTTP MCP runtime. Current Coolify runtime still uses unverified local :HEAD image; ZARI-213 HOLD prevents production promotion without independently verified SHA/digest and positive+negative E2E."
     },
     {
       "id": "plasmic",

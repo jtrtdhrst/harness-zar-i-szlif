@@ -3,6 +3,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'apps/repowise/**'
       - 'mcp/repowise-mcp/**'
       - 'ops/repowise/**'
       - 'ops/service-build-roots.json'
@@ -33,7 +34,9 @@ jobs:
           python3 -m unittest discover -s scripts -p test_service_build_roots.py -v
       - name: Validate pinned override source is syntactically sound
         run: |
-          python3 -m py_compile mcp/repowise-mcp/apply_overrides.py
-          python3 -m py_compile mcp/repowise-mcp/overrides/server/mcp_server/tool_answer/answer.py
+          python3 -m py_compile apps/repowise/packages/server/src/repowise/server/mcp_server/tool_answer/answer.py
+          python3 -m py_compile apps/repowise/tests/unit/server/test_answer_branch_routing_owned.py
+          grep -F 'python -m pip install --no-cache-dir .' apps/repowise/docker/Dockerfile.mcp
+          ! grep -E 'pip install .*repowise==' apps/repowise/docker/Dockerfile.mcp
       # The existing source-build-roots-pr workflow runs the pinned RepoWise
       # Dockerfile and embedded behavioral tests from the owned source context.

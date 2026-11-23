@@ -34,8 +34,8 @@ class McpBuildSelectionTests(unittest.TestCase):
             images.select([],event_name="workflow_dispatch",manual_service="qdrant-mcp")
 
     def test_repowise_mcp_uses_its_owned_source_and_runtime_id(self):
-        selected = images.select(["mcp/repowise-mcp/overrides/server/mcp_server/tool_answer/answer.py"], event_name="push")
-        self.assertEqual(selected, [{"service": "repowise-mcp-runtime", "directory": "mcp/repowise-mcp", "dockerfile": "Dockerfile"}])
+        selected = images.select(["apps/repowise/packages/server/src/repowise/server/mcp_server/tool_answer/answer.py"], event_name="push")
+        self.assertEqual(selected, [{"service": "repowise-mcp-runtime", "directory": "apps/repowise", "dockerfile": "docker/Dockerfile.mcp"}])
 
     def test_consecutive_pushes_do_not_lose_other_service_builds(self):
         # Every separate push must remain queued, even if an earlier build runs.
@@ -64,7 +64,8 @@ class McpBuildSelectionTests(unittest.TestCase):
                 manual_service=service),
                 [{"service": service, "directory": images.MCP_BUILD_CONTEXTS[service],
                   "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
-                                 "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}])
+                                 "backend/Dockerfile" if service == "opik-mcp" else
+                                 "docker/Dockerfile.mcp" if service == "repowise-mcp-runtime" else "Dockerfile")}])
         self.assertEqual(len(images.select([], event_name="workflow_dispatch",
                                            manual_service="all")), 10)
 
@@ -99,7 +100,8 @@ class McpBuildSelectionTests(unittest.TestCase):
         for service, directory in images.MCP_BUILD_CONTEXTS.items():
             with self.subTest(service=service):
                 self.assertTrue((repo / directory /
-                                 ("Dockerfile.http" if service == "mantic-mcp" else "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")).is_file())
+                                 ("Dockerfile.http" if service == "mantic-mcp" else "backend/Dockerfile" if service == "opik-mcp" else
+                                 "docker/Dockerfile.mcp" if service == "repowise-mcp-runtime" else "Dockerfile")).is_file())
 
 
 if __name__ == "__main__":

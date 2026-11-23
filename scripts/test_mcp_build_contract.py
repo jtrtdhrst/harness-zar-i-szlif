@@ -92,7 +92,14 @@ class McpSourceBuildContract(unittest.TestCase):
                 dockerfile = row["dockerfile"]
                 self.assertEqual(manifest["source_root"], context)
                 self.assertEqual(manifest["build_dockerfile"], dockerfile)
-                self.assertTrue(context.startswith("mcp/"))
+                if name == "repowise-mcp-runtime":
+                    self.assertEqual(context, "apps/repowise")
+                    self.assertEqual(dockerfile, "apps/repowise/docker/Dockerfile.mcp")
+                    image_source = (ROOT / dockerfile).read_text()
+                    self.assertIn("pip install --no-cache-dir .", image_source)
+                    self.assertNotIn("repowise==", image_source)
+                else:
+                    self.assertTrue(context.startswith("mcp/"))
                 self.assertTrue((ROOT / context).is_dir())
                 self.assertTrue((ROOT / dockerfile).is_file())
                 self.assertTrue((ROOT / dockerfile).resolve().is_relative_to(

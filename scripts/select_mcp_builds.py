@@ -20,7 +20,7 @@ MCP_BUILD_CONTEXTS = {
     "playwright-mcp": "mcp/playwright-mcp",
     "hindsight-mcp": "mcp/hindsight-mcp",
     "opik-mcp": "mcp/opik-mcp",
-    "repowise-mcp-runtime": "mcp/repowise-mcp",
+    "repowise-mcp-runtime": "apps/repowise",
     "supabase-mcp": "mcp/supabase-mcp",
     "ubuntu-mcp": "mcp/ubuntu-mcp",
 }
@@ -52,7 +52,8 @@ def select(changed_paths, *, event_name, manual_service="all"):
         raise ValueError("untrusted_event")
     return [{"service": service, "directory": MCP_BUILD_CONTEXTS[service],
              "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
-                            "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}
+                            "backend/Dockerfile" if service == "opik-mcp" else
+                           "docker/Dockerfile.mcp" if service == "repowise-mcp-runtime" else "Dockerfile")}
             for service in sorted(selected)]
 
 

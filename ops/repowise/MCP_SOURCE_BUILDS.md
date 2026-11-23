@@ -4,7 +4,7 @@
 
 ## Mandatory rule for every source-owned MCP
 
-1. Source code, lockfiles, Dockerfile and tests live in one canonical `mcp/<service>/` directory. All Docker `COPY` inputs must be inside that service's own build context; no repo-root fallback, ghost source folders or unreviewed vendor binaries.
+1. Each source-owned MCP builds only from one canonical, explicitly mapped GitHub source root. Standard services use `mcp/<service>/`. **RepoWise MCP is the deliberate shared-vendor exception**: the full 0.60.1 application and its HTTP MCP runtime both build directly from `apps/repowise/` (Dockerfile `docker/Dockerfile.mcp`) with `pip install .`, never a downloaded RepoWise wheel or a duplicated fork. All Docker `COPY` inputs remain inside that selected context; no repo-root fallback, ghost source folders, external runtime source, or unreviewed vendor binaries.
 2. An exact, reviewed GitHub `main` SHA builds through its assigned workflow (table below). PR validation uses the exact PR SHA and must not run untrusted PR workflow code on a production-adjacent self-hosted runner.
 3. OCI image must include `org.opencontainers.image.source` and `org.opencontainers.image.revision`, be published to GHCR with an exact `sha-<40-char-commit>` tag, and its **registry manifest digest** must be recorded. An image ID or floating tag is not a release digest.
 4. Publishing is not deployment. Production Coolify uses only the authorized immutable `image@sha256:...`; do not auto-promote on push or alter persistent volumes/OAuth state. Preserve CTO exact-SHA review, COO release authorization, CI verification, approved per-service UUID, production digest readback, positive/negative MCP E2E and rollback.
@@ -29,7 +29,7 @@ Every row below is derived from `ops/coolify-service-registry.json` and `ops/ser
 | supabase-mcp | `tjit4c8m0kjh8brkmdhyvkde` | `mcp/supabase-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 | ubuntu-mcp | `lcnjb3vreec7saihkhan6akh` | `mcp/ubuntu-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 
-| repowise-mcp-runtime | `lecwi3emh9hjxir7gphmalie` | `mcp/repowise-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
+| repowise-mcp-runtime | `lecwi3emh9hjxir7gphmalie` | `apps/repowise` | `docker/Dockerfile.mcp` | `mcp-images-ghcr.yml` |
 
 Additional owned non-MCP runtime image roots (Hermes Gateway and RepoWise deployment publisher staging) use `owned-runtime-images-ghcr.yml`; this table excludes them because their service identifiers are not MCPs.
 
@@ -38,7 +38,7 @@ Qdrant MCP was retired in Harness PR #182, source removed from `main` at commit 
 ## Exceptions, not evidence of source ownership
 
 - `cloudflared-mcp` and `mcp-activation`: vendor-image network/activation services, **not** a compiled MCP source checkout. If custom implementation is introduced, it must first be committed in an owned root and added to the source catalog and guarded publisher.
-- `repowise-mcp-runtime`: source candidate now exists under `mcp/repowise-mcp` with reviewed overrides and GitHub build mapping; the **production** service still runs `fciqzgceop7mqtqickkfomd7:HEAD` with UNKNOWN running SHA/digest, and remains **NOT DEPLOYED / NOT E2E VERIFIED**. The candidate Dockerfile currently installs the version-pinned upstream Repowise 0.60.1 wheel; source ownership of the complete vendor application is separately in `apps/repowise/`. This dependency must be reconciled and reviewed before immutable production attestation.
+- `repowise-mcp-runtime`: GitHub source and HTTP MCP build now share the one `apps/repowise/` vendor tree, with the branch-attribution patch installed directly in its Python module (no duplicate PyPI wheel install). **Production** still runs local `fciqzgceop7mqtqickkfomd7:HEAD` with UNKNOWN running SHA/digest; production remains **NOT DEPLOYED / NOT E2E VERIFIED** until independently authorized Coolify digest parity, native MCP positive/negative E2E and rollback.
 - `zar-i-szlif-mcp-host` and `zar-i-szlif-mcp-host-image`: **other repository** `jtrtdhrst/zar-i-szlif`. Validate/build them under their owning repo's own CI; do not copy product code into Harness.
 
 ## Verification commands and ownership boundaries

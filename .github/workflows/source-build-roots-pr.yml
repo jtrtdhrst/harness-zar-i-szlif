@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'ops/service-build-roots.json'
+      - 'apps/repowise/**'
       - 'mcp/repowise-mcp/**'
       - 'scripts/test_service_build_roots.py'
       - 'scripts/test_mcp_build_contract.py'

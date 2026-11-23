@@ -1,18 +1,14 @@
-# RepoWise Harness MCP (Git-owned build)
-The live Coolify service `lecwi3emh9hjxir7gphmalie` runs RepoWise **0.60.1** and hosts the Harness/Product MCP indexes. This source builds an equivalent pinned MCP executable; existing live containers/volumes stay unchanged until a separately approved cutover.
+# RepoWise MCP — canonical GitHub source and HTTP deployment
 
-## Coolify Git deployment configuration
-- Source: private GitHub `jtrtdhrst/harness-zar-i-szlif`, reviewed commit of `main`.
-- Build Pack: **Dockerfile**. Base Directory: `/repowise-mcp`; Dockerfile Location: `/Dockerfile`.
-- Internal port: `7338`. Disable auto-deploy during the release HOLD.
-- Copy existing runtime environment keys through **Coolify secrets**, never into Git; `REPOWISE_API_KEY`, `REPOWISE_DB_URL`, `REPOWISE_EMBEDDER`, `REPOWISE_EMBEDDING_MODEL` may be required by the existing runtime.
-- Preserve existing workspace/index volume and Codex-state volume only after a consistent backup and single-writer cutover. Do not mount the current writable index into a concurrently running candidate.
-- In staging, provide an independent index volume and check `repowise --version`, MCP handshake, tools/list, authenticated access, unauthorized 401, and exact indexed HEAD.
+The **only** application and MCP implementation source is the complete RepoWise 0.60.1 tree in `apps/repowise/`. This folder retains the migration contract and historical PR #196 provenance, not an independent code fork or downloaded package.
 
-## Edit the actual MCP Python implementation
-The pinned RepoWise 0.60.1 wheel is installed first. The Docker build then copies **only reviewed existing .py modules** from `overrides/<path-under-repowise-package>` into its installed package. The script rejects missing targets, non-Python files, and symlinks. For example, to customize the MCP HTTP router, commit the complete reviewed replacement at `overrides/server/routers/mcp.py` (based on the exact installed 0.60.1 source). For CLI integration code, the package path is `overrides/cli/commands/mcp_cmd.py`. Always compare the original vendor file/diff and run integration tests; an override changes upstream code and must not weaken auth.
+- Source: `apps/repowise/packages/server/src/repowise/server/mcp_server/tool_answer/answer.py`
+- Source build: `apps/repowise/docker/Dockerfile.mcp`; build context `apps/repowise/`
+- Real behavioral regression: `apps/repowise/tests/unit/server/test_answer_branch_routing_owned.py`
+- CI: `.github/workflows/repowise-mcp-ci.yml` (PR gates) + `.github/workflows/mcp-images-ghcr.yml` (trusted main SHA-bound GHCR publisher)
+- Coolify existing service UUID: `lecwi3emh9hjxir7gphmalie`, **still running local `:HEAD` until authorized release**
+- Preserve existing Harness/Product repo volumes, private environment configuration, internal port 7338, and rollback. Do not include runtime data, tokens, or private config in Git.
 
-This provides source-level edits from the Harness repo **without silently upgrading upstream RepoWise**. Hindsight's repo-owned MCP source is the gateway Caddyfile, not the memory engine. The original upstream repositories are maintained separately.
+The MCP build installs its package from `apps/repowise` using `pip install .`. No PyPI RepoWise application wheel, alternative local image source, or repo-root Docker build context is permitted.
 
-## Release gate
-Feature branch → independent exact-SHA review → CI and isolated Docker smoke → authorized Coolify update → running image digest/endpoint readback and rollback. An enabled MCP assignment is not evidence the agent can execute it.
+**Release:** exact reviewed main SHA → tested GHCR immutable digest → independent security isolation clearance (ZARI-213) and COO per-UUID authorization → Coolify image parity → authenticated positive and negative HTTP MCP tests → rollback proof. A green image build is not deployment approval.
