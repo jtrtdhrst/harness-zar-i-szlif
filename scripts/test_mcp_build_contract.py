@@ -35,10 +35,8 @@ def build_roots():
 
 
 def evidence_step(source, action):
-    """Find exactly one YAML step invoking the given mandatory evidence action."""
-    # A valid GitHub Actions step may start with '- if:' or '- uses:',
-    # not only '- name:'. Split on ANY six-space YAML list mapping key.
-    steps = re.split(r"(?m)(?=^      - [a-z][a-z-]*:)", source)
+    """Find exactly one mandatory action step, independent of YAML key order."""
+    steps = re.split(r"""(?m)(?=^      - ['"]?[a-z][a-z-]*['"]?[ \t]*:)""", source)
     matches = [step for step in steps if "uses: " + action in step]
     if len(matches) != 1:
         raise AssertionError("missing_or_duplicated_evidence_step:" + action)
@@ -46,15 +44,35 @@ def evidence_step(source, action):
 
 
 def require_mandatory_evidence_action(source, action):
-    """Fail closed on skipped/soft-failed attestation, even at job scope."""
+    """Fail closed on step/job soft failures and conditional evidence actions."""
     block = evidence_step(source, action)
-    # A condition or continue-on-error anywhere in the action step permits
-    # green OCI publication with missing/invalid evidence.
-    if re.search(r"(?m)^(?:      - |        )(?:if|continue-on-error):", block):
+    if re.search(r"""(?m)^(?:      - |        )['"]?(?:if|continue-on-error)['"]?[ \t]*:""", block):
         raise AssertionError("conditional_or_nonblocking_evidence_step:" + action)
-    # Job-level soft failure would also mask a failed mandatory evidence step.
-    if re.search(r"(?m)^    continue-on-error:", source):
+    if re.search(r"""(?m)^    ['"]?continue-on-error['"]?[ \t]*:""", source):
         raise AssertionError("nonblocking_publisher_job:" + action)
+
+
+EXPECTED_PUBLISH_IF = {
+    GENERAL_FLOW: "needs.select.outputs.matrix != '[]' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')",
+    RUNTIME_FLOW: "github.ref == 'refs/heads/main' && needs.select.outputs.matrix != '[]' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')",
+    COOLIFY_FLOW: "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+}
+
+
+def require_exact_main_publish_gate(source, flow):
+    """Only an explicitly trusted-main publishing job can carry OCI identity."""
+    job_name = "build-and-push" if flow == GENERAL_FLOW else "publish"
+    boundaries = list(re.finditer(r"(?m)^  ([a-z][a-z0-9-]*):[ \t]*$", source))
+    matches = [i for i, m in enumerate(boundaries) if m.group(1) == job_name]
+    if len(matches) != 1:
+        raise AssertionError("missing_or_duplicated_publish_job:" + flow)
+    i = matches[0]
+    body = source[boundaries[i].start():boundaries[i + 1].start() if i + 1 < len(boundaries) else len(source)]
+    conditions = re.findall(r"""(?m)^    ['"]?if['"]?[ \t]*:[ \t]*(.*)$""", body)
+    if conditions != [EXPECTED_PUBLISH_IF[flow]]:
+        raise AssertionError("untrusted_or_conditional_publish_job:" + flow)
+    if re.search(r"""(?m)^    ['"]?continue-on-error['"]?[ \t]*:""", body):
+        raise AssertionError("nonblocking_publish_job:" + flow)
 
 
 class McpSourceBuildContract(unittest.TestCase):
@@ -113,6 +131,7 @@ class McpSourceBuildContract(unittest.TestCase):
                 require_mandatory_evidence_action(source, "actions/upload-artifact@")
                 self.assertIn("release_authorized", source)
                 self.assertIn("production_verified", source)
+                require_exact_main_publish_gate(source, flow)
                 self.assertNotIn("git reset --hard origin/main", source)
 
     def test_nonblocking_or_conditional_attestation_is_rejected(self):
@@ -148,6 +167,31 @@ class McpSourceBuildContract(unittest.TestCase):
                 with self.subTest(flow=flow, action=action, shape="job-soft-failure"):
                     with self.assertRaises(AssertionError):
                         require_mandatory_evidence_action(job_soft_failure, action)
+
+    def test_publish_job_and_yaml_spacing_bypass_regressions(self):
+        """Reject valid YAML spacing variants and a bypassing job-level if."""
+        for flow in (GENERAL_FLOW, RUNTIME_FLOW, COOLIFY_FLOW):
+            source = (WORKFLOWS / flow).read_text()
+            require_exact_main_publish_gate(source, flow)
+            for action in ("actions/attest@", "actions/upload-artifact@"):
+                for injected in ("        if : always()\n",
+                                 "        continue-on-error : true\n"):
+                    mutated = source.replace("        uses: " + action,
+                                             injected + "        uses: " + action, 1)
+                    with self.subTest(flow=flow, action=action, shape="spaced-key"):
+                        with self.assertRaises(AssertionError):
+                            require_mandatory_evidence_action(mutated, action)
+            marker = "    if: " + EXPECTED_PUBLISH_IF[flow]
+            self.assertIn(marker, source)
+            for alt in ("    if: false", "    if : always()", marker + "\n    if: false"):
+                changed = source.replace(marker, alt, 1)
+                with self.subTest(flow=flow, shape="publish-job-if", alt=alt):
+                    with self.assertRaises(AssertionError):
+                        require_exact_main_publish_gate(changed, flow)
+            changed = source.replace("    permissions:", "    continue-on-error : true\n    permissions:", 1)
+            with self.subTest(flow=flow, shape="job-spaced-soft-failure"):
+                with self.assertRaises(AssertionError):
+                    require_exact_main_publish_gate(changed, flow)
 
     def test_no_unknown_vendor_image_is_falsely_marked_source_owned(self):
         rows = {
