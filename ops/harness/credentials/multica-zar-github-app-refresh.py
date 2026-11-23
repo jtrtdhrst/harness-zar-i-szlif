@@ -27,10 +27,12 @@ ROLE_PERMISSIONS = {
     "harness-reader": {"contents": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
     "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
+    # Dedicated, non-brokered credential for a digest-pinned GitHub Ops MCP image.
+    "github-ops-reader-harness": {"contents": "read", "metadata": "read"},
     "github-ops-writer": {"actions": "write", "contents": "write", "pull_requests": "write", "metadata": "read"},
 }
-ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
-ROLE_REPOS = {"harness-reader": (REPOS[0],)}
+ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",), "github-ops-reader-harness": ("harness-zar-i-szlif",)}
+ROLE_REPOS = {"harness-reader": (REPOS[0],), "github-ops-reader-harness": (REPOS[0],)}
 # Scoped agent grants are consumed by the broker; runner is a separate privileged role.
 for _base in ("implementer", "reviewer", "release"):
     for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
