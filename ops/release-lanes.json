@@ -350,7 +350,7 @@
       "review_required": true,
       "exact_image_digest_required": true,
       "source_commit_required_when_source_built": true,
-      "evidence_state": "retirement_pending",
+      "evidence_state": "open",
       "observed_at": "2026-11-04",
       "release_contract": "Retired Qdrant MCP only: NO build/deploy; pending controlled Coolify service removal. Separate Qdrant database remains untouched.",
       "reviewer_role": "CHO"
