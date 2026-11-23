@@ -12,7 +12,6 @@ on:
       - 'mcp/playwright-mcp/**'
       - 'mcp/opik-mcp/**'
       - 'mcp/hindsight-mcp/**'
-      - 'mcp/qdrant-mcp/**'
       - 'mcp/repowise-mcp/**'
       - 'mcp/supabase-mcp/**'
       - 'mcp/ubuntu-mcp/**'
@@ -34,8 +33,7 @@ on:
           - playwright-mcp
           - opik-mcp
           - hindsight-mcp
-          - qdrant-mcp
-          - repowise-mcp
+          - repowise-mcp-runtime
           - supabase-mcp
           - ubuntu-mcp
 
@@ -81,6 +79,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -91,6 +91,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build and publish exact main SHA with isolated rootless Buildah
+        id: publish
         shell: bash
         env:
           SERVICE: ${{ matrix.service }}
@@ -133,3 +134,39 @@ jobs:
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf '%s %s %s\n' "$SERVICE" "$GITHUB_SHA" "$digest" >> "$GITHUB_STEP_SUMMARY"
           echo 'OCI artifact published; Coolify promotion is separately gated.'
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/harness-${SERVICE}" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          export RELEASE_DIGEST="$digest" RELEASE_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/harness-${SERVICE}"
+          mkdir -p "$RUNNER_TEMP/mcp-image-releases/$SERVICE"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          e = os.environ
+          assert re.fullmatch(r"[a-f0-9]{40}", e["GITHUB_SHA"])
+          assert re.fullmatch(r"sha256:[a-f0-9]{64}", e["RELEASE_DIGEST"])
+          data = {
+              "schema_version": 1, "service": e["SERVICE"],
+              "source_repository": e["GITHUB_REPOSITORY"],
+              "source_sha": e["GITHUB_SHA"],
+              "source_root": e["BUILD_ROOT"],
+              "dockerfile": e["BUILD_ROOT"] + "/" + e["DOCKERFILE"],
+              "image": e["RELEASE_IMAGE"],
+              "image_digest": e["RELEASE_DIGEST"],
+              "subject": e["RELEASE_IMAGE"] + "@" + e["RELEASE_DIGEST"],
+              "release_authorized": False, "production_verified": False,
+          }
+          path = pathlib.Path(e["RUNNER_TEMP"]) / "mcp-image-releases" / e["SERVICE"] / "release.json"
+          path.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          echo "manifest=$RUNNER_TEMP/mcp-image-releases/$SERVICE/release.json" >> "$GITHUB_OUTPUT"
+      - name: Attest exact main SHA-bound OCI digest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+      - name: Upload non-authorizing release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mcp-oci-${{ matrix.service }}-${{ github.sha }}
+          path: ${{ steps.publish.outputs.manifest }}
+          if-no-files-found: error
+          retention-days: 30

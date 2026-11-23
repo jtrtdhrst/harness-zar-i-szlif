@@ -18,10 +18,9 @@ MCP_BUILD_CONTEXTS = {
     "mantic-mcp": "mcp/mantic-mcp",
     "plasmic-mcp": "mcp/plasmic-mcp",
     "playwright-mcp": "mcp/playwright-mcp",
-    "qdrant-mcp": "mcp/qdrant-mcp",
-    "repowise-mcp": "mcp/repowise-mcp",
     "hindsight-mcp": "mcp/hindsight-mcp",
     "opik-mcp": "mcp/opik-mcp",
+    "repowise-mcp-runtime": "mcp/repowise-mcp",
     "supabase-mcp": "mcp/supabase-mcp",
     "ubuntu-mcp": "mcp/ubuntu-mcp",
 }

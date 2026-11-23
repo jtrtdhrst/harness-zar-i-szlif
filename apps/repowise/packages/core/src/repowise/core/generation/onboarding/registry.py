@@ -1,0 +1,98 @@
+"""Registry of onboarding subkind specifications.
+
+Each subkind module declares a :class:`SubkindSpec` and calls :func:`register`
+on import. The dispatcher in :mod:`page_generator` iterates :func:`iter_specs`
+to drive generation — adding a new subkind never requires changes to the
+dispatcher itself.
+
+A subkind's ``build_context`` is allowed to return ``None`` when the slot's
+gate (e.g. "needs >= 50 commits") fails for this repo. The dispatcher then
+silently skips the slot — both the page and any UI nav entry.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+
+from .signals import OnboardingSignals
+from .slots import ONBOARDING_SLOTS, PROMOTED_SLOTS
+
+# A builder returns either a context object the template can render, or None
+# to indicate the gate failed and the slot should be skipped for this repo.
+BuildContext = Callable[[OnboardingSignals], object | None]
+EvidenceReferences = Callable[[object], Sequence[str]]
+
+
+@dataclass(frozen=True)
+class SubkindSpec:
+    """One onboarding subkind.
+
+    Attributes:
+        slot:          Slot identifier from :mod:`onboarding.slots`.
+        title:         Display title for the generated page.
+        template:      Jinja template filename, relative to
+                       ``templates/onboarding/``.
+        build_context: Returns the template context, or ``None`` to skip.
+        evidence_references: Optional callback receiving the completed subkind
+                       context. It returns ordered canonical ``path::symbol``
+                       references; first occurrence sets priority and duplicates
+                       are ignored. Missing files, symbols, or ranges become
+                       observable evidence skips rather than generation errors.
+        deterministic: The page is rendered from its context alone, with no
+                       provider call, on every run. Set it when the page is
+                       made of facts rather than of judgements: a model asked
+                       to restate enumerable facts resamples them, and two
+                       renders of one unchanged repository then differ. Such a
+                       subkind needs only its ``stub/`` template, because that
+                       is the only one that ever renders.
+        needs_parts:   Populate ``OnboardingSignals.parts`` (the top-level
+                       parts and their page summaries) for this subkind.
+                       Declared here rather than tested for by slot name in
+                       the level builder; it costs a batched store read, and a
+                       run emitting no subkind that wants it does not pay.
+    """
+
+    slot: str
+    title: str
+    template: str
+    build_context: BuildContext
+    evidence_references: EvidenceReferences | None = None
+    deterministic: bool = False
+    needs_parts: bool = False
+
+
+_REGISTRY: dict[str, SubkindSpec] = {}
+
+
+def register(spec: SubkindSpec) -> None:
+    """Register a subkind spec. Idempotent re-registration is rejected."""
+    if spec.slot in PROMOTED_SLOTS.values():
+        # Defensive: promoted slots are not generated through this path.
+        raise ValueError(
+            f"Slot '{spec.slot}' is promoted and must not be registered as a generated subkind."
+        )
+    if spec.slot in _REGISTRY:
+        raise ValueError(f"Duplicate onboarding subkind: {spec.slot}")
+    if spec.slot not in ONBOARDING_SLOTS:
+        raise ValueError(
+            f"Unknown onboarding slot '{spec.slot}'. Add it to ONBOARDING_SLOTS in slots.py first."
+        )
+    _REGISTRY[spec.slot] = spec
+
+
+def get_spec(slot: str) -> SubkindSpec | None:
+    """Return the spec for a slot, or ``None`` if unregistered."""
+    return _REGISTRY.get(slot)
+
+
+def iter_specs() -> list[SubkindSpec]:
+    """Return registered specs in display order.
+
+    The promoted slot (project_overview) is not generated
+    through this path and are excluded here.
+    """
+    promoted = set(PROMOTED_SLOTS.values())
+    return [
+        _REGISTRY[slot] for slot in ONBOARDING_SLOTS if slot not in promoted and slot in _REGISTRY
+    ]

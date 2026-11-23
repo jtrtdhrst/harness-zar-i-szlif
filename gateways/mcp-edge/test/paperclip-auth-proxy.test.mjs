@@ -85,9 +85,9 @@ test("Paperclip proxy fails closed if a shared edge credential could collapse pr
 
 test("unrelated MCP worker keeps existing auth-header allowlist", async (t) => {
   const read = capture(t, new Response(null, { status: 302, headers: { location: "https://example.org" } }));
-  const res = await worker.fetch(new Request("https://qdrant-mcp.zariszlif.pl/mcp", {
+  const res = await worker.fetch(new Request("https://supabase-mcp.zariszlif.pl/mcp", {
     headers: { "x-paperclip-board-api-key": "secret" },
-  }), { UPSTREAM_URL: "https://qdrant-engine.zariszlif.pl/mcp" });
+  }), { UPSTREAM_URL: "https://supabase-engine.zariszlif.pl/mcp" });
   assert.equal(res.status, 302);
   assert.equal(res.headers.get("location"), null);
   assert.equal(read().init.headers.get("x-paperclip-board-api-key"), null);

@@ -1,0 +1,31 @@
+"use client";
+
+import useSWR from "swr";
+import { getChangelog, getMetaVersion } from "@/lib/api/meta";
+
+const SWR_OPTS = { revalidateOnFocus: false, revalidateOnReconnect: false };
+
+/**
+ * Server version + PyPI freshness. Shared key so the banner and the version
+ * footer dedupe to a single request.
+ */
+export function useMetaVersion() {
+  const { data, error, isLoading } = useSWR(
+    "meta-version",
+    () => getMetaVersion(),
+    // Re-check hourly; the server caches the PyPI lookup so this is cheap.
+    { ...SWR_OPTS, refreshInterval: 60 * 60 * 1000 },
+  );
+  return { meta: data ?? null, error: (error as Error | undefined) ?? null, isLoading };
+}
+
+/** Changelog entries. Fetched lazily (pass enabled=false until the view opens).
+ *  `includeNewer` also lists releases newer than the running version. */
+export function useChangelog(enabled: boolean, limit = 20, includeNewer = false) {
+  const { data, error, isLoading } = useSWR(
+    enabled ? ["changelog", limit, includeNewer] : null,
+    () => getChangelog(limit, includeNewer),
+    SWR_OPTS,
+  );
+  return { entries: data?.entries ?? [], error: (error as Error | undefined) ?? null, isLoading };
+}

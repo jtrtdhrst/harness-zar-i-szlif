@@ -14,7 +14,7 @@ class ImageCatalogTests(unittest.TestCase):
 
     def test_complete_unique_coolify_mcp_coverage(self):
         expected={x["uuid"] for x in self.registry["resources"]
-                  if "mcp" in x["name"].lower() or x["name"]=="hermes-gateway"}
+                  if ("mcp" in x["name"].lower() or x["name"]=="hermes-gateway") and x.get("source") not in ("owned-image","retired-runtime")}
         actual=[x["coolify_uuid"] for x in self.catalog["items"]]
         self.assertEqual(set(actual),expected)
         self.assertEqual(len(actual),len(set(actual)))
@@ -34,13 +34,10 @@ class ImageCatalogTests(unittest.TestCase):
                 if x["last_published_ghcr_tag"]:
                     self.assertRegex(x["last_published_ghcr_tag"],r"^ghcr.io/jtrtdhrst/harness-[a-z0-9-]+:sha-[a-f0-9]{40}$")
 
-    def test_qdrant_source_matches_captured_live_bytes(self):
-        x=next(x for x in self.catalog["items"] if x["service"]=="qdrant-mcp")
-        self.assertEqual(x["dockerfile"],"mcp/qdrant-mcp/Dockerfile")
-        self.assertEqual(hashlib.sha256((ROOT/"mcp/qdrant-mcp/server.py").read_bytes()).hexdigest(),
-                         x["runtime_matching_server_sha256"])
-        self.assertEqual(hashlib.sha256((ROOT/"mcp/qdrant-mcp/requirements.txt").read_bytes()).hexdigest(),
-                         x["runtime_matching_requirements_sha256"])
+    def test_retired_qdrant_has_no_mcp_build_artifact(self):
+        self.assertNotIn("qdrant-mcp",[x["service"] for x in self.catalog["items"]])
+        self.assertFalse((ROOT/"mcp/qdrant-mcp").exists())
+
 
 if __name__=="__main__":
     unittest.main()

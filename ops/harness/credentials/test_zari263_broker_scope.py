@@ -14,15 +14,26 @@ SPEC.loader.exec_module(broker)
 
 H = "jtrtdhrst/harness-zar-i-szlif"
 P = "jtrtdhrst/zar-i-szlif"
+WORKFLOWS_WRITE_ROLES = {
+    "implementer-harness", "implementer-product",
+    "release-harness", "release-product",
+}
+
+
+def expected_permissions(role):
+    base = role if role == "cache-reader" else role.split("-", 1)[0]
+    permissions = dict(broker.ROLE_PERMISSIONS[base])
+    if role in WORKFLOWS_WRITE_ROLES:
+        permissions["workflows"] = "write"
+    return permissions
 
 
 def token(role, repos, permissions=None):
-    base = role if role == "cache-reader" else role.split("-", 1)[0]
     return {
         "token": "ghs_" + "x" * 46,
         "role": role,
         "repositories": list(repos),
-        "permissions": permissions or broker.ROLE_PERMISSIONS[base],
+        "permissions": permissions or expected_permissions(role),
         "expires_at": (datetime.datetime.now(datetime.timezone.utc)
                        + datetime.timedelta(minutes=35)).isoformat(),
     }
@@ -45,6 +56,36 @@ class ScopedAgentGrants(unittest.TestCase):
                 self.assertEqual(self.read(role, token(role, [own]))["role"], role)
                 with self.assertRaisesRegex(ValueError, "repository scope mismatch"):
                     self.read(role, token(role, [own, foreign]))
+
+    def test_workflows_write_is_confined_to_scoped_implementer_and_release_roles(self):
+        allowed = {
+            "implementer-harness": H,
+            "implementer-product": P,
+            "release-harness": H,
+            "release-product": P,
+        }
+        for role, own_repo in allowed.items():
+            with self.subTest(role=role):
+                payload = token(role, [own_repo])
+                self.assertEqual(payload["permissions"].get("workflows"), "write")
+                self.assertEqual(self.read(role, payload)["permissions"],
+                                 expected_permissions(role))
+
+    def test_reviewers_and_unscoped_roles_reject_workflows_write(self):
+        examples = (
+            ("reviewer-harness", [H]), ("reviewer-product", [P]),
+            ("implementer", [H, P]), ("release", [H, P]),
+            ("reviewer", [H, P]), ("cache-reader", [H, P]),
+        )
+        for role, repos in examples:
+            with self.subTest(role=role):
+                baseline = token(role, repos)
+                self.assertNotIn("workflows", baseline["permissions"])
+                self.assertEqual(self.read(role, baseline)["role"], role)
+                broadened = token(role, repos)
+                broadened["permissions"]["workflows"] = "write"
+                with self.assertRaisesRegex(ValueError, "permissions mismatch"):
+                    self.read(role, broadened)
 
     def test_broker_refuses_privileged_runner_and_unmapped_roles(self):
         for role in ("runner", "runner-harness", "runner-product", "unknown"):

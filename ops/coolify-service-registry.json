@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "repository": "jtrtdhrst/harness-zar-i-szlif",
-  "inventory_date": "2026-11-22",
-  "purpose": "Read-only source inventory, NOT an attestation of production image provenance or auto-deploy.",
+  "inventory_date": "2026-11-23",
+  "purpose": "Live 38-resource source/provenance inventory; identifies build-ready sources, image consumers and upstream dependencies without falsely claiming verified production source or E2E.",
   "resources": [
     {
       "name": "github-ops-mcp",
@@ -11,6 +11,28 @@
       "source": "owned-code",
       "root": "mcp/github-mcp",
       "dockerfile": "mcp/github-mcp/Dockerfile"
+    },
+    {
+      "name": "github-ops-mcp-digest-canary-a4a2f9b",
+      "uuid": "o968ndolpcfecgswerjjeg6j",
+      "type": "application",
+      "source": "owned-image",
+      "origin_service": "github-ops-mcp",
+      "origin_root": "mcp/github-mcp",
+      "source_repository": "jtrtdhrst/harness-zar-i-szlif",
+      "build_pack": "dockerimage",
+      "note": "Image-only GHCR canary with no traffic; Coolify exited:unhealthy at 2026-11-23 audit. It must consume reviewed images produced from mcp/github-mcp; image digest and live SHA require independent attestation."
+    },
+    {
+      "name": "github-ops-mcp-immutable-prod-d17e135",
+      "uuid": "sf67p2qio3qf31dwvkp5gcfw",
+      "type": "application",
+      "source": "owned-image",
+      "origin_service": "github-ops-mcp",
+      "origin_root": "mcp/github-mcp",
+      "source_repository": "jtrtdhrst/harness-zar-i-szlif",
+      "build_pack": "dockerimage",
+      "note": "Image-only immutable GHCR candidate running healthy without production traffic at 2026-11-23 audit. It must consume reviewed images produced from mcp/github-mcp; running image alone is not a source attestation."
     },
     {
       "name": "hermes-gateway",
@@ -157,10 +179,8 @@
       "name": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
       "type": "service",
-      "source": "owned-code",
-      "root": "mcp/qdrant-mcp",
-      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
-      "dockerfile": "mcp/qdrant-mcp/Dockerfile"
+      "source": "retired-runtime",
+      "note": "Owner retired Qdrant MCP source/build and requested production service teardown; no further builds. Qdrant database UUID eciprwgeyol4znmdd0dpu3xc remains separate and must not be deleted."
     },
     {
       "name": "supabase-mcp",
@@ -257,7 +277,7 @@
       "uuid": "lecwi3emh9hjxir7gphmalie",
       "type": "service",
       "source": "owned-code",
-      "note": "Source-owned pinned candidate only. Production still runs local HEAD image, with no proven matching source SHA or reviewed immutable digest.",
+      "note": "Owned GitHub candidate is source only. Current Coolify production still uses fciqzgceop7mqtqickkfomd7:HEAD without proven digest/SHA and remains on ZARI-213 security HOLD.",
       "root": "mcp/repowise-mcp",
       "dockerfile": "mcp/repowise-mcp/Dockerfile"
     }

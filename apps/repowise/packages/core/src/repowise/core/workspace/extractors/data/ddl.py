@@ -1,0 +1,78 @@
+"""DDL provider dialect: tables declared in ``.sql`` files.
+
+A ``CREATE TABLE`` / ``CREATE VIEW`` in a repo's schema files or migrations is
+the strongest ownership signal there is. Parsed with sqlglot in permissive
+mode (same engine as the ingestion SQL handler): a statement that fails to
+parse contributes nothing, never a guess. ``ALTER TABLE`` in migrations also
+asserts ownership (the repo evolves that table), marked ``schema: alter``.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from repowise.core.workspace.origins import ContractOrigin
+
+from ..base import ScanContext
+from .dialect import build_table_provider
+
+if TYPE_CHECKING:
+    from repowise.core.workspace.contracts import Contract
+
+# CREATE kinds that declare a relation worth a provider contract. INDEX and
+# TRIGGER attach to a table but don't declare one.
+_CREATE_KINDS = frozenset({"TABLE", "VIEW", "MATERIALIZED VIEW"})
+
+
+def _qualified_name(node: object) -> str | None:
+    """``schema.table`` (or bare ``table``) for a sqlglot Table-ish node."""
+    name = getattr(node, "name", "") or ""
+    if not name:
+        return None
+    db = getattr(node, "db", "") or ""
+    return f"{db}.{name}" if db else name
+
+
+class DdlDialect:
+    """Providers from ``CREATE``/``ALTER`` statements in ``.sql`` files."""
+
+    name = "ddl"
+    extensions = frozenset({".sql"})
+    requires = ("CREATE", "create", "Create", "ALTER", "alter", "Alter")
+
+    def extract(self, ctx: ScanContext) -> list[Contract]:
+        try:
+            from sqlglot import exp
+        except ImportError:
+            return []
+        from repowise.core.ingestion.sql_parse import parse_sql
+
+        try:
+            statements = parse_sql(ctx.content)
+        except Exception:
+            return []
+
+        out: list[Contract] = []
+        seen: set[str] = set()
+        for stmt in statements:
+            if stmt is None:
+                continue
+            raw: str | None = None
+            schema = "create"
+            if isinstance(stmt, exp.Create) and (stmt.kind or "").upper() in _CREATE_KINDS:
+                target = stmt.this
+                if isinstance(target, exp.Schema):
+                    target = target.this
+                raw = _qualified_name(target)
+            elif isinstance(stmt, exp.Alter) and (stmt.args.get("kind") or "").upper() == "TABLE":
+                raw = _qualified_name(stmt.this)
+                schema = "alter"
+            if raw is None or raw in seen:
+                continue
+            seen.add(raw)
+            contract = build_table_provider(
+                ctx, table_raw=raw, framework="sql-ddl", origin=ContractOrigin.DDL, schema=schema
+            )
+            if contract is not None:
+                out.append(contract)
+        return out

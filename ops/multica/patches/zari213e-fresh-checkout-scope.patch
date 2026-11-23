@@ -1,0 +1,509 @@
+diff --git a/server/internal/daemon/daemon.go b/server/internal/daemon/daemon.go
+index a3f23cd..486cd8f 100644
+--- a/server/internal/daemon/daemon.go
++++ b/server/internal/daemon/daemon.go
+@@ -134,7 +134,7 @@ var pendingWorkHintMinInterval = time.Second
+ // sandbox config is known, one workdir is reused across tasks whose policies
+ // can differ, and task-local metadata is correct under either policy.
+ func repoCheckoutModeFor(provider, goos string) string {
+-	if provider != "codex" {
++	if provider != "codex" && provider != "hermes" {
+ 		return ""
+ 	}
+ 	switch goos {
+@@ -9017,6 +9017,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
+ 	d.registerActiveRepoCheckoutTask(agentToken, activeRepoCheckoutTask{
+ 		WorkspaceID: task.WorkspaceID,
+ 		TaskID:      task.ID,
++		ProjectID:   task.ProjectID,
++		RepoURLs:    projectTaskRepoURLs(task),
+ 		AgentID:     task.AgentID,
+ 		AgentName:   task.Agent.Name,
+ 		WorkDir:     env.WorkDir,
+diff --git a/server/internal/daemon/daemon_test.go b/server/internal/daemon/daemon_test.go
+index 6780b5f..a92111d 100644
+--- a/server/internal/daemon/daemon_test.go
++++ b/server/internal/daemon/daemon_test.go
+@@ -329,6 +329,9 @@ func TestRepoCheckoutModeFor(t *testing.T) {
+ 		{name: "Linux Codex isolates Git metadata", provider: "codex", goos: "linux", want: repoCheckoutModeIsolated},
+ 		{name: "Windows Codex isolates Git metadata", provider: "codex", goos: "windows", want: repoCheckoutModeIsolated},
+ 		{name: "macOS Codex keeps worktree", provider: "codex", goos: "darwin"},
++		{name: "Linux Hermes isolates Git metadata", provider: "hermes", goos: "linux", want: repoCheckoutModeIsolated},
++		{name: "Windows Hermes isolates Git metadata", provider: "hermes", goos: "windows", want: repoCheckoutModeIsolated},
++		{name: "macOS Hermes keeps worktree", provider: "hermes", goos: "darwin"},
+ 		{name: "Linux Claude keeps worktree", provider: "claude", goos: "linux"},
+ 		{name: "Windows Claude keeps worktree", provider: "claude", goos: "windows"},
+ 	}
+diff --git a/server/internal/daemon/health.go b/server/internal/daemon/health.go
+index 5ef71ab..2a926f7 100644
+--- a/server/internal/daemon/health.go
++++ b/server/internal/daemon/health.go
+@@ -7,6 +7,7 @@ import (
+ 	"fmt"
+ 	"net"
+ 	"net/http"
++	"net/url"
+ 	"os"
+ 	"path/filepath"
+ 	"runtime"
+@@ -126,6 +127,8 @@ type repoCheckoutRequest struct {
+ type activeRepoCheckoutTask struct {
+ 	WorkspaceID string
+ 	TaskID      string
++	ProjectID   string
++	RepoURLs    []string
+ 	AgentID     string
+ 	AgentName   string
+ 	WorkDir     string
+@@ -413,6 +416,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
+ 	mux.HandleFunc("/health", d.healthHandler(startedAt))
+ 	mux.HandleFunc("/shutdown", d.shutdownHandler())
+ 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
++	mux.HandleFunc("/repo/scope", d.repoScopeHandler())
+ 
+ 	srv := &http.Server{Handler: mux}
+ 
+@@ -427,6 +431,115 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
+ 	}
+ }
+ 
++// repoScopeResponse is the trusted, token-bound task scope consumed by the
++// root Git credential broker. It exposes no secret, only the repositories the
++// active task may use.
++type repoScopeResponse struct {
++	WorkspaceID string   `json:"workspace_id"`
++	TaskID      string   `json:"task_id"`
++	ProjectID   string   `json:"project_id"`
++	AgentID     string   `json:"agent_id"`
++	AgentName   string   `json:"agent_name"`
++	RepoURLs    []string `json:"repo_urls"`
++}
++
++// repoScopeHandler lets the local root broker resolve a task token to the
++// same project-scoped repository claim that /repo/checkout enforces. It is
++// bound to the task's bearer token, exactly like /repo/checkout.
++func (d *Daemon) repoScopeHandler() http.HandlerFunc {
++	return func(w http.ResponseWriter, r *http.Request) {
++		if r.Method != http.MethodGet {
++			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
++			return
++		}
++		activeTask, authResult := d.activeRepoCheckoutTask(r)
++		if authResult != repoCheckoutAuthOK {
++			d.writeRepoCheckoutAuthError(w, authResult)
++			return
++		}
++		w.Header().Set("Content-Type", "application/json")
++		_ = json.NewEncoder(w).Encode(repoScopeResponse{
++			WorkspaceID: activeTask.WorkspaceID,
++			TaskID:      activeTask.TaskID,
++			ProjectID:   activeTask.ProjectID,
++			AgentID:     activeTask.AgentID,
++			AgentName:   activeTask.AgentName,
++			RepoURLs:    activeTask.RepoURLs,
++		})
++	}
++}
++
++// githubIdentity returns a canonical repository identity only for strict HTTPS
++// GitHub URLs. Redirects and lookalike hosts never imply a grant.
++func githubIdentity(raw string) string {
++	u, err := url.Parse(raw)
++	if err != nil || u.Scheme != "https" || u.Host != "github.com" ||
++		u.User != nil || u.RawQuery != "" || u.Fragment != "" {
++		return ""
++	}
++	path := strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
++	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
++	if len(parts) != 2 {
++		return ""
++	}
++	for _, part := range parts {
++		if part == "" || part == "." || part == ".." {
++			return ""
++		}
++		for _, c := range part {
++			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
++				(c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
++				return ""
++			}
++		}
++	}
++	return strings.ToLower(parts[0] + "/" + parts[1])
++}
++
++// Only task-bound project resources authorize project repository use.
++func projectTaskRepoURLs(task Task) []string {
++	if task.ProjectID == "" {
++		return nil
++	}
++	seen := map[string]bool{}
++	var urls []string
++	for _, resource := range task.ProjectResources {
++		if resource.ResourceType != "github_repo" {
++			continue
++		}
++		var ref struct {
++			URL string `json:"url"`
++		}
++		if json.Unmarshal(resource.ResourceRef, &ref) != nil {
++			continue
++		}
++		id := githubIdentity(ref.URL)
++		if id == "" || seen[id] {
++			continue
++		}
++		seen[id] = true
++		urls = append(urls, ref.URL)
++	}
++	// Project task admission must fail closed on ambiguous repo sets.
++	// Never hand a task a workspace-wide repository allowlist.
++	if len(urls) != 1 {
++		return nil
++	}
++	return urls
++}
++func repoURLInTaskScope(requested string, allowed []string) bool {
++	key := githubIdentity(requested)
++	if key == "" {
++		return false
++	}
++	for _, repo := range allowed {
++		if githubIdentity(repo) == key {
++			return true
++		}
++	}
++	return false
++}
++
+ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
+ 	return func(w http.ResponseWriter, r *http.Request) {
+ 		if r.Method != http.MethodPost {
+@@ -449,6 +557,10 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
+ 			http.Error(w, "url is required", http.StatusBadRequest)
+ 			return
+ 		}
++		if activeTask.ProjectID == "" || !repoURLInTaskScope(req.URL, activeTask.RepoURLs) {
++			http.Error(w, "repository outside active task project", http.StatusForbidden)
++			return
++		}
+ 		if req.WorkspaceID == "" {
+ 			http.Error(w, "workspace_id is required", http.StatusBadRequest)
+ 			return
+@@ -520,7 +632,7 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
+ 			AgentName:           req.AgentName,
+ 			TaskID:              req.TaskID,
+ 			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
+-			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
++			IsolatedGitMetadata: true, // task-local .git; Landlock must never grant shared bare cache
+ 			Fresh:               req.Fresh,
+ 		}
+ 		if req.RetryBusy {
+diff --git a/server/internal/daemon/health_test.go b/server/internal/daemon/health_test.go
+index 502612d..e87c2e5 100644
+--- a/server/internal/daemon/health_test.go
++++ b/server/internal/daemon/health_test.go
+@@ -811,6 +811,8 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+ 	d.registerActiveRepoCheckoutTask("mat_repo_checkout_test", activeRepoCheckoutTask{
+ 		WorkspaceID: workspaceID,
+ 		TaskID:      "task-1",
++		ProjectID:   "project-test",
++		RepoURLs:    []string{repoURL},
+ 		AgentID:     "agent-1",
+ 		AgentName:   "Test Agent",
+ 		WorkDir:     workDir,
+@@ -818,6 +820,61 @@ func newRepoCheckoutTestDaemon(t *testing.T, workspaceID, repoURL, workDir strin
+ 	return d
+ }
+ 
++func TestProjectRepoScopeFailClosed(t *testing.T) {
++	harness := "https://github.com/jtrtdhrst/harness-zar-i-szlif.git"
++	product := "https://github.com/jtrtdhrst/zar-i-szlif.git"
++	raw, _ := json.Marshal(map[string]string{"url": harness})
++	task := Task{ProjectID: "harness",
++		ProjectResources: []ProjectResourceData{{ResourceType: "github_repo", ResourceRef: raw}}}
++	repos := projectTaskRepoURLs(task)
++	if len(repos) != 1 || repos[0] != harness {
++		t.Fatalf("repos = %v", repos)
++	}
++	if !repoURLInTaskScope(harness, repos) ||
++		repoURLInTaskScope(product, repos) ||
++		repoURLInTaskScope("https://github.com/miloszspyrka-code/harness-zar-i-szlif.git", repos) ||
++		repoURLInTaskScope("https://github.com@bad.invalid/x/y", repos) {
++		t.Fatal("project repository boundary violated")
++	}
++	second, _ := json.Marshal(map[string]string{"url": product})
++	task.ProjectResources = append(task.ProjectResources, ProjectResourceData{
++		ResourceType: "github_repo", ResourceRef: second,
++	})
++	if len(projectTaskRepoURLs(task)) != 0 {
++		t.Fatal("multi-repository project must be denied, not widened")
++	}
++	task.ProjectID = ""
++	if len(projectTaskRepoURLs(task)) != 0 {
++		t.Fatal("no-project task got repo grant")
++	}
++}
++func TestRepoScopeHandlerBoundToTask(t *testing.T) {
++	d := &Daemon{logger: slog.Default()}
++	d.registerActiveRepoCheckoutTask("synthetic-token", activeRepoCheckoutTask{
++		WorkspaceID: "workspace", TaskID: "task", ProjectID: "harness",
++		AgentID: "agent", AgentName: "Harness",
++		RepoURLs: []string{"https://github.com/jtrtdhrst/harness-zar-i-szlif.git"},
++	})
++	req := httptest.NewRequest(http.MethodGet, "/repo/scope", nil)
++	req.Header.Set("Authorization", "Bearer synthetic-token")
++	rec := httptest.NewRecorder()
++	d.repoScopeHandler().ServeHTTP(rec, req)
++	if rec.Code != http.StatusOK {
++		t.Fatalf("status=%d %s", rec.Code, rec.Body.String())
++	}
++	var scope repoScopeResponse
++	if err := json.Unmarshal(rec.Body.Bytes(), &scope); err != nil ||
++		scope.ProjectID != "harness" || len(scope.RepoURLs) != 1 {
++		t.Fatalf("unexpected scope: %v %+v", err, scope)
++	}
++	req.Header.Del("Authorization")
++	rec = httptest.NewRecorder()
++	d.repoScopeHandler().ServeHTTP(rec, req)
++	if rec.Code != http.StatusUnauthorized {
++		t.Fatalf("unauth status=%d", rec.Code)
++	}
++}
++
+ func authorizedRepoCheckoutRequest(body io.Reader) *http.Request {
+ 	req := httptest.NewRequest(http.MethodPost, "/repo/checkout", body)
+ 	req.Header.Set("Authorization", "Bearer mat_repo_checkout_test")
+diff --git a/server/internal/daemon/repocache/cache.go b/server/internal/daemon/repocache/cache.go
+index c391abe..aaa838a 100644
+--- a/server/internal/daemon/repocache/cache.go
++++ b/server/internal/daemon/repocache/cache.go
+@@ -852,9 +852,14 @@ func (c *Cache) CreateWorktreeContext(ctx context.Context, params WorktreeParams
+ 		if ctx.Err() != nil {
+ 			return nil, context.Cause(ctx)
+ 		}
+-		// Non-fatal: preserve cached state and continue. The agent will
+-		// receive an older snapshot than the remote head, so the result
+-		// carries the error back to the CLI as well as the daemon log.
++		// A fresh checkout is an explicit request for the remote state. Never
++		// turn a failed fetch into a successful checkout from the cached copy.
++		if params.Fresh {
++			return nil, fmt.Errorf("fresh checkout requires a successful remote fetch: %w", err)
++		}
++		// Non-fatal for reused checkouts: preserve cached state and continue.
++		// The agent will receive an older snapshot than the remote head, so the
++		// result carries the error back to the CLI as well as the daemon log.
+ 		fetchErr = redact.Text(err.Error())
+ 		c.logger.Warn("repo checkout: fetch failed, agent will see possibly stale code",
+ 			"url", params.RepoURL,
+@@ -1174,17 +1179,11 @@
+ // localCloneArgs builds the `git clone --local` invocation that seeds a fresh
+ // isolated checkout from the shared bare cache.
+ //
+-// On Windows the clone also passes --no-hardlinks. A local clone hardlinks
+-// .git/objects whenever it can, but an NTFS hard link only exists within a
+-// single volume and every link shares one underlying file *and* one security
+-// descriptor. Copying the objects instead keeps a cache and workdir that live
+-// on different drives working, and stops a task checkout — whose tree the
+-// sandbox makes writable — from re-permissioning the daemon-owned cache's
+-// object files. The cost is extra disk and a slower first checkout on Windows.
++// Never hardlink Git objects into agent-writable task checkout directories.
++// Shared inodes would allow changes to object permissions or content across
++// Landlock's cache boundary. A copied object store costs disk but prevents
++// agents from mutating the daemon-owned bare cache through a writable alias.
+ func localCloneArgs(goos, barePath, checkoutPath string) []string {
+-	args := []string{"clone", "--local", "--no-checkout", "--no-tags"}
+-	if goos == "windows" {
+-		args = append(args, "--no-hardlinks")
+-	}
++	args := []string{"clone", "--local", "--no-hardlinks", "--no-checkout", "--no-tags"}
+ 	return append(args, "--origin", isolatedCacheRemoteName, barePath, checkoutPath)
+ }
+diff --git a/server/internal/daemon/repocache/cache_test.go b/server/internal/daemon/repocache/cache_test.go
+index 1e105f1..7128698 100644
+--- a/server/internal/daemon/repocache/cache_test.go
++++ b/server/internal/daemon/repocache/cache_test.go
+@@ -841,6 +841,46 @@ func TestCreateWorktreeReportsFailedFetch(t *testing.T) {
+ 	}
+ }
+ 
++func TestCreateWorktreeFreshFailsWhenFetchFails(t *testing.T) {
++	t.Parallel()
++	sourceRepo := createTestRepo(t)
++	cache := New(t.TempDir(), testLogger())
++	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
++		t.Fatalf("sync failed: %v", err)
++	}
++	if err := os.RemoveAll(sourceRepo); err != nil {
++		t.Fatalf("remove origin: %v", err)
++	}
++
++	params := WorktreeParams{
++		WorkspaceID: "ws-1",
++		RepoURL:     sourceRepo,
++		WorkDir:     t.TempDir(),
++		AgentName:   "QA",
++		TaskID:      "d4e5f6a7-b8c9-0123-def0-234567890123",
++		Fresh:       true,
++	}
++	if _, err := cache.CreateWorktree(params); err == nil ||
++		!strings.Contains(err.Error(), "fresh checkout requires a successful remote fetch") {
++		t.Fatalf("fresh checkout error = %v, want a failed-fetch error", err)
++	}
++}
++
++func TestLocalCloneArgsNeverHardlinkSharedCache(t *testing.T) {
++	for _, platform := range []string{"linux", "darwin", "windows"} {
++		args := localCloneArgs(platform, "/daemon/cache.git", "/task/checkout")
++		count := 0
++		for _, arg := range args {
++			if arg == "--no-hardlinks" {
++				count++
++			}
++		}
++		if count != 1 {
++			t.Fatalf("%s: expected exactly one --no-hardlinks, got %v", platform, args)
++		}
++	}
++}
++
+ func TestCreateWorktreeWithIsolatedGitMetadata(t *testing.T) {
+ 	t.Parallel()
+ 	sourceRepo := createTestRepo(t)
+@@ -1134,13 +1174,13 @@ func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
+-func TestLocalCloneArgsOnlyDisablesHardlinksOnWindows(t *testing.T) {
++func TestLocalCloneArgsNoHardlinksAllPlatforms(t *testing.T) {
+ 	t.Parallel()
+ 	const barePath, checkoutPath = "/cache/repo.git", "/task/repo"
+ 
+ 	for _, tt := range []struct {
+ 		goos          string
+ 		wantNoHardlnk bool
+ 	}{
+ 		{goos: "windows", wantNoHardlnk: true},
+-		{goos: "linux"},
+-		{goos: "darwin"},
++		{goos: "linux", wantNoHardlnk: true},
++		{goos: "darwin", wantNoHardlnk: true},
+ 	} {
+ 		t.Run(tt.goos, func(t *testing.T) {
+diff --git a/server/pkg/agent/codex.go b/server/pkg/agent/codex.go
+--- a/server/pkg/agent/codex.go
++++ b/server/pkg/agent/codex.go
+@@ -760,37 +760,48 @@
+ 	return sb.String(), true, nil
+ }
+ 
+-func normalizeCodexMcpServerConfig(server map[string]any) map[string]any {
+-	if !isCodexRemoteMcpServer(server) {
+-		normalized := make(map[string]any, len(server))
+-		for k, v := range server {
+-			if isMulticaMcpSelectorKey(k) {
+-				continue
+-			}
+-			normalized[k] = v
+-		}
+-		return normalized
+-	}
+-
+-	normalized := make(map[string]any, len(server)+1)
+-	for k, v := range server {
+-		switch {
+-		case isMulticaMcpSelectorKey(k):
+-			continue
+-		case k == "type":
+-			continue
+-		case k == "headers":
+-			if _, ok := server["http_headers"]; !ok {
+-				normalized["http_headers"] = v
+-			}
+-		default:
+-			normalized[k] = v
+-		}
+-	}
+-	normalized["experimental_use_rmcp_client"] = true
+-	return normalized
+-}
+-
++func normalizeCodexMcpServerConfig(server map[string]any) map[string]any {
++	if !isCodexRemoteMcpServer(server) {
++		normalized := make(map[string]any, len(server))
++		for k, v := range server {
++			if isMulticaMcpSelectorKey(k) || isCodexDisabledOAuth(k, v) {
++				continue
++			}
++			normalized[k] = v
++		}
++		return normalized
++	}
++
++	normalized := make(map[string]any, len(server)+1)
++	for k, v := range server {
++		switch {
++		case isMulticaMcpSelectorKey(k), isCodexDisabledOAuth(k, v):
++			continue
++		case k == "type":
++			continue
++		case k == "headers":
++			if _, ok := server["http_headers"]; !ok {
++				normalized["http_headers"] = v
++			}
++		default:
++			normalized[k] = v
++		}
++	}
++	normalized["experimental_use_rmcp_client"] = true
++	return normalized
++}
++
++// A disabled OAuth flag from the Multica MCP registry is not a valid Codex
++// McpServerOAuthConfig table. Omit only explicit false; preserve structured
++// OAuth and fail closed on unsupported true rather than silently granting access.
++func isCodexDisabledOAuth(key string, value any) bool {
++	if key != "oauth" {
++		return false
++	}
++	enabled, ok := value.(bool)
++	return ok && !enabled
++}
++
+ func isMulticaMcpSelectorKey(k string) bool {
+ 	switch k {
+ 	case "tools", "prompts", "resources":
+diff --git a/server/pkg/agent/codex_test.go b/server/pkg/agent/codex_test.go
+--- a/server/pkg/agent/codex_test.go
++++ b/server/pkg/agent/codex_test.go
+@@ -6445,3 +6445,33 @@
+ 		})
+ 	}
+ }
++
++func TestCodexManagedMcpOAuthFalseCompatibility(t *testing.T) {
++	t.Parallel()
++	mcp := json.RawMessage(`{"mcpServers":{"remote":{"type":"http","url":"https://mcp.example.test/session","oauth":false},"local":{"command":"mock","oauth":false}}}`)
++	block, hasServers, err := renderCodexMcpServersBlock(mcp)
++	if err != nil {
++		t.Fatalf("render: %v", err)
++	}
++	if !hasServers || strings.Contains(block, "oauth = false") {
++		t.Fatalf("disabled boolean OAuth must not appear in Codex TOML: %s", block)
++	}
++	for _, table := range []string{"[mcp_servers.remote]", "[mcp_servers.local]"} {
++		if !strings.Contains(block, table) {
++			t.Fatalf("missing authorized server %q", table)
++		}
++	}
++	structured := map[string]any{"scopes": []any{"read"}}
++	preserved := normalizeCodexMcpServerConfig(map[string]any{
++		"type": "http", "url": "https://mcp.example.test/session", "oauth": structured,
++	})
++	if !reflect.DeepEqual(preserved["oauth"], structured) {
++		t.Fatal("structured OAuth must be preserved, never silently disabled")
++	}
++	unsupported := normalizeCodexMcpServerConfig(map[string]any{
++		"type": "http", "url": "https://mcp.example.test/session", "oauth": true,
++	})
++	if unsupported["oauth"] != true {
++		t.Fatal("unsupported true OAuth must remain fail-closed, not silently downgraded")
++	}
++}

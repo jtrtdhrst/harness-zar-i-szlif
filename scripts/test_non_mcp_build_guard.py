@@ -23,6 +23,8 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("owned-runtime-images-ghcr.yml", "publish"),
     ("source-build-roots-pr.yml", "verify-owned-source"),
     ("source-build-roots-pr.yml", "build-all-16-owned-sources"),
+    ("vendor-repowise-source.yml", "verify-immutable-source-and-build"),
+    ("vendor-repowise-source.yml", "publish-reviewed-main-image"),
 }
 DOCKER_BUILD = re.compile(r"\bdocker\s+build\b|docker/build-push-action@|buildah\s+bud\b")
 
@@ -44,6 +46,67 @@ def image_build_jobs(content):
     return jobs
 
 def compliant(workflow_name, job):
+    if workflow_name == "vendor-repowise-source.yml":
+        # Narrow, audited exception: exact vendored RepoWise app source, NOT
+        # arbitrary non-MCP builds. PR may smoke-build only on a disposable
+        # GitHub runner; trusted main may publish immutable OCI by SHA.
+        # Neither job is authorized to deploy to Coolify.
+        forbidden = (
+            "self-hosted", "/var/run/docker.sock", "/api/v1/deploy",
+            "curl -X PATCH", "curl -X POST", "coolify deploy",
+            "git push ", "docker push ", ":latest", "tags: latest",
+        )
+        if any(item.lower() in job.lower() for item in forbidden):
+            return False
+        if "    if: github.event_name == 'pull_request'" in job:
+            required = (
+                "    runs-on: ubuntu-latest",
+                "      contents: read",
+                "actions/checkout@v4",
+                "persist-credentials: false",
+                "python3 -m unittest discover -s scripts -p test_repowise_app_source.py",
+                "docker build --pull --progress=plain -f apps/repowise/docker/Dockerfile",
+                "-t repowise-zari-286-ci:${{ github.sha }} apps/repowise",
+                "docker run --rm --entrypoint repowise",
+            )
+            return (all(value in job for value in required)
+                    and "packages: write" not in job
+                    and "id-token: write" not in job
+                    and "attestations: write" not in job
+                    and "docker/build-push-action@" not in job)
+        main_guard = ("    if: github.repository == 'jtrtdhrst/harness-zar-i-szlif'"
+                      " && github.event_name == 'push'"
+                      " && github.ref == 'refs/heads/main'")
+        required = (
+            main_guard,
+            "    runs-on: ubuntu-latest",
+            "      contents: read",
+            "      packages: write",
+            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "persist-credentials: false",
+            "test \"$GITHUB_REPOSITORY\" = 'jtrtdhrst/harness-zar-i-szlif'",
+            "test \"$GITHUB_REF\" = 'refs/heads/main'",
+            'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+            "test \"$(git rev-parse HEAD:apps/repowise)\" = 'fe223cb9efd9ed04583522b132089c4770c66ea0'",
+            "python3 -m unittest discover -s scripts -p test_repowise_app_source.py",
+            "context: ./apps/repowise",
+            "file: ./apps/repowise/docker/Dockerfile",
+            "docker/build-push-action@v6",
+            "push: true",
+            "org.opencontainers.image.source=https://github.com/jtrtdhrst/harness-zar-i-szlif",
+            "org.opencontainers.image.revision=${{ github.sha }}",
+            "DIGEST: ${{ steps.image.outputs.digest }}",
+            '[[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]',
+            "Production promotion: NOT AUTHORIZED",
+        )
+        expected_tag = "ghcr.io/jtrtdhrst/harness-repowise:sha-${{ github.sha }}"
+        tags = re.findall(r"(?m)^\s+tags: (.+)$", job)
+        return (all(value in job for value in required)
+                and tags == [expected_tag]
+                and job.count("docker/build-push-action@") == 1
+                and "docker build --pull" not in job
+                and "      - uses: docker/login-action@v3" in job
+                and "password: ${{ secrets.GITHUB_TOKEN }}" in job)
     if workflow_name == "coolify-mcp-ci.yml":
         # Hosted runner is ephemeral; publishing is SHA-bound to trusted main
         # and mcp/coolify-mcp/ alone. This builds OCI; it never deploys to Coolify.
@@ -207,6 +270,50 @@ class NonMcpBuildGuardTests(unittest.TestCase):
         ):
             self.assertFalse(compliant("owned-runtime-images-ghcr.yml", mutated))
         self.assertFalse(compliant("ordinary-service.yml", jobs["publish"]))
+
+    def test_repowise_vendor_ci_is_sha_bound_and_cannot_deploy(self):
+        workflow = (WORKFLOWS / "vendor-repowise-source.yml").read_text(encoding="utf8")
+        jobs = dict(image_build_jobs(workflow))
+        self.assertEqual(
+            set(jobs),
+            {"verify-immutable-source-and-build", "publish-reviewed-main-image"},
+        )
+        smoke, publisher = (jobs["verify-immutable-source-and-build"],
+                            jobs["publish-reviewed-main-image"])
+        self.assertTrue(compliant("vendor-repowise-source.yml", smoke))
+        self.assertTrue(compliant("vendor-repowise-source.yml", publisher))
+        for original, replacement in (
+            ("github.event_name == 'pull_request'", "github.event_name == 'push'"),
+            ("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]"),
+            ("persist-credentials: false", "persist-credentials: true"),
+            ("apps/repowise/docker/Dockerfile", "Dockerfile"),
+        ):
+            self.assertFalse(compliant(
+                "vendor-repowise-source.yml", smoke.replace(original, replacement, 1)
+            ), f"unsafe PR smoke mutation accepted: {original}")
+        for injected in ("packages: write", "docker push ghcr.io/other",
+                         "curl -X POST https://host/api/v1/deploy"):
+            self.assertFalse(compliant("vendor-repowise-source.yml", smoke + "\n" + injected))
+        for original, replacement in (
+            ("github.event_name == 'push'", "github.event_name == 'pull_request'"),
+            ("refs/heads/main", "refs/heads/feature"),
+            ("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]"),
+            ("push: true", "push: false"),
+            ("org.opencontainers.image.revision=${{ github.sha }}", "org.opencontainers.image.revision=latest"),
+            ("test \"$(git rev-parse HEAD)\" = \"$GITHUB_SHA\"", "echo source-not-verified"),
+            ("tags: ghcr.io/jtrtdhrst/harness-repowise:sha-${{ github.sha }}",
+             "tags: ghcr.io/jtrtdhrst/harness-repowise:latest"),
+        ):
+            self.assertFalse(compliant(
+                "vendor-repowise-source.yml", publisher.replace(original, replacement, 1)
+            ), f"unsafe trusted-main mutation accepted: {original}")
+        for injected in (
+            "          tags: ghcr.io/jtrtdhrst/harness-repowise:latest",
+            "curl -X PATCH https://host/api/v1/deploy",
+            "docker push ghcr.io/other",
+        ):
+            self.assertFalse(compliant("vendor-repowise-source.yml", publisher + "\n" + injected))
+        self.assertFalse(compliant("ordinary-service.yml", publisher))
 
     def test_retired_paperclip_mcp_ci_stays_absent(self):
         self.assertFalse((WORKFLOWS / "paperclip-mcp-ci.yml").exists(),
