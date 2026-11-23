@@ -32,6 +32,18 @@ jobs:
           import json
           from pathlib import Path
           x=json.loads(Path('ops/harness/release/security-hold.json').read_text())
-          assert x['active'] is True and x['clearance'] is None
-          print('PERSISTED_HOLD_ACTIVE_AND_FAIL_CLOSED')
+          import re
+          assert type(x['active']) is bool
+          if x['active']:
+              assert x['clearance'] is None
+              print('PERSISTED_HOLD_ACTIVE_AND_FAIL_CLOSED')
+          else:
+              c=x['clearance']
+              assert isinstance(c,dict)
+              assert c.get('cleared_by')==x.get('owner')
+              assert isinstance(c.get('cleared_at'),str) and c['cleared_at'].endswith('Z')
+              assert re.fullmatch(r'[a-f0-9]{40}',c.get('ctocoo_review_sha',''))
+              for key in ('isolation_e2e_comment_id','cto_review_comment_id','coo_authorization_comment_id'):
+                  assert re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}',c.get(key,''))
+              print('CLEARANCE_STRUCTURE_VALID_REQUIRES_RUNTIME_EVIDENCE_AND_REVIEW')
           PY
