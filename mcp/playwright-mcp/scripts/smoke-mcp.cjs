@@ -278,4 +278,3 @@ async function cleanup(ctx) {
   console.log(JSON.stringify({ ok: true, ...outcome, ...base }, null, 2));
   process.exitCode = 0;
 })();
-
