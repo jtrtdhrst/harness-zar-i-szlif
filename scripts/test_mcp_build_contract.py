@@ -34,17 +34,27 @@ def build_roots():
 
 
 
-def require_mandatory_evidence_action(source, action):
-    """Do not silently skip attest or artifact steps after a successful image push."""
-    # These workflows use precisely six-space-indented top-level step entries.
-    # Verify the action's own step, not a reassuring string elsewhere in YAML.
-    steps = re.split(r"(?m)(?=^      - (?:name|uses):)", source)
+def evidence_step(source, action):
+    """Find exactly one YAML step invoking the given mandatory evidence action."""
+    # A valid GitHub Actions step may start with '- if:' or '- uses:',
+    # not only '- name:'. Split on ANY six-space YAML list mapping key.
+    steps = re.split(r"(?m)(?=^      - [a-z][a-z-]*:)", source)
     matches = [step for step in steps if "uses: " + action in step]
     if len(matches) != 1:
         raise AssertionError("missing_or_duplicated_evidence_step:" + action)
-    block = matches[0]
-    if re.search(r"(?m)^        (?:if|continue-on-error):\s*", block):
+    return matches[0]
+
+
+def require_mandatory_evidence_action(source, action):
+    """Fail closed on skipped/soft-failed attestation, even at job scope."""
+    block = evidence_step(source, action)
+    # A condition or continue-on-error anywhere in the action step permits
+    # green OCI publication with missing/invalid evidence.
+    if re.search(r"(?m)^(?:      - |        )(?:if|continue-on-error):", block):
         raise AssertionError("conditional_or_nonblocking_evidence_step:" + action)
+    # Job-level soft failure would also mask a failed mandatory evidence step.
+    if re.search(r"(?m)^    continue-on-error:", source):
+        raise AssertionError("nonblocking_publisher_job:" + action)
 
 
 class McpSourceBuildContract(unittest.TestCase):
@@ -118,6 +128,26 @@ class McpSourceBuildContract(unittest.TestCase):
                     with self.subTest(workflow=flow, action=action, injected=injected):
                         with self.assertRaises(AssertionError):
                             require_mandatory_evidence_action(mutated, action)
+
+    def test_yaml_first_key_condition_and_job_level_soft_failure_are_denied(self):
+        """The valid YAML shapes found during native CHO adversarial review."""
+        for flow in (GENERAL_FLOW, RUNTIME_FLOW, COOLIFY_FLOW):
+            source = (WORKFLOWS / flow).read_text()
+            for action in ("actions/attest@", "actions/upload-artifact@"):
+                block = evidence_step(source, action)
+                head = block.splitlines()[0]
+                self.assertTrue(head.startswith("      - name:"), (flow, action, head))
+                first_key = "      - if: always()\n        name:" + head[len("      - name:"):]
+                mutated = source.replace(head, first_key, 1)
+                with self.subTest(flow=flow, action=action, shape="first-key-if"):
+                    with self.assertRaises(AssertionError):
+                        require_mandatory_evidence_action(mutated, action)
+                self.assertIn("    permissions:", source)
+                job_soft_failure = source.replace("    permissions:",
+                                                  "    continue-on-error: true\n    permissions:", 1)
+                with self.subTest(flow=flow, action=action, shape="job-soft-failure"):
+                    with self.assertRaises(AssertionError):
+                        require_mandatory_evidence_action(job_soft_failure, action)
 
     def test_no_unknown_vendor_image_is_falsely_marked_source_owned(self):
         rows = {
