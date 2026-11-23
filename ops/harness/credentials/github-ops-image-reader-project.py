@@ -74,7 +74,7 @@ def validated_volume(app_uuid, volume_name):
     directory = Path(volumes[0]["Mountpoint"])
     stat_info = os.lstat(directory)
     if (not stat.S_ISDIR(stat_info.st_mode) or stat_info.st_uid != 0
-            or stat.S_IMODE(stat_info.st_mode) & 0o002):
+            or stat.S_IMODE(stat_info.st_mode) & 0o022):
         raise RuntimeError("Untrusted volume root")
     container_ids = subprocess.run(
         ["docker", "ps", "-aq", "--filter", "volume=" + volume_name],
@@ -100,7 +100,7 @@ def project(data, directory):
     temp = None
     try:
         st = os.fstat(fd)
-        if st.st_uid != 0 or stat.S_IMODE(st.st_mode) & 0o002:
+        if st.st_uid != 0 or stat.S_IMODE(st.st_mode) & 0o022:
             raise RuntimeError("Unsafe destination directory")
         target_fd, temp = tempfile.mkstemp(prefix=".token-", dir=directory)
         os.fchown(target_fd, 0, NODE_GID)
