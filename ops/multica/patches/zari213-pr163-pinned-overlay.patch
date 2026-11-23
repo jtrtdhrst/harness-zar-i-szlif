@@ -1,5 +1,5 @@
 diff --git a/server/internal/daemon/daemon.go b/server/internal/daemon/daemon.go
-index 9ed1d38..5f64941 100644
+index 9ed1d38..b6710c6 100644
 --- a/server/internal/daemon/daemon.go
 +++ b/server/internal/daemon/daemon.go
 @@ -137,7 +137,7 @@ var pendingWorkHintMinInterval = time.Second
@@ -103,17 +103,18 @@ index 9ed1d38..5f64941 100644
  	})
  	defer d.clearActiveRepoCheckoutTask(agentToken)
  	defer d.environments.trackTask(env.RootDir, localenv.Task{
-@@ -11526,7 +11585,7 @@ func codexShellAuthorizedCustomEnvNames(customEnv map[string]string) []string {
+@@ -11526,6 +11585,9 @@ func codexShellAuthorizedCustomEnvNames(customEnv map[string]string) []string {
  // Failure is fatal: launching with an unowned or malformed policy could either
  // drop the task-scoped token again or expose inherited daemon credentials.
  func configureCodexTaskShellEnvironment(provider, codexHome string, inherited []string, agentEnv, agentCustomEnv map[string]string, logger *slog.Logger) error {
--	if provider != "codex" {
-+	if provider != "codex" && provider != "hermes" {
++	// This policy is read by Codex only. Hermes uses the native per-task
++	// environment and HermesHome; it does not create or read CodexHome.
++	// Requiring CODEX_HOME for Hermes prevents all Hermes tasks from starting.
+ 	if provider != "codex" {
  		return nil
  	}
- 	if strings.TrimSpace(codexHome) == "" {
 diff --git a/server/internal/daemon/daemon_test.go b/server/internal/daemon/daemon_test.go
-index ef67a2e..e270e0b 100644
+index ef67a2e..80679b4 100644
 --- a/server/internal/daemon/daemon_test.go
 +++ b/server/internal/daemon/daemon_test.go
 @@ -329,6 +329,9 @@ func TestRepoCheckoutModeFor(t *testing.T) {
@@ -126,6 +127,22 @@ index ef67a2e..e270e0b 100644
  		{name: "Linux Claude keeps worktree", provider: "claude", goos: "linux"},
  		{name: "Windows Claude keeps worktree", provider: "claude", goos: "windows"},
  	}
+@@ -398,6 +401,15 @@ func TestConfigureCodexTaskShellEnvironment(t *testing.T) {
+ 		}
+ 	})
+ 
++	t.Run("Hermes does not require unused CodexHome", func(t *testing.T) {
++		t.Parallel()
++		err := configureCodexTaskShellEnvironment("hermes", "", nil,
++			map[string]string{"MULTICA_TASK_ID": "task", "MULTICA_TOKEN": "mat_task"}, nil, slog.Default())
++		if err != nil {
++			t.Fatalf("Hermes must not require CODEX_HOME: %v", err)
++		}
++	})
++
+ 	t.Run("Codex without task home fails closed", func(t *testing.T) {
+ 		t.Parallel()
+ 		err := configureCodexTaskShellEnvironment("codex", "", nil, map[string]string{"MULTICA_TOKEN": "mat_task"}, nil, slog.Default())
 diff --git a/server/internal/daemon/health.go b/server/internal/daemon/health.go
 index b687af4..18b519d 100644
 --- a/server/internal/daemon/health.go
