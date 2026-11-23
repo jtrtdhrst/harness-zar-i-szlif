@@ -37,6 +37,7 @@ import os
 import secrets
 import subprocess
 import sys
+from harness_source_roots import source_path_prefix
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def changed_services(changed_paths, manifest):
     for path in changed_paths:
         if not isinstance(path, str) or not path or path.startswith("/") or "/../" in path:
             raise Denied("changed_paths_invalid")
-        owners = [service for service in services if path.startswith(service + "/")]
+        owners = [service for service in services if path.startswith(source_path_prefix(service))]
         if len(owners) > 1:
             raise Denied("ambiguous_changed_path")
         if not owners:
@@ -243,6 +244,8 @@ def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
     one SHA can never build or deploy another. A held or unapproved change
     yields a report with ``promoted: False`` and no transport call whatsoever.
     """
+    if pre_admitted is not None:
+        raise Denied("pre_admitted_forbidden")
     if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha):
         raise Denied("invalid_source_sha")
     attributed, unclassified = {}, []
@@ -267,25 +270,13 @@ def run_promotion(manifest, changed_paths, artifacts, transport, now=None,
         for service in sorted(attributed):
             decision = {"service": service, "changed_paths": sorted(attributed[service])}
             try:
-                if pre_admitted is not None and service in pre_admitted:
-                    # Trusted-main auto lane: the caller already verified exact
-                    # source/digest and the manifest authorizes automatic
-                    # promotion. No per-release request/grant artifact exists.
-                    record = pre_admitted[service]
-                    if (not isinstance(record, dict)
-                            or record.get("service") != service
-                            or record.get("source_sha") != source_sha
-                            or not isinstance(record.get("image_digest"), str)
-                            or not DIGEST.fullmatch(record["image_digest"])):
-                        raise Denied("auto_admission_invalid")
-                else:
-                    bundle = artifacts(service)
-                    if not isinstance(bundle, dict):
-                        raise Denied("gate_artifacts_invalid")
-                    request = bundle.get("request")
-                    record = evaluate(manifest, request, grant=bundle.get("grant"),
-                                      attestation=bundle.get("attestation"), now=now,
-                                      expected_source_sha=source_sha)
+                bundle = artifacts(service)
+                if not isinstance(bundle, dict):
+                    raise Denied("gate_artifacts_invalid")
+                request = bundle.get("request")
+                record = evaluate(manifest, request, grant=bundle.get("grant"),
+                                  attestation=bundle.get("attestation"), now=now,
+                                  expected_source_sha=source_sha)
             except Denied as exc:
                 decision.update(decision="denied", reason=str(exc))
                 report["decisions"].append(decision)

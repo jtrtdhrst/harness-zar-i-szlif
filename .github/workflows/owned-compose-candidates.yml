@@ -1,0 +1,105 @@
+name: Harness Compose candidate contracts
+# This is a hosted, unprivileged validation and selection workflow.
+# It NEVER deploys, merges, bypasses HOLD, or approves any release.
+on:
+  pull_request:
+    paths:
+      - 'ops/service-build-roots.json'
+      - 'ops/compose-migration-candidates.json'
+      - 'scripts/select_owned_compose.py'
+      - 'scripts/test_owned_compose_candidates.py'
+      - 'scripts/verify_owned_image_digests.py'
+      - 'scripts/test_verify_owned_image_digests.py'
+      - 'ops/audits/**'
+      - '**/compose.candidate.yml'
+      - '**/release-contract.json'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-and-select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test exact resource isolation and negative selectors
+        run: python3 -m unittest discover -s scripts -p 'test_owned_compose_candidates.py' -v
+      - name: Test immutable image preflight, including missing/HEAD/latest negatives
+        run: python3 -m unittest discover -s scripts -p 'test_verify_owned_image_digests.py' -v
+      - name: Parse every candidate with real Docker Compose without resolving secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/compose-paths.txt"
+          import json
+          with open("ops/compose-migration-candidates.json", encoding="utf-8") as file:
+              for row in json.load(file)["resources"]:
+                  print(row["compose"])
+          PY
+          while IFS= read -r file; do
+            docker compose -f "$file" config --no-interpolate --quiet
+          done < "$RUNNER_TEMP/compose-paths.txt"
+      - name: Validate all three source-pending Compose candidates with synthetic positive and negative environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          rows = json.loads(Path('ops/compose-migration-candidates.json').read_text(encoding='utf-8'))['resources']
+          assert len(rows) == 3, 'Expected three in-repo Harness Compose candidates'
+          required = re.compile(r'(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^}]*\}')
+          positive = 0
+          negative = 0
+          for row in rows:
+              path = row['compose']
+              names = sorted(set(required.findall(Path(path).read_text(encoding='utf-8'))))
+              env = {'PATH': os.environ['PATH'], 'HOME': os.environ.get('HOME', '/tmp')}
+              for name in names:
+                  if name.startswith('PINNED_IMAGE_'):
+                      value = 'example.invalid/fixture@sha256:' + '0' * 64
+                  elif 'BIND' in name or 'MOUNT' in name:
+                      value = '/tmp/fixture-data'
+                  elif name.endswith('_PORT'):
+                      value = '1234'
+                  else:
+                      value = 'synthetic-ci-only'
+                  env[name] = value
+              command = ['docker', 'compose', '-f', path, 'config', '--quiet']
+              subprocess.run(command, env=env, check=True, timeout=30)
+              positive += 1
+              if names:
+                  missing = names[0]
+                  negative_env = dict(env)
+                  del negative_env[missing]
+                  failed = subprocess.run(command, env=negative_env, capture_output=True, text=True, timeout=30)
+                  if failed.returncode == 0:
+                      raise RuntimeError(f'FAIL_OPEN: {row["id"]} accepted missing required {missing}')
+                  negative += 1
+              print('COMPOSE_SYNTHETIC_OK', row['id'], 'mandatory_inputs', len(names))
+          assert positive == 3, f'Expected three positives, got {positive}'
+          assert negative >= 1, f'Expected missing-input negative checks, got {negative}'
+          print('SYNTHETIC_SUMMARY', json.dumps({'positive': positive, 'negative': negative}))
+          PY
+      - name: Select changed resources; do not deploy
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$BASE_SHA"
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"
+          fi
+          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed.txt"
+          python3 scripts/select_owned_compose.py --changed-file "$RUNNER_TEMP/changed.txt"
+          echo 'Only the existing release controller can authorize deployment.'

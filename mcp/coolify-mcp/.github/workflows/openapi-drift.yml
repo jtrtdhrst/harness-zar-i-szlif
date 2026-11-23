@@ -1,0 +1,271 @@
+# Weekly check for upstream Coolify API changes.
+#
+# Compares upstream's openapi.yaml against the copy this repo vendors at
+# docs/coolify-openapi.yaml, and opens (or comments on) an issue when they
+# differ.
+#
+# **This workflow keeps no baseline of its own, deliberately.** The previous
+# version stored one at .github/coolify-openapi-baseline.yaml, and it never
+# worked: the job declared `contents: read`, so the step that committed the
+# freshly-downloaded baseline failed with a 403 every single week. Nothing was
+# ever committed, so the next run found no baseline again, took the
+# "create initial baseline" branch, hardcoded has_changes=false, and skipped the
+# issue-creation step. It ran every Monday for months, failed every time, and
+# never once compared two specs. See #309.
+#
+# Granting `contents: write` would not have been enough either — `main` is
+# protected, so a direct push from Actions is rejected regardless.
+#
+# docs/coolify-openapi.yaml is the right baseline anyway: it is the file the
+# client is actually written against, it is already the ground truth for
+# `npm run check:spec-drift`, and re-vendoring it is the exact action this
+# workflow exists to prompt. That makes this job read-only.
+name: OpenAPI Drift Detection
+
+on:
+  schedule:
+    # Weekly, Monday 07:00 UK
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download upstream Coolify OpenAPI spec
+        run: |
+          curl -sSL --fail \
+            "https://raw.githubusercontent.com/coollabsio/coolify/main/openapi.yaml" \
+            -o /tmp/upstream-openapi.yaml
+          # --fail catches an HTTP error, this catches a 200 that returned
+          # nothing useful. Either way, stop rather than "detect" a drift that is
+          # really a failed download — the old workflow's habit of turning a
+          # problem into a cheerful false negative is the thing being fixed.
+          if [ ! -s /tmp/upstream-openapi.yaml ]; then
+            echo "::error::Upstream spec download produced an empty file"
+            exit 1
+          fi
+          echo "Downloaded $(wc -c < /tmp/upstream-openapi.yaml) bytes"
+
+      - name: Compare against the vendored spec
+        id: compare
+        run: |
+          VENDORED="docs/coolify-openapi.yaml"
+          if [ ! -f "$VENDORED" ]; then
+            echo "::error::$VENDORED is missing — it is this repo's API ground truth"
+            exit 1
+          fi
+
+          if diff -q "$VENDORED" /tmp/upstream-openapi.yaml >/dev/null 2>&1; then
+            echo "No drift: vendored spec matches upstream."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Drift detected."
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+          # So the issue can say "first 300 of N" rather than claiming
+          # "truncated" when nothing was cut.
+          TOTAL=$(diff -u "$VENDORED" /tmp/upstream-openapi.yaml | wc -l | tr -d ' ')
+          echo "diff_lines=$TOTAL" >> "$GITHUB_OUTPUT"
+          # Identifies this exact diff, so an unchanged week does not re-comment.
+          echo "diff_hash=$(diff -u "$VENDORED" /tmp/upstream-openapi.yaml | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+          # Unified diff, truncated. Paths are normalised so the body reads as
+          # vendored-vs-upstream rather than exposing runner temp paths.
+          {
+            echo "DIFF_SUMMARY<<GHA_EOF"
+            # `|| true` is load-bearing: diff exits 1 when files differ, which
+            # is the only case that reaches here. The default runner shell has
+            # no pipefail so `head` currently masks it — adding `shell: bash`
+            # later would turn that into `-eo pipefail` and silently kill the
+            # drift-detected path, the one path that matters.
+            { diff -u "$VENDORED" /tmp/upstream-openapi.yaml \
+              | sed -e "s|^--- .*|--- vendored ($VENDORED)|" \
+                    -e 's|^+++ .*|+++ upstream (coollabsio/coolify main)|' \
+              | head -300 ; } || true
+            echo "GHA_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the drift issue
+        if: steps.compare.outputs.has_changes == 'true'
+        uses: actions/github-script@v9
+        env:
+          DIFF_SUMMARY: ${{ steps.compare.outputs.DIFF_SUMMARY }}
+          DIFF_LINES: ${{ steps.compare.outputs.diff_lines }}
+          DIFF_HASH: ${{ steps.compare.outputs.diff_hash }}
+        with:
+          script: |
+            const diff = process.env.DIFF_SUMMARY || '(diff unavailable)';
+            const today = new Date().toISOString().split('T')[0];
+            const total = Number(process.env.DIFF_LINES || 0);
+            const truncNote =
+              total > 300
+                ? `Showing the first 300 of ${total} changed lines.`
+                : `Full diff, ${total} lines.`;
+            const body = [
+              '## Upstream Coolify OpenAPI spec has changed',
+              '',
+              '`docs/coolify-openapi.yaml` no longer matches upstream `main`.',
+              '',
+              '### To resolve',
+              '',
+              '1. Re-vendor the spec:',
+              '   ```bash',
+              '   curl -sSL https://raw.githubusercontent.com/coollabsio/coolify/main/openapi.yaml \\',
+              '     -o docs/coolify-openapi.yaml',
+              '   npm run build:chunks   # regenerate docs/openapi-chunks/',
+              '   ```',
+              '2. Review the diff for new, removed or changed endpoints and decide',
+              '   whether any tools need adding, deprecating or reshaping.',
+              '3. `npm run check:spec-drift` and `npm run check:chunk-drift` must pass.',
+              '',
+              '> Verify anything surprising against a real instance before acting on it.',
+              '> The Coolify spec has been wrong before — see the gotchas in `CLAUDE.md`.',
+              '',
+              `### Diff — ${today}`,
+              '',
+              truncNote,
+              '',
+              '```diff',
+              diff,
+              '```',
+              '',
+              '---',
+              '*Opened automatically by the OpenAPI Drift Detection workflow.*',
+              '',
+              `<!-- diff-hash:${process.env.DIFF_HASH} -->`,
+            ].join('\n');
+
+            // listForRepo returns pull requests too — a PR carrying the
+            // api-drift label would otherwise receive the diff instead.
+            const { data: found } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'api-drift',
+              state: 'open',
+            });
+            const open = found.filter((i) => !i.pull_request);
+
+            if (open.length > 0) {
+              const issue = open[0];
+              // The diff is unchanged from last week if the marker matches, and
+              // re-posting 300 identical lines every Monday buries the issue.
+              const marker = `<!-- diff-hash:${process.env.DIFF_HASH} -->`;
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                per_page: 100,
+              });
+              const alreadyReported =
+                comments.some((c) => (c.body || '').includes(marker)) ||
+                (issue.body || '').includes(marker);
+
+              if (alreadyReported) {
+                core.notice(`Drift unchanged since the last run — not re-commenting on #${issue.number}`);
+                return;
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `## Spec drifted again (${today})\n\n${truncNote}\n\n\`\`\`diff\n${diff}\n\`\`\`\n\n${marker}`,
+              });
+              core.notice(`Commented on existing drift issue #${issue.number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Coolify OpenAPI spec has drifted from the vendored copy',
+                labels: ['api-drift', 'maintenance'],
+                body,
+              });
+              core.notice(`Opened drift issue #${created.number}`);
+            }
+
+      # The root cause of #309 was not only the 403 — it was that a scheduled
+      # workflow surfaces no PR check, so it failed every Monday for months with
+      # nobody watching. An honest `exit 1` above is still only loud to whoever
+      # thinks to open the Actions tab. This closes that loop.
+      - name: Report a broken drift check
+        if: failure()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const title = 'OpenAPI drift check is failing';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              'The weekly OpenAPI drift check failed, so **upstream API changes are no longer being detected**.',
+              '',
+              `Run: ${run}`,
+              '',
+              'Likely causes: upstream moved or renamed `openapi.yaml`, raw.githubusercontent returned an error,',
+              'or `docs/coolify-openapi.yaml` is missing from the checkout.',
+              '',
+              'This issue closes itself the next time the check succeeds.',
+              '',
+              '<!-- drift-broken -->',
+            ].join('\n');
+
+            const { data: found } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'api-drift-broken',
+              state: 'open',
+            });
+            const open = found.filter((i) => !i.pull_request);
+
+            if (open.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open[0].number,
+                body: `Still failing as of ${new Date().toISOString().split('T')[0]}. ${run}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: ['api-drift-broken', 'maintenance'],
+                body,
+              });
+            }
+
+      # Self-healing: a green run closes the "it is broken" issue, so the label
+      # reflects reality rather than accumulating stale alarms.
+      - name: Close the broken-check issue once it passes
+        if: success()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { data: found } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'api-drift-broken',
+              state: 'open',
+            });
+            for (const issue of found.filter((i) => !i.pull_request)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: 'Drift check ran successfully — closing.',
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }

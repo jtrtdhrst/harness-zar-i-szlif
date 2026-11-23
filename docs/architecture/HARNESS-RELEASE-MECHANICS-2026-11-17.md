@@ -26,7 +26,7 @@ endpoints separately before asserting production readiness.
 
 ## Ubuntu MCP code changes merged 2026-11-17
 
-Code lives in `ubuntu-mcp/server.mjs` and tests in `ubuntu-mcp/test-auth.mjs`.
+Code lives in `mcp/ubuntu-mcp/server.mjs` and tests in `mcp/ubuntu-mcp/test-auth.mjs`.
 Today's commits introduced/refined the ChatGPT OAuth metadata/PKCE flow,
 CIMD discovery, OpenAI callback-host compatibility, refresh-token and issuer
 handling, the HTTP `405` contract for non-POST `/mcp`, legacy URL-key
