@@ -46,17 +46,55 @@ def _iso_time(value):
         return False
 
 
+SECURITY_HOLD_CTO = "3a54e0b4-6526-4de5-a1fd-e66e205cb3b4"
+SECURITY_HOLD_COO = "774ab8a9-4e60-42a1-af03-c1c09860c15f"
+
+
+def _read_clearance_comment(value, db_container, actor_type, actor_id, markers):
+    if not isinstance(value, str) or not UUID.fullmatch(value):
+        raise Denied("security_hold_evidence_id_invalid")
+    sql = ("SELECT row_to_json(t)::text FROM (SELECT author_type, author_id, "
+           "content, source_task_id FROM comment "
+           f"WHERE id='{value}' AND issue_id='{SECURITY_HOLD_ISSUE}' "
+           "AND deleted_at IS NULL) t")
+    rows = read_rows(sql, db_container)
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        raise Denied("security_hold_evidence_comment_missing")
+    item = rows[0]
+    content = item.get("content")
+    if (item.get("author_type") != actor_type or item.get("author_id") != actor_id
+            or not isinstance(content, str)
+            or not all(marker in content for marker in markers)):
+        raise Denied("security_hold_evidence_comment_untrusted")
+    if actor_type == "agent":
+        task = task_record(item.get("source_task_id"), db_container)
+        if (task.get("agent_id") != actor_id or task.get("issue_id") != SECURITY_HOLD_ISSUE
+                or task.get("status") != "completed"):
+            raise Denied("security_hold_evidence_run_not_completed")
+    return True
+
+
 def enforce_persistent_security_hold(db_container, hold_path=None):
     path = Path(hold_path) if hold_path is not None else SECURITY_HOLD_FILE
     if path.is_symlink() or not path.is_file():
         raise Denied("security_hold_record_missing")
+    try:
+        st = path.stat()
+        gate_st = Path(__file__).stat()
+    except OSError:
+        raise Denied("security_hold_record_unreadable") from None
+    # Authored repository checkout or root-owned production installation must
+    # own BOTH checker and record, be non-group/world writable and single-link.
+    if st.st_uid != gate_st.st_uid or st.st_nlink != 1 or (st.st_mode & 0o022):
+        raise Denied("security_hold_record_unsafe_permissions")
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
         raise Denied("security_hold_record_unreadable") from None
     if not isinstance(record, dict):
         raise Denied("security_hold_record_invalid")
-    if (record.get("owner") != SECURITY_HOLD_OWNER
+    if (record.get("schema_version") != 1
+            or record.get("owner") != SECURITY_HOLD_OWNER
             or not isinstance(record.get("reason"), str)
             or not record["reason"].strip()
             or not _iso_time(record.get("activated_at"))
@@ -71,13 +109,12 @@ def enforce_persistent_security_hold(db_container, hold_path=None):
         raise Denied("security_hold_clearance_missing")
     if clearance.get("cleared_by") != SECURITY_HOLD_OWNER or not _iso_time(clearance.get("cleared_at")):
         raise Denied("security_hold_clearance_not_authorized")
-    if not isinstance(clearance.get("isolation_e2e_evidence"), str) or not clearance["isolation_e2e_evidence"].strip():
-        raise Denied("security_hold_isolation_e2e_missing")
-    if not isinstance(clearance.get("ctocoo_review_sha"), str) or not SHA.fullmatch(clearance["ctocoo_review_sha"]):
+    sha = clearance.get("ctocoo_review_sha")
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
         raise Denied("security_hold_independent_review_missing")
 
-    # The issue metadata survives blocked -> in_review -> done and supplies a
-    # second independent live source of truth (not a comment or task status).
+    # Live metadata survives status changes. A source-only clearance can NEVER
+    # bypass the active ZARI-213 hold in the authoritative Multica database.
     sql = ("SELECT row_to_json(t)::text FROM (SELECT metadata FROM issue "
            f"WHERE id='{SECURITY_HOLD_ISSUE}' AND workspace_id='{WORKSPACE}') t")
     rows = read_rows(sql, db_container)
@@ -86,8 +123,23 @@ def enforce_persistent_security_hold(db_container, hold_path=None):
     meta = rows[0].get("metadata")
     if not isinstance(meta, dict) or meta.get("security_hold") is not False:
         raise Denied("security_hold_live_not_cleared")
-    return True
 
+    # Not arbitrary strings or an arbitrary 40-hex value: three persisted,
+    # role-authenticated Multica comments are required. The CTO/COO evidence
+    # is bound to the SAME reviewed security patch SHA. The release-specific
+    # exact-head approval remains independently checked by verify() below.
+    _read_clearance_comment(
+        clearance.get("isolation_e2e_comment_id"), db_container, "member",
+        SECURITY_HOLD_OWNER, (
+            "ISOLATION_E2E_PASS", "HARNESS_OWN_REPO_PASS",
+            "PRODUCT_OWN_REPO_PASS", "CROSS_REPO_DENIED", "ROLLBACK_PASS"))
+    _read_clearance_comment(
+        clearance.get("cto_review_comment_id"), db_container, "agent",
+        SECURITY_HOLD_CTO, ("CODE_ONLY_APPROVED", sha))
+    _read_clearance_comment(
+        clearance.get("coo_authorization_comment_id"), db_container, "agent",
+        SECURITY_HOLD_COO, ("RELEASE_APPROVED", sha))
+    return True
 
 
 def validate_input(repo, pr, head_sha, merge_sha, issue_ref):
