@@ -22,9 +22,9 @@ To repozytorium zawiera **kod własnych integracji MCP oraz konfigurację ich ur
 - `workers/opik-run-enricher/`: niezależny proces batch. **Wysyła** do istniejących trace w Opik dozwolone metryki/zliczenia z zakończonych przebiegów agentów oraz Hindsight, bez surowych logów, promptów i treści pamięci. Nie obsługuje `tools/list` ani `tools/call`. W odczytanej liście 36 zasobów Coolify (2026-11-23) nie ma osobnego zasobu o tej nazwie — nie zakładaj wdrożenia, sprawdź rzeczywistego operatora przed zmianą.
 - `ops/` to wspólna infrastruktura dla **wszystkich** integracji. Nie jest drugą implementacją Opik; `ops/mcp-images/catalog.json` przechowuje inwentaryzację obrazów, a nie skompilowany serwer.
 
-## Qdrant: tylko jeden katalog źródeł
+## Qdrant MCP retired — do not recreate
 
-`mcp/qdrant-mcp/` zawiera `server.py`, `requirements.txt`, `Dockerfile`, README i kontrakty. Dawny katalog główny `qdrant-mcp/` zawierał jedynie dokumentację i kandydackie kontrakty Compose. Po migracji nie wolno go odtwarzać. **Nie usuwać** usługi Coolify `a4zgmthjspz8hwvyu6llr8dh`, obrazu produkcyjnego, Qdrant DB ani wolumenów/zbiorów danych w ramach porządkowania repo.
+The Qdrant **MCP** service has been retired and all owned source removed from `mcp/qdrant-mcp/` by merged PR #182. PR #234 removed its edge route and Worker source configuration. Do not recreate the deleted folder, build or publish a `qdrant-mcp` OCI image, restore `EDGE_SERVICE_ID=qdrant`, or restart the obsolete Coolify service `a4zgmthjspz8hwvyu6llr8dh`. The Coolify service is a retired record pending a confirmed, authorized deletion; its absence must be verified rather than assumed. Preserve the separate **Qdrant vector database** `eciprwgeyol4znmdd0dpu3xc`, its collections and data volumes. Historical notes may mention the old service but are not instructions to reactivate it.
 
 ## Procedura zmiany dla każdego agenta
 
