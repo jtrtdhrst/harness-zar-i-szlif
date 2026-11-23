@@ -1,5 +1,7 @@
 # Opik run enricher — Paperclip + Hindsight/VAI
 
+**Ten katalog nie jest drugą implementacją Opik MCP.** `mcp/opik-mcp/` odbiera zapytania narzędzi MCP, a ten worker tylko dopisuje zanonimizowane metryki do już istniejących śladów. `ops/` zawiera konfigurację i inwentaryzację wspólną dla całego Harness.
+
 Source derived from production local/opik-run-enricher:d27babc915c0 with one additive paperclip.run.safe_timeline span per finished, verified Paperclip run. No raw run logs, prompts, model responses, tool arguments, bearer grants or bank memories enter Opik.
 
 The exporter joins an existing Opik trace by both paperclip_run_id and Paperclip agent UUID, and requires an end_time; it does not create a fake trace or claim run success. For each matched run it emits at most one paperclip.run.audit_summary, paperclip.run.safe_timeline, and hindsight.bank.stats_snapshot span. IDs are deterministic, and any previously published span is preserved. Snapshot data is from the agent's own bank, counts only; snapshot does not prove memory use by the run. pc_obs recall/retain entries provide independent per-run evidence only if observed. Missing events and missing traces are not imputed.
@@ -12,4 +14,4 @@ Opik MCP still exposes Opik-indexed projects, traces and spans, not arbitrary di
 python3 -m unittest -q test_worker && python3 -m py_compile worker.py
 
 ## Release
-Use the service-specific reviewed promotion flow. Build a candidate from this source at an exact git SHA, record immutable image digest, run a bounded container against a read-only Paperclip log mount and isolated network, verify new spans by trace ID and negative data-leak tests, then promote to Coolify opik-run-enricher with verified rollback. Do not change a running production image on the basis of this file or an unreviewed PR alone. Memory/source credentials must not be copied into source or logs.
+Use the service-specific reviewed promotion flow. Build a candidate from this source at an exact git SHA, record immutable image digest, run a bounded container against a read-only Paperclip log mount and isolated network, verify new spans by trace ID and negative data-leak tests, then promote only to a verified, authorized execution target with rollback. The 2026-11-23 Coolify inventory of 36 resources has no separately named `opik-run-enricher` resource; check any systemd/other scheduler owner and its current image before claiming it is deployed. Do not change a running production image on the basis of this file or an unreviewed PR alone. Memory/source credentials must not be copied into source or logs.
