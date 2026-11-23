@@ -28,6 +28,7 @@ class RepoWiseAppSourceTests(unittest.TestCase):
     def test_all_tracked_upstream_files_are_imported_with_identical_git_tree(self):
         x = self.meta
         sha = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD:" + x["source_root"]], text=True).strip()
+        self.assertEqual(x["upstream_git_tree"], "fe223cb9efd9ed04583522b132089c4770c66ea0")
         self.assertEqual(sha, x["upstream_git_tree"])
         paths = subprocess.check_output(["git", "-C", str(ROOT), "ls-tree", "-r", "--name-only", "HEAD", x["source_root"]], text=True).splitlines()
         self.assertEqual(len(paths), x["upstream_tracked_file_count"])
@@ -35,6 +36,9 @@ class RepoWiseAppSourceTests(unittest.TestCase):
 
     def test_no_production_release_claim(self):
         self.assertEqual(self.meta["status"], "LOCAL_PRE_RELEASE_ONLY")
+        self.assertTrue(self.meta["inventory_reconciliation_required_before_cutover"])
+        self.assertEqual(self.meta["live_inventory_source_during_transition"], "upstream-git")
+        self.assertIn("registry_and_build_roots_reconciled_to_actual_cutover", self.meta["requires_before_cutover"])
         self.assertIn("independent_exact_sha_code_review",self.meta["requires_before_cutover"])
         self.assertIn("live_positive_negative_e2e",self.meta["requires_before_cutover"])
 
