@@ -593,6 +593,67 @@ test('rotating GitHub App writer file governs only verified POST and fails close
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
+test('single-repo rotating Harness reader enforces exact GitHub App scope and fail-closed rotation',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-reader-harness-')),file=join(dir,'reader.json');
+ const seen=[];
+ const role=(token,overrides={})=>({
+   token,role:'github-ops-reader-harness',app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:[REPO],permissions:{contents:'read',metadata:'read'},...overrides
+ });
+ const write=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
+ let s=null;
+ try {
+   write(role('a'.repeat(50)));
+   s=makeServer({callerToken:'narrow-reader-only',githubToken:'',tokenFile:file,
+     tokenFileRole:'github-ops-reader-harness',writesEnabled:false,
+     fetchImpl:async(url,opts)=>{
+       seen.push(opts.headers.Authorization);
+       return new Response(JSON.stringify({full_name:REPO,default_branch:'main'}),{status:200});
+     }});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const health=async()=> (await (await fetch(base+'/health')).json());
+   const call=async()=> {
+     const res=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer narrow-reader-only'},
+       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+         params:{name:'github_repo_info',arguments:{repo:REPO}}})});
+     return (await res.json()).result;
+   };
+   assert.equal((await health()).ready,true);
+   assert.equal((await health()).writes_enabled,false);
+   assert.equal((await call()).structuredContent.full_name,REPO);
+   write(role('b'.repeat(50)));
+   assert.equal((await call()).structuredContent.full_name,REPO,'rotation without restart');
+   assert.deepEqual(seen,['Bearer '+'a'.repeat(50),'Bearer '+'b'.repeat(50)]);
+   for(const altered of [
+     {repositories:[REPO,'jtrtdhrst/zar-i-szlif']},
+     {repositories:['jtrtdhrst/zar-i-szlif']},
+     {permissions:{contents:'write',metadata:'read'}},
+     {permissions:{actions:'read',contents:'read',metadata:'read'}},
+     {role:'github-ops-reader'},
+     {expires_at:new Date(Date.now()+30000).toISOString()}
+   ]){
+     write(role('c'.repeat(50),altered));
+     assert.equal((await health()).ready,false,'invalid scope must fail readiness');
+     const out=await call();
+     assert.equal(out.isError,true);
+     assert.match(out.content[0].text,/AUTH_SCOPE_INVALID|AUTH_FILE_EXPIRED/);
+     assert.equal(seen.length,2,'no GitHub provider call on invalid scope');
+   }
+   write(role('d'.repeat(50)));
+   assert.equal((await call()).structuredContent.full_name,REPO,'recover after valid rotation');
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
+test('rotating reader role cannot be configured as writer or arbitrary credential role',()=>{
+ for(const role of ['github-ops-writer','admin','github-ops-reader-harness-writer']){
+   assert.throws(()=>makeServer({tokenFileRole:role,githubToken:''}),/Unsupported read-only GitHub App credential role/);
+ }
+});
+
 test('branch delete requires exact repository, branch and SHA grant before provider calls',async()=>{
   const f=await fixture({writesEnabled:true,pushToken:'test-push-token',approved:false});
   try {
