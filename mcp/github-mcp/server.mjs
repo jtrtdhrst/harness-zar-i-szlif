@@ -204,11 +204,20 @@ async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
       throw error('AUTH_FILE_EXPIRED','GitHub installation token expired');
     if(v.app_id!==5398752 || v.installation_id!==173456397 || v.role!==expectedRole)
       throw error('AUTH_SCOPE_INVALID','GitHub installation token identity invalid');
-    const expected=['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'];
-    if(!Array.isArray(v.repositories) || v.repositories.length!==2 || expected.some(r=>!v.repositories.includes(r)))
+    // The new restricted Harness reader is an explicit role, not a scope
+    // downgrade of the existing two-repository production reader/writer.
+    const allowedRepositories={
+      'github-ops-reader':['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
+      'github-ops-reader-harness':['jtrtdhrst/harness-zar-i-szlif'],
+      'github-ops-writer':['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
+    };
+    const expected=allowedRepositories[expectedRole];
+    if(!expected || !Array.isArray(v.repositories) || v.repositories.length!==expected.length ||
+       expected.some(r=>!v.repositories.includes(r)))
       throw error('AUTH_SCOPE_INVALID','GitHub installation repository scope invalid');
     const allowedPermissions={
       'github-ops-reader':{actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'},
+      'github-ops-reader-harness':{contents:'read',metadata:'read'},
       'github-ops-writer':{actions:'write',contents:'write',pull_requests:'write',metadata:'read'},
     };
     const required=allowedPermissions[expectedRole];
@@ -241,6 +250,9 @@ export function makeServer(config={}) {
   const callerToken=config.callerToken??process.env.GITHUB_OPS_CALLER_TOKEN??'';
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
   const tokenFile=config.tokenFile??process.env.GITHUB_OPS_TOKEN_FILE??'';
+  const tokenFileRole=config.tokenFileRole??process.env.GITHUB_OPS_TOKEN_FILE_ROLE??'github-ops-reader';
+  if(!['github-ops-reader','github-ops-reader-harness'].includes(tokenFileRole))
+    throw error('AUTH_SCOPE_INVALID','Unsupported read-only GitHub App credential role');
   const writerTokenFile=config.writerTokenFile??process.env.GITHUB_OPS_WRITER_TOKEN_FILE??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
   // Only explicit in-process test injection may use a static token. Production
@@ -262,7 +274,7 @@ export function makeServer(config={}) {
     if(pinnedBranches.has(b))throw error('BRANCH_PINNED','Deployed branch is read-only');
     return b;
   };
-  const api=githubClient({token:githubToken,getToken:tokenFile?()=>scopedTokenFromFile(tokenFile):null,fetchImpl:config.fetchImpl});
+  const api=githubClient({token:githubToken,getToken:tokenFile?()=>scopedTokenFromFile(tokenFile,tokenFileRole):null,fetchImpl:config.fetchImpl});
   const readWriterToken=async()=>{
     if(writerTokenFile)return scopedTokenFromFile(writerTokenFile,'github-ops-writer');
     if(injectedWriterToken)return injectedWriterToken;
@@ -584,7 +596,7 @@ export function makeServer(config={}) {
   const server=http.createServer(async(req,res)=>{
     const json=(status,obj)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(obj));};
     if(req.method==='GET'&&req.url==='/health'){
-      const configured=tokenFile?await scopedTokenFromFile(tokenFile).then(()=>true,()=>false):Boolean(githubToken);
+      const configured=tokenFile?await scopedTokenFromFile(tokenFile,tokenFileRole).then(()=>true,()=>false):Boolean(githubToken);
       const writerConfigured=writerTokenFile?await scopedTokenFromFile(writerTokenFile,'github-ops-writer').then(()=>true,()=>false):false;
       return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured,writer_configured:writerConfigured});
     }
