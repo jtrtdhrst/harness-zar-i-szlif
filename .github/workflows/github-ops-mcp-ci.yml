@@ -74,12 +74,12 @@ jobs:
           python3 -m py_compile ops/harness/credentials/multica-zar-github-app-refresh.py ops/harness/credentials/github-ops-token-project.py
           python3 -m py_compile ops/harness/credentials/multica-git-credential-broker.py
           python3 -m py_compile ops/harness/credentials/github-ops-image-reader-project.py
+      - name: One-repo Github Ops reader and volume projection negatives
+        run: python3 ops/harness/credentials/test_github_ops_image_reader_project.py -q
       - name: Role-scoped Codex broker negative and quota regressions
         run: |
           python3 -m pip install --disable-pip-version-check aiohttp==3.14.5
           python3 ops/harness/credentials/test_zari213_codex_role_broker.py -v
-      - name: New one-repo Github Ops reader and volume projection negatives
-        run: python3 ops/harness/credentials/test_github_ops_image_reader_project.py -q
       - name: Git credential broker identity and isolation regressions
         run: python3 ops/harness/credentials/test_zari213_daemon_cache_reader.py -q
       - name: Verify task-role OAuth isolation and cache ACL regressions
