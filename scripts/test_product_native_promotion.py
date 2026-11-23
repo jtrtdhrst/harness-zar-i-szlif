@@ -1103,5 +1103,28 @@ class ProductPromotionTests(unittest.TestCase):
         self.assertEqual(p.READBACK_INTERVAL, 10)
         self.assertLess(p.READBACK_DEADLINE_SECONDS + 24, 20 * 60)
 
+    def test_shipped_controller_and_unit_carry_no_obsolete_owner(self):
+        """The repository owner renamed: an old-owner literal would fail closed.
+
+        The installed unit and this controller are the only shipped artifacts
+        that resolve the Product repository, so an obsolete owner here means
+        the live service reports missing_or_ambiguous_main_pr forever.
+        """
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        obsolete = "milosz" + "spyrka-code"
+        for name in ("scripts/product_native_promotion.py",
+                     "ops/systemd/product-native-promotion.service",
+                     "ops/systemd/product-native-promotion.timer"):
+            text = (root / name).read_text(encoding="utf-8")
+            with self.subTest(path=name):
+                self.assertNotIn(obsolete, text)
+        unit = (root / "ops/systemd/product-native-promotion.service").read_text(
+            encoding="utf-8")
+        self.assertIn("Documentation=https://github.com/jtrtdhrst/harness-zar-i-szlif", unit)
+        self.assertIn("ExecStart=/usr/bin/python3 /usr/local/libexec/product_native_promotion.py", unit)
+        self.assertIn("Environment=PRODUCT_NATIVE_GATE=/usr/local/libexec/"
+                      "multica_native_release_gate.py", unit)
+
 if __name__=="__main__":
     unittest.main()

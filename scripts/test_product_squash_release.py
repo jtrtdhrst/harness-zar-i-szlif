@@ -23,12 +23,16 @@ class ProductSquashTests(unittest.TestCase):
              patch.object(p,"commit",return_value=node), \
              patch.object(p,"provenance",return_value=(164,HEAD)), \
              patch.object(p,"checks",return_value={"billing_blocked":False}) as checks, \
+             patch.object(p,"premerge_head_checks",side_effect=AssertionError("docs-only must not re-validate the PR head")), \
              patch.object(p,"native_approval",side_effect=AssertionError("never review doc-only")):
             result=p.process(plan=False)
         self.assertEqual(result["result"],"no_runtime_release_required")
         self.assertEqual(result["live"],OLD)
         self.assertEqual(result["release_ref"],OLD)
-        self.assertEqual(checks.call_count,2)
+        # A metadata-only squash consults trusted CI for the CURRENT main tip
+        # exactly once; the removed PR-head tree/rootless prevalidation is what
+        # blocked safe docs after a squash.
+        self.assertEqual(checks.call_count,1)
 
     def test_single_parent_direct_push_rejected(self):
         node={"sha":NEW,"parents":[{"sha":OLD}],"files":[{"filename":"docs/a.md","status":"modified"}]}
@@ -71,11 +75,27 @@ class ProductSquashTests(unittest.TestCase):
         with patch.object(p,"commit",side_effect=lambda sha:{MID:docs,NEW:runtime}[sha]), \
              patch.object(p,"provenance",side_effect=lambda sha:(169,HEAD) if sha==NEW else (168,HEAD)), \
              patch.object(p,"checks",return_value={"billing_blocked":False}) as checks, \
+             patch.object(p,"premerge_head_checks",return_value={"billing_blocked":False}) as premerge, \
              patch.object(p,"native_approval") as native:
             result=p.candidate_history(OLD,NEW)
         self.assertEqual([x["pr"] for x in result],[169])
         native.assert_called_once_with(169,HEAD,NEW)
-        self.assertEqual(checks.call_count,4)
+        # Only the runtime squash is prevalidated against its PR head; the
+        # docs-only squash is judged on current main CI alone.
+        self.assertEqual(premerge.call_count,1)
+        self.assertEqual([c.args[0] for c in checks.call_args_list],[NEW,NEW])
+
+    def test_docs_only_squash_still_denied_when_trusted_main_ci_is_billing_blocked(self):
+        """Removing the PR-head prevalidation must not weaken the CI requirement."""
+        node={"sha":NEW,"parents":[{"sha":OLD}],"files":[{"filename":"docs/a.md","status":"modified"}]}
+        with patch.object(p,"commit",return_value=node), \
+             patch.object(p,"provenance",return_value=(167,HEAD)), \
+             patch.object(p,"checks",return_value={"billing_blocked":True}) as checks, \
+             patch.object(p,"premerge_head_checks",side_effect=AssertionError("docs-only must not re-validate the PR head")), \
+             patch.object(p,"native_approval",side_effect=AssertionError("docs-only is never a runtime release")):
+            with self.assertRaisesRegex(p.Denied,"product_ci_not_green"):
+                p.candidate_history(OLD,NEW)
+        checks.assert_called_once_with(NEW)
 
     def test_billing_block_without_root_attestation_denies_before_any_ref_write(self):
         """A billing-blocked CI run is never released without root-attested evidence.
