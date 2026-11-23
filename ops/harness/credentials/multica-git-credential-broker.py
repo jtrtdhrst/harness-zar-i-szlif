@@ -44,6 +44,11 @@ ROLE_PERMISSIONS = {
     "release": {"contents": "write", "pull_requests": "write", "checks": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
 }
+# Keep this grant narrower than the base role: reviewers and generic roles cannot edit CI.
+WORKFLOWS_WRITE_ROLES = {
+    "implementer-harness", "implementer-product",
+    "release-harness", "release-product",
+}
 DEFAULT_ROOT = "/etc/multica-git-credential"
 DAEMON_UNIT = "multica-zar-daemon.service"
 DAEMON_PORT_FILE = Path("/srv/multica-zar/.multica/profiles/zar-prod/daemon.port")
@@ -225,6 +230,16 @@ def role_base(role):
     return role
 
 
+def role_permissions(role):
+    """Return exact permissions expected for this scoped or base role."""
+    permissions = ROLE_PERMISSIONS.get(role_base(role))
+    if permissions is None:
+        return None
+    if role in WORKFLOWS_WRITE_ROLES:
+        return {**permissions, "workflows": "write"}
+    return permissions
+
+
 def role_repos(role):
     if role == "harness-reader":
         return {HARNESS_REPO}
@@ -369,8 +384,9 @@ def read_role_token(tokens_dir, role):
         raise ValueError("role not authorized for broker")
     if set(data.get("repositories", [])) != role_repos(role):
         raise ValueError("role token repository scope mismatch")
-    base = role_base(role)
-    if base in ROLE_PERMISSIONS and data.get("permissions") != ROLE_PERMISSIONS[base]:
+    expected_permissions = role_permissions(role)
+    if (expected_permissions is not None and
+            data.get("permissions") != expected_permissions):
         raise ValueError("role token permissions mismatch")
     if role.endswith(tuple(f"-{suffix}" for suffix in PROJECT_REPOS)):
         if data.get("role") != role:

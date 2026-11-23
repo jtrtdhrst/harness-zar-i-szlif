@@ -35,10 +35,14 @@ ROLE_PERMISSIONS = {
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",), "github-ops-reader-harness": ("harness-zar-i-szlif",)}
 ROLE_REPOS = {"harness-reader": (REPOS[0],), "github-ops-reader-harness": (REPOS[0],)}
 # Scoped agent grants are consumed by the broker; runner is a separate privileged role.
+# Only project-specific implementer/release roles may update repository workflows.
 for _base in ("implementer", "reviewer", "release"):
+    _scoped_permissions = dict(ROLE_PERMISSIONS[_base])
+    if _base in {"implementer", "release"}:
+        _scoped_permissions["workflows"] = "write"
     for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
                                   ("product", REPOS[1], REPO_NAMES[1])):
-        ROLE_PERMISSIONS[f"{_base}-{_suffix}"] = ROLE_PERMISSIONS[_base]
+        ROLE_PERMISSIONS[f"{_base}-{_suffix}"] = dict(_scoped_permissions)
         ROLE_REPOS[f"{_base}-{_suffix}"] = (_repo,)
         ROLE_REPO_NAMES[f"{_base}-{_suffix}"] = (_name,)
 RUNTIME_GID = 981

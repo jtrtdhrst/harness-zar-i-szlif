@@ -401,7 +401,7 @@ class ScopedRoleTests(unittest.TestCase):
                 "role": "implementer-harness",
                 "expires_at": "2099-01-01T00:00:00Z",
                 "repositories": ["jtrtdhrst/harness-zar-i-szlif"],
-                "permissions": broker.ROLE_PERMISSIONS["implementer"],
+                "permissions": broker.role_permissions("implementer-harness"),
             }
             path = pathlib.Path(directory) / "implementer-harness.json"
             path.write_text(json.dumps(payload))
@@ -480,6 +480,21 @@ class TaskScopeHandlerTests(unittest.TestCase):
             h.handle()
         self.assertEqual(result, [{"ok": False, "error": "no_active_multica_task"}])
         scope.assert_called_once_with("tok")
+        get_token.assert_not_called()
+
+    def test_scope_for_different_task_id_denies_credentials(self):
+        h, result = self.make_handler("jtrtdhrst/harness-zar-i-szlif.git")
+        mismatched_scope = {
+            "workspace_id": broker.EXPECTED_WORKSPACE,
+            "task_id": "another-task",
+            "agent_id": "agent-1",
+            "repo_urls": ["https://github.com/jtrtdhrst/harness-zar-i-szlif"],
+        }
+        with patch.object(broker, "task_agent", return_value=("agent-1", "task-1", "tok")), \
+             patch.object(broker, "task_repo_scope", return_value=mismatched_scope), \
+             patch.object(broker, "token_for_role") as get_token:
+            h.handle()
+        self.assertEqual(result, [{"ok": False, "error": "no_active_multica_task"}])
         get_token.assert_not_called()
 
 
