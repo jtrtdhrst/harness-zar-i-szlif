@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { inspectDataTokens, planDataToken, plasmicDataTokenTools, tokenValue } from "../services/plasmic-mcp/data-token-tools.ts";
+import { inspectDataTokens, isSecretMaterial, planDataToken, plasmicDataTokenTools, tokenValue } from "../services/plasmic-mcp/data-token-tools.ts";
 import type { BundleDoc } from "@design-stack/plasmic-client";
 
 const fresh = (): BundleDoc => ({
@@ -125,6 +125,35 @@ test("Ordinary site text still round-trips through the same guards", () => {
   assert.equal(bundle.map[insert.tokenId]!.value, '"Hello"');
   const update = planDataToken(bundle, "update", { projectId: "fixture", tokenId: insert.tokenId, value: "Summer sale — 20% off" });
   assert.equal(applied(bundle, update).map[insert.tokenId]!.value, '"Summer sale — 20% off"');
+});
+test("Code expressions cannot embed credential material either", async () => {
+  const codeSecret = "(v) => 'sk_live_4eC39HqLyjWDarjtT1zdp7dc'";
+  assert.equal(isSecretMaterial(codeSecret), true, "the detector must recognise the embedded key");
+  assert.throws(() => tokenValue(codeSecret, "code"), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  const { bundle, insert } = created();
+  assert.throws(() => planDataToken(bundle, "create", { projectId: "fixture", name: "pricing", valueType: "code", value: codeSecret }), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  assert.throws(() => planDataToken(bundle, "update", { projectId: "fixture", tokenId: insert.tokenId, valueType: "code", value: codeSecret }), /DATA_TOKEN_SECRET_VALUE_REJECTED/);
+  // Ordinary expressions keep working.
+  assert.equal(tokenValue("(amount) => Math.round(amount)", "code"), "(amount) => Math.round(amount)");
+  assert.equal(tokenValue("amount * 2", "code"), "(amount * 2)");
+
+  const legacyCode: BundleDoc = {
+    version: "test", root: "site", deps: [],
+    map: {
+      site: { __type: "Site", dataTokens: [{ __ref: "tokCodeSecret" }, { __ref: "tokCodeSafe" }], components: [] },
+      tokCodeSecret: { __type: "DataToken", uuid: "c1", name: "leaky", type: "Data", value: codeSecret, variantedValues: [], isRegistered: false, regKey: null },
+      tokCodeSafe: { __type: "DataToken", uuid: "c2", name: "rounding", type: "Data", value: "(amount) => Math.round(amount)", variantedValues: [], isRegistered: false, regKey: null },
+    },
+  };
+  const ctx = { client: { getProjectRev: async () => ({ revision: 5, bundle: legacyCode, modelVersion: 30 }) } as any, stateDir: "/tmp/unused", auditFile: "/tmp/unused/audit" };
+  const get = plasmicDataTokenTools(ctx).find((x) => x.name === "plasmic_get_data_token")!;
+  const unsafe = await get.handler({ projectId: "fixture", tokenId: "leaky" }) as Record<string, unknown>;
+  assert.equal(unsafe.valueRedacted, true);
+  assert.equal(unsafe.value, undefined);
+  assert.ok(!JSON.stringify(unsafe).includes("sk_live_"), "the embedded key must not leak in the read result");
+  const safe = await get.handler({ projectId: "fixture", tokenId: "rounding" }) as Record<string, unknown>;
+  assert.equal(safe.valueRedacted, false);
+  assert.equal(safe.value, "(amount) => Math.round(amount)");
 });
 test("get_data_token withholds credential-shaped existing values and returns safe ones", async () => {
   const legacySecret: BundleDoc = {

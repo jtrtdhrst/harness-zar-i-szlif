@@ -84,9 +84,12 @@ export function tokenValue(value: unknown, kind: Kind): string {
   }
   if (typeof value !== "string" || !value.trim() || value.length > 4000 ||
       codeForbidden.test(value) || /[;][\s]*(?:fetch|eval|import|require)\b/i.test(value)) {
-    fail("UNSAFE_DATA_TOKEN_CODE");
+    return fail("UNSAFE_DATA_TOKEN_CODE");
   }
-  const trimmed = (value as string).trim();
+  // Code expressions are evaluated in the browser like text values, so a literal credential
+  // embedded in an expression is the same publication path.
+  assertNoSecretMaterial(value, "VALUE");
+  const trimmed = value.trim();
   return trimmed.startsWith("(") && trimmed.endsWith(")") ? trimmed : "(" + trimmed + ")";
 }
 function safeName(name: unknown): string {
@@ -253,10 +256,9 @@ export function plasmicDataTokenTools(ctx: PlasmicCtx): ToolDef[] {
         const stored = String(token.token.value);
         const kind = kindOf(stored);
         // Existing tokens may predate the create/update guard, so redact on read as well:
-        // code expressions are never echoed and text values are withheld when they look like
-        // credential material.
+        // any value — text or code — that looks like credential material is withheld.
         const sensitive = codeForbidden.test(stored) ||
-          (kind === "text" && isSecretMaterial(unwrapText(stored)));
+          isSecretMaterial(kind === "text" ? unwrapText(stored) : stored);
         return { id: token.iid, name: token.token.name, revision: rev.revision,
           valueType: kind, value: sensitive ? undefined : stored,
           valueRedacted: sensitive, registered: token.token.isRegistered === true };
