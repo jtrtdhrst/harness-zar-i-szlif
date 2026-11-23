@@ -64,17 +64,12 @@ same project.
 | `mcp/github-mcp/` (BGH) | `docker build --target verify -t local/github-mcp:verify mcp/github-mcp/ && docker build -t local/github-mcp:dev mcp/github-mcp/` | `mcp/github-mcp/Dockerfile` |
 | `gateways/mcp-edge/` | `docker build -f gateways/mcp-edge/Dockerfile.coolify -t local/mcp-edge:dev gateways/mcp-edge/` | `gateways/mcp-edge/Dockerfile.coolify` |
 
-## Pending structural cleanup
+## Migration notes (current canonical layout)
 
-These are tracked as migration work, not silently ignored:
-
-- ComfyUI is now split into `comfy` and `comfy-mcp`; the old combined
-  `mcp/comfy-mcp/` folder remains only as historical build source.
-- `mcp-bridges` is split into `emailens-mcp`, `mantic-mcp` (in `mautic`) and
-  `ubuntu-mcp`; old app containers removed.
-- platform folders (`mautic`, `supabase`, `opik`,
-  `comfy`) are metadata/build-contract folders; their upstream images/source
-  remain external.
+- `mcp/comfy-mcp/` is **active canonical MCP source**, not an obsolete combined folder. The separate `comfy` service runs its existing local/upstream image and stores models and outputs in its own persistent volumes.
+- Bridges `emailens-mcp`, `mantic-mcp`, and `ubuntu-mcp` have independent code under `mcp/`; their providers or engine stacks are separate resources.
+- Mautic, Supabase, Opik Core, ComfyUI Engine and Qdrant DB are runtime resources; do not invent local owner-source folders for vendor or unknown-source images.
+- `mcp/opik-mcp/` and `workers/opik-run-enricher/` are separate components, whereas `ops/` contains shared deployment metadata, not an Opik process.
 
 `mcp/qdrant-mcp/` is the canonical source of the running Qdrant MCP service. Qdrant database is a separate upstream runtime; removing historical `qdrant/` metadata does not delete its deployed collections or volumes. Any retirement of live resources requires separate inventory and migration.
 
