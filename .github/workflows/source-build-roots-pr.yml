@@ -5,6 +5,8 @@ on:
     paths:
       - 'ops/service-build-roots.json'
       - 'scripts/test_service_build_roots.py'
+      - 'scripts/test_mcp_build_contract.py'
+      - 'ops/repowise/MCP_SOURCE_BUILDS.md'
       - 'ops/repowise/compose.publisher.owned.yaml'
       - 'ops/repowise/Dockerfile.publisher'
       - '.github/workflows/source-build-roots-pr.yml'
@@ -24,6 +26,8 @@ jobs:
           persist-credentials: false
       - name: Verify exactly 15 source-ready roots and staged Coolify root
         run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
+      - name: Fail closed if any owned MCP loses its main SHA-bound publisher
+        run: python3 -m unittest discover -s scripts -p 'test_mcp_build_contract.py' -v
       - name: Validate standalone RepoWise staging Compose rooted at its own folder
         run: docker compose -f ops/repowise/compose.publisher.owned.yaml config --quiet
       - name: Build staging publisher from owned context with protocol tests
