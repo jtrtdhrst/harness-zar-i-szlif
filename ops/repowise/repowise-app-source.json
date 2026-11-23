@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "status": "LOCAL_PRE_RELEASE_ONLY",
+  "repository": "jtrtdhrst/harness-zar-i-szlif",
+  "source_root": "apps/repowise",
+  "dockerfile": "apps/repowise/docker/Dockerfile",
+  "upstream_repository": "repowise-dev/repowise",
+  "upstream_version": "v0.60.1",
+  "upstream_commit": "7ccd63f1b97d4f9f15dd79f930233f75e66d3e94",
+  "upstream_git_tree": "fe223cb9efd9ed04583522b132089c4770c66ea0",
+  "upstream_tracked_file_count": 7629,
+  "license": "AGPL-3.0-or-later",
+  "coolify_application_uuid": "oea9obpkhzbgkmipxwqmz2hj",
+  "current_production_source": "repowise-dev/repowise.git v0.60.1",
+  "target_git_branch": "main",
+  "target_base_directory": "/apps/repowise",
+  "target_dockerfile_location": "/docker/Dockerfile",
+  "requires_before_cutover": [
+    "full_source_on_harness_main",
+    "independent_exact_sha_code_review",
+    "trusted_ci_build",
+    "COO_release_authorization",
+    "source_digest_parity",
+    "preserved_volumes_and_secrets",
+    "live_positive_negative_e2e",
+    "rollback_verified"
+  ]
+}
