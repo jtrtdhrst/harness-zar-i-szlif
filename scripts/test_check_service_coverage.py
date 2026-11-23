@@ -83,9 +83,9 @@ class ServiceCoverageTests(unittest.TestCase):
 
     def test_nested_mcp_workflow_must_keep_exact_pr_source_path_filter(self):
         workflow = (
-            "name: nested service test\\non:\\n  pull_request:\\n    paths:\\n"
-            "      - 'mcp/coolify-mcp/**'\\n"
-            "      - '.github/workflows/test.yml'\\n"
+            "name: nested service test\non:\n  pull_request:\n    paths:\n"
+            "      - 'mcp/coolify-mcp/**'\n"
+            "      - '.github/workflows/test.yml'\n"
         )
         temp, root, config = self.fixture(
             {"mode": "manual_only", "reason": "manual gate"}, workflow
@@ -101,7 +101,7 @@ class ServiceCoverageTests(unittest.TestCase):
             config.write_text(json.dumps(data))
             self.assertEqual(check(root, config), (5, 1))
             ci = root / ".github/workflows/test.yml"
-            ci.write_text(workflow.replace("      - 'mcp/coolify-mcp/**'\\n", ""))
+            ci.write_text(workflow.replace("      - 'mcp/coolify-mcp/**'\n", ""))
             with self.assertRaisesRegex(ValueError, "does not path-filter"):
                 check(root, config)
 
