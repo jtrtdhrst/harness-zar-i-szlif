@@ -115,6 +115,11 @@ class AdmissionTests(unittest.TestCase):
     def test_denies_unknown_service(self):
         self.deny("unknown_service", request=request(service="not-a-service"))
 
+    def test_denies_github_ops_mcp_until_manifest_authorization_exists(self):
+        # The controller now models the github-ops-mcp transport; without a
+        # reviewed lanes/other_resources entry it must stay deny-by-default.
+        self.deny("unknown_service", request=request(service="github-ops-mcp"))
+
     def test_denies_non_allowlisted_coolify_uuid(self):
         self.deny("coolify_uuid_mismatch", request=request(coolify_uuid="0" * 24))
 
