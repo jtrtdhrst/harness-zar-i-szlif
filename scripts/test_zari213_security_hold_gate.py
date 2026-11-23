@@ -98,7 +98,7 @@ class PersistedHoldTests(unittest.TestCase):
         self.cleared()
         replies={
             EVIDENCE_ID:{"author_type":"member","author_id":OWNER,
-                "content":"ISOLATION_E2E_PASS HARNESS_OWN_REPO_PASS PRODUCT_OWN_REPO_PASS CROSS_REPO_DENIED ROLLBACK_PASS",
+                "content":"ISOLATION_CLEARANCE "+SHA+"\nHARNESS_OWN_REPO_PASS\nPRODUCT_OWN_REPO_PASS\nCROSS_REPO_DENIED\nROLLBACK_PASS",
                 "source_task_id":None},
             CTO_ID:{"author_type":"agent","author_id":CTO,"content":"CODE_ONLY_APPROVED "+SHA,
                 "source_task_id":CTO_TASK},
@@ -125,6 +125,19 @@ class PersistedHoldTests(unittest.TestCase):
             self.denied("security_hold_evidence_run_not_completed")
             tasks[COO_TASK]["status"]="completed"
             replies[EVIDENCE_ID]["author_id"]="attacker"
+            self.denied("security_hold_evidence_comment_untrusted")
+            replies[EVIDENCE_ID]["author_id"]=OWNER
+            replies[EVIDENCE_ID]["content"]="ISOLATION_CLEARANCE "+SHA+" is NOT proven; HARNESS_OWN_REPO_PASS failed; PRODUCT_OWN_REPO_PASS missing; CROSS_REPO_DENIED never tested; ROLLBACK_PASS absent"
+            self.denied("security_hold_evidence_comment_untrusted")
+            replies[EVIDENCE_ID]["content"]="> ISOLATION_CLEARANCE "+SHA+"\n> HARNESS_OWN_REPO_PASS\n> PRODUCT_OWN_REPO_PASS\n> CROSS_REPO_DENIED\n> ROLLBACK_PASS"
+            self.denied("security_hold_evidence_comment_untrusted")
+            replies[EVIDENCE_ID]["content"]="```\nISOLATION_CLEARANCE "+SHA+"\nHARNESS_OWN_REPO_PASS\nPRODUCT_OWN_REPO_PASS\nCROSS_REPO_DENIED\nROLLBACK_PASS\n```"
+            self.denied("security_hold_evidence_comment_untrusted")
+            replies[EVIDENCE_ID]["content"]="ISOLATION_CLEARANCE "+SHA+"\nHARNESS_OWN_REPO_PASS\nPRODUCT_OWN_REPO_PASS\nCROSS_REPO_DENIED\nROLLBACK_PASS"
+            replies[CTO_ID]["content"]="CODE_ONLY_APPROVED "+SHA+" is WITHHELD"
+            self.denied("security_hold_evidence_comment_untrusted")
+            replies[CTO_ID]["content"]="CODE_ONLY_APPROVED "+SHA
+            replies[COO_ID]["content"]="RELEASE_APPROVED "+SHA+" refused"
             self.denied("security_hold_evidence_comment_untrusted")
 
 if __name__=="__main__":
