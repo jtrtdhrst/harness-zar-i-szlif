@@ -14,7 +14,7 @@ class SourceLayoutTests(unittest.TestCase):
         self.assertEqual(sum(x["type"]=="application" for x in self.rows),13)
         self.assertEqual(sum(x["type"]=="service" for x in self.rows),25)
     def test_source_owner_is_real_not_a_dummy_directory(self):
-        no_root={"vendor-image","upstream-git","local-image-unknown-source","other-repository","owned-image"}
+        no_root={"vendor-image","upstream-git","local-image-unknown-source","other-repository","owned-image","retired-runtime"}
         for x in self.rows:
             with self.subTest(name=x["name"]):
                 if x["source"] in no_root:
@@ -39,9 +39,17 @@ class SourceLayoutTests(unittest.TestCase):
             self.assertEqual(entry["source_repository"], "jtrtdhrst/harness-zar-i-szlif")
             self.assertEqual(entry["build_pack"], "dockerimage")
             self.assertNotIn("root", entry)
+    def test_retired_qdrant_mcp_no_build_folder(self):
+        r=next(x for x in self.rows if x["name"]=="qdrant-mcp")
+        self.assertEqual(r["source"],"retired-runtime")
+        self.assertNotIn("root",r)
+        self.assertNotIn("dockerfile",r)
+        self.assertFalse((ROOT/"mcp/qdrant-mcp").exists())
+        self.assertIn("qdrant", {x["name"] for x in self.rows})
+
     def test_service_folder_matches_owned_mcp_source(self):
         for name in ("playwright-mcp","mantic-mcp","comfy-mcp","multica-mcp",
-                     "qdrant-mcp","coolify-mcp","hindsight-mcp","opik-mcp",
+                     "coolify-mcp","hindsight-mcp","opik-mcp",
                      "plasmic-mcp","emailens-mcp","ubuntu-mcp","supabase-mcp"):
             r=next(x for x in self.rows if x["name"]==name)
             self.assertEqual(r["root"],"mcp/"+name)

@@ -22,10 +22,16 @@ class McpBuildSelectionTests(unittest.TestCase):
         self.assertEqual(images.EXPECTED_REPOSITORY,"jtrtdhrst/harness-zar-i-szlif")
 
     def test_independent_mcp_build_paths(self):
-        for name in ("qdrant-mcp", "hindsight-mcp", "opik-mcp"):
+        for name in ("hindsight-mcp", "opik-mcp"):
             with self.subTest(service=name):
                 selected = images.select(["mcp/" + name + "/README.md"], event_name="push")
                 self.assertEqual([item["service"] for item in selected], [name])
+
+    def test_retired_qdrant_mcp_cannot_rebuild(self):
+        self.assertNotIn("qdrant-mcp",images.MCP_BUILD_CONTEXTS)
+        self.assertEqual(images.select(["mcp/qdrant-mcp/server.py"],event_name="push"),[])
+        with self.assertRaisesRegex(ValueError,"invalid_manually_selected_service"):
+            images.select([],event_name="workflow_dispatch",manual_service="qdrant-mcp")
 
     def test_consecutive_pushes_do_not_lose_other_service_builds(self):
         # Every separate push must remain queued, even if an earlier build runs.
@@ -56,7 +62,7 @@ class McpBuildSelectionTests(unittest.TestCase):
                   "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
                                  "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}])
         self.assertEqual(len(images.select([], event_name="workflow_dispatch",
-                                           manual_service="all")), 10)
+                                           manual_service="all")), 9)
 
     def test_rejects_injected_service_and_untrusted_events(self):
         for candidate in ("../../etc", "ops", "mcp-all; touch /tmp/unsafe",

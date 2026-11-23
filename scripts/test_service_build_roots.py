@@ -19,12 +19,12 @@ class HarnessBuildRootsTests(unittest.TestCase):
         cls.data = json.loads(MANIFEST.read_text(encoding="utf-8"))
         cls.rows = cls.data["resources"]
 
-    def test_exactly_16_in_repo_build_root_resources(self):
+    def test_exactly_15_in_repo_build_root_resources(self):
         self.assertEqual(self.data["schema_version"], 1)
         self.assertEqual(self.data["repo"], "jtrtdhrst/harness-zar-i-szlif")
-        self.assertEqual(len(self.rows), 16)
-        self.assertEqual(len({r["id"] for r in self.rows}), 16)
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 16)
+        self.assertEqual(len(self.rows), 15)
+        self.assertEqual(len({r["id"] for r in self.rows}), 15)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 15)
 
     def test_every_source_root_is_non_root_and_explicit(self):
         for r in self.rows:
@@ -69,13 +69,13 @@ class HarnessBuildRootsTests(unittest.TestCase):
             with self.subTest(instruction=safe):
                 self.assertNotRegex(safe, PARENT_CONTEXT_COPY_RE)
 
-    def test_exact_fifteen_source_ready_and_unreleased_coolify(self):
+    def test_exact_fourteen_source_ready_and_unreleased_coolify(self):
         approved = {
             "github-ops-mcp", "hermes-gateway", "multica-mcp",
             "repowise-deployment-publisher-staging", "emailens-mcp",
             "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
             "mantic-mcp", "playwright-mcp", "comfy-mcp",
-            "coolify-mcp", "qdrant-mcp", "hindsight-mcp", "opik-mcp",
+            "coolify-mcp", "hindsight-mcp", "opik-mcp",
         }
         ready = {row["id"] for row in self.rows if row["source_build_ready"]}
         self.assertEqual(ready, approved)
