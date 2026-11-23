@@ -42,6 +42,11 @@ class RoleAuthIsolationTests(unittest.TestCase):
         self.role_dir.mkdir(mode=0o700)
         self.auth = self.role_dir / "auth.json"
         self.uid = os.getuid()
+        # Exercise the dormant fail-closed Codex credential validator using
+        # synthetic data only. Production CODEX_ROLES remains empty.
+        original_roles = M.CODEX_ROLES
+        M.CODEX_ROLES = frozenset({"cto"})
+        self.addCleanup(setattr, M, "CODEX_ROLES", original_roles)
 
     def create_private(self):
         self.auth.write_text('{"synthetic":"not-a-secret"}')
@@ -174,14 +179,14 @@ class RoleProviderPolicyTests(unittest.TestCase):
         self.profile("cto", "opencode-go")
         self.assertEqual(M.role_model_provider(self.home, "cto", os.getuid()), "opencode-go")
 
-    def test_codex_role_uses_codex_auth(self):
+    def test_former_codex_role_cannot_select_codex_auth(self):
         self.profile("coo", "openai-codex")
-        self.assertEqual(M.role_model_provider(self.home, "coo", os.getuid()), "openai-codex")
-
-    def test_unapproved_other_codex_role_fallback_denied(self):
-        self.profile("coo", "opencode-go")
         with self.assertRaisesRegex(ValueError, "not approved"):
             M.role_model_provider(self.home, "coo", os.getuid())
+
+    def test_former_codex_role_uses_private_opencode_provider(self):
+        self.profile("coo", "opencode-go")
+        self.assertEqual(M.role_model_provider(self.home, "coo", os.getuid()), "opencode-go")
 
     def test_opencode_role_cannot_switch_to_codex(self):
         self.profile("harness-engineer", "openai-codex")
