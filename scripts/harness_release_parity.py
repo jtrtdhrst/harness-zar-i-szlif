@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from harness_source_roots import source_path_prefix
 
 from harness_release_admission import Denied, read_trusted_bytes
 
@@ -47,9 +48,9 @@ def check_source(repo, expected_sha, *, runner=subprocess.run):
     origin = checked(["git", "-C", str(repo), "remote", "get-url", "origin"],
                      "source_remote_unverifiable", runner=runner)
     trusted = (
-        r"https://github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-        r"git@github\.com:miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-        r"ssh://git@github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+        r"https://github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+        r"git@github\.com:jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+        r"ssh://git@github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
     )
     if not any(re.fullmatch(pattern, origin, flags=re.IGNORECASE) for pattern in trusted):
         raise ParityFailure("source_remote_untrusted")
@@ -148,7 +149,7 @@ def _check_runtime(repo, expected_sha, service, *, runner=subprocess.run, state_
     # Compare only the service directory; unrelated merges do not imply the
     # running service is stale. Errors and absent Git history are NOT PASS.
     rc, _ = command(["git", "-C", str(repo), "diff", "--quiet", full_revision,
-                     expected_sha, "--", service + "/"], runner=runner)
+                     expected_sha, "--", source_path_prefix(service)], runner=runner)
     if rc == 1:
         raise ParityFailure("service_changes_not_deployed")
     if rc:

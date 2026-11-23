@@ -13,14 +13,16 @@ import sys
 # Only source-owned Dockerfiles; externally managed or unpinned images are not
 # built from this repository. Keep this table deliberately explicit.
 MCP_BUILD_CONTEXTS = {
-    "comfy-mcp": "comfy-mcp",
-    "emailens-mcp": "emailens-mcp",
-    "mantic-mcp": "mantic-mcp",
-    "plasmic-mcp": "plasmic-mcp",
-    "playwright-mcp": "playwright-mcp",
-    "qdrant-mcp": "qdrant-mcp",
-    "supabase-mcp": "supabase-mcp",
-    "ubuntu-mcp": "ubuntu-mcp",
+    "comfy-mcp": "mcp/comfy-mcp",
+    "emailens-mcp": "mcp/emailens-mcp",
+    "mantic-mcp": "mcp/mantic-mcp",
+    "plasmic-mcp": "mcp/plasmic-mcp",
+    "playwright-mcp": "mcp/playwright-mcp",
+    "qdrant-mcp": "mcp/qdrant-mcp",
+    "hindsight-mcp": "mcp/hindsight-mcp",
+    "opik-mcp": "mcp/opik-mcp",
+    "supabase-mcp": "mcp/supabase-mcp",
+    "ubuntu-mcp": "mcp/ubuntu-mcp",
 }
 BUILD_CONFIG_PATHS = {
     ".github/workflows/mcp-images-ghcr.yml",
@@ -49,7 +51,8 @@ def select(changed_paths, *, event_name, manual_service="all"):
     else:
         raise ValueError("untrusted_event")
     return [{"service": service, "directory": MCP_BUILD_CONTEXTS[service],
-             "dockerfile": "Dockerfile.http" if service == "mantic-mcp" else "Dockerfile"}
+             "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
+                            "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}
             for service in sorted(selected)]
 
 

@@ -76,6 +76,130 @@ def grant(ruleset, path, rights, *, require_regular_nofollow=False):
     finally:
         os.close(fd)
 
+def private_role_auth_file(shared_home: Path, role: str, uid: int) -> Path:
+    """Require a private role credential file; never follow common OAuth links.
+
+    This validates filesystem isolation, not whether upstream credentials have
+    distinct token identities. An independently provisioned role credential is
+    mandatory before enabling this stricter policy on the production daemon.
+    """
+    if role not in CODEX_ROLES:
+        raise ValueError("role is not authorized for Codex credentials")
+    directory = shared_home / "profiles" / role
+    entry = directory / "auth.json"
+    d = directory.lstat()  # reject role path symlinks
+    if (not stat.S_ISDIR(d.st_mode) or d.st_uid != uid or
+            stat.S_IMODE(d.st_mode) != 0o700):
+        raise ValueError("Codex role credential directory is not private")
+    f = entry.lstat()  # NEVER resolve a symlink into shared OAuth state
+    if (not stat.S_ISREG(f.st_mode) or f.st_uid != uid or
+            stat.S_IMODE(f.st_mode) != 0o600 or f.st_nlink != 1):
+        raise ValueError("Codex role credential must be a private regular file")
+    root_auth = shared_home / "auth.json"
+    try:
+        global_stat = root_auth.stat()
+    except FileNotFoundError:
+        global_stat = None
+    if global_stat and (f.st_dev, f.st_ino) == (global_stat.st_dev, global_stat.st_ino):
+        raise ValueError("Codex role credential aliases shared OAuth state")
+    return entry
+
+
+def role_model_provider(shared_home: Path, role: str, uid: int) -> str:
+    """Read only the trusted role-local provider selector; reject provider drift.
+
+    CTO may temporarily use the pre-approved OpenCode runtime for independent
+    review while its Codex OAuth login is unavailable. No other Codex role
+    silently inherits this exception.
+    """
+    if role not in CODEX_ROLES and role not in OPENCODE_ROLES:
+        raise ValueError("role has no model credential policy")
+    config = shared_home / "profiles" / role / "config.yaml"
+    fd = os.open(config, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1):
+            raise ValueError("untrusted role model config")
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as file:
+            lines = file.read(65536).splitlines()
+    finally:
+        os.close(fd)
+    found = []
+    inside = False
+    blocks = 0
+    for line in lines:
+        if line.startswith("model:"):
+            blocks += 1
+            inside = True
+        elif inside and line and not line[0].isspace() and not line.startswith("#"):
+            inside = False
+        elif inside:
+            match = re.fullmatch(r"  provider:\s*([a-z0-9-]+)\s*", line)
+            if match:
+                found.append(match.group(1))
+    if blocks != 1 or len(found) != 1:
+        raise ValueError("ambiguous role model provider")
+    provider = found[0]
+    approved = (
+        (role in CODEX_ROLES and provider == "openai-codex")
+        or (role in OPENCODE_ROLES and provider == "opencode-go")
+        or (role == "cto" and provider == "opencode-go")
+    )
+    if not approved:
+        raise ValueError("role model provider not approved")
+    return provider
+
+
+def private_role_env_file(shared_home: Path, role: str, uid: int) -> Path:
+    """Validate private role .env metadata, never expose the provider key."""
+    path = shared_home / "profiles" / role / ".env"
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1):
+            raise ValueError("role provider environment is not private")
+    finally:
+        os.close(fd)
+    return path
+
+
+def verified_hermes_home_profile(task: Path, home: Path, session_root: Path,
+                                 agent: str, role: str, uid: int) -> str:
+    """Accept only an owned task-private home or the exact persisted role session.
+
+    A task-local Hermes home is produced by Multica for fresh sessions. It
+    must not be mistaken for a foreign shared/persistent Hermes profile.
+    Never follow a symlink and never broaden the shared-profile READ grant.
+    """
+    if not UUID.fullmatch(agent) or not UID_NAME.fullmatch(role):
+        raise ValueError("invalid task agent/role identity for Hermes home")
+    resolved = home.resolve(strict=True)
+    if home != resolved:
+        raise ValueError("Hermes home is symlinked")
+    expected_task_home = task / "hermes-home"
+    if home == expected_task_home:
+        st = home.lstat()
+        if (not stat.S_ISDIR(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o700):
+            raise ValueError("task-local Hermes home is not private")
+        return role
+    try:
+        rel = home.relative_to(session_root / agent)
+    except ValueError:
+        raise ValueError("Hermes home outside own task/session") from None
+    if (len(rel.parts) != 2 or not UID_NAME.fullmatch(rel.parts[0])
+            or not UUID.fullmatch(rel.parts[1])):
+        raise ValueError("unverified persisted Hermes session for profile ACL")
+    if rel.parts[0] != role:
+        raise ValueError("foreign Hermes profile session")
+    st = home.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != uid or stat.S_IMODE(st.st_mode) != 0o700:
+        raise ValueError("persisted Hermes home is not private")
+    return role
+
+
 def task_scope():
     if not UUID.fullmatch(os.environ.get("MULTICA_TASK_ID", "")):
         raise ValueError("missing verified task context")
@@ -152,12 +276,9 @@ def restrict(task, tmpdir):
         # profiles under the common Unix uid, bypassing repo/task isolation.
         shared_home = Path("/srv/multica-zar/.hermes")
         session_root = Path("/srv/multica-zar/.multica/profiles/zar-prod/hermes-sessions")
-        home_for_acl = Path(os.environ.get("HERMES_HOME", "")).resolve(strict=True)
-        rel_home = home_for_acl.relative_to(session_root / agent)
-        if (len(rel_home.parts) != 2 or not UID_NAME.fullmatch(rel_home.parts[0])
-                or not UUID.fullmatch(rel_home.parts[1])):
-            raise ValueError("unverified Hermes session for profile read ACL")
-        own_profile = rel_home.parts[0]
+        home_for_acl = Path(os.environ.get("HERMES_HOME", ""))
+        own_profile = verified_hermes_home_profile(
+            task, home_for_acl, session_root, agent, role, os.getuid())
         if not UID_NAME.fullmatch(role) or own_profile != role:
             raise ValueError("agent role and trusted persisted session profile disagree")
         if role not in CODEX_ROLES and role not in OPENCODE_ROLES:
@@ -170,18 +291,22 @@ def restrict(task, tmpdir):
         # Only exact shared bootstrap files needed for profile symlinks;
         # never grant other profiles, global session DBs, logs or backups.
         grant(ruleset, shared_home / "installs", READ)
-        # Provider-scoped model secrets: never grant global OpenCode .env to a
-        # task. The root projector creates a private role-local .env before
-        # policy cutover. OpenCode roles never need root Codex OAuth auth.json;
-        # Codex roles still require shared OAuth until a trusted broker exists.
+        # Provider-scoped secrets: never grant global .env or auth.json.
+        # Every Codex role requires an independently provisioned local auth file;
+        # missing, linked, hardlinked or group-readable credentials fail closed.
         bootstrap_names = ("auth.lock", "install_id", "SOUL.md",
                            ".codex_gpt55_autoraise_notice",
                            "models_dev_cache.json", "provider_models_cache.json",
                            "context_length_cache.yaml")
         for name in bootstrap_names:
             grant(ruleset, shared_home / name, READ_FILE)
-        if role in CODEX_ROLES:
-            grant(ruleset, shared_home / "auth.json", READ_FILE)
+        provider = role_model_provider(shared_home, role, os.getuid())
+        if provider == "openai-codex":
+            grant(ruleset, private_role_auth_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
+        elif provider == "opencode-go":
+            grant(ruleset, private_role_env_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
         # Hermes startup uses an existing per-install flock. Permit only
         # this single lock file to be opened for writing, never shared config
         # or a parent directory, so no other task's data becomes writable.

@@ -70,7 +70,7 @@ def attestation(**overrides):
         "source_sha": SOURCE,
         "image_digest": DIGEST,
         "tests": [{"command": "python -m pytest -q", "exit": 0}],
-        "changed_paths": ["mantic-mcp/src/server.ts"],
+        "changed_paths": ["mcp/mantic-mcp/src/server.ts"],
         "artifact_manifest_digest": "sha256:" + "d" * 64,
     }
     base.update(overrides)
@@ -194,7 +194,7 @@ class AdmissionTests(unittest.TestCase):
 
     def test_denies_path_traversal_in_changed_paths(self):
         self.deny("changed_paths_outside_service",
-                  attestation=attestation(changed_paths=["mantic-mcp/../paperclip-mcp/x.py"]))
+                  attestation=attestation(changed_paths=["mcp/mantic-mcp/../paperclip-mcp/x.py"]))
 
     def test_denies_absolute_changed_path(self):
         self.deny("changed_paths_outside_service",
@@ -343,7 +343,7 @@ class AttestationVerificationTests(unittest.TestCase):
 
         return attester.build_attestation(
             "mantic-mcp", SOURCE, [{"command": "true", "exit": 0}],
-            ["mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
+            ["mcp/mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
             policy_digest=attestation()["policy_digest"])
 
     def test_a_verified_attestation_is_admitted(self):

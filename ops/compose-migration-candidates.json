@@ -2,39 +2,50 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "source_pr": 223,
-  "scope": "Three source-pending candidates: plasmic WAB, hindsight-mcp and opik-mcp. Qdrant code is now owned source; its production release is still gated.",
+  "scope": "Four source-pending in-repository candidates: plasmic (non-MCP), hindsight-mcp, opik-mcp and qdrant-mcp. External-image resources have no phantom build roots.",
   "release_status": "BLOCKED_CANDIDATES_ONLY",
   "resources": [
     {
       "id": "plasmic",
       "uuid": "mzmlcorgkfgdy44hqfmmtxgw",
-      "root": "plasmic",
-      "compose": "plasmic/compose.candidate.yml",
-      "contract": "plasmic/release-contract.json",
+      "root": "apps/plasmic",
+      "compose": "apps/plasmic/compose.candidate.yml",
+      "contract": "apps/plasmic/release-contract.json",
       "watch_paths": [
-        "plasmic/"
+        "apps/plasmic/"
       ],
       "release_ready": false
     },
     {
       "id": "hindsight-mcp",
       "uuid": "aglen8ervlo2lpi30oz8iii9",
-      "root": "hindsight-mcp",
-      "compose": "hindsight-mcp/compose.candidate.yml",
-      "contract": "hindsight-mcp/release-contract.json",
+      "root": "mcp/hindsight-mcp",
+      "compose": "mcp/hindsight-mcp/compose.candidate.yml",
+      "contract": "mcp/hindsight-mcp/release-contract.json",
       "watch_paths": [
-        "hindsight-mcp/"
+        "mcp/hindsight-mcp/"
       ],
       "release_ready": false
     },
     {
       "id": "opik-mcp",
       "uuid": "egasedqaofxnzcqppuxi805h",
-      "root": "opik-mcp",
-      "compose": "opik-mcp/compose.candidate.yml",
-      "contract": "opik-mcp/release-contract.json",
+      "root": "mcp/opik-mcp",
+      "compose": "mcp/opik-mcp/compose.candidate.yml",
+      "contract": "mcp/opik-mcp/release-contract.json",
       "watch_paths": [
-        "opik-mcp/"
+        "mcp/opik-mcp/"
+      ],
+      "release_ready": false
+    },
+    {
+      "id": "qdrant-mcp",
+      "uuid": "a4zgmthjspz8hwvyu6llr8dh",
+      "root": "mcp/qdrant-mcp",
+      "compose": "mcp/qdrant-mcp/compose.candidate.yml",
+      "contract": "mcp/qdrant-mcp/release-contract.json",
+      "watch_paths": [
+        "mcp/qdrant-mcp/"
       ],
       "release_ready": false
     }

@@ -67,7 +67,7 @@ jobs:
         with:
           node-version: "24"
       - name: Test Multica MCP adapter on trusted main
-        working-directory: multica-mcp
+        working-directory: mcp/multica-mcp
         env:
           MULTICA_MCP_HOME: ${{ runner.temp }}/multica-mcp-ci-home
         run: npm test

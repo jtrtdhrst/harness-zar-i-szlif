@@ -5,14 +5,16 @@ on:
   push:
     branches: [main]
     paths:
-      - 'comfy-mcp/**'
-      - 'emailens-mcp/**'
-      - 'mantic-mcp/**'
-      - 'plasmic-mcp/**'
-      - 'playwright-mcp/**'
-      - 'qdrant-mcp/**'
-      - 'supabase-mcp/**'
-      - 'ubuntu-mcp/**'
+      - 'mcp/comfy-mcp/**'
+      - 'mcp/emailens-mcp/**'
+      - 'mcp/mantic-mcp/**'
+      - 'mcp/plasmic-mcp/**'
+      - 'mcp/playwright-mcp/**'
+      - 'mcp/opik-mcp/**'
+      - 'mcp/hindsight-mcp/**'
+      - 'mcp/qdrant-mcp/**'
+      - 'mcp/supabase-mcp/**'
+      - 'mcp/ubuntu-mcp/**'
       - 'scripts/select_mcp_builds.py'
       - '.github/workflows/mcp-images-ghcr.yml'
   workflow_dispatch:
@@ -29,6 +31,8 @@ on:
           - mantic-mcp
           - plasmic-mcp
           - playwright-mcp
+          - opik-mcp
+          - hindsight-mcp
           - qdrant-mcp
           - supabase-mcp
           - ubuntu-mcp

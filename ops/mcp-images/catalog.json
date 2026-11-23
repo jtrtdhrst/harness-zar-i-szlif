@@ -11,8 +11,8 @@
       "coolify_uuid": "t09dqe2eppn2eiqmhzlf8xzp",
       "coolify_type": "application",
       "source_kind": "owned-code",
-      "source_root": "github-mcp",
-      "dockerfile": "github-mcp/Dockerfile",
+      "source_root": "mcp/github-mcp",
+      "dockerfile": "mcp/github-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "t09dqe2eppn2eiqmhzlf8xzp-20261122T114018",
@@ -61,8 +61,8 @@
       "coolify_uuid": "5o4edyfjo0wftfg08mtkknir",
       "coolify_type": "application",
       "source_kind": "owned-code",
-      "source_root": "multica-mcp",
-      "dockerfile": "multica-mcp/Dockerfile",
+      "source_root": "mcp/multica-mcp",
+      "dockerfile": "mcp/multica-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "5o4edyfjo0wftfg08mtkknir-20261121T115025",
@@ -135,9 +135,9 @@
       "service": "hindsight-mcp",
       "coolify_uuid": "aglen8ervlo2lpi30oz8iii9",
       "coolify_type": "service",
-      "source_kind": "source-pending",
-      "source_root": "hindsight-mcp",
-      "dockerfile": null,
+      "source_kind": "owned-code",
+      "source_root": "mcp/hindsight-mcp",
+      "dockerfile": "mcp/hindsight-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "hindsight-mcp-aglen8ervlo2lpi30oz8iii9",
@@ -160,9 +160,9 @@
       "service": "opik-mcp",
       "coolify_uuid": "egasedqaofxnzcqppuxi805h",
       "coolify_type": "service",
-      "source_kind": "partial-code",
-      "source_root": "opik-mcp",
-      "dockerfile": null,
+      "source_kind": "owned-code",
+      "source_root": "mcp/opik-mcp",
+      "dockerfile": "mcp/opik-mcp/backend/Dockerfile",
       "running_containers": [
         {
           "container": "proxy-egasedqaofxnzcqppuxi805h",
@@ -214,8 +214,8 @@
       "coolify_uuid": "16qnapdkj0qqqmeokepdechk",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "emailens-mcp",
-      "dockerfile": "emailens-mcp/Dockerfile",
+      "source_root": "mcp/emailens-mcp",
+      "dockerfile": "mcp/emailens-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "emailens-mcp-16qnapdkj0qqqmeokepdechk",
@@ -239,8 +239,8 @@
       "coolify_uuid": "a6ci2beifbinzckfnneiqnjd",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "plasmic-mcp",
-      "dockerfile": "plasmic-mcp/Dockerfile",
+      "source_root": "mcp/plasmic-mcp",
+      "dockerfile": "mcp/plasmic-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "plasmic-mcp-a6ci2beifbinzckfnneiqnjd",
@@ -263,34 +263,35 @@
       "service": "coolify-mcp",
       "coolify_uuid": "f7smgdueq8frlex9lfhp9iji",
       "coolify_type": "service",
-      "source_kind": "source-pending",
-      "source_root": "coolify-mcp",
-      "dockerfile": null,
+      "source_kind": "owned-code",
+      "source_root": "mcp/coolify-mcp",
+      "dockerfile": "mcp/coolify-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "coolify-mcp-f7smgdueq8frlex9lfhp9iji",
           "engine_reported_repo_digests": [
-            "ghcr.io/stumason/coolify-mcp@sha256:15261f67e1b35fb6ffe2ac07b01adfd204bfda1672807beef1fe5becb83418ca"
+            "ghcr.io/jtrtdhrst/coolify-mcp@sha256:3680d1b58fbc6c5097ac3f525e9e1b0aaec390be0a05ab5580eba322f70d734d"
           ],
-          "image_id": "sha256:15261f67e1b35fb6ffe2ac07b01adfd204bfda1672807beef1fe5becb83418ca",
-          "image_ref": "ghcr.io/stumason/coolify-mcp:3.9.0",
-          "source_repository_label": "https://github.com/StuMason/coolify-mcp",
-          "source_revision_label": "596e645b1a8ea7474fdfded08ae95ef5dee40120"
+          "image_id": "sha256:3680d1b58fbc6c5097ac3f525e9e1b0aaec390be0a05ab5580eba322f70d734d",
+          "image_ref": "ghcr.io/jtrtdhrst/coolify-mcp@sha256:3680d1b58fbc6c5097ac3f525e9e1b0aaec390be0a05ab5580eba322f70d734d",
+          "source_repository_label": "https://github.com/jtrtdhrst/harness-zar-i-szlif",
+          "source_revision_label": "b0bb233c2c6ca5c1a81c38d80aa75d3fd9f9c4b9"
         }
       ],
       "last_published_ghcr_tag": null,
       "last_published_sha": null,
       "verified_remote_oci_digest": null,
       "verified_production_source_sha": null,
-      "verified_production_e2e": false
+      "verified_production_e2e": false,
+      "observation_note": "Updated live Docker readback on 2026-11-22: running healthy, OAuth persistence /data preserved, previous /app/dist/lib/oauth.js bind absent. Label is evidence of claimed source revision, not independently attested OCI digest or E2E for the new repository layout."
     },
     {
       "service": "qdrant-mcp",
       "coolify_uuid": "a4zgmthjspz8hwvyu6llr8dh",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "qdrant-mcp",
-      "dockerfile": "qdrant-mcp/Dockerfile",
+      "source_root": "mcp/qdrant-mcp",
+      "dockerfile": "mcp/qdrant-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "qdrant-mcp-a4zgmthjspz8hwvyu6llr8dh",
@@ -316,8 +317,8 @@
       "coolify_uuid": "tjit4c8m0kjh8brkmdhyvkde",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "supabase-mcp",
-      "dockerfile": "supabase-mcp/Dockerfile",
+      "source_root": "mcp/supabase-mcp",
+      "dockerfile": "mcp/supabase-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "supabase-mcp-tjit4c8m0kjh8brkmdhyvkde",
@@ -341,8 +342,8 @@
       "coolify_uuid": "kkhfw0napmeaqewgdirwhc1h",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "comfy-mcp",
-      "dockerfile": "comfy-mcp/Dockerfile",
+      "source_root": "mcp/comfy-mcp",
+      "dockerfile": "mcp/comfy-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "comfy-mcp-kkhfw0napmeaqewgdirwhc1h",
@@ -366,8 +367,8 @@
       "coolify_uuid": "lcnjb3vreec7saihkhan6akh",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "ubuntu-mcp",
-      "dockerfile": "ubuntu-mcp/Dockerfile",
+      "source_root": "mcp/ubuntu-mcp",
+      "dockerfile": "mcp/ubuntu-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "ubuntu-mcp-lcnjb3vreec7saihkhan6akh",
@@ -451,8 +452,8 @@
       "coolify_uuid": "bioufw4uxwuhmr51ueyahf0u",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "mantic-mcp",
-      "dockerfile": "mantic-mcp/Dockerfile.http",
+      "source_root": "mcp/mantic-mcp",
+      "dockerfile": "mcp/mantic-mcp/Dockerfile.http",
       "running_containers": [
         {
           "container": "mantic-mcp-bioufw4uxwuhmr51ueyahf0u",
@@ -476,8 +477,8 @@
       "coolify_uuid": "9e4fzsodixl4qzzap4zg0ntp",
       "coolify_type": "service",
       "source_kind": "owned-code",
-      "source_root": "playwright-mcp",
-      "dockerfile": "playwright-mcp/Dockerfile",
+      "source_root": "mcp/playwright-mcp",
+      "dockerfile": "mcp/playwright-mcp/Dockerfile",
       "running_containers": [
         {
           "container": "playwright-mcp-9e4fzsodixl4qzzap4zg0ntp",

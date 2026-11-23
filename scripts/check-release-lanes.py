@@ -31,7 +31,7 @@ def check(data):
         must(lane.get("mode") in allowed, f"{name}: wrong mode")
         must(isinstance(lane.get("repository"), str) and "/" in lane["repository"], f"{name}: source missing")
         must(lane.get("review_required") is True and lane.get("exact_sha_required") is True, f"{name}: missing review/provenance gate")
-        expected_reviewer = "CTO" if lane["repository"] == "miloszspyrka-code/zar-i-szlif" else "CHO"
+        expected_reviewer = "CTO" if lane["repository"] == "jtrtdhrst/zar-i-szlif" else "CHO"
         must(lane.get("reviewer_role") == expected_reviewer, f"{name}: wrong review owner")
         must(bool(lane.get("observed_baseline")), f"{name}: missing observed baseline")
         if lane["mode"] == "git_promoted":
@@ -89,7 +89,7 @@ def check(data):
     must(names == {"paperclip-mcp", "stronaglowna", "zariszlif-prawne"}, "existing Worker lost")
     must("product-panel" in ids, "product release lane absent")
     core = next((x for x in lanes if x["id"] == "paperclip-core"), None)
-    must(core is not None and core.get("repository") == "miloszspyrka-code/harness-zar-i-szlif" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0", "upstream Paperclip identity incorrect")
+    must(core is not None and core.get("repository") == "jtrtdhrst/harness-zar-i-szlif" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0", "upstream Paperclip identity incorrect")
     must(re.fullmatch(r"[0-9a-f]{40}", str(core.get("overlay_source_sha", ""))) is not None, "missing immutable Core overlay SHA")
     must(re.fullmatch(r"sha256:[0-9a-f]{64}", str(core.get("runtime_image_id", ""))) is not None, "missing immutable Core runtime image digest")
     must(str(core.get("artifact_source_ref", "")).startswith("local/paperclip-core-h03-candidate:"), "Paperclip Core runtime source reference incorrect")

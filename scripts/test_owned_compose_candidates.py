@@ -16,13 +16,13 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
         cls.mapping = json.loads(MAP.read_text(encoding="utf-8"))["resources"]
         cls.rows = json.loads(REGISTRY.read_text(encoding="utf-8"))["resources"]
 
-    def test_exact_three_uuid_ownership_no_coolify_mcp(self):
+    def test_exact_four_uuid_ownership_no_coolify_mcp(self):
         source = {r["id"]: r for r in self.mapping
-                  if not r["source_build_ready"] and r["id"] != "coolify-mcp"}
-        self.assertEqual(len(source), 3)
-        self.assertEqual(len(self.rows), 3)
+                  if r.get("compose_candidate") and not r.get("compose_release_ready")}
+        self.assertEqual(len(source), 4)
+        self.assertEqual(len(self.rows), 4)
         self.assertEqual({r["id"] for r in self.rows}, set(source))
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 3)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 4)
         for row in self.rows:
             self.assertEqual(row["uuid"], source[row["id"]]["uuid"])
             self.assertEqual(row["root"], source[row["id"]]["source_root"])
@@ -39,7 +39,7 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
                 contract = json.loads((ROOT / row["contract"]).read_text())
                 self.assertEqual(contract["uuid"], row["uuid"])
                 self.assertEqual(contract["release_state"], "BLOCKED")
-                self.assertFalse(contract["source_build_ready"])
+                self.assertEqual(contract["source_build_ready"],next(r for r in self.mapping if r["id"]==row["id"])["source_build_ready"])
                 yaml = (ROOT / row["compose"]).read_text(encoding="utf-8")
                 self.assertIn("services:", yaml)
                 self.assertNotRegex(yaml, r"(?m)^\s*build:")
@@ -81,16 +81,16 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
             "qdrant/compose.candidate.yml": set(),
             "qdrant-extra/Dockerfile": set(),
             "mautic/release-contract.json": set(),
-            "comfy-mcp/Dockerfile": set(),
+            "mcp/comfy-mcp/Dockerfile": set(),
             "ops/repowise/README.md": set(),
-            "coolify-mcp/Dockerfile": set(),
+            "mcp/coolify-mcp/Dockerfile": set(),
             "docs/unrelated.md": set(),
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(set(select_owned_compose.select([path])), expected)
         self.assertEqual(len(select_owned_compose.select(
-            ["ops/compose-migration-candidates.json"])), 3)
+            ["ops/compose-migration-candidates.json"])), 4)
 
 if __name__ == "__main__":
     unittest.main()

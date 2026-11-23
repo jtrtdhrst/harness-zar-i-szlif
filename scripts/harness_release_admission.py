@@ -30,8 +30,9 @@ import re
 import stat
 import sys
 from datetime import datetime, timezone
+from harness_source_roots import source_path_prefix
 
-REPO = "miloszspyrka-code/harness-zar-i-szlif"
+REPO = "jtrtdhrst/harness-zar-i-szlif"
 RELEASE_BASE_REF = "main"
 MANIFEST_SCHEMA = 1
 ATTESTATION_SCHEMA = 1
@@ -201,7 +202,7 @@ def _check_attestation(entry, request, attestation, source_sha):
     changed = attestation.get("changed_paths")
     if not isinstance(changed, list) or not changed:
         raise Denied("attestation_changed_paths_missing")
-    prefix = entry["id"] + "/"
+    prefix = source_path_prefix(entry["id"])
     for path in changed:
         if not _text(path) or path.startswith("/") or "/../" in path or not path.startswith(prefix):
             raise Denied("changed_paths_outside_service")
