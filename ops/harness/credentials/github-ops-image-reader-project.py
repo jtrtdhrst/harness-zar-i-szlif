@@ -34,6 +34,10 @@ def read_exact_grant(path=SOURCE):
                 or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
             raise RuntimeError("Untrusted token source")
         data = json.load(file)
+    return validate_grant(data)
+
+
+def validate_grant(data, now=None):
     if (not isinstance(data, dict) or data.get("role") != ROLE
             or data.get("app_id") != APP_ID or data.get("installation_id") != INSTALLATION_ID
             or data.get("repositories") != REPOS or data.get("permissions") != PERMISSIONS):
@@ -45,7 +49,7 @@ def read_exact_grant(path=SOURCE):
     if not isinstance(expires_at, str):
         raise RuntimeError("Token expiry missing")
     expiry = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = now or datetime.datetime.now(datetime.timezone.utc)
     if not now + datetime.timedelta(minutes=10) < expiry <= now + datetime.timedelta(hours=1):
         raise RuntimeError("Token expiry outside permitted window")
     return data
