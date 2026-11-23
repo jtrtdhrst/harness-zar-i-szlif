@@ -68,7 +68,7 @@ class RoleProjectionTests(unittest.TestCase):
 
     def test_role_provider_drift_refused(self):
         (self.root / "profiles" / "cto" / "config.yaml").write_text(
-            "model:\n  provider: opencode-go\n")
+            "model:\n  provider: openai-codex\n")
         with self.assertRaisesRegex(RuntimeError, "provider drift"):
             self.call(apply=True)
         self.assertTrue((self.root/"profiles"/"cho"/".env").is_symlink())
