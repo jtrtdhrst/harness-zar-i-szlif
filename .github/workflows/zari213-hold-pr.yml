@@ -1,0 +1,37 @@
+name: ZARI-213 persisted HOLD PR validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ops/harness/release/multica_native_release_gate.py'
+      - 'ops/harness/release/security-hold.json'
+      - 'scripts/test_zari213_security_hold_gate.py'
+      - '.github/workflows/zari213-hold-pr.yml'
+permissions:
+  contents: read
+jobs:
+  negative-release-gate:
+    if: github.repository == 'jtrtdhrst/harness-zar-i-szlif'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reject status flips, missing holds and unauthorized clearance
+        run: python3 -m unittest discover -s scripts -p test_zari213_security_hold_gate.py -v
+      - name: Validate release checker syntax and hold active
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ops/harness/release/multica_native_release_gate.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('ops/harness/release/security-hold.json').read_text())
+          assert x['active'] is True and x['clearance'] is None
+          print('PERSISTED_HOLD_ACTIVE_AND_FAIL_CLOSED')
+          PY
