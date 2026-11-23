@@ -8,8 +8,9 @@ from pathlib import Path
 import runpy
 
 ROOT = Path("/srv/multica-zar/.hermes")
-CODEX = {"ceo", "cho", "cmo", "coo", "cpo", "cto"}
-OPENCODE = {"designer", "email-creative", "engineer", "harness-engineer",
+CODEX = set()
+OPENCODE = {"ceo", "cho", "cmo", "coo", "cpo", "cto",
+            "designer", "email-creative", "engineer", "harness-engineer",
             "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"}
 
 
@@ -54,10 +55,10 @@ def main():
         "global_env_denied": denied(ROOT / ".env"),
         "foreign_env_denied": denied(ROOT / "profiles" / a.foreign_role / ".env"),
     }
-    if a.own_role in CODEX:
-        result["own_model_auth"] = allowed(ROOT / "auth.json")
-    else:
-        result["global_codex_auth_denied"] = denied(ROOT / "auth.json")
+    # Every role is OpenCode-only. Both the global target and this role's
+    # auth.json symlink must fail to open under the task kernel policy.
+    result["global_codex_auth_denied"] = denied(ROOT / "auth.json")
+    result["own_codex_auth_denied"] = denied(ROOT / "profiles" / a.own_role / "auth.json")
     if a.require_projected_env:
         result["own_role_env"] = allowed(ROOT / "profiles" / a.own_role / ".env")
     print(json.dumps({"checks": result, "passed": all(result.values())}, sort_keys=True))
