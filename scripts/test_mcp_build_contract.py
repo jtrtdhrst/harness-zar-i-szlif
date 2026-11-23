@@ -113,6 +113,74 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertIn("ghcr.io/", yaml)
                 self.assertIn("org.opencontainers.image.revision", yaml)
 
+    def assert_repowise_doc_parity(self, doc):
+        """Every active source-owned MCP must have one exact documented 5-column row."""
+        owned = owned_services()
+        self.assertIn(f"## Current {len(owned)} source-owned MCPs", doc)
+        self.assertIn("Additional owned non-MCP runtime image roots", doc)
+        table = doc.split("## Current ", 1)[1].split(
+            "Additional owned non-MCP runtime image roots", 1
+        )[0]
+        lines = [line for line in table.splitlines() if line.startswith("| ")]
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertEqual(lines[0].split("|")[1].strip(), "Coolify service")
+        self.assertEqual(len(lines) - 2, len(owned))
+        seen = set()
+        bt = chr(96)
+        for line in lines[2:]:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            self.assertEqual(len(cells), 5, f"Malformed MCP source row: {line}")
+            name = cells[0]
+            self.assertNotIn(name, seen, f"Duplicate documented MCP: {name}")
+            self.assertIn(name, owned, f"Undeclared or retired MCP in source contract: {name}")
+            row = owned[name]
+            if name == "coolify-mcp":
+                publisher = COOLIFY_FLOW
+            elif name in GENERAL:
+                publisher = GENERAL_FLOW
+            else:
+                publisher = RUNTIME_FLOW
+            root = row["root"]
+            full_dockerfile = row["dockerfile"]
+            self.assertTrue(full_dockerfile.startswith(root + "/"))
+            expected = [
+                name,
+                f"{bt}{row['uuid']}{bt}",
+                f"{bt}{root}{bt}",
+                f"{bt}{full_dockerfile[len(root) + 1:]}{bt}",
+                f"{bt}{publisher}{bt}",
+            ]
+            self.assertEqual(cells, expected, f"Incorrect UUID/root/Dockerfile/publisher: {name}")
+            seen.add(name)
+        self.assertEqual(seen, set(owned))
+        self.assertIn("Qdrant MCP was retired", doc)
+
+    def test_repowise_documented_mcp_table_matches_owned_source_registry(self):
+        """The indexed source-build knowledge must track all 5 registry fields."""
+        doc = (ROOT / "ops/repowise/MCP_SOURCE_BUILDS.md").read_text()
+        self.assert_repowise_doc_parity(doc)
+
+    def test_repowise_documented_mcp_table_rejects_mutations(self):
+        """Fail closed on incorrect values, duplicates, and malformed table rows."""
+        doc = (ROOT / "ops/repowise/MCP_SOURCE_BUILDS.md").read_text()
+        original = next(line for line in doc.splitlines() if line.startswith("| coolify-mcp |"))
+        bt = chr(96)
+        uuid = "f7smgdueq8frlex9lfhp9iji"
+        mutations = {
+            "wrong_uuid": original.replace(uuid, "unknownuuid"),
+            "wrong_context": original.replace("mcp/coolify-mcp", "mcp/unknown-mcp"),
+            "wrong_dockerfile": original.replace(f"{bt}Dockerfile{bt}", f"{bt}Missingfile{bt}"),
+            "wrong_publisher": original.replace("coolify-mcp-ci.yml", "mcp-images-ghcr.yml"),
+            "missing_backticks": original.replace(f"{bt}{uuid}{bt}", uuid),
+            "duplicate": original + "\n" + original,
+            "extra_malformed": original + "\n| ghost-mcp | missing | mcp/ghost | Dockerfile | publisher |",
+        }
+        for name, replacement in mutations.items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(replacement, original)
+                with self.assertRaises(AssertionError):
+                    self.assert_repowise_doc_parity(doc.replace(original, replacement, 1))
+
     def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
         services = owned_services()
         self.assertNotIn("qdrant-mcp", services)
