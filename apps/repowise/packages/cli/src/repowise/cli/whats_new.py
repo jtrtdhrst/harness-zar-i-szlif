@@ -1,0 +1,246 @@
+"""Presenter for release news in the CLI.
+
+Locates the changelog (bundled with the wheel, or the source ``docs/CHANGELOG.md``
+in a checkout), parses it via :mod:`repowise.core.upgrade.changelog`, and renders
+"what's new" panels and the PyPI update advisory. Also tracks the last release
+the user has seen so the post-upgrade panel and ``repowise whats-new`` only show
+genuinely new entries.
+
+Everything here is best-effort: a missing changelog or unreadable marker degrades
+to a quiet fallback (a link to the GitHub releases page), never an error.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+from pathlib import Path
+
+from rich.console import Console
+from rich.markup import escape
+from rich.panel import Panel
+
+from repowise.core.upgrade.changelog import (
+    UNRELEASED,
+    ChangelogEntry,
+    entries_between,
+    parse_changelog,
+)
+from repowise.core.upgrade.release import (
+    BUNDLED_CHANGELOG_PATH,
+    is_newer_version,
+    load_release_stats,
+)
+
+from .helpers import user_global_dir
+from .update_check import windows_upgrade_caveat
+
+RELEASES_URL = "https://github.com/repowise-dev/repowise/releases"
+
+_BUNDLED_CHANGELOG = BUNDLED_CHANGELOG_PATH
+_LAST_SEEN_FILENAME = "last-seen-version"
+
+
+# --- changelog location + parsing ----------------------------------------
+
+
+def find_changelog_path() -> Path | None:
+    """Locate *repowise's* changelog.
+
+    Order: ``REPOWISE_CHANGELOG`` override, then the source ``docs/CHANGELOG.md``
+    reachable from this package (a dev/editable checkout, freshest), then the
+    copy bundled into the installed wheel.
+
+    Deliberately does NOT search the current working directory: an installed
+    user running ``repowise`` inside their own project must never have that
+    project's ``docs/CHANGELOG.md`` mistaken for repowise's release notes.
+    """
+    override = os.environ.get("REPOWISE_CHANGELOG")
+    if override and Path(override).is_file():
+        return Path(override)
+    # Walk up from this module; in a source/editable checkout a parent holds
+    # docs/CHANGELOG.md. In an installed wheel the package lives under
+    # site-packages with no such parent, so this finds nothing and we fall
+    # through to the bundled copy.
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "docs" / "CHANGELOG.md"
+        if candidate.is_file():
+            return candidate
+    if _BUNDLED_CHANGELOG.is_file():
+        return _BUNDLED_CHANGELOG
+    return None
+
+
+def load_changelog_entries() -> list[ChangelogEntry]:
+    """Parsed changelog entries (newest first), or ``[]`` if none can be found."""
+    path = find_changelog_path()
+    if path is None:
+        return []
+    try:
+        return parse_changelog(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+# --- last-seen-version tracking ------------------------------------------
+
+
+def read_last_seen_version() -> str | None:
+    try:
+        text = (user_global_dir() / _LAST_SEEN_FILENAME).read_text(encoding="utf-8").strip()
+        return text or None
+    except Exception:
+        return None
+
+
+def write_last_seen_version(version: str) -> None:
+    """Record *version* as seen; never lowers the marker, so an older install
+    cannot make the next upgrade re-show releases already read."""
+    previous = read_last_seen_version()
+    if previous and is_newer_version(previous, version):
+        return
+    with contextlib.suppress(Exception):  # best-effort marker
+        (user_global_dir() / _LAST_SEEN_FILENAME).write_text(version, encoding="utf-8")
+
+
+# --- rendering ------------------------------------------------------------
+
+
+def numbers_line(stats: dict | None) -> str | None:
+    """One line of a release's "By the numbers", or ``None`` without figures."""
+    if not stats:
+        return None
+    try:
+        first = stats.get("first_time_contributors")
+        people = f"{stats['contributors']:,} contributors"
+        if first:
+            people += f" ({first:,} first-time)"
+        return (
+            f"{stats['prs']:,} pull requests from {people}, {stats['files_changed']:,} files, "
+            f"+{stats['lines_added']:,} / -{stats['lines_removed']:,} lines, "
+            f"{stats['days']:,} days since {stats['since']}"
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _format_entry(entry: ChangelogEntry, *, max_items: int, stats: dict | None = None) -> str:
+    # Highlights and the numbers lead and do not count toward the bullet cap:
+    # they are the part of the release a reader should not miss.
+    lines = _highlight_lines(entry)
+    numbers = numbers_line(stats)
+    if numbers:
+        lines.append(f"[dim]By the numbers: {numbers}[/dim]")
+    lines.extend(_section_lines(entry, max_items=max_items))
+    return "\n".join(lines)
+
+
+def _highlight_lines(entry: ChangelogEntry) -> list[str]:
+    if not entry.highlights:
+        return []
+    lines = ["[bold]Highlights[/bold]"]
+    for h in entry.highlights:
+        blurb = f": {escape(h.blurb)}" if h.blurb else ""
+        lines.append(f"  - [bold]{escape(h.title)}[/bold]{blurb}")
+    return lines
+
+
+def _section_lines(entry: ChangelogEntry, *, max_items: int) -> list[str]:
+    """Section bullets up to *max_items* in total, then an ellipsis."""
+    lines: list[str] = []
+    budget = max_items
+    for section in entry.sections:
+        if not section.items:
+            continue
+        if budget <= 0:
+            return [*lines, "  [dim]...[/dim]"]
+        lines.append(f"[bold]{section.name}[/bold]")
+        lines.extend(f"  - {_strip_markdown(item)}" for item in section.items[:budget])
+        if len(section.items) > budget:
+            return [*lines, "  [dim]...[/dim]"]
+        budget -= len(section.items)
+    return lines
+
+
+def _strip_markdown(text: str) -> str:
+    # Light touch: drop bold markers so rich doesn't render literal ** and keep
+    # the line readable in a terminal. Leaves the prose otherwise intact.
+    return text.replace("**", "")
+
+
+def render_whats_new(
+    console: Console,
+    entries: list[ChangelogEntry],
+    *,
+    since_version: str | None,
+    up_to_version: str | None = None,
+    max_versions: int = 5,
+    max_items_per_version: int = 8,
+    title: str = "What's new",
+) -> bool:
+    """Render release entries newer than *since_version* (up to *up_to_version*).
+
+    Returns ``True`` if anything was rendered. Falls back to a quiet GitHub link
+    when no changelog is available.
+    """
+    if not entries:
+        console.print(f"[dim]Release notes: {RELEASES_URL}[/dim]")
+        return False
+
+    selected = entries_between(entries, newer_than=since_version, up_to=up_to_version)
+    if not selected:
+        return False
+
+    stats = load_release_stats()
+    blocks: list[str] = []
+    for entry in selected[:max_versions]:
+        label = f" [dim]({entry.label})[/dim]" if entry.label else ""
+        body = _format_entry(
+            entry, max_items=max_items_per_version, stats=stats.get(entry.version)
+        )
+        name = "Unreleased" if entry.version == UNRELEASED else f"v{entry.version}"
+        blocks.append(f"[bold cyan]{name}[/bold cyan]{label}\n{body}")
+
+    extra = len(selected) - max_versions
+    if extra > 0:
+        blocks.append(f"[dim]...and {extra} earlier release(s). Full notes: {RELEASES_URL}[/dim]")
+
+    console.print(Panel("\n\n".join(blocks), title=title, border_style="cyan", expand=False))
+    return True
+
+
+def render_update_advisory(console: Console, check) -> bool:
+    """Print a non-blocking advisory when a newer release exists.
+
+    *check* is an :class:`~repowise.cli.update_check.UpdateCheck`. Returns
+    ``True`` if an advisory was printed (i.e. an update is available).
+    """
+    if not check.update_available or not check.latest_version:
+        return False
+    caveat = windows_upgrade_caveat()
+    if caveat:
+        console.print(
+            f"[yellow]repowise {check.latest_version} is available[/yellow] "
+            f"[dim](you have {check.current_version}).[/dim]"
+        )
+        console.print(f"[dim]{caveat}[/dim]")
+        console.print(f"Upgrade: [bold]{check.suggested_command}[/bold]")
+        return True
+    console.print(
+        f"[yellow]repowise {check.latest_version} is available[/yellow] "
+        f"[dim](you have {check.current_version}).[/dim] "
+        f"Upgrade: [bold]{check.suggested_command}[/bold]"
+    )
+    return True
+
+
+__all__ = [
+    "RELEASES_URL",
+    "find_changelog_path",
+    "load_changelog_entries",
+    "numbers_line",
+    "read_last_seen_version",
+    "render_update_advisory",
+    "render_whats_new",
+    "write_last_seen_version",
+]

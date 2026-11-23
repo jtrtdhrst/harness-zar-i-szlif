@@ -1,10 +1,10 @@
 name: Opik run enricher checks
 on:
   pull_request:
-    paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
+    paths: ['workers/opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
   push:
     branches: [main]
-    paths: ['opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
+    paths: ['workers/opik-run-enricher/**', '.github/workflows/opik-run-enricher.yml']
 concurrency:
   group: opik-run-enricher-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -18,6 +18,6 @@ jobs:
         with:
           python-version: '3.13'
       - run: python3 -m unittest -q test_worker
-        working-directory: opik-run-enricher
+        working-directory: workers/opik-run-enricher
       - run: python3 -m py_compile worker.py
-        working-directory: opik-run-enricher
+        working-directory: workers/opik-run-enricher

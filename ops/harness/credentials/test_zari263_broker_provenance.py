@@ -73,16 +73,19 @@ class HandlerScopeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);self.root.chmod(0o700)
         self.map=self.root/'agent-roles.json'
-        self.map.write_text(json.dumps({'agent':'implementer-harness'}));self.map.chmod(0o600)
+        self.map.write_text(json.dumps({'agent':'implementer'}));self.map.chmod(0o600)
         self.owner=patch.object(broker,'TRUSTED_UID',os.getuid());self.owner.start();self.addCleanup(self.owner.stop)
 
-    def request(self, repo):
+    def request(self, repo, scope=None):
         h=object.__new__(broker.Handler)
         h.request=Mock();h.request.getsockopt.return_value=struct.pack('3i',800,997,981)
         h.rfile=io.BytesIO(json.dumps({'op':'credential','protocol':'https','host':'github.com','path':repo+'.git'}).encode()+b'\n')
         h.server=SimpleNamespace(daemon_unit='fake',pidfile=None,allow_any_daemon=False,roles_file=self.map,tokens=self.root)
         outputs=[];h.reply=outputs.append
-        with patch.object(broker,'task_agent',return_value=('agent','task')),patch.object(broker,'token_for_role',return_value={'token':'synthetic-not-a-live-token','expires_at':'2099-01-01T00:00:00Z'}) as get_token:
+        scope = scope if scope is not None else {'task_id':'task','agent_id':'agent','repo_urls':['https://github.com/'+H]}
+        with patch.object(broker,'task_agent',return_value=('agent','task','task-token')), \
+             patch.object(broker,'task_repo_scope',return_value=scope), \
+             patch.object(broker,'token_for_role',return_value={'token':'synthetic-not-a-live-token','expires_at':'2099-01-01T00:00:00Z'}) as get_token:
             h.handle()
         return outputs[0],get_token.call_count
 
@@ -99,9 +102,10 @@ class HandlerScopeTests(unittest.TestCase):
         result,count=self.request(H)
         self.assertEqual(result['error'],'credential_unavailable');self.assertEqual(count,0)
 
-    def test_legacy_base_role_is_not_a_broker_actor(self):
-        self.map.write_text(json.dumps({'agent':'implementer'}))
-        result,count=self.request(H)
-        self.assertEqual(result['error'],'agent_not_mapped');self.assertEqual(count,0)
+    def test_foreign_task_scope_denied_before_token_lookup(self):
+        # The live task binding is the isolation boundary: a valid agent with a
+        # task claim for another task id must never reach the token store.
+        result,count=self.request(H,scope={'task_id':'other-task','agent_id':'agent','repo_urls':['https://github.com/'+H]})
+        self.assertEqual(result['error'],'no_active_multica_task');self.assertEqual(count,0)
 
 if __name__=='__main__':unittest.main()

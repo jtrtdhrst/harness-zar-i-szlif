@@ -5,6 +5,7 @@ No real provider calls, token reads, or persistent system paths are used.
 Execute as a non-root test user. UID-0 ownership is simulated in fstat only.
 """
 import importlib.util
+import json
 import os
 import pathlib
 import stat
@@ -17,6 +18,52 @@ SOURCE = pathlib.Path(__file__).with_name("multica-zar-github-app-refresh.py")
 spec = importlib.util.spec_from_file_location("refresh_acl_under_test", SOURCE)
 refresh = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(refresh)
+
+
+class ScopedWorkflowPermissionTests(unittest.TestCase):
+    def test_only_scoped_implementer_and_release_roles_receive_workflows_write(self):
+        allowed = {
+            "implementer-harness", "implementer-product",
+            "release-harness", "release-product",
+        }
+        for role in allowed:
+            expected = dict(refresh.ROLE_PERMISSIONS[role.split("-", 1)[0]])
+            expected["workflows"] = "write"
+            self.assertEqual(refresh.ROLE_PERMISSIONS[role], expected)
+
+        for role, permissions in refresh.ROLE_PERMISSIONS.items():
+            if role not in allowed:
+                with self.subTest(role=role):
+                    self.assertNotIn("workflows", permissions)
+
+    def test_mint_requests_only_the_exact_role_repository_and_permissions(self):
+        for role, permissions in refresh.ROLE_PERMISSIONS.items():
+            with self.subTest(role=role):
+                repos = refresh.ROLE_REPOS.get(role, refresh.REPOS)
+                names = refresh.ROLE_REPO_NAMES.get(role, refresh.REPO_NAMES)
+                payload = {
+                    "status": 201,
+                    "app_id": refresh.APP_ID,
+                    "installation_id": refresh.INSTALLATION_ID,
+                    "token": "ghs_" + "x" * 50,
+                    "expires_at": "2099-01-01T00:00:00Z",
+                    "repositories": list(repos),
+                    "permissions": permissions,
+                }
+                calls = []
+
+                def fake_run(args, **kwargs):
+                    calls.append(args[-1].split("--execute=", 1)[1])
+                    return types.SimpleNamespace(
+                        returncode=0, stdout=json.dumps(payload), stderr="")
+
+                with patch.object(refresh.subprocess, "run", side_effect=fake_run):
+                    grant = refresh.mint(role)
+
+                self.assertEqual(grant["repositories"], list(repos))
+                self.assertEqual(grant["permissions"], permissions)
+                self.assertIn('"repositories"=>'+refresh.php_list(names), calls[0])
+                self.assertIn('"permissions"=>'+refresh.php_map(permissions), calls[0])
 
 
 class SafeRefreshPathTests(unittest.TestCase):

@@ -40,8 +40,14 @@ jobs:
           python-version: "3.12"
       - name: Validate release contract, every root disposition and regressions
         run: python scripts/check-release-lanes.py --self-test
+      - name: Verify 31 owned-source Harness build roots
+        run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
+      - name: Verify every owned MCP has a source-root and main SHA-bound image publisher
+        run: python3 -m unittest discover -s scripts -p 'test_mcp_build_contract.py' -v
       - name: Test auto-build, independent review and signed-CI admission
         run: python3 -m unittest discover -s scripts -p 'test_harness_native_delivery.py' -v
+      - name: Enforce persisted security HOLD independently of issue status
+        run: python3 -m unittest discover -s scripts -p test_zari213_security_hold_gate.py -v
       - name: Guard against non-MCP automatic image builds
         run: python3 -m unittest discover -s scripts -p test_non_mcp_build_guard.py -v
       # Catch truncated or malformed security sources before approving a merge.
@@ -65,7 +71,7 @@ jobs:
         with:
           node-version: "24"
       - name: Test Multica MCP adapter on trusted main
-        working-directory: multica-mcp
+        working-directory: mcp/multica-mcp
         env:
           MULTICA_MCP_HOME: ${{ runner.temp }}/multica-mcp-ci-home
         run: npm test

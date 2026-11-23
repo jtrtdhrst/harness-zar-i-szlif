@@ -1,0 +1,594 @@
+"""Provider resolution, synthesis budget, and cache-key hashing for get_answer.
+
+Recovers the LLM provider the user configured for ``repowise init`` so the
+MCP server can synthesise without a separate config, decides how long one
+synthesis call may take, and hashes the question for the answer cache.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import hashlib
+import json as _json
+import logging
+import math
+import os
+import posixpath
+import re
+import time
+from pathlib import Path
+from typing import NamedTuple
+
+from repowise.core.providers.llm.base import RateLimitError
+from repowise.core.providers.llm.error_hints import describe_provider_error
+from repowise.core.providers.llm.specs import PROVIDER_SPECS
+from repowise.core.reasoning import ReasoningMode, resolve_reasoning
+from repowise.core.repo_config import load_repo_config
+from repowise.server.mcp_server.tool_answer.config import (
+    _SYNTHESIS_MAX_TOKENS,
+    _SYNTHESIS_MAX_TOKENS_ENV,
+    _SYNTHESIS_RETRY_TOKEN_FACTOR,
+    _SYNTHESIS_TEMPERATURE,
+)
+
+_log = logging.getLogger("repowise.mcp.answer")
+
+# Escape hatch for the per-provider synthesis budget. Seconds, float.
+_TIMEOUT_ENV = "REPOWISE_ANSWER_TIMEOUT_S"
+# Used only if a provider reports no usable budget of its own. Every
+# BaseProvider subclass inherits one, so this covers a runtime-registered
+# provider that does not subclass it, or one that declares nonsense.
+_FALLBACK_TIMEOUT_S = 30.0
+# Ceiling on any budget, however configured. get_answer is a tool an agent
+# blocks on, and every MCP client enforces its own tool timeout underneath
+# this one, so a longer budget cannot produce an answer the client will still
+# accept. It only converts our diagnosable degraded payload into the client's
+# bare transport error. 600s also matches the agent-CLI providers' own
+# subprocess ceiling, past which raising this is inert anyway.
+_MAX_TIMEOUT_S = 600.0
+# Operation label for the ledger rows written here, so answer spend is its own
+# bucket on the costs report rather than folded into doc generation.
+_COST_OPERATION = "answer_synthesis"
+
+
+def _hash_question(question: str) -> str:
+    """Stable SHA-256 of the normalized question. Lowercase + strip + collapse ws."""
+    norm = " ".join(question.lower().strip().split())
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+def _normalize_scope(scope: str | None) -> str | None:
+    """Canonical repo-relative scope used by retrieval and cache identity."""
+    if scope is None or not scope.strip():
+        return None
+    normalized = posixpath.normpath(scope.strip().replace("\\", "/"))
+    normalized = normalized.removeprefix("./").strip("/")
+    return normalized if normalized and normalized != "." else None
+
+
+def _hash_answer_identity(question: str, normalized_scope: str | None) -> str:
+    """Versioned answer-cache identity for one normalized question and scope."""
+    normalized_question = " ".join(question.lower().strip().split())
+    # JSON preserves the distinction between null and every possible scope
+    # string (including a literal "<unscoped>") without a sentinel collision.
+    identity = _json.dumps(
+        ["v2", normalized_question, normalized_scope],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _resolve_reasoning_for_answer(repo_path: Path | None) -> ReasoningMode:
+    """Resolve the synthesis reasoning mode from env and repo config."""
+    config = load_repo_config(repo_path) if repo_path is not None else None
+    return resolve_reasoning(config=config)
+
+
+# (provider, model) -> whether synthesis may ask for ``low``. Filled once per
+# process, and set to False when the provider refuses ``low`` at call time.
+_LOW_EFFORT_OK: dict[tuple[str, str], bool] = {}
+
+
+def _spec(provider):
+    return PROVIDER_SPECS.get(str(getattr(provider, "provider_name", "")))
+
+
+def _model_key(provider) -> tuple[str, str]:
+    return (
+        str(getattr(provider, "provider_name", "")),
+        str(getattr(provider, "model_name", "")),
+    )
+
+
+async def _accepts_low_effort(provider) -> bool:
+    key = _model_key(provider)
+    if key not in _LOW_EFFORT_OK:
+        try:
+            ok = "low" in provider.supported_reasoning_modes()
+            if not ok and _spec(provider).lists_reasoning_modes:
+                options = await asyncio.to_thread(provider.available_model_options)
+                ok = any(o.model == key[1] and "low" in o.reasoning_modes for o in options)
+        except Exception:
+            # A provider that cannot report its modes must not fail the answer.
+            ok = False
+        _LOW_EFFORT_OK[key] = ok
+    return _LOW_EFFORT_OK[key]
+
+
+async def _synthesis_reasoning(provider, reasoning: ReasoningMode) -> ReasoningMode:
+    """The reasoning mode one synthesis call is sent with.
+
+    The evidence is already retrieved, so synthesis only writes it up: a
+    thinking model left on ``auto`` is asked for ``low``. Left on its default
+    effort it can spend most of the token cap before the first answer token.
+    A configured mode other than ``auto`` is kept as given.
+    """
+    spec = _spec(provider)
+    if reasoning != "auto" or spec is None or not spec.low_effort_trims:
+        return reasoning
+    return "low" if await _accepts_low_effort(provider) else reasoning
+
+
+def _resolve_provider_for_answer(repo_path: Path | None = None):
+    """The provider get_answer synthesises with, or None when none can be built.
+
+    Resolution is the shared one (``repowise.core.providers.llm.resolve``), so
+    get_answer uses the same provider and model as ``repowise update`` for the
+    repo, reading its ``config.yaml`` and ``.env`` without a separate config.
+    ``REPOWISE_DOC_MODEL`` overrides the model for synthesis only.
+
+    A configured provider whose key is absent must not end resolution:
+    returning None there made get_answer drop silently to retrieval-only mode
+    while another provider's key sat in the environment. It falls through to
+    auto-detection instead.
+    """
+    try:
+        from repowise.core.providers.llm.registry import (
+            PROVIDER_AUTODETECT_ORDER,
+            get_provider,
+            provider_credentials_present,
+        )
+        from repowise.core.providers.llm.resolve import (
+            llm_provider_kwargs,
+            provider_ready,
+            repo_getenv,
+            resolve_api_key,
+            resolve_llm,
+        )
+    except Exception:
+        _log.warning("Provider registry import failed", exc_info=True)
+        return None
+
+    doc_model = (os.environ.get("REPOWISE_DOC_MODEL") or "").strip() or None
+
+    def _build(provider_name: str | None = None):
+        selection = resolve_llm(
+            repo_path,
+            provider=provider_name,
+            model=doc_model,
+            override_source="env:REPOWISE_DOC_MODEL",
+            autodetect=False,
+        )
+        if selection.provider is None:
+            return None, None
+        if not provider_ready(selection.provider, repo_path):
+            return None, selection.provider
+        try:
+            kwargs = llm_provider_kwargs(selection, repo_path)
+            return get_provider(selection.provider, **kwargs), selection.provider
+        except Exception:
+            _log.warning("get_provider(%s) failed", selection.provider, exc_info=True)
+            return None, selection.provider
+
+    provider, name = _build()
+    if provider is not None:
+        return provider
+    if name:
+        _log.warning(
+            "Configured provider %r has no usable key/setup; falling back to "
+            "auto-detection from available API keys.",
+            name,
+        )
+
+    # Auto-detect from whatever credentials are present. Only the keyed
+    # providers participate: a keyless one is "usable" everywhere, so
+    # auto-detecting it would hijack every repo that never configured it.
+    getenv = repo_getenv(repo_path)
+    for candidate in PROVIDER_AUTODETECT_ORDER:
+        if candidate == name:
+            # Already attempted above with the same credentials.
+            continue
+        if not (
+            provider_credentials_present(candidate, getenv)
+            or resolve_api_key(candidate, repo_path)[0]
+        ):
+            continue
+        provider, _ = _build(candidate)
+        if provider is not None:
+            return provider
+    return None
+
+
+def _usable_seconds(value: object) -> float | None:
+    """``value`` as a usable budget in seconds, clamped, or None if unusable.
+
+    Rejects bools (``float(True)`` would be a silent 1-second budget), NaN, and
+    anything non-positive. Infinity is clamped rather than rejected: it means
+    "no limit", and ``asyncio.wait_for`` honours that literally by never firing,
+    which is the one outcome this function exists to prevent.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if math.isnan(number) or number <= 0:
+        return None
+    return min(number, _MAX_TIMEOUT_S)
+
+
+def _synthesis_timeout(provider) -> float:
+    """Wall-clock budget for one synthesis call, in seconds.
+
+    Defaults to the provider's own ``interactive_timeout_s``. A remote API
+    answers in seconds, an agent-CLI subprocess or a local model needs minutes,
+    and a single hardcoded number cancels the second group on every call
+    (issue #1119). ``REPOWISE_ANSWER_TIMEOUT_S`` overrides it for the cases no
+    default can predict: a slow proxy, an overloaded self-hosted box, an agent
+    harness that would rather fail fast.
+
+    Every input here is untrusted. The env var is user-typed, and the provider
+    attribute belongs to a possibly runtime-registered class that need not
+    subclass BaseProvider, so a bad value must degrade to a working default
+    rather than raise out of a function whose caller is not expecting it to.
+    """
+    raw = (os.environ.get(_TIMEOUT_ENV) or "").strip()
+    if raw:
+        try:
+            override = _usable_seconds(float(raw))
+        except ValueError:
+            override = None
+        if override is not None:
+            return override
+        _log.warning("Ignoring unusable %s=%r", _TIMEOUT_ENV, raw)
+
+    declared = _usable_seconds(getattr(provider, "interactive_timeout_s", None))
+    return _FALLBACK_TIMEOUT_S if declared is None else declared
+
+
+def _synthesis_failure_note(exc: BaseException, provider, timeout_s: float, timed_out: bool) -> str:
+    """Human-readable ``note`` for a synthesis failure.
+
+    Names the provider and model that failed and, when we cancelled the call,
+    the budget it blew and the knob that raises it. The old note carried only
+    the exception class, which collapsed "your agent CLI needs 90s" and "your
+    key is rate limited" into an identical, unactionable ``TimeoutError``
+    (#1119).
+
+    ``timed_out`` is passed in rather than sniffed off ``exc``: builtin
+    ``TimeoutError`` is an ``OSError`` subclass and is what a bare socket
+    timeout raises, so type-testing would offer "raise your budget" for a
+    connection that died in ten seconds.
+    """
+    who = (
+        f"provider={getattr(provider, 'provider_name', None) or '?'}, "
+        f"model={getattr(provider, 'model_name', None) or '?'}"
+    )
+    if timed_out:
+        headroom = ""
+        if timeout_s < _MAX_TIMEOUT_S:
+            headroom = f" Raise it with {_TIMEOUT_ENV}=<seconds> (your MCP client's own tool timeout still applies), or"
+        return (
+            f"DEGRADED: LLM synthesis exceeded its {timeout_s:g}s budget ({who})."
+            f"{headroom} switch to a faster provider. Read the listed files to "
+            "answer meanwhile."
+        )
+    if _key_rejected(exc):
+        return _key_rejected_note(provider, who)
+    detail = " ".join(str(exc).split())[:200]
+    suffix = f": {detail}" if detail else ""
+    return (
+        f"DEGRADED: LLM synthesis failed ({type(exc).__name__}{suffix}) "
+        f"[{who}]. Read the listed files to answer."
+    )
+
+
+def _key_rejected(exc: BaseException | None) -> bool:
+    """Whether the provider refused the credentials (401/403)."""
+    hint = describe_provider_error(exc) if exc is not None else None
+    return hint is not None and hint.kind == "auth"
+
+
+def _key_rejected_note(provider, who: str) -> str:
+    """Where to put a working key. Never quotes the error, which can echo the key."""
+    spec = _spec(provider)
+    if spec is None or not spec.api_key_envs:
+        return (
+            f"DEGRADED: the provider rejected its credentials ({who}). Check the "
+            "provider's login or access. Read the listed files to answer meanwhile."
+        )
+    names = " or ".join(spec.api_key_envs)
+    return (
+        f"DEGRADED: the provider rejected the API key or its access ({who}). Set a "
+        f"valid {names} in the repo's .repowise/.env (read on the next call) or in "
+        "the MCP server's environment, which wins and needs a server restart. Read "
+        "the listed files to answer meanwhile."
+    )
+
+
+def _empty_completion_note(provider, response, max_tokens: int = _SYNTHESIS_MAX_TOKENS) -> str:
+    """Note for a call that succeeded and returned no text.
+
+    Measured against a local reasoning model on ollama: it spent all 1024
+    tokens thinking and emitted an empty content block. The call did not fail,
+    so nothing marked it degraded, and get_answer shipped a blank answer as a
+    normal result. That is the same silent empty answer #1119 was reported as,
+    reached from the other side.
+    """
+    who = (
+        f"provider={getattr(provider, 'provider_name', None) or '?'}, "
+        f"model={getattr(provider, 'model_name', None) or '?'}"
+    )
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        return (
+            f"DEGRADED: the model used its entire {max_tokens}-token "
+            f"budget without emitting an answer ({who}). Reasoning models spend "
+            "that budget on hidden thinking before any answer token; raise it "
+            f"with {_SYNTHESIS_MAX_TOKENS_ENV}=<tokens>, or use a non-reasoning "
+            "model for synthesis. Read the listed files to answer meanwhile."
+        )
+    return (
+        f"DEGRADED: the model returned an empty completion ({who}). "
+        "Read the listed files to answer."
+    )
+
+
+async def _record_synthesis_cost(
+    provider,
+    response,
+    session_factory,
+    repo_id: str | None,
+) -> None:
+    """Meter one completed synthesis call: a ledger row plus a telemetry line.
+
+    Every published figure for what a question costs to answer has come from
+    metering the provider *outside* the product, because the token counts the
+    provider returns were read for nothing but the empty-completion check. That
+    makes the cost of a change to this path unverifiable anywhere it actually
+    runs.
+
+    Two states are reported separately on purpose. A call with counts is priced
+    with the same table the generation ledger uses and persisted under its own
+    operation label. A call whose counts are both zero is a provider adapter
+    that did not normalise ``usage`` — it is *not* a free call, so it warns and
+    writes nothing; a zero row would total up as free forever.
+
+    Never raises: metering a call must not be able to fail an answer that
+    already succeeded.
+    """
+    input_tokens = int(getattr(response, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(response, "output_tokens", 0) or 0)
+    cached_tokens = int(getattr(response, "cached_tokens", 0) or 0)
+    model = getattr(provider, "model_name", None) or "?"
+    name = getattr(provider, "provider_name", None) or "?"
+
+    if not input_tokens and not output_tokens:
+        _log.warning(
+            "get_answer synthesis reported no usage (provider=%s, model=%s) — this call is "
+            "unpriced, not free. The provider adapter is not normalising input/output tokens.",
+            name,
+            model,
+        )
+        return
+
+    try:
+        from repowise.core.generation.cost_tracker import CostTracker
+
+        tracker = CostTracker(session_factory, repo_id)
+        cost_usd = await tracker.record(
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            operation=_COST_OPERATION,
+        )
+    except Exception:
+        _log.warning(
+            "get_answer synthesis cost not recorded (provider=%s, model=%s, "
+            "input_tokens=%d, output_tokens=%d, cached_tokens=%d)",
+            name,
+            model,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
+            exc_info=True,
+        )
+        return
+
+    # One line per synthesis, logged whether or not there was a ledger to write
+    # to — an MCP server pointed at a read-only or repo-less index still has to
+    # be able to report what it spent. ``cached_tokens`` is on the line because a
+    # cost comparison across two runs is meaningless without it.
+    _log.info(
+        "get_answer synthesis cost: provider=%s model=%s operation=%s "
+        "input_tokens=%d output_tokens=%d cached_tokens=%d cost_usd=%.6f",
+        name,
+        model,
+        _COST_OPERATION,
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        cost_usd,
+    )
+
+
+class Synthesis(NamedTuple):
+    """One synthesis result. ``stop_reason`` is the provider's neutral stop
+    reason (``"max_tokens"`` when the text was cut at the token cap), or None
+    when the provider does not report one."""
+
+    text: str
+    failure_note: str | None
+    stop_reason: str | None = None
+
+
+async def _generate_within(
+    provider,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    reasoning: ReasoningMode,
+    max_tokens: int,
+    timeout_s: float,
+) -> tuple[object | None, BaseException | None, bool]:
+    """One provider call under a deadline: ``(response, failure, timed_out)``.
+
+    The provider's own errors are caught inside the deadline, so only our
+    deadline is labelled a timeout. A provider raising builtin ``TimeoutError``
+    (what a bare socket timeout raises, since it subclasses ``OSError``) would
+    otherwise tell the user to raise a budget that had nothing to do with it.
+    """
+
+    async def _generate() -> tuple[object | None, BaseException | None]:
+        try:
+            return (
+                await provider.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                    temperature=_SYNTHESIS_TEMPERATURE,
+                    reasoning=reasoning,
+                ),
+                None,
+            )
+        except Exception as exc:
+            return None, exc
+
+    try:
+        response, failure = await asyncio.wait_for(_generate(), timeout=timeout_s)
+    except TimeoutError as exc:
+        return None, exc, True
+    return response, failure, False
+
+
+def _hit_token_cap(response) -> bool:
+    return getattr(response, "stop_reason", None) == "max_tokens"
+
+
+def _text_of(response) -> str:
+    return (getattr(response, "content", None) or "").strip()
+
+
+async def _retry_past_cap(call, response, max_tokens: int, *, remaining_s: float, meter):
+    """Ask once more with a larger cap: ``(response to keep, its cap)``.
+
+    Bounded to one retry inside what is left of the time budget. A failed or
+    empty retry keeps the first reply, whose ``stop_reason`` still says it was cut.
+    """
+    if remaining_s <= 0:
+        return response, max_tokens
+    retry_tokens = max_tokens * _SYNTHESIS_RETRY_TOKEN_FACTOR
+    retried, failure, _ = await call(max_tokens=retry_tokens, timeout_s=remaining_s)
+    if failure is not None:
+        _log.warning("get_answer synthesis retry past the token cap failed: %s", failure)
+        return response, max_tokens
+    await meter(retried)
+    if _text_of(retried) or not _text_of(response):
+        return retried, retry_tokens
+    return response, max_tokens
+
+
+# A provider's refusal of the mode itself, as opposed to an outage or a filter:
+# "Thinking level is not supported" (Gemini), "reasoning=... is not supported"
+# (pre-call check), an unsupported ``reasoning_effort`` (OpenAI-style APIs).
+_REFUSED_MODE = re.compile(r"thinking|reasoning|effort", re.IGNORECASE)
+
+
+async def _first_call(provider, prompts, configured, timeout_s, started):
+    """The first synthesis call: ``(call, response, failure, timed_out)``.
+
+    ``call`` is bound to the reasoning mode the reply came from, so a retry past
+    the token cap asks the same way. When the provider refuses the ``low`` mode
+    synthesis chose (Gemini 2.5 models reject thinking levels), the call is made
+    once more with the configured mode, and ``low`` is not tried again. Any
+    other failure under ``low`` also gets that one call, but keeps ``low``,
+    except a rate limit or a rejected key, which another mode cannot fix.
+    """
+    reasoning = await _synthesis_reasoning(provider, configured)
+    call = functools.partial(_generate_within, provider, *prompts, reasoning=reasoning)
+    response, failure, timed_out = await call(max_tokens=_SYNTHESIS_MAX_TOKENS, timeout_s=timeout_s)
+    refused = failure is not None and not timed_out and reasoning != configured
+    if not refused or isinstance(failure, RateLimitError) or _key_rejected(failure):
+        return call, response, failure, timed_out
+    if _REFUSED_MODE.search(str(failure)):
+        _log.info("get_answer synthesis: %s refused reasoning=low (%s)", _model_key(provider), failure)
+        _LOW_EFFORT_OK[_model_key(provider)] = False
+    remaining_s = timeout_s - (time.monotonic() - started)
+    if remaining_s <= 0:
+        return call, response, failure, timed_out
+    call = functools.partial(call, reasoning=configured)
+    return (call, *await call(max_tokens=_SYNTHESIS_MAX_TOKENS, timeout_s=remaining_s))
+
+
+async def synthesize(
+    provider,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    reasoning: ReasoningMode = "auto",
+    session_factory=None,
+    repo_id: str | None = None,
+) -> Synthesis:
+    """Run synthesis. Returns ``Synthesis(text, failure_note, stop_reason)``.
+
+    ``failure_note`` is None on success. Owning the budget, the call and the
+    error message together is what keeps them consistent: the budget that
+    cancelled the call is the number the note quotes, and a caller cannot wire
+    up the call while forgetting the budget (which is how #1119 survived a
+    hardcoded 30s for as long as it did).
+
+    A reply the provider stopped at the token cap is asked for once more with
+    a larger cap, inside the same time budget. A thinking model spends most of
+    the cap on hidden reasoning, so the first reply can stop mid-sentence. If
+    the retry fails or also hits the cap, the first usable text is kept and
+    ``stop_reason`` says it was cut. ``_synthesis_reasoning`` keeps that rare by
+    asking a thinking model for ``low`` effort.
+
+    ``session_factory`` / ``repo_id`` are where the cost row lands. Both
+    optional: with neither, the call is still priced and logged, just not
+    persisted.
+    """
+    timeout_s = _synthesis_timeout(provider)
+    max_tokens = _SYNTHESIS_MAX_TOKENS
+    started = time.monotonic()
+    call, response, failure, timed_out = await _first_call(
+        provider, (system_prompt, user_prompt), reasoning, timeout_s, started
+    )
+    if failure is None:
+        # Metered before the empty-completion branch: a reasoning model that
+        # spends its whole budget on hidden thinking returns no text and is the
+        # most expensive call this path makes, so it is the last one that should
+        # go unpriced.
+        meter = functools.partial(_record_synthesis_cost, provider)
+        await meter(response, session_factory, repo_id)
+        if _hit_token_cap(response):
+            response, max_tokens = await _retry_past_cap(
+                call,
+                response,
+                max_tokens,
+                remaining_s=timeout_s - (time.monotonic() - started),
+                meter=functools.partial(meter, session_factory=session_factory, repo_id=repo_id),
+            )
+        text = _text_of(response)
+        if text:
+            return Synthesis(text, None, getattr(response, "stop_reason", None))
+        return Synthesis("", _empty_completion_note(provider, response, max_tokens))
+
+    _log.warning(
+        "get_answer LLM call failed (provider=%s, model=%s, budget=%.1fs, timed_out=%s): %s",
+        getattr(provider, "provider_name", "?"),
+        getattr(provider, "model_name", "?"),
+        timeout_s,
+        timed_out,
+        failure,
+    )
+    return Synthesis("", _synthesis_failure_note(failure, provider, timeout_s, timed_out))
