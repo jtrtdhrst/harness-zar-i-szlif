@@ -1,0 +1,81 @@
+name: RepoWise ZARI-286 pinned upstream import and isolated Docker CI
+on:
+  push:
+    branches: ['task/zari-286']
+    paths:
+      - '.github/workflows/vendor-repowise-source.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/repowise/**'
+      - 'ops/repowise/repowise-app-source.json'
+      - 'scripts/test_repowise_app_source.py'
+      - '.github/workflows/vendor-repowise-source.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repowise-zari-286-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import-full-upstream-source:
+    if: github.event_name == 'push' && github.repository == 'jtrtdhrst/harness-zar-i-szlif' && github.ref == 'refs/heads/task/zari-286'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: task/zari-286
+          persist-credentials: true
+      - name: Import only pinned upstream source, preserve exact Git tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/task/zari-286"
+          test -z "$(git status --porcelain)"
+          if test -e apps/repowise; then
+            echo 'apps/repowise already exists; refusing competing import'
+            exit 1
+          fi
+          git clone --quiet --depth 1 --single-branch --branch v0.60.1 https://github.com/repowise-dev/repowise.git "$RUNNER_TEMP/repowise-v0601"
+          actual="$(git -C "$RUNNER_TEMP/repowise-v0601" rev-parse HEAD)"
+          test "$actual" = "7ccd63f1b97d4f9f15dd79f930233f75e66d3e94"
+          mkdir -p apps/repowise
+          (cd "$RUNNER_TEMP/repowise-v0601"; git ls-files -z | tar --null -T - -cf -) | tar -xf - -C apps/repowise
+          test -f apps/repowise/LICENSE
+          test -f apps/repowise/docker/Dockerfile
+          git add -f -- apps/repowise
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "vendor(repowise): complete upstream v0.60.1 at 7ccd63f1"
+          tree="$(git rev-parse HEAD:apps/repowise)"
+          test "$tree" = "fe223cb9efd9ed04583522b132089c4770c66ea0"
+          count="$(git ls-tree -r --name-only HEAD apps/repowise | wc -l)"
+          test "$count" -eq 7629
+          python3 -m unittest discover -s scripts -p test_repowise_app_source.py -v
+          git push origin HEAD:refs/heads/task/zari-286
+          echo "SOURCE_IMPORT_HEAD=$(git rev-parse HEAD)"
+          echo "SOURCE_TREE=$tree"
+  verify-immutable-source-and-build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Source SHA, exact tree and licensing checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_repowise_app_source.py -v
+          python3 -m compileall -q apps/repowise/packages/core/src/repowise apps/repowise/packages/cli/src apps/repowise/packages/server/src
+      - name: Full Docker build from the exact owned application root
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --progress=plain -f apps/repowise/docker/Dockerfile -t repowise-zari-286-ci:${{ github.sha }} apps/repowise
+      - name: Version smoke
+        run: docker run --rm --entrypoint repowise repowise-zari-286-ci:${{ github.sha }} --version
