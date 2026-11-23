@@ -660,8 +660,59 @@ test('rotating reader role cannot be configured as writer or arbitrary credentia
    assert.throws(()=>makeServer({tokenFileRole:role,githubToken:''}),/Unsupported read-only GitHub App credential role/);
  }
  assert.throws(()=>makeServer({tokenFileRole:'github-ops-reader-harness',writesEnabled:true}),
-   /Single-repository read-only role cannot enable writes/);
+   /Dedicated read-only reader role cannot enable writes/);
 });
+
+test('parity image reader serves both legacy repositories, rejects third and all writes',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-parity-reader-')),file=join(dir,'reader.json');
+ const permissions={actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'};
+ const repos=[REPO,'jtrtdhrst/zar-i-szlif'];
+ const role=(token,patch={})=>({token,role:'github-ops-reader-image',
+   app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:repos,permissions,...patch});
+ const put=x=>{writeFileSync(file,JSON.stringify(x),{mode:0o600});chmodSync(file,0o600)};
+ let s=null,providerCalls=0;
+ try{
+   put(role('p'.repeat(50)));
+   s=makeServer({callerToken:'parity-owner',tokenFile:file,
+     tokenFileRole:'github-ops-reader-image',githubToken:'',writesEnabled:false,
+     fetchImpl:async(url,opts)=>{providerCalls++;
+       return new Response(JSON.stringify({full_name:new URL(url).pathname.replace('/repos/',''),default_branch:'main'}),{status:200});
+     }});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const call=async(name,repo)=>{
+     const r=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
+       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+         params:{name,arguments:{repo}}})});
+     return (await r.json()).result;
+   };
+   const tools=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
+     body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list'})});
+   assert.equal((await tools.json()).result.tools.length,20);
+   assert.equal((await call('github_repo_info',REPO)).structuredContent.full_name,REPO);
+   assert.equal((await call('github_repo_info','jtrtdhrst/zar-i-szlif')).structuredContent.full_name,'jtrtdhrst/zar-i-szlif');
+   assert.match((await call('github_repo_info','another/repo')).content[0].text,/REPO_DENIED/);
+   assert.match((await call('github_create_branch',REPO)).content[0].text,/WRITE_DISABLED/);
+   assert.equal(providerCalls,2,'no GitHub traffic for unknown repo or denied write');
+   for(const altered of [
+     {repositories:[REPO]},
+     {permissions:{...permissions,issues:'read'}},
+     {permissions:{actions:'read',contents:'read',deployments:'read',metadata:'read'}},
+     {role:'github-ops-reader'},
+   ]){
+     put(role('q'.repeat(50),altered));
+     assert.equal((await (await fetch(base+'/health')).json()).ready,false);
+     assert.match((await call('github_repo_info',REPO)).content[0].text,/AUTH_SCOPE_INVALID/);
+     assert.equal(providerCalls,2);
+   }
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+assert.throws(()=>makeServer({tokenFileRole:'github-ops-reader-image',writesEnabled:true}),
+  /Dedicated read-only reader role cannot enable writes/);
 
 test('reader credential rejects symlink, multiple hard links, world-readable and non-root inode',async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,chownSync,linkSync,symlinkSync,renameSync,unlinkSync,rmSync}=await import('node:fs');
