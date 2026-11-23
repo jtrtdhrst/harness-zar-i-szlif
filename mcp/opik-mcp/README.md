@@ -1,14 +1,13 @@
 # opik-mcp
 
-> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `egasedqaofxnzcqppuxi805h`; katalog `mcp/opik-mcp/`; Dockerfile `mcp/opik-mcp/access-guard/Dockerfile`; implementacja: `access-guard/guard.py, proxy/mcp-proxy.conf`.
-> Repo posiada kod bramki OAuth/NGINX, a backend Opik MCP jest osobnym lokalnym obrazem.
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `egasedqaofxnzcqppuxi805h`; katalog `mcp/opik-mcp/` obejmuje **backend MCP**, `access-guard/` oraz `proxy/`. Dockerfile backendu: `backend/Dockerfile`; kontrola JWT: `access-guard/Dockerfile`, implementacja: `access-guard/guard.py`, `proxy/mcp-proxy.conf`.
+> Backend odtworzono w `backend/` z lokalnego obrazu używanego na produkcji; sam fakt istnienia źródła w Git nie dowodzi, że bieżący kontener jest z tego SHA. Aktualne produkcyjne obrazy należy odczytać i porównać osobno.
 
 
-Coolify project/service folder. Runtime data volumes are owned by this
-project; only `volumes/` markers are committed.
+To folder **serwera MCP przyjmującego żądania Opik**. Nie jest tym samym co `workers/opik-run-enricher/`: worker tylko wzbogaca zakończone ślady Opik o bezpieczne statystyki i nie wystawia narzędzi MCP. `ops/` przechowuje z kolei mapy infrastruktury, a nie kod Opik. Runtime data volumes are owned by the Coolify project; only `volumes/` markers are committed.
 
 - Project metadata: `project.yml`
-- Runtime source/image: see `docs/COOLIFY-PROJECTS.md`
+- Source roots and production image inventory: see `ops/service-build-roots.json`, `ops/mcp-images/catalog.json` and `docs/REPOSITORY-ARCHITECTURE.md` (from repository root)
 - No secrets or runtime data in Git.
 
 ## Cloudflare Access + origin JWT (production 2026-11-05)
