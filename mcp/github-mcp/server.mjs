@@ -222,6 +222,7 @@ async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
     const allowedRepositories={
       'github-ops-reader':['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
       'github-ops-reader-harness':['jtrtdhrst/harness-zar-i-szlif'],
+      'github-ops-reader-image':['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
       'github-ops-writer':['jtrtdhrst/harness-zar-i-szlif','jtrtdhrst/zar-i-szlif'],
     };
     const expected=allowedRepositories[expectedRole];
@@ -231,6 +232,7 @@ async function scopedTokenFromFile(path, expectedRole='github-ops-reader'){
     const allowedPermissions={
       'github-ops-reader':{actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'},
       'github-ops-reader-harness':{contents:'read',metadata:'read'},
+      'github-ops-reader-image':{actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'},
       'github-ops-writer':{actions:'write',contents:'write',pull_requests:'write',metadata:'read'},
     };
     const required=allowedPermissions[expectedRole];
@@ -266,12 +268,12 @@ export function makeServer(config={}) {
   const githubToken=config.githubToken??process.env.GITHUB_TOKEN??'';
   const tokenFile=config.tokenFile??process.env.GITHUB_OPS_TOKEN_FILE??'';
   const tokenFileRole=config.tokenFileRole??process.env.GITHUB_OPS_TOKEN_FILE_ROLE??'github-ops-reader';
-  if(!['github-ops-reader','github-ops-reader-harness'].includes(tokenFileRole))
+  if(!['github-ops-reader','github-ops-reader-harness','github-ops-reader-image'].includes(tokenFileRole))
     throw error('AUTH_SCOPE_INVALID','Unsupported read-only GitHub App credential role');
   const writerTokenFile=config.writerTokenFile??process.env.GITHUB_OPS_WRITER_TOKEN_FILE??'';
   const writesEnabled=config.writesEnabled??(process.env.GITHUB_OPS_WRITES_ENABLED==='true');
-  if(tokenFileRole==='github-ops-reader-harness' && writesEnabled)
-    throw error('WRITE_DISABLED','Single-repository read-only role cannot enable writes');
+  if(['github-ops-reader-harness','github-ops-reader-image'].includes(tokenFileRole) && writesEnabled)
+    throw error('WRITE_DISABLED','Dedicated read-only reader role cannot enable writes');
   const readerRepositories=tokenFileRole==='github-ops-reader-harness'
     ? new Set(['jtrtdhrst/harness-zar-i-szlif']) : REPOS;
   // Only explicit in-process test injection may use a static token. Production
