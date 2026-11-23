@@ -43,7 +43,7 @@ def require_mandatory_evidence_action(source, action):
     if len(matches) != 1:
         raise AssertionError("missing_or_duplicated_evidence_step:" + action)
     block = matches[0]
-    if re.search(r"(?m)^        (?:if|continue-on-error):\\s*", block):
+    if re.search(r"(?m)^        (?:if|continue-on-error):\s*", block):
         raise AssertionError("conditional_or_nonblocking_evidence_step:" + action)
 
 
@@ -112,8 +112,8 @@ class McpSourceBuildContract(unittest.TestCase):
             for action in ("actions/attest@", "actions/upload-artifact@"):
                 original = "        uses: " + action
                 self.assertIn(original, source, (flow, action))
-                for injected in ("        continue-on-error: true\\n",
-                                 "        if: always()\\n"):
+                for injected in ("        continue-on-error: true\n",
+                                 "        if: always()\n"):
                     mutated = source.replace(original, injected + original, 1)
                     with self.subTest(workflow=flow, action=action, injected=injected):
                         with self.assertRaises(AssertionError):
