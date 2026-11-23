@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomically project one dedicated GitHub App reader grant into an isolated Coolify volume.
+"""Atomically project a parity-scoped GitHub App reader into an isolated Coolify volume.
 
 Input is the existing native Multica GitHub App refresh output. This projector
 never mints or broadens credentials; it only verifies and copies an exact-scope
@@ -16,10 +16,10 @@ import subprocess
 import sys
 import tempfile
 
-SOURCE = Path("/etc/multica-git-credential/roles/github-ops-reader-harness.json")
-ROLE = "github-ops-reader-harness"
-REPOS = ["jtrtdhrst/harness-zar-i-szlif"]
-PERMISSIONS = {"contents": "read", "metadata": "read"}
+SOURCE = Path("/etc/multica-git-credential/roles/github-ops-reader-image.json")
+ROLE = "github-ops-reader-image"
+REPOS = ["jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"]
+PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"}
 APP_ID = 5398752
 INSTALLATION_ID = 173456397
 NODE_GID = 1000
