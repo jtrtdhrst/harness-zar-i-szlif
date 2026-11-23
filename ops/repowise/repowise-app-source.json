@@ -23,6 +23,10 @@
     "source_digest_parity",
     "preserved_volumes_and_secrets",
     "live_positive_negative_e2e",
-    "rollback_verified"
-  ]
+    "rollback_verified",
+    "registry_and_build_roots_reconciled_to_actual_cutover"
+  ],
+  "live_inventory_source_during_transition": "upstream-git",
+  "inventory_reconciliation_required_before_cutover": true,
+  "inventory_reconciliation_rule": "Keep ops/coolify-service-registry.json upstream-git while Coolify still builds from repowise-dev/repowise. In the authorized source cutover reconcile registry and build-roots guards to owned-source with the actual deployment SHA/digest; do not claim GitHub ownership on a live upstream image."
 }
