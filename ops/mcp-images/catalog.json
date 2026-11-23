@@ -286,33 +286,6 @@
       "observation_note": "Updated live Docker readback on 2026-11-22: running healthy, OAuth persistence /data preserved, previous /app/dist/lib/oauth.js bind absent. Label is evidence of claimed source revision, not independently attested OCI digest or E2E for the new repository layout."
     },
     {
-      "service": "qdrant-mcp",
-      "coolify_uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "coolify_type": "service",
-      "source_kind": "owned-code",
-      "source_root": "mcp/qdrant-mcp",
-      "dockerfile": "mcp/qdrant-mcp/Dockerfile",
-      "running_containers": [
-        {
-          "container": "qdrant-mcp-a4zgmthjspz8hwvyu6llr8dh",
-          "engine_reported_repo_digests": [
-            "127.0.0.1:5000/harness-qdrant-mcp@sha256:18ec19c4108eaa284a0a15b11ec8e2a44c1978e1c5f05d3d11262ccc1ebf28f6"
-          ],
-          "image_id": "sha256:18ec19c4108eaa284a0a15b11ec8e2a44c1978e1c5f05d3d11262ccc1ebf28f6",
-          "image_ref": "127.0.0.1:5000/harness-qdrant-mcp:deb907a88591",
-          "source_repository_label": null,
-          "source_revision_label": null
-        }
-      ],
-      "last_published_ghcr_tag": null,
-      "last_published_sha": null,
-      "verified_remote_oci_digest": null,
-      "verified_production_source_sha": null,
-      "verified_production_e2e": false,
-      "runtime_matching_server_sha256": "59aeaf846aa9781a17a7de098958a4268b145555e948c6f296979356e5b7df45",
-      "runtime_matching_requirements_sha256": "f7ba36d15d134709fe89125d340299f059b48a671027828f213182b64a9bf101"
-    },
-    {
       "service": "supabase-mcp",
       "coolify_uuid": "tjit4c8m0kjh8brkmdhyvkde",
       "coolify_type": "service",

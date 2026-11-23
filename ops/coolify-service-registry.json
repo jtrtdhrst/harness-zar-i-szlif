@@ -179,10 +179,8 @@
       "name": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
       "type": "service",
-      "source": "owned-code",
-      "root": "mcp/qdrant-mcp",
-      "note": "Repo owns the exact source folder and Dockerfile. Coolify production image/SHA/digest is not yet verified against this code, and release may be on HOLD.",
-      "dockerfile": "mcp/qdrant-mcp/Dockerfile"
+      "source": "retired-runtime",
+      "note": "Owner retired Qdrant MCP source/build and requested production service teardown; no further builds. Qdrant database UUID eciprwgeyol4znmdd0dpu3xc remains separate and must not be deleted."
     },
     {
       "name": "supabase-mcp",

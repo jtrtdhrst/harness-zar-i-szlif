@@ -89,10 +89,6 @@
       "mode": "manual_only",
       "reason": "Source Docker build checked in PR matrix; independently authorized integration E2E and digest release required."
     },
-    "mcp/qdrant-mcp": {
-      "mode": "manual_only",
-      "reason": "Source Docker build checked in PR matrix; separate Qdrant release remains on HOLD until immutable digest and live E2E."
-    },
     "mcp/supabase-mcp": {
       "mode": "manual_only",
       "reason": "Source Docker build checked in PR matrix; independently authorized privilege-negative E2E and digest release required."
