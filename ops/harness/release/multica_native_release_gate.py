@@ -90,7 +90,6 @@ def enforce_persistent_security_hold(db_container, hold_path=None):
 
 
 
-
 def validate_input(repo, pr, head_sha, merge_sha, issue_ref):
     if repo not in ALLOWED_REPOS or not isinstance(pr, int) or pr < 1 or pr > 1000000:
         raise Denied("invalid_repository_or_pr")
