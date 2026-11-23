@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+# Git-owned source contexts: mcp/repowise-mcp + trusted named repowise-source=apps/repowise.
+# NEVER use a downloaded PyPI RepoWise wheel or a repo-root Docker context.
+FROM python:3.12-slim-bookworm
+ENV PYTHONUNBUFFERED=1 DO_NOT_TRACK=1 REPOWISE_TELEMETRY_DISABLED=1
+RUN apt-get update && apt-get install -y --no-install-recommends git libgomp1 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY --from=repowise-source /pyproject.toml /README.md /LICENSE /MANIFEST.in ./
+COPY --from=repowise-source /packages/core/ packages/core/
+COPY --from=repowise-source /packages/cli/ packages/cli/
+COPY --from=repowise-source /packages/server/ packages/server/
+RUN python -m pip install --no-cache-dir .
+COPY apply_overrides.py /tmp/repowise-custom/apply_overrides.py
+COPY overrides/ /tmp/repowise-custom/overrides/
+RUN python /tmp/repowise-custom/apply_overrides.py
+COPY tests/ /tmp/repowise-custom/tests/
+RUN python -m unittest discover -s /tmp/repowise-custom/tests -p 'test_*.py' -v
+RUN groupadd -r repowise && useradd -r -g repowise -m -d /home/repowise -s /usr/sbin/nologin repowise \
+    && mkdir -p /workspace && chown -R repowise:repowise /workspace
+USER repowise
+WORKDIR /workspace
+EXPOSE 7338
+ENTRYPOINT ["repowise", "mcp"]
+CMD ["/workspace", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "7338", "--tools", "get_answer,get_context,get_symbol,search_codebase,get_risk,get_change_risk,get_why,get_overview,get_health,get_dead_code,list_repos,get_dependency_path,get_execution_flows,get_blast_radius,get_architecture,get_conformance"]

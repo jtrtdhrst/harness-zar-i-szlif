@@ -1,14 +1,15 @@
-# RepoWise MCP — canonical GitHub source and HTTP deployment
+# RepoWise MCP — single vendor source, reviewed MCP overlay
 
-The **only** application and MCP implementation source is the complete RepoWise 0.60.1 tree in `apps/repowise/`. This folder retains the migration contract and historical PR #196 provenance, not an independent code fork or downloaded package.
+The only complete upstream RepoWise 0.60.1 application source lives in `apps/repowise/` (byte-pinned by `scripts/test_repowise_app_source.py`). The MCP-specific HTTP wrapper, pinned Dockerfile, tested `get_answer` override and regression tests live here; **no separate downloaded RepoWise application package or source fork**.
 
-- Source: `apps/repowise/packages/server/src/repowise/server/mcp_server/tool_answer/answer.py`
-- Source build: `apps/repowise/docker/Dockerfile.mcp`; build context `apps/repowise/`
-- Real behavioral regression: `apps/repowise/tests/unit/server/test_answer_branch_routing_owned.py`
-- CI: `.github/workflows/repowise-mcp-ci.yml` (PR gates) + `.github/workflows/mcp-images-ghcr.yml` (trusted main SHA-bound GHCR publisher)
-- Coolify existing service UUID: `lecwi3emh9hjxir7gphmalie`, **still running local `:HEAD` until authorized release**
-- Preserve existing Harness/Product repo volumes, private environment configuration, internal port 7338, and rollback. Do not include runtime data, tokens, or private config in Git.
+Build from two explicit GitHub-owned contexts at the **same exact commit**:
 
-The MCP build installs its package from `apps/repowise` using `pip install .`. No PyPI RepoWise application wheel, alternative local image source, or repo-root Docker build context is permitted.
+```sh
+docker build --build-context repowise-source=./apps/repowise \
+  -f mcp/repowise-mcp/Dockerfile \
+  -t repowise-mcp-test mcp/repowise-mcp
+```
 
-**Release:** exact reviewed main SHA → tested GHCR immutable digest → independent security isolation clearance (ZARI-213) and COO per-UUID authorization → Coolify image parity → authenticated positive and negative HTTP MCP tests → rollback proof. A green image build is not deployment approval.
+GitHub PR CI must run that build and its embedded positive/negative branch, stale cache and repo-scoping tests. Trusted-main GHCR Buildah publishing adds the same named context and retains exact SHA/digest attestation. No repo-root Docker context or PyPI wheel.
+
+The production Coolify service `lecwi3emh9hjxir7gphmalie` still runs a local `:HEAD` image. No immutable production digest, same-SHA readback or live authenticated +/- MCP E2E is claimed until CTO review, ZARI-213 HOLD clearance, COO scoped authorization and rollout/rollback. Preserve existing Harness/Product data mounts, credentials, port 7338, and server identities.

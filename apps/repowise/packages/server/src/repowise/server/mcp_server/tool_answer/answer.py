@@ -52,10 +52,8 @@ import contextlib
 import functools
 import json as _json  # noqa: F401  — re-exported: a test patches answer._json.dumps
 import logging
-import re
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, NamedTuple
 
 from repowise.core.persistence.database import get_session
@@ -262,159 +260,8 @@ class _Retrieved(NamedTuple):
     flow_paths: list[list[str]]
 
 
-def _service_identifiers(question: str) -> list[str]:
-    """Bounded, explicit hyphenated service identifiers in a question."""
-    return list(dict.fromkeys(re.findall(
-        r"(?<![\w/])(?:[a-z][a-z0-9]*-){1,}[a-z][a-z0-9]*(?![\w/])",
-        question.lower(),
-    )))[:2]
-
-
-def _branch_source_question(question: str) -> bool:
-    """Do not incur source-line lookup for ordinary architectural questions."""
-    return bool(_service_identifiers(question)) and bool(re.search(
-        r"\b(?:branch|branches|build|built|deploy|production|source|gał[ąę]ź|gałęzi|budow|buduj|wdroż|produkcj)\w*",
-        question, flags=re.IGNORECASE,
-    ))
-
-
-async def _literal_source_anchor_hits(
-    question: str, *, repo_alias: str | None, scope: str | None,
-    exclude_spec: Any,
-) -> list[dict]:
-    """Attach real, path-scoped source lines that wiki synthesis misses.
-
-    Source is the same authenticated repo-local search_codebase used by MCP.
-    The result is a pageless-file hit; it never fabricates a Page row, running
-    SHA, image digest or permission. Bounded to two explicit service tokens.
-    """
-    if not _branch_source_question(question):
-        return []
-    from repowise.server.mcp_server.tool_search.tool import search_codebase
-
-    hits = []
-    for name in _service_identifiers(question):
-        try:
-            result = await asyncio.wait_for(
-                search_codebase(query=f"`{name}`", limit=10, mode="hybrid", repo=repo_alias),
-                timeout=10.0,
-            )
-        except Exception:
-            _log.warning("get_answer: literal source lookup failed", exc_info=True)
-            continue
-        lines = result.get("lines") or []
-        # Prefer exact tabular facts; a prose mention of a service is weaker.
-        matching = [
-            row for row in lines
-            if isinstance(row, dict)
-            and isinstance(row.get("path"), str)
-            and isinstance(row.get("text"), str)
-            and name in row["text"].lower()
-            and (not scope or row["path"].startswith(scope))
-        ]
-        matching.sort(key=lambda row: (
-            not row["text"].lstrip().startswith(f"| `{name}` / `"),
-            row["path"] != "ops/repowise/BRANCH_BUILD_PROVENANCE.md",
-            not row["text"].lstrip().startswith("|"),
-            row["path"], row.get("line") or 0,
-        ))
-        # Only complete, validated config rows may become branch-source anchors.
-        # Incidental mentions, including negative prose from another repo,
-        # must not be surfaced as branch configuration evidence.
-        matching = [
-            row for row in matching
-            if (config_row := _BUILD_CONFIG_ROW.match(row["text"].lstrip()))
-            and config_row.group("service").lower() == name
-        ]
-        if not matching:
-            continue
-        row = matching[0]
-        path = row["path"]
-        text = row["text"].strip()
-        if not path or not text or len(text) > 1200:
-            continue
-        source_line = f"Verified source line {row.get('line', '?')}: {text}"
-        hits.append({
-            "page_id": f"file:{path}",
-            "page_type": "file",
-            "target_path": path,
-            "title": f"Exact source match: {name}",
-            "summary": source_line,
-            "snippet": source_line,
-            "excerpt": source_line,
-            "score": 12.0,
-            "_sources": {"literal"},
-        })
-    return filter_dicts_by_key(hits, "target_path", exclude_spec)
-
-
-_BUILD_CONFIG_ROW = re.compile(
-    r"^\|\s*\x60(?P<service>[^\x60]+)\x60\s*/\s*\x60(?P<uuid>[^\x60]+)\x60"
-    r"\s*\|\s*\x60(?P<repo>[^\x60]+)\x60\s*\|\s*\x60(?P<branch>[^\x60]+)\x60"
-)
-
-
-def _exact_config_answer(question: str, retrieved: _Retrieved) -> dict | None:
-    """An exact, dated branch selector is answerable without LLM guesses.
-
-    Never interprets a Git ref as the actual running image or deployment SHA.
-    A markdown row is only evidence for what the indexed source documented.
-    """
-    if not _branch_source_question(question):
-        return None
-    rows = {}
-    for hit in retrieved.hits:
-        if "literal" not in (hit.get("_sources") or set()):
-            continue
-        source_line = hit.get("excerpt") or hit.get("snippet") or ""
-        text = source_line.partition(": ")[2] if source_line.startswith("Verified source line ") else source_line
-        match = _BUILD_CONFIG_ROW.match(text)
-        if not match:
-            continue
-        values = match.groupdict()
-        name = values["service"].lower()
-        if name not in _service_identifiers(question):
-            continue
-        if not all(values.get(key) for key in ("service", "uuid", "repo", "branch")):
-            continue
-        rows[name] = {"data": values, "path": hit.get("target_path"), "source_line": source_line}
-    if not rows:
-        return None
-    facts = [rows[n] for n in _service_identifiers(question) if n in rows]
-    paths = list(dict.fromkeys(f["path"] for f in facts if f["path"]))
-    sentences = [
-        f"`{f['data']['service']}`: the indexed Coolify configuration snapshot "
-        f"records repository `{f['data']['repo']}`, build branch "
-        f"`{f['data']['branch']}` (resource UUID `{f['data']['uuid']}`)."
-        for f in facts
-    ]
-    missing = [n for n in _service_identifiers(question) if n not in rows]
-    if missing:
-        sentences.append(
-            "No exact configuration row was verified for " +
-            ", ".join(f"`{n}`" for n in missing) + "."
-        )
-    sentences.append(
-        "This is a dated, source-indexed configuration snapshot, NOT proof of a "
-        "currently deployed source SHA, image digest, auto-deploy trigger, or "
-        "production E2E. Verify current Coolify and Docker readback before acting."
-    )
-    return {
-        "answer": " ".join(sentences),
-        "citations": paths,
-        "fallback_targets": paths,
-        "retrieval": [
-            {"path": f["path"], "snippet": f["source_line"], "page_type": "file"}
-            for f in facts
-        ],
-        "confidence": "medium",
-        "retrieval_quality": "verified_source_line_not_live_runtime",
-        "grounding": "indexed_source_line",
-    }
-
-
 async def _run_retrieval_pipeline(
-    question: str, ctx, *, scope: str | None, exclude_spec, repo_id, repo_alias=None
+    question: str, ctx, *, scope: str | None, exclude_spec, repo_id
 ) -> _Retrieved:
     """Run every retrieval, ranking and enrichment stage, in order.
 
@@ -523,14 +370,6 @@ async def _run_retrieval_pipeline(
     # A compound question gets each later clause's best file into the top five.
     with contextlib.suppress(Exception):
         hits = await cover_clauses(question, hits, ctx, scope=scope, exclude_spec=exclude_spec)
-    # Verified literal source evidence leads only service/build questions.
-    # The wiki-only retrieval may miss newly indexed markdown config rows.
-    anchors = await _literal_source_anchor_hits(
-        question, repo_alias=repo_alias, scope=scope, exclude_spec=exclude_spec
-    )
-    if anchors:
-        paths = {h["target_path"] for h in anchors}
-        hits = anchors + [h for h in hits if h.get("target_path") not in paths]
     # The pre-cap ranking feeds ``candidates``: files below the synthesis cut
     # are still the best answer to "where do I look next".
     resolved_pool = list(hits)
@@ -676,84 +515,13 @@ def _fallback_targets(hits: list[dict]) -> list[str]:
     ]
 
 
-def _verified_markdown_source_excerpt(
-    hit: dict, repo_root: Path, question: str,
-) -> str | None:
-    """Return bounded *live source*, never invented wiki content.
-
-    Repo/source path is already scoped and exclusion-filtered by retrieval.
-    This is a read-only rescue for documentation pages missing from wiki_pages.
-    It never traverses directories, symlinks, or hidden credentials.
-    """
-    path = hit.get("target_path")
-    if not isinstance(path, str) or not path.endswith((".md", ".mdx", ".rst")):
-        return None
-    if not path or path.startswith("/") or ".." in Path(path).parts:
-        return None
-    try:
-        root = Path(repo_root).resolve(strict=True)
-        source = root / path
-        if source.is_symlink() or not source.is_file():
-            return None
-        if not source.resolve(strict=True).is_relative_to(root):
-            return None
-        if source.stat().st_size > 128_000:
-            return None
-        lines = source.read_text(encoding="utf-8").splitlines()
-    except (OSError, ValueError, UnicodeError):
-        return None
-
-    stop = {
-        "which", "what", "where", "when", "does", "from", "this", "with",
-        "that", "about", "configured", "how", "the", "and", "która", "jakiej",
-        "jaki", "jak", "jest", "gałąź", "branch", "build", "buduje",
-        "repo", "source", "file", "plik", "gdzie", "który",
-    }
-    terms = list(dict.fromkeys(
-        tok.lower() for tok in re.findall(r"[\w./-]{4,}", question)
-        if tok.lower() not in stop and len(tok) < 90
-    ))[:12]
-    if not terms:
-        return None
-    scored = []
-    for i, line in enumerate(lines):
-        trimmed = line.strip()
-        if not trimmed or len(trimmed) > 1200:
-            continue
-        lower = trimmed.lower()
-        matches = [term for term in terms if term in lower]
-        if matches:
-            scored.append((len(matches), any("-" in term and term in lower for term in matches), i, trimmed))
-    if not scored:
-        return None
-    scored.sort(key=lambda row: (-row[0], -int(row[1]), row[2]))
-    winners = sorted(scored[:3], key=lambda row: row[2])
-    return "Verified live repository documentation (not production state):\n" + "\n".join(
-        f"L{n+1}: {line}" for _, _, n, line in winners
-    )
-
-
-async def _attach_excerpts(hits: list[dict], ctx, question: str) -> None:
+async def _attach_excerpts(hits: list[dict], ctx) -> None:
     """Page content for the top hits, before anything branches on retrieval quality.
 
     Gating it on dominance starves the confident answers of prose; the cost is
     one indexed SELECT over at most five rows.
     """
     missing = await _attach_page_excerpts(hits, ctx)
-    # Wiki indexes only selected pages. A source-backed documentation hit may
-    # have a title but no wiki body, even when its Markdown exists on disk.
-    # Do not let synthesis infer config values from title-only evidence.
-    if missing:
-        for hit in hits[:5]:
-            if hit.get("excerpt"):
-                continue
-            verified = await asyncio.to_thread(
-                _verified_markdown_source_excerpt, hit, _repo_root(ctx), question
-            )
-            if verified:
-                hit["excerpt"] = verified
-                hit["snippet"] = verified
-                hit.setdefault("_sources", set()).add("live_doc")
     if missing:
         _log.warning(
             "get_answer: %d of %d top hits have no page content; those hits "
@@ -997,7 +765,7 @@ async def get_answer(
     # The versioned identity deliberately misses legacy question-only rows.
     normalized_scope = _normalize_scope(scope)
     qhash = _hash_answer_identity(question, normalized_scope)
-    cache_disabled = _cache_disabled() or _branch_source_question(question)
+    cache_disabled = _cache_disabled()
     if not cache_disabled:
         served = await _serve_cached_answer(
             ctx=ctx,
@@ -1012,11 +780,8 @@ async def get_answer(
             return served
 
     retrieved = await _run_retrieval_pipeline(
-        question, ctx, scope=normalized_scope, exclude_spec=exclude_spec, repo_id=ask.repo_id, repo_alias=repo
+        question, ctx, scope=normalized_scope, exclude_spec=exclude_spec, repo_id=ask.repo_id
     )
-    literal_config = _exact_config_answer(question, retrieved)
-    if literal_config is not None:
-        return _with_candidates(literal_config, retrieved.resolved_pool)
     hits = retrieved.hits
     resolved_pool = retrieved.resolved_pool
     graph_callers = await _graph_callers(ask, retrieved)
@@ -1042,7 +807,7 @@ async def get_answer(
         return _with_candidates(early, resolved_pool)
 
     fallback_targets = _fallback_targets(hits)
-    await _attach_excerpts(hits, ctx, question)
+    await _attach_excerpts(hits, ctx)
     # The grade takes the dominance TIER so its note quotes only the measurement made.
     dominance = dominance_reason(hits, agreement_dominant=agreement_dominant)
     gated = await _gated_reply(

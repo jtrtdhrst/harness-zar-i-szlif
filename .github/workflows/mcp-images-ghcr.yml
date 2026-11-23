@@ -12,7 +12,7 @@ on:
       - 'mcp/playwright-mcp/**'
       - 'mcp/opik-mcp/**'
       - 'mcp/hindsight-mcp/**'
-      - 'apps/repowise/**'
+      - 'mcp/repowise-mcp/**'
       - 'mcp/supabase-mcp/**'
       - 'mcp/ubuntu-mcp/**'
       - 'scripts/select_mcp_builds.py'
@@ -121,7 +121,11 @@ jobs:
           cleanup() { buildah unshare rm -rf -- "$work" || :; }
           trap cleanup EXIT
           tag="ghcr.io/${GITHUB_REPOSITORY_OWNER}/harness-${SERVICE}:sha-${GITHUB_SHA}"
-          buildah bud --isolation=chroot --format=oci --pull=always \
+          extra_context=()
+          if test "$SERVICE" = "repowise-mcp-runtime"; then
+            extra_context=(--build-context "repowise-source=$GITHUB_WORKSPACE/apps/repowise")
+          fi
+          buildah bud --isolation=chroot --format=oci --pull=always "${extra_context[@]}" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             -f "$BUILD_ROOT/$DOCKERFILE" -t "$tag" "$BUILD_ROOT"

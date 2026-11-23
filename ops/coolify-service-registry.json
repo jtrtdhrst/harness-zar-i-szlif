@@ -277,9 +277,9 @@
       "uuid": "lecwi3emh9hjxir7gphmalie",
       "type": "service",
       "source": "owned-code",
-      "note": "GitHub-owned full vendored RepoWise 0.60.1 source at apps/repowise; production still runs local :HEAD with no SHA/digest parity, HOLD true.",
-      "root": "apps/repowise",
-      "dockerfile": "apps/repowise/docker/Dockerfile.mcp"
+      "note": "Owned GitHub candidate is source only. Current Coolify production still uses fciqzgceop7mqtqickkfomd7:HEAD without proven digest/SHA and remains on ZARI-213 security HOLD.",
+      "root": "mcp/repowise-mcp",
+      "dockerfile": "mcp/repowise-mcp/Dockerfile"
     }
   ]
 }

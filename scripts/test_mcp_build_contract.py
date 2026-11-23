@@ -92,14 +92,7 @@ class McpSourceBuildContract(unittest.TestCase):
                 dockerfile = row["dockerfile"]
                 self.assertEqual(manifest["source_root"], context)
                 self.assertEqual(manifest["build_dockerfile"], dockerfile)
-                if name == "repowise-mcp-runtime":
-                    self.assertEqual(context, "apps/repowise")
-                    self.assertEqual(dockerfile, "apps/repowise/docker/Dockerfile.mcp")
-                    image_source = (ROOT / dockerfile).read_text()
-                    self.assertIn("pip install --no-cache-dir .", image_source)
-                    self.assertNotIn("repowise==", image_source)
-                else:
-                    self.assertTrue(context.startswith("mcp/"))
+                self.assertTrue(context.startswith("mcp/"))
                 self.assertTrue((ROOT / context).is_dir())
                 self.assertTrue((ROOT / dockerfile).is_file())
                 self.assertTrue((ROOT / dockerfile).resolve().is_relative_to(
@@ -187,6 +180,17 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertNotEqual(replacement, original)
                 with self.assertRaises(AssertionError):
                     self.assert_repowise_doc_parity(doc.replace(original, replacement, 1))
+
+    def test_repowise_mcp_uses_only_pinned_git_vendor_named_context(self):
+        dockerfile = (ROOT / "mcp/repowise-mcp/Dockerfile").read_text()
+        self.assertIn("COPY --from=repowise-source", dockerfile)
+        self.assertIn("pip install --no-cache-dir .", dockerfile)
+        self.assertNotIn("repowise==", dockerfile)
+        for flow in (GENERAL_FLOW, "source-build-roots-pr.yml"):
+            source = (WORKFLOWS / flow).read_text()
+            self.assertIn('--build-context "repowise-source=', source)
+            self.assertIn('test "$SERVICE" = "repowise-mcp-runtime"', source)
+        assert (ROOT / "apps/repowise/pyproject.toml").is_file()
 
     def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
         services = owned_services()
