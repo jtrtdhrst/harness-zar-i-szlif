@@ -66,7 +66,7 @@ class McpBuildSelectionTests(unittest.TestCase):
                   "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
                                  "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}])
         self.assertEqual(len(images.select([], event_name="workflow_dispatch",
-                                           manual_service="all")), 9)
+                                           manual_service="all")), 10)
 
     def test_rejects_injected_service_and_untrusted_events(self):
         for candidate in ("../../etc", "ops", "mcp-all; touch /tmp/unsafe",
