@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "branch": "main",
-  "observed_at": "2026-11-22",
+  "observed_at": "2026-11-23",
   "description": "Only real source-owned MCP/integration roots. Upstream and local image-only services are inventoried separately without ghost code folders. Ready does not imply production deploy.",
   "resources": [
     {
@@ -11,7 +11,7 @@
       "source_root": "mcp/github-mcp",
       "build_dockerfile": "mcp/github-mcp/Dockerfile",
       "source_build_ready": true,
-      "reason": "Coolify already builds from /github-mcp with watch mcp/github-mcp/**; auto-deploy intentionally disabled."
+      "reason": "Canonical source is mcp/github-mcp. Live Coolify base_directory=/github-mcp and watch_paths=github-mcp/** (readback 2026-11-23); must change to /mcp/github-mcp and mcp/github-mcp/** in an authorized release before next build. Auto-deploy is disabled."
     },
     {
       "id": "hermes-gateway",
@@ -27,7 +27,7 @@
       "source_root": "mcp/multica-mcp",
       "build_dockerfile": "mcp/multica-mcp/Dockerfile",
       "source_build_ready": true,
-      "reason": "Coolify Git source already builds from /multica-mcp."
+      "reason": "Canonical source is mcp/multica-mcp. Live Coolify base_directory=/multica-mcp and watch_paths=multica-mcp/** (readback 2026-11-23); must change to /mcp/multica-mcp and mcp/multica-mcp/** in an authorized release before next build. Auto-deploy is disabled."
     },
     {
       "id": "repowise-deployment-publisher-staging",
@@ -92,7 +92,7 @@
       "source_root": "mcp/coolify-mcp",
       "build_dockerfile": "mcp/coolify-mcp/Dockerfile",
       "source_build_ready": true,
-      "reason": "Real in-repository source and build Dockerfile are available; current production uses an older image and release remains gated. The source-owned candidate is NOT a deployment or production E2E."
+      "reason": "Source and Dockerfile are available in mcp/coolify-mcp. Production currently runs ghcr.io/jtrtdhrst/coolify-mcp@sha256:3680d1b58fbc6c5097ac3f525e9e1b0aaec390be0a05ab5580eba322f70d734d (Coolify readback 2026-11-23); this does not attest or deploy the new directory layout, which remains gated."
     },
     {
       "id": "qdrant-mcp",
