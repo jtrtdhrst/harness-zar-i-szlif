@@ -14,7 +14,6 @@ Katalog `mcp/` zawiera tylko serwery MCP i ich kod/proxy bezpieczeństwa. Usług
 | [opik-mcp](opik-mcp/) | Backend Opik MCP + Access JWT guard + Nginx proxy | `mcp/opik-mcp/backend/Dockerfile`, `access-guard/Dockerfile` | `egasedqaofxnzcqppuxi805h` | Kod backendu odzyskany z działającego obrazu lokalnego; brak potwierdzonego Git SHA upstream |
 | [plasmic-mcp](plasmic-mcp/) | 42+ narzędzia MCP dla Plasmic WAB | `mcp/plasmic-mcp/Dockerfile` | `a6ci2beifbinzckfnneiqnjd` | Kod w repo |
 | [playwright-mcp](playwright-mcp/) | Browser MCP, zarządzanie sesjami i idle proxy | `mcp/playwright-mcp/Dockerfile` | `9e4fzsodixl4qzzap4zg0ntp` | Kod w repo |
-| [qdrant-mcp](qdrant-mcp/) | Python MCP hybrid search + CRUD | `mcp/qdrant-mcp/Dockerfile` | `a4zgmthjspz8hwvyu6llr8dh` | Kod bajtowo zgodny z działającym kontenerem |
 | [supabase-mcp](supabase-mcp/) | MCP do operacji Supabase, RLS i storage | `mcp/supabase-mcp/Dockerfile` | `tjit4c8m0kjh8brkmdhyvkde` | Kod w repo |
 | [ubuntu-mcp](ubuntu-mcp/) | Administracja Ubuntu/SSH i audyt z rolami | `mcp/ubuntu-mcp/Dockerfile` | `lcnjb3vreec7saihkhan6akh` | Kod w repo |
 
@@ -22,4 +21,4 @@ Katalog `mcp/` zawiera tylko serwery MCP i ich kod/proxy bezpieczeństwa. Usług
 
 **Źródła i obrazy to różne rzeczy:** [ops/mcp-images/catalog.json](../ops/mcp-images/catalog.json) zapisuje rzeczywiste obrazy i UUID; jeśli brak niezależnie potwierdzonego manifest digest/SHA, wydanie pozostaje niezweryfikowane.
 
-**Historia migracji:** PR #182 i PR #132 były źródłami kodu dla Qdrant i Hindsight. Żaden automatyczny release nie wynika z przeniesienia tych plików. Sekrety OAuth i dane banków Hindsight pozostają po stronie Coolify.
+**Historia migracji:** Qdrant MCP został całkowicie wycofany ze źródeł w PR #182 i z konfiguracji bramy w PR #234. Nie przywracaj jego katalogu ani wpisu buildowego. Osobna baza danych Qdrant pozostaje aktywna. Hindsight MCP (PR #132) jest oddzielnym komponentem i zachowuje swoje niezależne sekrety i dane.
