@@ -19,7 +19,7 @@ REF = "127.0.0.1:5000/harness-plasmic-mcp@" + DIGEST
 class FakeRunner:
     def __init__(self, upstream=SOURCE, local=SOURCE, revision=OLD,
                  diff=0, auth=True, ids="abc123abc123", config=None,
-                 remote_url="https://github.com/miloszspyrka-code/harness-zar-i-szlif.git",
+                 remote_url="https://github.com/jtrtdhrst/harness-zar-i-szlif.git",
                  repo_digests=None):
         self.upstream, self.local, self.revision = upstream, local, revision
         self.diff, self.auth, self.ids = diff, auth, ids
@@ -124,6 +124,7 @@ class ParityTests(unittest.TestCase):
     def test_wrong_origin_denied_before_contacting_remote(self):
         for url in (
             "https://github.com/other-org/harness-zar-i-szlif.git",
+            "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git",
             "https://github.com/miloszspyrka-code/harness-zar-i-szlif.git.evil",
             "https://github.com.evil/miloszspyrka-code/harness-zar-i-szlif.git",
             "https://secret@github.com/miloszspyrka-code/harness-zar-i-szlif.git",
