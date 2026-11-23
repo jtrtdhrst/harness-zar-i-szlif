@@ -1,0 +1,49 @@
+name: ZARI-213 persisted HOLD PR validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ops/harness/release/multica_native_release_gate.py'
+      - 'ops/harness/release/security-hold.json'
+      - 'scripts/test_zari213_security_hold_gate.py'
+      - '.github/workflows/zari213-hold-pr.yml'
+permissions:
+  contents: read
+jobs:
+  negative-release-gate:
+    if: github.repository == 'jtrtdhrst/harness-zar-i-szlif'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reject status flips, missing holds and unauthorized clearance
+        run: python3 -m unittest discover -s scripts -p test_zari213_security_hold_gate.py -v
+      - name: Validate release checker syntax and hold active
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ops/harness/release/multica_native_release_gate.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('ops/harness/release/security-hold.json').read_text())
+          import re
+          assert type(x['active']) is bool
+          if x['active']:
+              assert x['clearance'] is None
+              print('PERSISTED_HOLD_ACTIVE_AND_FAIL_CLOSED')
+          else:
+              c=x['clearance']
+              assert isinstance(c,dict)
+              assert c.get('cleared_by')==x.get('owner')
+              assert isinstance(c.get('cleared_at'),str) and c['cleared_at'].endswith('Z')
+              assert re.fullmatch(r'[a-f0-9]{40}',c.get('ctocoo_review_sha',''))
+              for key in ('isolation_e2e_comment_id','cto_review_comment_id','coo_authorization_comment_id'):
+                  assert re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}',c.get(key,''))
+              print('CLEARANCE_STRUCTURE_VALID_REQUIRES_RUNTIME_EVIDENCE_AND_REVIEW')
+          PY
