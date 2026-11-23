@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'github-mcp/**'
+      - 'mcp/github-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
       - 'ops/harness/credentials/github-ops-token-project.py'
+      - 'ops/harness/credentials/github-ops-image-reader-project.py'
+      - 'ops/harness/credentials/test_github_ops_image_reader_project.py'
       - 'ops/harness/credentials/multica-git-credential-broker.py'
       - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
       - 'ops/harness/credentials/zari213-codex-role-broker.py'
@@ -27,9 +29,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'github-mcp/**'
+      - 'mcp/github-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
       - 'ops/harness/credentials/github-ops-token-project.py'
+      - 'ops/harness/credentials/github-ops-image-reader-project.py'
+      - 'ops/harness/credentials/test_github_ops_image_reader_project.py'
       - 'ops/harness/credentials/multica-git-credential-broker.py'
       - 'ops/harness/credentials/test_zari213_daemon_cache_reader.py'
       - 'ops/harness/credentials/zari213-codex-role-broker.py'
@@ -64,11 +68,14 @@ jobs:
         with:
           node-version: '24'
       - name: Syntax validation
-        run: node --check github-mcp/server.mjs
+        run: node --check mcp/github-mcp/server.mjs
       - name: Validate GitHub App credential broker source
         run: |
           python3 -m py_compile ops/harness/credentials/multica-zar-github-app-refresh.py ops/harness/credentials/github-ops-token-project.py
           python3 -m py_compile ops/harness/credentials/multica-git-credential-broker.py
+          python3 -m py_compile ops/harness/credentials/github-ops-image-reader-project.py
+      - name: One-repo Github Ops reader and volume projection negatives
+        run: python3 ops/harness/credentials/test_github_ops_image_reader_project.py -q
       - name: Role-scoped Codex broker negative and quota regressions
         run: |
           python3 -m pip install --disable-pip-version-check aiohttp==3.14.5
@@ -89,9 +96,9 @@ jobs:
       # Run inside the unprivileged BuildKit sandbox (root in the build stage),
       # not as host root or by relaxing production credential checks.
       - name: MCP HTTP regression tests (isolated image build)
-        run: docker build --target verify -t github-ops-mcp:verify ./github-mcp
+        run: docker build --target verify -t github-ops-mcp:verify ./mcp/github-mcp
       - name: Build production Dockerfile
-        run: docker build -t github-ops-mcp:ci ./github-mcp
+        run: docker build -t github-ops-mcp:ci ./mcp/github-mcp
       - name: Validate packaged server syntax
         run: docker run --rm --entrypoint node github-ops-mcp:ci --check /app/server.mjs
 
