@@ -113,6 +113,15 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertIn("ghcr.io/", yaml)
                 self.assertIn("org.opencontainers.image.revision", yaml)
 
+    def test_repowise_documented_mcp_table_matches_owned_source_registry(self):
+        """The indexed source-build knowledge must stay aligned with the live root catalog."""
+        doc = (ROOT / "ops/repowise/MCP_SOURCE_BUILDS.md").read_text()
+        owned = owned_services()
+        self.assertIn(f"## Current {len(owned)} source-owned MCPs", doc)
+        documented = set(re.findall(r"(?m)^\\| ([a-z][a-z0-9-]*mcp) \\| \\x60[a-z0-9]", doc))
+        self.assertEqual(documented, set(owned), "Repowise MCP table differs from the owned-source registry")
+        self.assertIn("Retired \\x60qdrant-mcp\\x60", doc)
+
     def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
         services = owned_services()
         self.assertNotIn("qdrant-mcp", services)
