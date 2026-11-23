@@ -1,10 +1,10 @@
 # GitHub Ops MCP — scoped augmentation (not a deployment controller)
 
-> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `t09dqe2eppn2eiqmhzlf8xzp`; katalog `github-mcp/`; Dockerfile `github-mcp/Dockerfile`; implementacja: `server.mjs`.
+> **Źródło tej usługi Coolify:** repo `jtrtdhrst/harness-zar-i-szlif`, UUID `t09dqe2eppn2eiqmhzlf8xzp`; katalog `mcp/github-mcp/`; Dockerfile `mcp/github-mcp/Dockerfile`; implementacja: `server.mjs`.
 > Kod jest w tym folderze; bieżąca produkcyjna wersja musi być potwierdzona digestem i pozytywnym E2E.
 
 
-Canonical source and Docker build context: `github-mcp/` in `jtrtdhrst/harness-zar-i-szlif`. Coolify BGH application must use `base_directory=/github-mcp`, `dockerfile_location=/Dockerfile` and reviewed `main`; do not build from `github-ops-mcp/` or `coolify-mcp/`. The Docker verify stage runs both HTTP regression suites.
+Canonical source and Docker build context: `mcp/github-mcp/` in `jtrtdhrst/harness-zar-i-szlif`. Coolify BGH application must use `base_directory=/mcp/github-mcp`, `dockerfile_location=/Dockerfile` and reviewed `main`; do not build from `github-ops-mcp/` or `coolify-mcp/`. The Docker verify stage runs both HTTP regression suites.
 
 
 An owner-authenticated GitHub operator MCP for the two current repositories. The 20-tool catalog includes source files and blob SHAs, branch reads/listing, pull requests/diffs, exact-SHA CI/runs, existing rule/deployment evidence, and guarded branch, commit, PR and merge mutations. It does not bypass GitHub rulesets, release HOLD or independent reviews. Workflow dispatch stays disabled because GitHub workflow_dispatch cannot atomically bind a mutable ref to a reviewed SHA.
@@ -35,7 +35,19 @@ The host's existing `multica-zar-github-app-refresh.service` reads its existing 
 
 Deletion additionally needs the `git` binary in the image (the Dockerfile installs it) and the separate, rotating `GITHUB_OPS_WRITER_TOKEN_FILE` grant. Global Git configuration is suppressed and the credential helper restricts protocol, host and exact repository path. The deprecated `GITHUB_OPS_PUSH_TOKEN` environment variable is not accepted in production.
 
-Use a Coolify **private, manual** staging application with `base_directory=/github-mcp`, `Dockerfile` build and `is_auto_deploy_enabled=false`. No FQDN, no public port, no production secrets in build args. Do not turn on writes/deletion in a test deployment. Register its private MCP URL in Multica only after independent authorization, a supported secure secret injection path, and test of the exact target runtime's network reachability.
+Use a Coolify **private, manual** staging application with `base_directory=/mcp/github-mcp`, `Dockerfile` build and `is_auto_deploy_enabled=false`. No FQDN, no public port, no production secrets in build args. Do not turn on writes/deletion in a test deployment. Register its private MCP URL in Multica only after independent authorization, a supported secure secret injection path, and test of the exact target runtime's network reachability.
+
+## Immutable production image and credential rotation (ZARI-240)
+
+The Git-backed Coolify UUID `t09dqe2eppn2eiqmhzlf8xzp` remains the previous release and rollback target. Build the approved SHA once in trusted-main CI; deploy the GHCR image from a tag pinned to that SHA and verify the **actual RepoDigest and OCI revision**. A Dockerfile rebuild on Coolify is a different artifact and does not satisfy that contract. The new Docker Image app receives no domain or traffic without a separate scoped COO gate.
+
+**Parity role:** Existing production can read both `jtrtdhrst/harness-zar-i-szlif` and `jtrtdhrst/zar-i-szlif`. The separate newly minted `github-ops-reader-image` role preserves both repositories and exact permissions `actions:read`, `administration:read`, `contents:read`, `deployments:read`, `metadata:read`. The smaller `github-ops-reader-harness` role is reserved for single-repository canaries, not this production cutover. The legacy `github-ops-reader` and `github-ops-writer` roles are unchanged.
+
+Use `GITHUB_OPS_TOKEN_FILE=/run/secrets/github-ops/token.json`, `GITHUB_OPS_TOKEN_FILE_ROLE=github-ops-reader-image`, `GITHUB_OPS_WRITES_ENABLED=false`, and an app-specific caller bearer. Do not set `GITHUB_TOKEN`, copy the old production App token or private key, or mount a writer credential. Coolify must mount a distinct named volume at `/run/secrets/github-ops`, owned by that new image-app UUID, with no other app attached. The host root projector writes `root:1000` mode `0640`, nlink=1 and atomically replaces the file; Node checks owner, group-write/world bits, app/installation ID, role, repos, permissions and expiry on every request using `O_NOFOLLOW` and `fstat`. Invalid or stale files fail closed.
+
+**Rotation owner:** existing native `multica-zar-github-app-refresh.service` and its 15-minute timer. Add the distinct `github-ops-reader-image` mint to the installed native source, then opt in the existing refresh service by setting BOTH non-secret `GITHUB_OPS_IMAGE_APP_UUID` and `GITHUB_OPS_IMAGE_READER_VOLUME`. After minting, it calls `ops/harness/credentials/github-ops-image-reader-project.py` (installed separately at `/usr/local/libexec/github-ops-image-reader-project.py`) to verify and project that role into the uniquely attached Coolify volume. This is not a second authority or extra timer. Do not enable opt-in until the exact UUID/volume have been reviewed and approved; failed projection fails the refresh unit, and a missing or near-expired file makes `/health.ready=false`. Confirm **two successful scheduled rotations without restart** before calling production credential delivery durable.
+
+Post-cutover E2E must verify Cloudflare Access denials outside the origin, bearer denials at the MCP, both-repo real `github_repo_info`, 20-tool list, `writes_enabled=false`, the approved GHCR digest and SHA revision, and an executable old-app alias rollback. `ZARI-213` HOLD stays independent.
 
 ## MCP verification
 
