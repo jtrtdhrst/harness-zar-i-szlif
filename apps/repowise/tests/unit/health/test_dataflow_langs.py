@@ -1,0 +1,3946 @@
+"""Dataflow def/use + CFG + Extract Method coverage for the ported languages.
+
+Covers the Go, TS/JS, Java, and Rust ``DefUseDialect``s and the language-
+agnostic CFG / slicer once the Python-specific grammar was lifted onto
+``LanguageNodeMap``. Best-effort like the other dataflow tests: each language
+skips when its tree-sitter pack is missing rather than failing.
+"""
+
+from __future__ import annotations
+
+import textwrap
+
+import pytest
+
+from repowise.core.analysis.health.complexity.ast_utils import _collect_function_nodes
+from repowise.core.analysis.health.complexity.languages import get_language_map
+from repowise.core.analysis.health.dataflow import (
+    analyze_file,
+    analyze_function,
+    build_cfgs_for_file,
+    find_extractions,
+)
+from repowise.core.analysis.health.perf.promotion import _loop_iterations_independent
+
+
+def _require(language: str) -> None:
+    try:
+        from repowise.core.ingestion.parser import _get_language
+    except Exception:
+        pytest.skip(f"tree-sitter language pack missing for {language}")
+    if _get_language(language) is None:
+        pytest.skip(f"tree-sitter language pack missing for {language}")
+
+
+def _analyses(language: str, src: str):
+    _require(language)
+    res = analyze_file(f"m.{language}", language, textwrap.dedent(src).encode(), flagged_only=False)
+    if res.stats.functions_seen == 0:
+        pytest.skip(f"tree-sitter language pack missing for {language}")
+    return res.functions
+
+
+def _first(language: str, src: str):
+    fns = _analyses(language, src)
+    assert fns, "no function analysed"
+    return fns[0]
+
+
+def _def_names(fn) -> set[str]:
+    return {d.var for d in fn.def_use.definitions}
+
+
+def _use_names(fn) -> set[str]:
+    return {u.name for b in fn.def_use.blocks.values() for u in b.uses}
+
+
+# == Go =========================================================================
+
+# Every Go write shape in one function: ``:=``, ``var``, ``=``, ``+=``, ``x++``,
+# a ``range`` binder, a multi-assign, and a selector/index target (not a local).
+_GO_SHAPES = """
+package main
+func shapes(input []int, base int) int {
+    total := 0
+    var scale int = 2
+    for i, v := range input {
+        total += v * scale
+        seen[i] = v
+        cfg.count++
+    }
+    a, b := base, total
+    a, b = b, a
+    return a + b
+}
+"""
+
+
+def test_go_def_use_classification():
+    fn = _first("go", _GO_SHAPES)
+    defs = _def_names(fn)
+    # ``:=`` / ``var`` / ``range`` / multi-assign targets are all locals.
+    assert {"total", "scale", "i", "v", "a", "b"} <= defs
+    assert {"input", "base"} <= _def_names(fn)  # parameters seeded as defs
+    # A selector target (``cfg.count++``) and index target (``seen[i] = v``) bind
+    # no local: their bases are reads, never defs.
+    assert "seen" not in defs
+    assert "cfg" not in defs
+    assert "count" not in defs
+    uses = _use_names(fn)
+    assert {"scale", "v", "seen", "cfg", "base"} <= uses
+
+
+def test_go_for_clause_and_while_heads():
+    fn = _first(
+        "go",
+        """
+        package main
+        func loops(n int) int {
+            sum := 0
+            for j := 0; j < n; j++ {
+                sum += j
+            }
+            for sum < 100 {
+                sum *= 2
+            }
+            return sum
+        }
+        """,
+    )
+    # ``j`` is bound by the C-style for-clause initializer.
+    assert "j" in _def_names(fn)
+    # The CFG has two loop headers with back-edges.
+    headers = [b for b in fn.cfg.blocks if b.kind == "loop_header"]
+    assert len(headers) == 2
+    assert fn.cfg.back_edges()
+
+
+def test_go_method_receiver_is_seeded():
+    fn = _first(
+        "go",
+        """
+        package main
+        func (s *Server) handle(req int) int {
+            x := s.lookup(req)
+            return x
+        }
+        """,
+    )
+    assert "s" in _def_names(fn)  # the receiver is available in the body
+
+
+def test_go_else_if_chain_branches():
+    # The C-family ``else if`` nests in the ``alternative`` field; each arm is a
+    # branch and every path reaches exit.
+    fn = _first(
+        "go",
+        """
+        package main
+        func grade(x int) int {
+            y := 0
+            if x == 1 {
+                y = 1
+            } else if x == 2 {
+                y = 2
+            } else if x == 3 {
+                y = 3
+            } else {
+                y = 4
+            }
+            return y
+        }
+        """,
+    )
+    branches = [b for b in fn.cfg.blocks if b.kind == "branch"]
+    assert len(branches) == 3  # three ``if`` tests
+    assert fn.cfg.exit_id in fn.cfg.reachable_ids()
+
+
+def test_go_if_else_branch_and_continue():
+    fn = _first(
+        "go",
+        """
+        package main
+        func f(items []int, x int) int {
+            total := 0
+            for _, it := range items {
+                if it > x {
+                    total += it
+                } else {
+                    total -= it
+                }
+                if it == 0 {
+                    continue
+                }
+            }
+            return total
+        }
+        """,
+    )
+    branches = [b for b in fn.cfg.blocks if b.kind == "branch"]
+    assert len(branches) == 2
+    # The else arm and a join both exist; the loop has a back-edge.
+    assert [b for b in fn.cfg.blocks if b.kind == "join"]
+    assert fn.cfg.back_edges()
+
+
+# A long Go function whose compute-average tail is a clean extraction.
+_GO_PROCESS = """
+package main
+func process(records []int, threshold int) (int, int) {
+    results := []int{}
+    errors := 0
+    for _, r := range records {
+        if r < 0 {
+            errors++
+            continue
+        }
+        results = append(results, r)
+    }
+    total := 0
+    count := 0
+    for _, v := range results {
+        if v > threshold {
+            total += v
+            count++
+        } else {
+            total -= v
+        }
+    }
+    average := 0
+    if count > 0 {
+        average = total / count
+    }
+    return average, errors
+}
+"""
+
+
+def test_go_extract_method_fires():
+    lmap = get_language_map("go")
+    extractions = find_extractions(_first("go", _GO_PROCESS), lmap)
+    assert extractions, "expected at least one Go extraction"
+    best = extractions[0]
+    # The strongest extraction is the compute-average tail.
+    assert "average" in best.returns
+    assert "results" in best.params and "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+    # The whole function body is never offered as an extraction.
+    assert not (best.start_line <= 4 and best.end_line >= 27)
+
+
+def test_go_extractions_are_deterministic():
+    lmap = get_language_map("go")
+    fn = _first("go", _GO_PROCESS)
+
+    def serialize():
+        return [
+            (e.start_line, e.end_line, e.params, e.returns, e.ccn_removed)
+            for e in find_extractions(fn, lmap)
+        ]
+
+    first = serialize()
+    for _ in range(3):
+        assert serialize() == first
+
+
+# == TypeScript / JavaScript ====================================================
+
+_TS_SHAPES = """
+function shapes(input: number[], base: number): number {
+    let total = 0;
+    const scale = 2;
+    var legacy = 1;
+    for (const v of input) {
+        total += v * scale;
+        legacy++;
+    }
+    const [a, b] = pair(total);
+    const {p, q} = obj;
+    obj.attr = base;
+    arr[0] = total;
+    return a + b + p + q + legacy;
+}
+"""
+
+
+def test_ts_def_use_classification():
+    fn = _first("typescript", _TS_SHAPES)
+    defs = _def_names(fn)
+    # let / const / var / array-destructure / object-destructure are all locals.
+    assert {"total", "scale", "legacy", "v", "a", "b", "p", "q"} <= defs
+    assert {"input", "base"} <= defs  # parameters
+    # Member / subscript targets bind no local; their bases are reads.
+    assert "obj" not in defs
+    assert "attr" not in defs
+    assert "arr" not in defs
+    uses = _use_names(fn)
+    assert {"scale", "v", "obj", "base", "total"} <= uses
+
+
+def test_js_def_use_destructuring():
+    # Plain JS (no type annotations) exercises the shared dialect on the JS pack.
+    fn = _first(
+        "javascript",
+        """
+        function f(items, factor) {
+            let acc = 0;
+            for (const x of items) {
+                acc += x * factor;
+            }
+            const [head, ...tail] = items;
+            return acc + head + tail.length;
+        }
+        """,
+    )
+    defs = _def_names(fn)
+    assert {"acc", "x", "head", "tail"} <= defs
+    assert {"items", "factor"} <= defs
+
+
+def test_ts_shorthand_object_literal_reads():
+    # ``{ days, limit }`` in a return reads both locals; ``shorthand_property_
+    # identifier`` must count as a use even though its ``_pattern`` twin is a
+    # destructuring def.
+    fn = _first(
+        "typescript",
+        """
+        function build(days: number, limit: number) {
+            const payload = compute(days);
+            return { days, limit, payload };
+        }
+        """,
+    )
+    uses = _use_names(fn)
+    assert {"days", "limit", "payload"} <= uses
+    # Reads never become defs.
+    defs = _def_names(fn)
+    assert defs == {"days", "limit", "payload"}  # params + the one declaration
+
+
+def test_ts_shorthand_mixed_with_destructuring_same_statement():
+    # LHS shorthand is a destructuring def; RHS shorthand is a read -- both on
+    # one statement.
+    fn = _first(
+        "typescript",
+        """
+        function f(source: { a: number }, b: number) {
+            const { a } = { ...source, b };
+            return a;
+        }
+        """,
+    )
+    assert "a" in _def_names(fn)
+    # On the destructuring line itself only ``a`` binds; the RHS shorthand
+    # ``b`` stays a read (its sole def is the parameter seed).
+    destructure_defs = {d.var for d in fn.def_use.definitions if d.line == 3}
+    assert destructure_defs == {"a"}
+    uses = _use_names(fn)
+    assert {"source", "b"} <= uses
+
+
+def test_js_shorthand_and_spread_reads():
+    # Plain JS pack: spread reads its identifier, shorthand reads its local.
+    fn = _first(
+        "javascript",
+        """
+        function merge(base, extra) {
+            const combined = { ...base, extra };
+            return combined;
+        }
+        """,
+    )
+    uses = _use_names(fn)
+    assert {"base", "extra"} <= uses
+    assert "extra" not in {d.var for d in fn.def_use.definitions if d.line > fn.start_line}
+
+
+_TS_PROCESS = """
+function process(records: number[], threshold: number): [number, number] {
+    const results: number[] = [];
+    let errors = 0;
+    for (const r of records) {
+        if (r < 0) {
+            errors += 1;
+            continue;
+        }
+        results.push(r);
+    }
+    let total = 0;
+    let count = 0;
+    for (const v of results) {
+        if (v > threshold) {
+            total += v;
+            count += 1;
+        } else {
+            total -= v;
+        }
+    }
+    let average = 0;
+    if (count > 0) {
+        average = total / count;
+    }
+    return [average, errors];
+}
+"""
+
+
+def test_ts_extract_method_fires():
+    lmap = get_language_map("typescript")
+    extractions = find_extractions(_first("typescript", _TS_PROCESS), lmap)
+    assert extractions, "expected at least one TS extraction"
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params and "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+
+
+def test_ts_guard_cascade_has_no_extraction():
+    # Every span contains a return -> no single-exit slice.
+    lmap = get_language_map("typescript")
+    src = """
+        function classify(x: number): string {
+            if (x < 0) {
+                return "neg";
+            }
+            if (x === 0) {
+                return "zero";
+            }
+            if (x < 10) {
+                return "small";
+            }
+            return "large";
+        }
+        """
+    assert find_extractions(_first("typescript", src), lmap) == []
+
+
+def test_ts_extractions_are_deterministic():
+    lmap = get_language_map("typescript")
+    fn = _first("typescript", _TS_PROCESS)
+
+    def serialize():
+        return [
+            (e.start_line, e.end_line, e.params, e.returns, e.ccn_removed)
+            for e in find_extractions(fn, lmap)
+        ]
+
+    first = serialize()
+    for _ in range(3):
+        assert serialize() == first
+
+
+# == flagged-only gate (the per-language budget contract) =======================
+
+
+def test_go_flagged_only_gate_skips_small_functions():
+    _require("go")
+    lines = ["package main", "func big(x int) int {", "    y := 0"]
+    for i in range(12):
+        lines += [f"    if x == {i} {{", f"        y = {i}", "    }"]
+    lines += ["    return y", "}", "", "func tiny() int {", "    return 1", "}", ""]
+    result = build_cfgs_for_file("m.go", "go", "\n".join(lines).encode())
+    if result.stats.functions_seen == 0:
+        pytest.skip("tree-sitter language pack missing for go")
+    assert result.stats.functions_seen == 2
+    assert result.stats.functions_built == 1  # only the flagged big function
+    assert [fc.name for fc in result.functions] == ["big"]
+
+
+def test_ts_flagged_only_gate_skips_small_functions():
+    _require("typescript")
+    lines = ["function big(x: number): number {", "    let y = 0;"]
+    for i in range(12):
+        lines += [f"    if (x === {i}) {{", f"        y = {i};", "    }"]
+    lines += ["    return y;", "}", "", "function tiny(): number {", "    return 1;", "}", ""]
+    result = build_cfgs_for_file("m.ts", "typescript", "\n".join(lines).encode())
+    if result.stats.functions_seen == 0:
+        pytest.skip("tree-sitter language pack missing for typescript")
+    assert result.stats.functions_seen == 2
+    assert result.stats.functions_built == 1
+    assert [fc.name for fc in result.functions] == ["big"]
+
+
+# == the loop-carried-dependence proof, cross-language ==========================
+
+
+def _independent(language: str, src: str, marker: str) -> bool:
+    """Run the promotion proof at *marker*'s line in *src*'s first function."""
+    _require(language)
+    from tree_sitter import Parser
+
+    from repowise.core.ingestion.parser import _get_language
+
+    body = textwrap.dedent(src)
+    lmap = get_language_map(language)
+    parser = Parser(_get_language(language))
+    tree = parser.parse(body.encode())
+    nodes = _collect_function_nodes(tree.root_node, lmap)
+    assert nodes, "no function node parsed"
+    analyzed = analyze_function(nodes[0], language, lmap)
+    assert analyzed is not None, "analysis returned None"
+    cfg, def_use, reaching = analyzed
+    line = next(i for i, ln in enumerate(body.splitlines(), start=1) if marker in ln)
+    return _loop_iterations_independent(cfg, def_use, reaching, line)
+
+
+# == Java =======================================================================
+
+# Every Java write shape in one method: multi-declarator decl, ``=`` vs ``+=``
+# (operator-sniffed), ``x++`` / ``--x``, field / array targets (not locals),
+# an enhanced-for binder, a C-style for initializer, and try-with-resources.
+_JAVA_SHAPES = """
+class Demo {
+    int shapes(int[] input, int base, String... rest) {
+        int total = 0;
+        int a = 1, b = 2;
+        total += base;
+        a++;
+        --b;
+        this.field = total;
+        seen[a] = b;
+        for (int i = 0; i < input.length; i++) {
+            total += input[i];
+        }
+        for (int v : input) {
+            total -= v;
+        }
+        try (var res = open()) {
+            total = res.hashCode();
+        } catch (RuntimeException e) {
+            total = 0;
+        }
+        return total + a + b;
+    }
+}
+"""
+
+
+def test_java_def_use_classification():
+    fn = _first("java", _JAVA_SHAPES)
+    defs = _def_names(fn)
+    # Declarations, for-init, enhanced-for binder, and try resources are locals.
+    assert {"total", "a", "b", "i", "v", "res"} <= defs
+    assert {"input", "base", "rest"} <= defs  # parameters (varargs included)
+    # Field (``this.field = ...``) and array (``seen[a] = ...``) targets bind
+    # no local: their bases are reads, never defs.
+    assert "field" not in defs
+    assert "seen" not in defs
+    uses = _use_names(fn)
+    assert {"base", "input", "seen", "a", "b", "total", "res"} <= uses
+    # Method names are never variable reads.
+    assert "hashCode" not in uses
+    assert "open" not in uses
+
+
+def test_java_compound_assign_reads_target():
+    fn = _first(
+        "java",
+        """
+        class Demo {
+            int f(int x) {
+                int acc = 0;
+                acc += x;
+                return acc;
+            }
+        }
+        """,
+    )
+    # ``acc += x`` is both a write and a read of ``acc``.
+    assert "acc" in _def_names(fn)
+    assert "acc" in _use_names(fn)
+
+
+def test_java_for_and_while_heads():
+    fn = _first(
+        "java",
+        """
+        class Demo {
+            int loops(int n) {
+                int sum = 0;
+                for (int j = 0; j < n; j++) {
+                    sum += j;
+                }
+                while (sum < 100) {
+                    sum *= 2;
+                }
+                return sum;
+            }
+        }
+        """,
+    )
+    assert "j" in _def_names(fn)  # bound by the C-style for initializer
+    headers = [b for b in fn.cfg.blocks if b.kind == "loop_header"]
+    assert len(headers) == 2
+    assert fn.cfg.back_edges()
+
+
+def test_java_else_if_chain_branches():
+    fn = _first(
+        "java",
+        """
+        class Demo {
+            int grade(int x) {
+                int y = 0;
+                if (x == 1) {
+                    y = 1;
+                } else if (x == 2) {
+                    y = 2;
+                } else if (x == 3) {
+                    y = 3;
+                } else {
+                    y = 4;
+                }
+                return y;
+            }
+        }
+        """,
+    )
+    branches = [b for b in fn.cfg.blocks if b.kind == "branch"]
+    assert len(branches) == 3
+    assert fn.cfg.exit_id in fn.cfg.reachable_ids()
+
+
+def test_java_switch_arm_writes_are_may_defs():
+    # A ``switch`` stays one CFG statement, so an arm's write is conditional:
+    # it must register as BOTH a def and a use (the may-def convention that
+    # keeps the promotion proof conservative).
+    fn = _first(
+        "java",
+        """
+        class Demo {
+            int f(int x) {
+                int y = 0;
+                switch (x) {
+                    case 1:
+                        y = 10;
+                        break;
+                    default:
+                        y = 20;
+                }
+                return y;
+            }
+        }
+        """,
+    )
+    decl_line = min(d.line for d in fn.def_use.definitions if d.var == "y")
+    switch_defs = [d for d in fn.def_use.definitions if d.var == "y" and d.line > decl_line]
+    assert switch_defs, "expected the arm writes to register as defs"
+    use_lines = {u.line for b in fn.def_use.blocks.values() for u in b.uses if u.name == "y"}
+    assert {d.line for d in switch_defs} <= use_lines  # ...and as paired uses
+
+
+# A long Java method whose compute-average tail is a clean extraction.
+_JAVA_PROCESS = """
+class Demo {
+    int process(int[] records, int threshold) {
+        int errors = 0;
+        java.util.List<Integer> results = new java.util.ArrayList<>();
+        for (int r : records) {
+            if (r < 0) {
+                errors++;
+                continue;
+            }
+            results.add(r);
+        }
+        int total = 0;
+        int count = 0;
+        for (int v : results) {
+            if (v > threshold) {
+                total += v;
+                count++;
+            } else {
+                total -= v;
+            }
+        }
+        int average = 0;
+        if (count > 0) {
+            average = total / count;
+        }
+        return average + errors;
+    }
+}
+"""
+
+
+def test_java_extract_method_fires():
+    lmap = get_language_map("java")
+    extractions = find_extractions(_first("java", _JAVA_PROCESS), lmap)
+    assert extractions, "expected at least one Java extraction"
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params and "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+
+
+def test_java_span_never_shares_a_line_with_a_compact_block_brace():
+    # A block opened on its header's line and closed on its last statement's
+    # line: a span over its statements would lift the header and the brace.
+    src = """
+    class Demo {
+        int f(int[] xs, int limit) {
+            int total = 0;
+            int extra = 0;
+            for (int x : xs) {
+                total += x;
+            }
+            if (limit > 0) { extra = limit * 2;
+                if (extra > 9) {
+                    extra = 9;
+                }
+                total += extra;
+                total += 1; }
+            return total;
+        }
+    }
+    """
+    lmap = get_language_map("java")
+    lines = textwrap.dedent(src).splitlines()
+    header = next(i for i, ln in enumerate(lines, 1) if "if (limit > 0) {" in ln)
+    brace = next(i for i, ln in enumerate(lines, 1) if "total += 1; }" in ln)
+    for e in find_extractions(_first("java", src), lmap):
+        assert e.start_line != header and e.end_line != brace
+
+
+def test_java_extractions_are_deterministic():
+    lmap = get_language_map("java")
+    fn = _first("java", _JAVA_PROCESS)
+
+    def serialize():
+        return [
+            (e.start_line, e.end_line, e.params, e.returns, e.ccn_removed)
+            for e in find_extractions(fn, lmap)
+        ]
+
+    first = serialize()
+    for _ in range(3):
+        assert serialize() == first
+
+
+def test_java_flagged_only_gate_skips_small_functions():
+    _require("java")
+    lines = ["class Demo {", "    int big(int x) {", "        int y = 0;"]
+    for i in range(12):
+        lines += [f"        if (x == {i}) {{", f"            y = {i};", "        }"]
+    lines += ["        return y;", "    }", "    int tiny() {", "        return 1;", "    }", "}"]
+    result = build_cfgs_for_file("m.java", "java", "\n".join(lines).encode())
+    if result.stats.functions_seen == 0:
+        pytest.skip("tree-sitter language pack missing for java")
+    assert result.stats.functions_seen == 2
+    assert result.stats.functions_built == 1
+    assert [fc.name for fc in result.functions] == ["big"]
+
+
+def test_java_append_loop_is_independent():
+    assert _independent(
+        "java",
+        """
+        class Demo {
+            void f(int[] items) {
+                for (int item : items) {
+                    int r = fetch(item);  // HIT
+                    store(r);
+                }
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_java_accumulator_is_carried():
+    assert not _independent(
+        "java",
+        """
+        class Demo {
+            int f(int[] items) {
+                int acc = 0;
+                for (int item : items) {
+                    acc = acc + fetch(item);  // HIT
+                }
+                return acc;
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_java_switch_conditional_write_refuses_promotion():
+    # ``flag`` is written only on one switch arm, so it may carry across
+    # iterations; the may-def convention must keep this refused.
+    assert not _independent(
+        "java",
+        """
+        class Demo {
+            void f(int[] items) {
+                int flag = 0;
+                for (int item : items) {
+                    switch (item) {
+                        case 1:
+                            flag = 1;
+                            break;
+                        default:
+                            break;
+                    }
+                    int r = fetch(flag);  // HIT
+                    store(r);
+                }
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+# == Rust =======================================================================
+
+# Every Rust write shape in one function: ``let`` (plain / mut / tuple / struct
+# / slice patterns), ``=`` vs ``+=`` (distinct node kinds), field / index /
+# deref targets (not locals), a ``for`` binder, and paths (``Vec::new``).
+_RUST_SHAPES = """
+struct S { count: i64 }
+
+impl S {
+    fn shapes(&mut self, input: &[i64], base: i64) -> i64 {
+        let total = 0;
+        let mut acc = base;
+        let (a, b) = (1, 2);
+        let Wrapper { x, y } = wrapper;
+        let [head, tail] = pair;
+        acc += a;
+        acc = acc * 2;
+        self.count += 1;
+        arr[0] = acc;
+        obj.field = b;
+        *ptr = x;
+        let v = Vec::new();
+        for item in input {
+            acc += item + y + head + tail + total;
+        }
+        acc
+    }
+}
+"""
+
+
+def test_rust_def_use_classification():
+    fn = _first("rust", _RUST_SHAPES)
+    defs = _def_names(fn)
+    # ``let`` binders across pattern shapes, plus the for binder, are locals.
+    assert {"total", "acc", "a", "b", "x", "y", "head", "tail", "v", "item"} <= defs
+    assert {"input", "base", "self"} <= defs  # params + the self receiver
+    # Field / index / deref targets bind no local: bases are reads, never defs.
+    assert "count" not in defs
+    assert "arr" not in defs
+    assert "obj" not in defs
+    assert "ptr" not in defs
+    # The tuple-struct/struct pattern *type* side is not a binder.
+    assert "Wrapper" not in defs
+    uses = _use_names(fn)
+    assert {"base", "acc", "self", "arr", "obj", "ptr", "item", "wrapper"} <= uses
+    # Path components (``Vec::new``) are never variable reads.
+    assert "Vec" not in uses
+    assert "new" not in uses
+
+
+@pytest.mark.parametrize(
+    "import_stmt",
+    [
+        "use foo;",
+        "use foo as bar;",
+        "use Shape::{Circle, Square};",
+        "use std::fmt;",
+        "use Shape::*;",
+    ],
+)
+def test_rust_imports_are_not_variable_reads(import_stmt):
+    fn = _first(
+        "rust",
+        f"""
+        fn main() {{
+            {import_stmt}
+            let a = 1;
+        }}
+        """,
+    )
+
+    assert not _use_names(fn), (
+        f"Import {import_stmt!r} should not create variable reads; "
+        f"got {_use_names(fn)}"
+    )
+
+
+def test_rust_import_does_not_read_local_with_same_name():
+    fn = _first(
+        "rust",
+        """
+        fn main() {
+            let io = 1;
+            use std::{fs, io};
+        }
+        """,
+    )
+
+    assert "io" not in _use_names(fn)
+
+def test_rust_while_let_binder_is_a_may_def():
+    fn = _first(
+        "rust",
+        """
+        fn drain(iter: &mut I) -> i64 {
+            let mut n = 0;
+            while let Some(item) = iter.next() {
+                n += item;
+            }
+            n
+        }
+        """,
+    )
+    # The pattern binds ``item`` only when it matches: def AND paired use.
+    assert "item" in _def_names(fn)
+    assert "item" in _use_names(fn)
+    assert [b for b in fn.cfg.blocks if b.kind == "loop_header"]
+
+
+def test_rust_else_if_chain_branches():
+    fn = _first(
+        "rust",
+        """
+        fn grade(x: i64) -> i64 {
+            let mut y = 0;
+            if x == 1 {
+                y = 1;
+            } else if x == 2 {
+                y = 2;
+            } else if x == 3 {
+                y = 3;
+            } else {
+                y = 4;
+            }
+            y
+        }
+        """,
+    )
+    branches = [b for b in fn.cfg.blocks if b.kind == "branch"]
+    assert len(branches) == 3
+    assert fn.cfg.exit_id in fn.cfg.reachable_ids()
+
+
+def test_rust_statement_position_control_flow_is_unwrapped():
+    # Rust parses statement-position loops / returns inside an
+    # ``expression_statement``; the CFG builder must classify the real node.
+    fn = _first(
+        "rust",
+        """
+        fn f(items: &[i64], x: i64) -> i64 {
+            let mut total = 0;
+            for it in items {
+                if *it > x {
+                    total += it;
+                } else {
+                    total -= it;
+                }
+                if *it == 0 {
+                    continue;
+                }
+            }
+            return total;
+        }
+        """,
+    )
+    assert [b for b in fn.cfg.blocks if b.kind == "loop_header"]
+    assert len([b for b in fn.cfg.blocks if b.kind == "branch"]) == 2
+    assert fn.cfg.back_edges()
+
+
+# A long Rust function whose compute-average tail is a clean extraction.
+_RUST_PROCESS = """
+fn process(records: &[i64], threshold: i64) -> (i64, i64) {
+    let mut results = Vec::new();
+    let mut errors = 0;
+    for r in records {
+        if *r < 0 {
+            errors += 1;
+            continue;
+        }
+        results.push(*r);
+    }
+    let mut total = 0;
+    let mut count = 0;
+    for v in &results {
+        if *v > threshold {
+            total += v;
+            count += 1;
+        } else {
+            total -= v;
+        }
+    }
+    let mut average = 0;
+    if count > 0 {
+        average = total / count;
+    }
+    (average, errors)
+}
+"""
+
+
+def test_rust_extract_method_fires():
+    lmap = get_language_map("rust")
+    extractions = find_extractions(_first("rust", _RUST_PROCESS), lmap)
+    assert extractions, "expected at least one Rust extraction"
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params and "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+
+
+def test_rust_extractions_never_cover_the_tail_expression():
+    # The final ``(average, errors)`` tail is the function's value; a span
+    # ending on it would silently drop that value, so none is ever offered.
+    fn = _first("rust", _RUST_PROCESS)
+    lmap = get_language_map("rust")
+    tail_line = fn.end_line - 1  # the tuple expression before the closing brace
+    for e in find_extractions(fn, lmap):
+        assert e.end_line < tail_line
+
+
+def test_rust_extractions_are_deterministic():
+    lmap = get_language_map("rust")
+    fn = _first("rust", _RUST_PROCESS)
+
+    def serialize():
+        return [
+            (e.start_line, e.end_line, e.params, e.returns, e.ccn_removed)
+            for e in find_extractions(fn, lmap)
+        ]
+
+    first = serialize()
+    for _ in range(3):
+        assert serialize() == first
+
+
+def test_rust_question_mark_span_has_no_extraction():
+    # ``?`` propagates an error out of the function -- an early exit that makes
+    # any span containing it unsafe to lift; every candidate here carries one.
+    lmap = get_language_map("rust")
+    src = """
+        fn load(paths: &[String], threshold: i64) -> Result<i64, E> {
+            let mut total = 0;
+            let mut count = 0;
+            for p in paths {
+                let data = read(p)?;
+                if data.len() > threshold {
+                    total += parse(&data)?;
+                    count += 1;
+                }
+            }
+            let mut average = 0;
+            if count > 0 {
+                average = total / count;
+                check(average)?;
+            }
+            Ok(average)
+        }
+        """
+    assert find_extractions(_first("rust", src), lmap) == []
+
+
+def test_rust_flagged_only_gate_skips_small_functions():
+    _require("rust")
+    lines = ["fn big(x: i64) -> i64 {", "    let mut y = 0;"]
+    for i in range(12):
+        lines += [f"    if x == {i} {{", f"        y = {i};", "    }"]
+    lines += ["    y", "}", "", "fn tiny() -> i64 {", "    1", "}", ""]
+    result = build_cfgs_for_file("m.rs", "rust", "\n".join(lines).encode())
+    if result.stats.functions_seen == 0:
+        pytest.skip("tree-sitter language pack missing for rust")
+    assert result.stats.functions_seen == 2
+    assert result.stats.functions_built == 1
+    assert [fc.name for fc in result.functions] == ["big"]
+
+
+def test_rust_push_loop_is_independent():
+    assert _independent(
+        "rust",
+        """
+        fn f(items: &[i64]) -> Vec<i64> {
+            let mut out = Vec::new();
+            for item in items {
+                let r = fetch(item);  // HIT
+                out.push(r);
+            }
+            out
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_rust_accumulator_is_carried():
+    assert not _independent(
+        "rust",
+        """
+        fn f(items: &[i64]) -> i64 {
+            let mut acc = 0;
+            for item in items {
+                acc = acc + fetch(item);  // HIT
+            }
+            acc
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_rust_match_conditional_write_refuses_promotion():
+    # ``flag`` is written only on one match arm (a may-def inside the mega-
+    # statement), so it may carry across iterations: must stay refused.
+    assert not _independent(
+        "rust",
+        """
+        fn f(items: &[i64]) {
+            let mut flag = 0;
+            for item in items {
+                match item {
+                    1 => flag = 1,
+                    _ => {}
+                }
+                let r = fetch(flag);  // HIT
+                store(r);
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+# == C++ ========================================================================
+
+# Every C++ write shape in one function: declaration (with and without an
+# initialiser, through pointer / reference / array declarators), plain and
+# compound assignment, ``++``, the range-``for`` binder, the C-style ``for``
+# initializer -- plus the target shapes that bind NO local.
+_CPP_SHAPES = """
+    int total(const std::vector<int>& input, int base, Config* cfg) {
+        int acc = base;
+        int a = 1, b = 2;
+        int uninit;
+        int* ptr = nullptr;
+        int& ref = acc;
+        int arr[8];
+        for (const auto& item : input) {
+            acc += item;
+        }
+        for (int i = 0; i < 10; i++) {
+            acc = acc + i;
+        }
+        cfg->count = acc;
+        obj.field = acc;
+        arr[a] = b;
+        *ptr = acc;
+        acc++;
+        auto lam = [&](int z) { return z + hidden; };
+        return acc;
+    }
+"""
+
+
+def test_cpp_def_use_classification():
+    fn = _first("cpp", _CPP_SHAPES)
+    defs = _def_names(fn)
+    # Declarations (initialised or not), through every declarator wrapper, plus
+    # the two loop binders, are locals.
+    assert {"acc", "a", "b", "uninit", "ptr", "ref", "arr", "item", "i", "lam"} <= defs
+    assert {"input", "base", "cfg"} <= defs  # parameters seeded as entry defs
+    # Field / subscript / deref targets bind no local: their bases are reads.
+    assert "count" not in defs
+    assert "obj" not in defs
+    assert "field" not in defs
+    uses = _use_names(fn)
+    assert {"base", "acc", "cfg", "obj", "item", "input", "i"} <= uses
+    # A type is never a variable read, and neither is a called function's name.
+    assert "vector" not in uses
+    assert "Config" not in uses
+
+
+def test_cpp_reads_a_member_callee_receiver_but_not_the_method():
+    fn = _first(
+        "cpp",
+        """
+        int run(Database& db, int id) {
+            int n = 0;
+            n += db.execute(id);
+            n += helper(id);
+            return n;
+        }
+        """,
+    )
+    uses = _use_names(fn)
+    assert "db" in uses  # the receiver is a real read
+    assert "execute" not in uses  # the method name is not a variable
+    assert "helper" not in uses  # nor is a free function's name
+
+
+def test_cpp_lambda_body_is_a_separate_scope():
+    fn = _first(
+        "cpp",
+        """
+        int outer(int seed) {
+            int kept = seed;
+            auto lam = [&](int z) { return z + inner_only; };
+            return kept;
+        }
+        """,
+    )
+    assert "inner_only" not in _use_names(fn)
+    assert "z" not in _def_names(fn)
+
+
+def test_cpp_range_for_and_c_for_build_loop_headers():
+    fn = _first(
+        "cpp",
+        """
+        int walk(const std::vector<int>& xs) {
+            int n = 0;
+            for (auto x : xs) { n += x; }
+            for (int i = 0; i < 4; i++) { n += i; }
+            while (n > 100) { n--; }
+            return n;
+        }
+        """,
+    )
+    kinds = [b.kind for b in fn.cfg.blocks]
+    assert kinds.count("loop_header") == 3
+    assert "loop_exit" in kinds
+
+
+def test_cpp_else_if_chain_branches():
+    fn = _first(
+        "cpp",
+        """
+        int pick(int x) {
+            int r = 0;
+            if (x > 10) { r = 1; }
+            else if (x > 5) { r = 2; }
+            else { r = 3; }
+            return r;
+        }
+        """,
+    )
+    assert [b.kind for b in fn.cfg.blocks].count("branch") == 2
+
+
+def test_cpp_try_catch_builds_a_handler_block():
+    fn = _first(
+        "cpp",
+        """
+        int guarded(int x) {
+            int r = 0;
+            try { r = risky(x); }
+            catch (const std::exception& e) { r = -1; }
+            return r;
+        }
+        """,
+    )
+    assert any(b.kind == "handler" for b in fn.cfg.blocks)
+
+
+def test_cpp_switch_writes_are_may_defs():
+    # A switch is one CFG statement, so an arm's write is recorded as a def AND
+    # a use -- keeping the must-def reasoning conservative.
+    fn = _first(
+        "cpp",
+        """
+        int classify(int x) {
+            int r = 0;
+            switch (x) {
+                case 1: r = 10; break;
+                default: r = 20;
+            }
+            return r;
+        }
+        """,
+    )
+    assert "r" in _def_names(fn)
+    assert "r" in _use_names(fn)
+
+
+def test_cpp_extract_method_fires():
+    fn = _first(
+        "cpp",
+        """
+        int report(const std::vector<int>& xs, int base) {
+            int sum = base;
+            int count = 0;
+            for (auto& item : xs) {
+                if (item > 0) { sum += item; count++; }
+                else if (item < -5) { sum -= item; }
+                else { count--; }
+            }
+            int avg = count > 0 ? sum / count : 0;
+            int scaled = avg * 2;
+            int shifted = scaled + base;
+            int clamped = shifted > 100 ? 100 : shifted;
+            if (clamped < 0) { clamped = 0; }
+            return clamped;
+        }
+        """,
+    )
+    lmap = get_language_map("cpp")
+    assert lmap is not None
+    extractions = find_extractions(fn, lmap)
+    assert extractions
+    # Deterministic ordering: re-running yields the identical best candidate.
+    assert [(e.start_line, e.end_line) for e in find_extractions(fn, lmap)] == [
+        (e.start_line, e.end_line) for e in extractions
+    ]
+
+
+def test_cpp_extraction_never_spans_a_jump():
+    # ``break`` / ``continue`` / ``return`` / ``throw`` all have dedicated node
+    # types in tree-sitter-cpp, so the slicer's single-exit gate sees them.
+    lmap = get_language_map("cpp")
+    assert lmap is not None
+    assert {"break_statement", "continue_statement"} <= lmap.break_kinds | lmap.continue_kinds
+    assert "return_statement" in lmap.return_kinds
+    assert "throw_statement" in lmap.raise_kinds
+
+
+# == C# ==================================================================
+
+# Every C# write shape in one method: declarations (int a = 1, b = 2), compound
+# and plain assignment, ++/--, tuple deconstruction, using declaration and
+# statement, is-pattern, switch pattern, foreach binder, C-style for, indexer and
+# member targets (not locals), out/ref args, lambda/local func, and try/catch.
+_CSHARP_SHAPES = """
+class Demo {
+    int Shapes(int[] input, int baseVal, out int outResult, ref int refCount) {
+        int total = 0;
+        int a = 1, b = 2;
+        int acc = baseVal;
+        acc += a;
+        acc++;
+        --acc;
+        (int p, int q) = (1, 2);
+        (a, b) = (3, 4);
+        using var x = open();
+        using (var y = open()) {
+            acc += 1;
+        }
+        if (obj is string s) {
+            acc += s.Length;
+        }
+        switch (input) {
+            case int[] arr:
+                acc += arr.Length;
+                break;
+            default:
+                break;
+        }
+        foreach (int r in input) {
+            acc += r;
+        }
+        for (int i = 0; i < 10; i++) {
+            acc += i;
+        }
+        int[] seen = new int[10];
+        seen[a] = b;
+        this.field = acc;
+        obj.field = acc;
+        DoOut(out var outLocal);
+        DoOutT(out int outTLocal);
+        DoOut(out outResult);
+        DoRef(ref refCount);
+        var lam = (int z) => z + acc;
+        int LocalFunc(int w) => w + 1;
+        try {
+            acc += 1;
+        } catch (Exception e) {
+            acc -= 1;
+        }
+        return acc;
+    }
+}
+"""
+
+
+def test_csharp_def_use_classification():
+    fn = _first("csharp", _CSHARP_SHAPES)
+    defs = _def_names(fn)
+    # Declarations, for/foreach binders, tuple deconstruction, using, out/ref args, pattern variables, and local function are locals.
+    assert {
+        "total",
+        "a",
+        "b",
+        "acc",
+        "p",
+        "q",
+        "x",
+        "y",
+        "s",
+        "arr",
+        "r",
+        "i",
+        "seen",
+        "outLocal",
+        "outTLocal",
+        "outResult",
+        "refCount",
+        "lam",
+        "LocalFunc",
+    } <= defs
+    assert {"input", "baseVal", "outResult", "refCount"} <= defs  # parameters
+    # Field (``this.field = ...``) and indexer (``seen[a] = ...``) targets bind no local: bases are reads.
+    assert "field" not in defs
+    # Lambda parameter z and catch binder e are not defs of enclosing method.
+    assert "z" not in defs
+    uses = _use_names(fn)
+    assert {"baseVal", "input", "seen", "a", "b", "acc", "obj", "refCount", "r", "s"} <= uses
+    # Member names (Length) are never variable reads; bare callee identifiers (open, DoOut, DoRef)
+    # are recorded as uses so delegate invocations (cb(n)) are captured as reads.
+    assert "Length" not in uses
+    assert {"open", "DoOut", "DoRef"} <= uses
+
+
+def test_csharp_compound_assign_reads_target():
+    fn = _first(
+        "csharp",
+        """
+        class Demo {
+            int f(int x) {
+                int acc = 0;
+                acc += x;
+                return acc;
+            }
+        }
+        """,
+    )
+    assert "acc" in _def_names(fn)
+    assert "acc" in _use_names(fn)
+
+
+def test_csharp_for_and_while_heads():
+    fn = _first(
+        "csharp",
+        """
+        class Demo {
+            int loops(int n) {
+                int sum = 0;
+                for (int j = 0; j < n; j++) {
+                    sum += j;
+                }
+                while (sum < 100) {
+                    sum *= 2;
+                }
+                return sum;
+            }
+        }
+        """,
+    )
+    assert "j" in _def_names(fn)
+    headers = [b for b in fn.cfg.blocks if b.kind == "loop_header"]
+    assert len(headers) == 2
+    assert fn.cfg.back_edges()
+
+
+def test_csharp_else_if_chain_branches():
+    fn = _first(
+        "csharp",
+        """
+        class Demo {
+            int grade(int x) {
+                int y = 0;
+                if (x == 1) {
+                    y = 1;
+                } else if (x == 2) {
+                    y = 2;
+                } else if (x == 3) {
+                    y = 3;
+                } else {
+                    y = 4;
+                }
+                return y;
+            }
+        }
+        """,
+    )
+    branches = [b for b in fn.cfg.blocks if b.kind == "branch"]
+    assert len(branches) == 3
+    assert fn.cfg.exit_id in fn.cfg.reachable_ids()
+
+
+def test_csharp_switch_arm_writes_are_may_defs():
+    fn = _first(
+        "csharp",
+        """
+        class Demo {
+            int f(int x) {
+                int y = 0;
+                switch (x) {
+                    case 1:
+                        y = 10;
+                        break;
+                    default:
+                        y = 20;
+                        break;
+                }
+                return y;
+            }
+        }
+        """,
+    )
+    decl_line = min(d.line for d in fn.def_use.definitions if d.var == "y")
+    switch_defs = [d for d in fn.def_use.definitions if d.var == "y" and d.line > decl_line]
+    assert switch_defs, "expected the arm writes to register as defs"
+    use_lines = {u.line for b in fn.def_use.blocks.values() for u in b.uses if u.name == "y"}
+    assert {d.line for d in switch_defs} <= use_lines
+
+
+_CSHARP_PROCESS = """
+class Demo {
+    int Process(int[] records, int threshold) {
+        int errors = 0;
+        var results = new System.Collections.Generic.List<int>();
+        foreach (int r in records) {
+            if (r < 0) {
+                errors++;
+                continue;
+            }
+            results.Add(r);
+        }
+        int total = 0;
+        int count = 0;
+        foreach (int v in results) {
+            if (v > threshold) {
+                total += v;
+                count++;
+            } else {
+                total -= v;
+            }
+        }
+        int average = 0;
+        if (count > 0) {
+            average = total / count;
+        }
+        return average + errors;
+    }
+}
+"""
+
+
+def test_csharp_extract_method_fires():
+    lmap = get_language_map("csharp")
+    extractions = find_extractions(_first("csharp", _CSHARP_PROCESS), lmap)
+    assert extractions, "expected at least one C# extraction"
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params and "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+
+
+# A ``using var`` is disposed at the end of the block that declares it, so a
+# helper holding it would dispose it when the helper returns (#3452).
+_CSHARP_USING_DECLARATION = """
+class Demo {
+    int Process(string path, int[] records, int threshold) {
+        %s var stream = System.IO.File.OpenRead(path);
+        int total = 0;
+        int count = 0;
+        foreach (int v in records) {
+            if (v > threshold) {
+                total += v + (int)stream.Position;
+                count++;
+            } else {
+                total -= v;
+            }
+        }
+        if (count > 0) {
+            total = total / count;
+        }
+        if (total > 100) {
+            total = 100;
+        }
+        System.IO.File.Delete(path);
+        return total;
+    }
+}
+"""
+
+
+@pytest.mark.parametrize("keyword", ["using", "await using"])
+def test_csharp_span_never_ends_a_using_declaration_early(keyword):
+    _require("csharp")
+    src = _CSHARP_USING_DECLARATION % keyword
+    using_line = next(n for n, ln in enumerate(src.splitlines(), 1) if "var stream" in ln)
+    extractions = find_extractions(_first("csharp", src), get_language_map("csharp"))
+    assert not [
+        (e.start_line, e.end_line) for e in extractions if e.start_line <= using_line <= e.end_line
+    ]
+    # A span after the declaration takes the resource as a parameter.
+    assert any(e.start_line == using_line + 1 and "stream" in e.params for e in extractions)
+
+
+def test_csharp_span_inside_a_using_block_is_still_offered():
+    _require("csharp")
+    src = """
+class Demo {
+    int Process(string path, int[] records, int threshold) {
+        using (var stream = System.IO.File.OpenRead(path)) {
+            int total = 0;
+            int count = 0;
+            foreach (int v in records) {
+                if (v > threshold) {
+                    total += v + (int)stream.Position;
+                    count++;
+                } else {
+                    total -= v;
+                }
+            }
+            if (count > 0) {
+                total = total / count;
+            }
+            if (total > 100) {
+                total = 100;
+            }
+            System.IO.File.Delete(path);
+            return total;
+        }
+    }
+}
+"""
+    lines = src.splitlines()
+    block_start = next(n for n, ln in enumerate(lines, 1) if "using (" in ln)
+    block_end = next(n for n, ln in enumerate(lines, 1) if "return total;" in ln) + 1
+    extractions = find_extractions(_first("csharp", src), get_language_map("csharp"))
+    assert any(block_start < e.start_line and e.end_line < block_end for e in extractions)
+
+
+def test_csharp_stage_never_ends_a_using_declaration_early():
+    _require("csharp")
+    from repowise.core.analysis.health.dataflow.stages import find_stages
+
+    section = """
+        if (a > {n}) {{
+            total += {n};
+        }} else {{
+            total -= {n};
+        }}
+        if (total > {n}0) {{
+            total = {n};
+        }}"""
+    src = (
+        "class Demo {\n    int Run(string path, int a) {\n        int total = 0;\n"
+        "        using var stream = System.IO.File.OpenRead(path);"
+        + "".join(section.format(n=k) for k in range(1, 7))
+        + "\n        System.IO.File.Delete(path);\n        return total;\n    }\n}\n"
+    )
+    using_line = next(n for n, ln in enumerate(src.splitlines(), 1) if "using var" in ln)
+    plan = find_stages(_first("csharp", src), get_language_map("csharp"))
+    assert plan.stages
+    assert not [
+        (st.start_line, st.end_line)
+        for st in plan.stages
+        if st.start_line <= using_line <= st.end_line
+    ]
+
+
+def test_csharp_extractions_are_deterministic():
+    lmap = get_language_map("csharp")
+    fn = _first("csharp", _CSHARP_PROCESS)
+
+    def serialize():
+        return [
+            (e.start_line, e.end_line, e.params, e.returns, e.ccn_removed)
+            for e in find_extractions(fn, lmap)
+        ]
+
+    first = serialize()
+    for _ in range(3):
+        assert serialize() == first
+
+
+def test_csharp_flagged_only_gate_skips_small_functions():
+    _require("csharp")
+    lines = ["class Demo {", "    int big(int x) {", "        int y = 0;"]
+    for i in range(12):
+        lines += [f"        if (x == {i}) {{", f"            y = {i};", "        }"]
+    lines += ["        return y;", "    }", "    int tiny() {", "        return 1;", "    }", "}"]
+    result = build_cfgs_for_file("m.cs", "csharp", "\n".join(lines).encode())
+    if result.stats.functions_seen == 0:
+        pytest.skip("tree-sitter language pack missing for csharp")
+    assert result.stats.functions_seen == 2
+    assert result.stats.functions_built == 1
+    assert [fc.name for fc in result.functions] == ["big"]
+
+
+def test_csharp_append_loop_is_independent():
+    assert _independent(
+        "csharp",
+        """
+        class Demo {
+            void f(int[] items) {
+                foreach (int item in items) {
+                    int r = fetch(item);  // HIT
+                    store(r);
+                }
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_csharp_accumulator_is_carried():
+    assert not _independent(
+        "csharp",
+        """
+        class Demo {
+            int f(int[] items) {
+                int acc = 0;
+                foreach (int item in items) {
+                    acc = acc + fetch(item);  // HIT
+                }
+                return acc;
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_csharp_switch_conditional_write_refuses_promotion():
+    assert not _independent(
+        "csharp",
+        """
+        class Demo {
+            void f(int[] items) {
+                int flag = 0;
+                foreach (int item in items) {
+                    switch (item) {
+                        case 1:
+                            flag = 1;
+                            break;
+                        default:
+                            break;
+                    }
+                    int r = fetch(flag);  // HIT
+                    store(r);
+                }
+            }
+        }
+        """,
+        "HIT",
+    )
+
+
+def test_c_extract_method_fires():
+    # Same shape as the C++ repro: two accumulation loops, a ``continue``, and
+    # an ``average`` tail. C reuses the C++ dialect, so the same plan fires.
+    fn = _first(
+        "c",
+        """
+        double report(const int *xs, const int *ys, int n, int threshold) {
+            int results = 0;
+            int total = 0;
+            for (int i = 0; i < n; i++) {
+                if (xs[i] > threshold) { total += xs[i]; results++; }
+                else if (xs[i] < -threshold) { continue; }
+                else { results--; }
+            }
+            for (int i = 0; i < n; i++) {
+                if (ys[i] > threshold) { total += ys[i]; results++; }
+                else if (ys[i] == 0) { results--; }
+            }
+            double average = results > 0 ? (double)total / results : 0.0;
+            return average;
+        }
+        """,
+    )
+    lmap = get_language_map("c")
+    assert lmap is not None
+    extractions = find_extractions(fn, lmap)
+    assert extractions
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params
+
+
+def test_c_specific_write_shapes_bind_locals():
+    # Array / pointer declarators, comma declarators, and selector / subscript
+    # targets (``x->f = v``, ``a[i] = v``) bind no local of their own.
+    fn = _first(
+        "c",
+        """
+        int mix(int *a, struct point *p, int i, int v) {
+            int arr[8];
+            int *q = &v;
+            int x = 1, y = 2;
+            struct point s = {0};
+            p->f = v;
+            a[i] = v;
+            arr[0] = x + y + *q + s.f;
+            return arr[0];
+        }
+        """,
+    )
+    defs = _def_names(fn)
+    assert {"arr", "q", "x", "y", "s"} <= defs
+    # A field or subscript write is not a definition of a local.
+    assert "f" not in defs
+
+
+def test_c_function_pointer_parameter_is_a_def():
+    # A function-pointer parameter binds a local. Note: calling it through a
+    # bare identifier (``fp(x)``) does not register a read of ``fp`` — the C++
+    # dialect intentionally skips identifier callees (they are free-function
+    # names in C++, ``cpp.py: _CALLEE_NAME_KINDS``), and telling the two apart
+    # needs scope-aware callee analysis, which is out of scope here.
+    fn = _first(
+        "c",
+        """
+        int apply(int (*fp)(int), int x) {
+            return (*fp)(x);
+        }
+        """,
+    )
+    assert "fp" in _def_names(fn)
+    assert "x" in _use_names(fn)
+
+
+def test_c_extraction_never_spans_a_goto_label():
+    # A ``goto`` target can be jumped into from anywhere in the function, so a
+    # span that contains the label must be refused.
+    fn = _first(
+        "c",
+        """
+        int scan(const int *xs, int n) {
+            int total = 0;
+            for (int i = 0; i < n; i++) {
+                if (xs[i] < 0) goto skip;
+                total += xs[i];
+                skip:;
+            }
+            return total;
+        }
+        """,
+    )
+    lmap = get_language_map("c")
+    assert lmap is not None
+    # The label sits on the source line of ``skip:``; no offered span may
+    # cover it.
+    label_line = textwrap.dedent(
+        """
+        int scan(const int *xs, int n) {
+            int total = 0;
+            for (int i = 0; i < n; i++) {
+                if (xs[i] < 0) goto skip;
+                total += xs[i];
+                skip:;
+        """
+    ).count("\n") + 1
+    for e in find_extractions(fn, lmap):
+        assert not (e.start_line <= label_line <= e.end_line)
+
+
+# == PHP =========================================================================
+
+# Every PHP write shape in one function: plain assignment, compound assign,
+# update (++/--), static declaration, foreach binders (key => value), list
+# and array destructuring -- plus the target shapes that bind NO local (properties,
+# array elements, method calls, static member calls).
+_PHP_SHAPES = """<?php
+function processShapes(array $input, int $base, $cfg) {
+    $acc = $base;
+    $a = 1;
+    $b = 2;
+    $errors = 0;
+    $errors += 1;
+    $errors .= "suffix";
+    $val ??= 2;
+    $acc++;
+    --$acc;
+    static $cache = 0;
+    foreach ($input as $k => $item) {
+        $acc += $item;
+    }
+    list($x, $y) = [$a, $b];
+    [$u, $v] = [$x, $y];
+    ["key" => $z] = ["key" => $u];
+    $cfg->count = $acc;
+    $obj->field = $acc;
+    $arr[$a] = $b;
+    $lam = function($elem) use ($base) { return $elem + $base; };
+    return $acc;
+}
+"""
+
+
+def test_php_def_use_classification():
+    fn = _first("php", _PHP_SHAPES)
+    defs = _def_names(fn)
+    assert {"input", "base", "cfg"} <= defs  # parameters seeded as entry defs
+    assert {
+        "acc",
+        "a",
+        "b",
+        "errors",
+        "val",
+        "cache",
+        "k",
+        "item",
+        "x",
+        "y",
+        "u",
+        "v",
+        "z",
+        "lam",
+    } <= defs
+    assert "count" not in defs
+    assert "field" not in defs
+
+    uses = _use_names(fn)
+    assert {"base", "acc", "input", "a", "b", "cfg", "obj", "arr", "item", "x", "y", "u"} <= uses
+    assert "array" not in uses
+    assert "processShapes" not in uses
+
+
+def test_php_reads_a_member_callee_receiver_but_not_the_method():
+    fn = _first(
+        "php",
+        """<?php
+        function run($db, $id) {
+            $n = 0;
+            $n += $db->execute($id);
+            $n += helper($id);
+            return $n;
+        }
+        """,
+    )
+    uses = _use_names(fn)
+    assert "db" in uses  # the receiver is a real read
+    assert "execute" not in uses  # the method name is not a variable
+    assert "helper" not in uses  # global function name is not a variable read
+
+
+def test_php_reads_member_call_and_nullsafe_call_arguments_without_method_names():
+    fn = _first(
+        "php",
+        """<?php
+        function run($db, $id, $item) {
+            $n = 0;
+            $n += $db->execute($id);
+            $n += $db?->executeOther($item);
+            return $n;
+        }
+        """,
+    )
+    uses = _use_names(fn)
+    assert "db" in uses
+    assert "id" in uses
+    assert "item" in uses
+    assert "execute" not in uses
+    assert "executeOther" not in uses
+
+
+
+def test_php_delegate_call_is_a_variable_read():
+    fn = _first(
+        "php",
+        """<?php
+        function executeDelegate($fn, $arg) {
+            $n = 0;
+            $n += $fn($arg);
+            return $n;
+        }
+        """,
+    )
+    uses = _use_names(fn)
+    assert "fn" in uses  # delegate variable is a read
+    assert "arg" in uses
+
+
+def test_php_lambda_body_is_a_separate_scope():
+    fn = _first(
+        "php",
+        """<?php
+        function run($items, $base) {
+            $total = $base;
+            $lam = function($x) use ($total) {
+                $inner = $x * 2;
+                return $inner + $total;
+            };
+            return $total;
+        }
+        """,
+    )
+    defs = _def_names(fn)
+    assert "inner" not in defs  # scoped inside the closure
+    assert "x" not in defs  # closure parameter
+    captured = {u.name for u in fn.def_use.captured.reads}
+    assert "total" in captured
+    assert "x" not in captured
+
+
+def test_php_extract_method_fires():
+    fn = _first(
+        "php",
+        """<?php
+        function process($records, $threshold) {
+            $results = [];
+            $errors = 0;
+            foreach ($records as $r) {
+                if ($r === null) {
+                    $errors += 1;
+                    continue;
+                }
+                $results[] = $r;
+            }
+            $total = 0;
+            $count = 0;
+            foreach ($results as $v) {
+                if ($v > $threshold) {
+                    $total += $v;
+                    $count += 1;
+                } else {
+                    $total -= $v;
+                }
+            }
+            $average = $count ? $total / $count : 0;
+            return $average;
+        }
+        """,
+    )
+    lmap = get_language_map("php")
+    assert lmap is not None
+    extractions = find_extractions(fn, lmap)
+    assert extractions
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params
+    assert "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+    # Deterministic ordering: re-running yields identical candidates
+    assert [(e.start_line, e.end_line) for e in find_extractions(fn, lmap)] == [
+        (e.start_line, e.end_line) for e in extractions
+    ]
+
+
+def test_php_flagged_only_gate_skips_small_functions():
+    _require("php")
+    src = b"""<?php
+    function small($a, $b) {
+        if ($a > $b) {
+            return $a;
+        }
+        return $b;
+    }
+    """
+    res = analyze_file("small.php", "php", src, flagged_only=True)
+    assert res.stats.functions_seen == 1
+    assert len(res.functions) == 0  # not flagged (low complexity)
+
+
+@pytest.mark.parametrize(
+    "stmt",
+    [
+        "yield $v;",
+        "$$v = 1;",
+        "global $cfg;",
+        "static $s = 0;",
+        "$alias = &$total;",
+    ],
+)
+def test_php_spans_holding_disallowed_constructs_are_refused(stmt: str):
+    code = f"""<?php
+    function process($records, $threshold) {{
+        $results = [];
+        $errors = 0;
+        foreach ($records as $r) {{
+            if ($r === null) {{
+                $errors += 1;
+                continue;
+            }}
+            $results[] = $r;
+        }}
+        $total = 0;
+        $count = 0;
+        {stmt}
+        foreach ($results as $v) {{
+            if ($v > $threshold) {{
+                $total += $v;
+                $count += 1;
+            }} else {{
+                $total -= $v;
+            }}
+        }}
+        $average = $count ? $total / $count : 0;
+        return $average;
+    }}
+    """
+    fn = _first("php", code)
+    lmap = get_language_map("php")
+    assert lmap is not None
+    spans = find_extractions(fn, lmap)
+    # The statement at line 14 should not be included in any offered extraction span
+    assert not any(e.start_line <= 14 <= e.end_line for e in spans)
+
+
+def test_php_byref_parameter_mutation_refuses_when_returning_another():
+    code_byref = """<?php
+    function process(array &$out, $records, $threshold) {
+        $results = [];
+        $errors = 0;
+        foreach ($records as $r) {
+            if ($r === null) {
+                $errors += 1;
+                continue;
+            }
+            $results[] = $r;
+        }
+        $total = 0;
+        $count = 0;
+        foreach ($results as $v) {
+            if ($v > $threshold) {
+                $total += $v;
+                $count += 1;
+                $out = [$v];
+            } else {
+                $total -= $v;
+            }
+        }
+        $average = $count ? $total / $count : 0;
+        return $average;
+    }
+    """
+    code_byval = code_byref.replace("&$out", "$out")
+    lmap = get_language_map("php")
+    assert lmap is not None
+
+    fn_byval = _first("php", code_byval)
+    assert len(find_extractions(fn_byval, lmap)) > 0
+
+    fn_byref = _first("php", code_byref)
+    assert len(find_extractions(fn_byref, lmap)) == 0
+
+
+def test_php_byref_foreach_is_refused():
+    code = """<?php
+    function process($records, $threshold) {
+        $results = [];
+        $errors = 0;
+        foreach ($records as $r) {
+            if ($r === null) {
+                $errors += 1;
+                continue;
+            }
+            $results[] = $r;
+        }
+        $total = 0;
+        $count = 0;
+        foreach ($results as &$v) {
+            if ($v > $threshold) {
+                $total += $v;
+                $count += 1;
+            } else {
+                $total -= $v;
+            }
+        }
+        $average = $count ? $total / $count : 0;
+        return $average;
+    }
+    """
+    fn = _first("php", code)
+    lmap = get_language_map("php")
+    assert lmap is not None
+    # By-reference foreach makes the loop disqualified from extraction
+    assert len(find_extractions(fn, lmap)) == 0
+
+
+def test_php_subscript_writes_are_defs():
+    code = """<?php
+    function f($items, $limit) {
+        $out = [];
+        $n = count($items);
+        if ($n > $limit) {
+            $out[] = $items[0];
+            $n = $n - 1;
+        }
+        $total = $n + 1;
+        echo $total;
+        return $out;
+    }
+    """
+    fn = _first("php", code)
+    lmap = get_language_map("php")
+    assert lmap is not None
+    spans = find_extractions(fn, lmap)
+    # No offered span passes $out in without returning it
+    assert not any(
+        e.start_line <= 6 <= e.end_line and "out" in e.params and "out" not in e.returns
+        for e in spans
+    )
+    # Span 4-8 defines both $n and $out with both live-out -> multiple returns -> refused
+    assert not any(e.start_line == 4 and e.end_line == 8 for e in spans)
+
+
+def test_php_byref_builtins_mutate_arguments():
+    # sort($out) modifies $out in-place
+    code_sort = """<?php
+    function g($items, $limit) {
+        $out = [];
+        $n = count($items);
+        if ($n > $limit) {
+            sort($out);
+            $n = $n - 1;
+        }
+        $total = $n + 1;
+        echo $total;
+        return $out;
+    }
+    """
+    fn_sort = _first("php", code_sort)
+    lmap = get_language_map("php")
+    assert lmap is not None
+    spans = find_extractions(fn_sort, lmap)
+    assert not any(
+        e.start_line <= 6 <= e.end_line and "out" in e.params and "out" not in e.returns
+        for e in spans
+    )
+    assert not any(e.start_line == 4 and e.end_line == 8 for e in spans)
+
+    # preg_match writes the matches array (arg 2)
+    code_preg = """<?php
+    function h($re, $s) {
+        $m = [];
+        if (strlen($s) > 0) {
+            preg_match($re, $s, $m);
+        }
+        return $m;
+    }
+    """
+    fn_preg = _first("php", code_preg)
+    assert "m" in _def_names(fn_preg)
+
+
+def test_php_elseif_chain_cfg_and_defs():
+    code = """<?php
+    function test_branches($a, $b, $c) {
+        if ($a) {
+            $m = 1;
+        } elseif ($b) {
+            $m = 2;
+        } elseif ($c) {
+            $m = 3;
+        } else {
+            $m = 4;
+        }
+        return $m;
+    }
+    """
+    fn = _first("php", code)
+    defs = [(d.var, d.line) for d in fn.def_use.definitions]
+    # Defs from all arms (line 4, 6, 8, 10) must reach the CFG
+    m_lines = {line for var, line in defs if var == "m"}
+    assert m_lines == {4, 6, 8, 10}
+
+
+@pytest.mark.parametrize("fn_name", ["compact", "extract"])
+def test_php_compact_and_extract_refuse_spans(fn_name: str):
+    code = f"""<?php
+    function process($records, $threshold) {{
+        $results = [];
+        $errors = 0;
+        foreach ($records as $r) {{
+            if ($r === null) {{
+                $errors += 1;
+                continue;
+            }}
+            $results[] = $r;
+        }}
+        $total = 0;
+        $count = 0;
+        {fn_name}($records);
+        foreach ($results as $v) {{
+            if ($v > $threshold) {{
+                $total += $v;
+                $count += 1;
+            }} else {{
+                $total -= $v;
+            }}
+        }}
+        $average = $count ? $total / $count : 0;
+        return $average;
+    }}
+    """
+    fn = _first("php", code)
+    lmap = get_language_map("php")
+    assert lmap is not None
+    spans = find_extractions(fn, lmap)
+    assert not any(e.start_line <= 14 <= e.end_line for e in spans)
+
+
+def test_identifiers_preserves_dollar_in_ts_js():
+    from tree_sitter import Parser
+
+    from repowise.core.analysis.health.dataflow.slice import _identifiers
+    from repowise.core.ingestion.parser import _get_language
+
+    parser_ts = Parser(_get_language("typescript"))
+    tree_ts = parser_ts.parse(b"let $items = 1;")
+    names_ts = _identifiers(tree_ts.root_node)
+    assert "$items" in names_ts
+
+    parser_php = Parser(_get_language("php"))
+    tree_php = parser_php.parse(b"<?php $items = 1;")
+    names_php = _identifiers(tree_php.root_node)
+    assert "items" in names_php and "$items" not in names_php
+
+
+# ---------------------------------------------------------------------------
+# Nested scopes that bind a name in the enclosing scope (and the ones that do not)
+# ---------------------------------------------------------------------------
+
+
+def _defs(analysis) -> set[tuple[str, int]]:
+    return {
+        (definition.var, definition.line)
+        for block in analysis.def_use.blocks.values()
+        for definition in block.defs
+    }
+
+
+def test_python_nested_def_binds_its_name_in_the_enclosing_scope() -> None:
+    """Without this a span calling a sibling closure omitted it from its IN set."""
+    (analysis,) = [
+        item
+        for item in _analyses(
+            "python",
+            """
+            def outer(rows):
+                def helper(value):
+                    return value + 1
+                total = 0
+                for row in rows:
+                    total += helper(row)
+                return total
+            """,
+        )
+        if item.name == "outer"
+    ]
+    assert ("helper", 3) in _defs(analysis)
+
+
+def test_a_named_function_expression_binds_nothing_outside_itself() -> None:
+    """JS scopes a function expression's own name to its body.
+
+    Recording it as an enclosing definition would shadow an unrelated variable
+    of the same name - the ``var fib = function fib(n) {...}`` idiom - and the
+    slicer would then believe the span had already redefined it and drop it
+    from the IN set.
+    """
+    (analysis,) = [
+        item
+        for item in _analyses(
+            "typescript",
+            """
+            function outer(rows) {
+              let bar = 5;
+              var f = function bar() { return 1; };
+              console.log(bar);
+              return f;
+            }
+            """,
+        )
+        if item.name == "outer"
+    ]
+    defined = _defs(analysis)
+    assert ("bar", 3) in defined, "the real let-binding must still be a definition"
+    assert ("bar", 4) not in defined, "the function expression's own name is not ours"
+
+
+def test_a_function_declaration_does_bind_in_the_enclosing_scope() -> None:
+    (analysis,) = [
+        item
+        for item in _analyses(
+            "typescript",
+            """
+            function outer(rows) {
+              function helper(v) { return v + 1; }
+              let total = 0;
+              for (const row of rows) { total += helper(row); }
+              return total;
+            }
+            """,
+        )
+        if item.name == "outer"
+    ]
+    assert ("helper", 3) in _defs(analysis)
+
+
+def test_anonymous_scope_dialects_declare_no_enclosing_binders() -> None:
+    """Go, Java and C++ have no nested construct that binds a name here."""
+    from repowise.core.analysis.health.dataflow.dialects import get_defuse_dialect
+
+    for language in ("go", "java", "cpp"):
+        dialect = get_defuse_dialect(language)
+        if dialect is None:
+            continue
+        assert not dialect.enclosing_binder_kinds, language
+
+
+def test_every_declared_binder_is_actually_a_scope_boundary() -> None:
+    """A binder kind the walk never reaches would be silently dead."""
+    from repowise.core.analysis.health.dataflow.dialects import get_defuse_dialect
+
+    for language in ("python", "typescript", "go", "java", "rust", "cpp"):
+        dialect = get_defuse_dialect(language)
+        if dialect is None:
+            continue
+        for kind in dialect.enclosing_binder_kinds:
+            node = type("N", (), {"type": kind})()
+            assert dialect._is_scope_boundary(node), f"{language}: {kind}"
+
+
+def test_hoisted_binding_precompute_matches_the_direct_test() -> None:
+    """The per-function precompute must decide exactly what a per-span scan would.
+
+    ``_hoisted_bindings`` exists to keep the check off the candidate loop, where
+    scanning every variable per span cost the analyzer real time. An optimisation
+    that also changed the answer would be a silent behaviour change, so the two
+    formulations are compared over every span shape the corpus produces.
+    """
+    from repowise.core.analysis.health.dataflow import slice as slicing
+    from repowise.core.analysis.health.dataflow.dialects import get_defuse_dialect
+
+    def directly(def_lines, use_lines, s, e) -> bool:
+        for var, defs in def_lines.items():
+            if not any(s <= ln <= e for ln in defs):
+                continue
+            if any(ln < s for ln in defs):
+                continue
+            if any(ln < s for ln in use_lines.get(var, [])):
+                return True
+        return False
+
+    from .refactoring_corpus_fixture import CASE_FILES, source_for
+
+    compared = 0
+    for language, filename in CASE_FILES:
+        if get_defuse_dialect(language) is None:
+            continue
+        result = analyze_file(filename, language, source_for(filename), flagged_only=False)
+        for analysis in result.functions:
+            def_lines, use_lines = slicing._var_lines(analysis.def_use)
+            hoisted = slicing._hoisted_bindings(def_lines, use_lines)
+            for low in range(analysis.start_line, analysis.end_line + 1):
+                for high in range(low, analysis.end_line + 1):
+                    compared += 1
+                    precomputed = any(low <= d <= high and u < low for d, u in hoisted)
+                    assert precomputed == directly(def_lines, use_lines, low, high)
+    assert compared, "the corpus produced no spans to compare"
+
+
+def test_tsx_parses_without_error_recovery() -> None:
+    """A .tsx file is tagged ``typescript`` and needs the JSX grammar here too.
+
+    Read without it, every element lands in ERROR recovery and the CFG is built
+    over a tree that does not describe the file.
+    """
+    from repowise.core.analysis.health.dataflow.parsing import parse_source
+
+    source = b"export function C({ n }: P) {\n  return <div id={n}>{n + 1}</div>;\n}\n"
+    parsed = parse_source("src/C.tsx", "typescript", source)
+    if parsed is None:
+        pytest.skip("tree-sitter typescript pack missing")
+    root, _ = parsed
+    assert not root.has_error
+    # The same bytes under a .ts path keep the grammar the tag alone picks.
+    as_ts = parse_source("src/C.ts", "typescript", source)
+    assert as_ts is not None
+    assert as_ts[0].has_error
+
+
+# == A name the span itself declares is not a parameter =========================
+
+# Two loops reuse the counter ``i`` and the span holds the second. Its header
+# declares ``i`` and reads it on one line, and the first loop's ``i`` is a
+# definition of the same name before the span, so the counter read as an input
+# of the helper although the call site has no such variable.
+_TWO_LOOPS = {
+    "java": """
+        class Demo {
+            int run(int[] a, int n) {
+                int sum = 0;
+                for (int i = 0; i < n; i++) {
+                    sum += a[i];
+                }
+                int total = 0;
+                for (int i = 0; i < n; i++) {
+                    if (a[i] > 0) {
+                        total += a[i];
+                    } else {
+                        total -= a[i];
+                    }
+                }
+                return sum + total;
+            }
+        }
+        """,
+    "typescript": """
+        function run(a: number[], n: number): number {
+            let sum = 0;
+            for (let i = 0; i < n; i++) {
+                sum += a[i];
+            }
+            let total = 0;
+            for (let i = 0; i < n; i++) {
+                if (a[i] > 0) {
+                    total += a[i];
+                } else {
+                    total -= a[i];
+                }
+            }
+            return sum + total;
+        }
+        """,
+    "cpp": """
+        int run(int* a, int n) {
+            int sum = 0;
+            for (int i = 0; i < n; i++) {
+                sum += a[i];
+            }
+            int total = 0;
+            for (int i = 0; i < n; i++) {
+                if (a[i] > 0) {
+                    total += a[i];
+                } else {
+                    total -= a[i];
+                }
+            }
+            return sum + total;
+        }
+        """,
+    "go": """
+        package main
+        func run(a []int, n int) int {
+            sum := 0
+            for i := 0; i < n; i++ {
+                sum += a[i]
+            }
+            total := 0
+            for i := 0; i < n; i++ {
+                if a[i] > 0 {
+                    total += a[i]
+                } else {
+                    total -= a[i]
+                }
+            }
+            return sum + total
+        }
+        """,
+    "csharp": """
+        class Demo {
+            int Run(int[] a, int n) {
+                int sum = 0;
+                for (int i = 0; i < n; i++) {
+                    sum += a[i];
+                }
+                int total = 0;
+                for (int i = 0; i < n; i++) {
+                    if (a[i] > 0) {
+                        total += a[i];
+                    } else {
+                        total -= a[i];
+                    }
+                }
+                return sum + total;
+            }
+        }
+        """,
+}
+
+
+@pytest.mark.parametrize("language", sorted(_TWO_LOOPS))
+def test_a_counter_declared_by_the_spans_own_loop_header_is_not_a_parameter(language):
+    lmap = get_language_map(language)
+    extractions = find_extractions(_first(language, _TWO_LOOPS[language]), lmap)
+
+    assert extractions, f"expected the second loop as a {language} extraction"
+    assert [(x.params, x.returns) for x in extractions] == [(("a", "n"), ("total",))]
+
+
+# The case the fix must not disturb: ``total`` is written and read on one line
+# too, but there the read comes first, so the helper does need it handed in.
+_READ_THEN_WRITE = {
+    "java": """
+        class Demo {
+            int run(int[] a, int n, int total) {
+                int sum = 0;
+                for (int j = 0; j < n; j++) {
+                    sum += a[j];
+                }
+                total = total + a[0];
+                for (int k = 1; k < n; k++) {
+                    if (a[k] > 0) {
+                        total += a[k];
+                    } else {
+                        total -= a[k];
+                    }
+                }
+                return sum + total;
+            }
+        }
+        """,
+    "typescript": """
+        function run(a: number[], n: number, total: number): number {
+            let sum = 0;
+            for (let j = 0; j < n; j++) {
+                sum += a[j];
+            }
+            total = total + a[0];
+            for (let k = 1; k < n; k++) {
+                if (a[k] > 0) {
+                    total += a[k];
+                } else {
+                    total -= a[k];
+                }
+            }
+            return sum + total;
+        }
+        """,
+    "cpp": """
+        int run(int* a, int n, int total) {
+            int sum = 0;
+            for (int j = 0; j < n; j++) {
+                sum += a[j];
+            }
+            total = total + a[0];
+            for (int k = 1; k < n; k++) {
+                if (a[k] > 0) {
+                    total += a[k];
+                } else {
+                    total -= a[k];
+                }
+            }
+            return sum + total;
+        }
+        """,
+    "go": """
+        package main
+        func run(a []int, n int, total int) int {
+            sum := 0
+            for j := 0; j < n; j++ {
+                sum += a[j]
+            }
+            total = total + a[0]
+            for k := 1; k < n; k++ {
+                if a[k] > 0 {
+                    total += a[k]
+                } else {
+                    total -= a[k]
+                }
+            }
+            return sum + total
+        }
+        """,
+    "csharp": """
+        class Demo {
+            int Run(int[] a, int n, int total) {
+                int sum = 0;
+                for (int j = 0; j < n; j++) {
+                    sum += a[j];
+                }
+                total = total + a[0];
+                for (int k = 1; k < n; k++) {
+                    if (a[k] > 0) {
+                        total += a[k];
+                    } else {
+                        total -= a[k];
+                    }
+                }
+                return sum + total;
+            }
+        }
+        """,
+}
+
+
+@pytest.mark.parametrize("language", sorted(_READ_THEN_WRITE))
+def test_a_variable_read_before_its_same_line_write_stays_a_parameter(language):
+    lmap = get_language_map(language)
+    extractions = find_extractions(_first(language, _READ_THEN_WRITE[language]), lmap)
+
+    assert [(x.params, x.returns) for x in extractions] == [(("a", "n", "total"), ("total",))]
+
+
+def test_go_redeclaration_that_reads_the_outer_name_keeps_it_as_a_parameter():
+    """``x := x + v`` in an inner scope declares a new ``x`` from the outer one:
+    the read sits in the declaration's own initializer, before the new name
+    exists, so the outer ``x`` is still an input."""
+    fn = _first(
+        "go",
+        """
+        package main
+        func run(a []int, x int) int {
+            sum := 0
+            for j := 0; j < x; j++ {
+                sum += a[j]
+            }
+            total := 0
+            for _, v := range a {
+                x := x + v
+                if x > 0 {
+                    total += x
+                } else {
+                    total -= x
+                }
+            }
+            return sum + total
+        }
+        """,
+    )
+
+    extractions = find_extractions(fn, get_language_map("go"))
+
+    assert [(x.params, x.returns) for x in extractions] == [(("a", "x"), ("total",))]
+
+
+def test_a_local_declared_and_read_on_one_line_in_the_span_is_not_a_parameter():
+    """The same shape without a loop header: ``t`` is declared and then read on
+    one line inside the span, and an earlier block has its own ``t``."""
+    fn = _first(
+        "java",
+        """
+        class Demo {
+            int run(int[] a, int n) {
+                int sum = 0;
+                for (int j = 0; j < n; j++) {
+                    int t = a[j];
+                    sum += t;
+                }
+                int total = 0;
+                for (int k = 0; k < n; k++) {
+                    int t = a[k]; total += t;
+                    if (t > 0) {
+                        total += 1;
+                    } else {
+                        total -= 1;
+                    }
+                }
+                return sum + total;
+            }
+        }
+        """,
+    )
+
+    extractions = find_extractions(fn, get_language_map("java"))
+
+    assert extractions, "expected the second loop as an extraction"
+    assert all("t" not in x.params for x in extractions)
+    assert (("a", "n"), ("total",)) in [(x.params, x.returns) for x in extractions]
+
+
+# == Reads inside nested closures ===============================================
+
+
+def _covering(fn, lmap, first: int, last: int):
+    return [e for e in find_extractions(fn, lmap) if e.start_line <= first and e.end_line >= last]
+
+
+def test_go_closure_read_of_a_parameter_makes_it_a_param():
+    # ``ps`` is read only inside the func literal; the span still needs it.
+    src = """
+        package main
+
+        func load(m *Map, ps *Page) []int {
+            key := ps.Path()
+            if key == "/" {
+                key = ""
+            }
+            v, err := m.cache.GetOrCreate(key, func(string) ([]int, error) {
+                res := m.find(ps)
+                if len(res) > 2 {
+                    res = res[:2]
+                }
+                return res, nil
+            })
+            if err != nil {
+                panic(err)
+            }
+            m.count++
+            m.last = key
+            m.seen = true
+            return v
+        }
+        """
+    lmap = get_language_map("go")
+    spans = _covering(_first("go", src), lmap, 9, 18)
+    assert spans
+    assert all("ps" in e.params for e in spans)
+
+
+def test_ts_closure_read_after_the_span_makes_a_return():
+    # ``seen`` is read after the span only inside the arrow function.
+    src = """
+        function prune(messages: Msg[], limit: number): Msg[] {
+            const seen = new Set<string>()
+            for (const msg of messages) {
+                if (msg.id && msg.size < limit) {
+                    seen.add(msg.id)
+                }
+            }
+            log(messages.length)
+            log(limit)
+            log(seen.size)
+            return messages.filter((m) => seen.has(m.parent))
+        }
+        """
+    lmap = get_language_map("typescript")
+    spans = _covering(_first("typescript", src), lmap, 3, 8)
+    assert spans
+    assert all("seen" in e.returns for e in spans)
+
+
+def test_ts_closure_parameter_is_not_a_read_of_the_outer_name():
+    src = """
+        function scale(items: number[], x: number): number[] {
+            let out: number[] = []
+            if (x > 1) {
+                out = items.map((x) => x * 2)
+                out.push(0)
+            } else {
+                out = items.slice()
+            }
+            log(out.length)
+            log(items.length)
+            log(out.length)
+            return out
+        }
+        """
+    lmap = get_language_map("typescript")
+    spans = _covering(_first("typescript", src), lmap, 4, 9)
+    assert spans
+    assert all("x" in e.params for e in spans)  # the condition reads the outer x
+    fn = _first("typescript", src)
+    captured = {u.name for u in fn.def_use.captured.reads}
+    assert "x" not in captured and "items" not in captured
+
+
+@pytest.mark.parametrize(
+    ("language", "src", "captured", "not_captured"),
+    [
+        (
+            "python",
+            """
+            def f(rows, k):
+                total = 0
+                def inner(v):
+                    return v + total + k
+                return list(map(lambda total: total * 2, rows)), inner
+            """,
+            {"total", "k"},
+            {"v", "inner"},
+        ),
+        (
+            "java",
+            """
+            class A {
+                int f(java.util.List<Integer> rows, int k) {
+                    int total = 1;
+                    rows.forEach(v -> System.out.println(v + total + k));
+                    return total;
+                }
+            }
+            """,
+            {"total", "k"},
+            {"v"},
+        ),
+        (
+            "rust",
+            """
+            fn f(rows: Vec<i32>, k: i32) -> i32 {
+                let total = 1;
+                let s: i32 = rows.iter().map(|v| v + total + k).sum();
+                s
+            }
+            """,
+            {"total", "k"},
+            {"v"},
+        ),
+        (
+            "typescript",
+            """
+            function f(rows: number[], k: number) {
+                const total = 1
+                return rows.map((v) => rows.filter((w) => w + v + total > k))
+            }
+            """,
+            {"total", "k", "rows"},
+            {"v", "w"},
+        ),
+        (
+            "php",
+            """<?php
+            function f($rows, $k) {
+                $total = 1;
+                $fn = function($v) use ($total, $k) { return $v + $total + $k; };
+                return array_map($fn, $rows);
+            }
+            """,
+            {"total", "k"},
+            {"v"},
+        ),
+    ],
+)
+def test_closure_reads_are_captured_per_language(language, src, captured, not_captured):
+    fn = _first(language, src)
+    names = {u.name for u in fn.def_use.captured.reads}
+    assert captured <= names
+    assert not (not_captured & names)
+
+
+def test_a_closure_local_shadowing_an_outer_name_is_not_a_capture():
+    src = """
+        function f(items: number[], t: number): number[] {
+            let t2 = 0
+            if (t > 1) {
+                t2 = t * 3
+                log(t2)
+            }
+            log(t)
+            return items.map((v) => {
+                const t2 = v * 2
+                return t2 + t
+            })
+        }
+        """
+    fn = _first("typescript", src)
+    assert "t2" not in {u.name for u in fn.def_use.captured.reads}
+
+
+# == Spans a helper cannot carry =================================================
+
+
+def test_python_span_holding_a_yield_is_not_offered():
+    src = """
+        def rows(items, limit):
+            seen = 0
+            for item in items:
+                if item > limit:
+                    seen += 1
+                    yield item
+                else:
+                    seen -= 1
+            print(seen)
+            print(limit)
+            return seen
+        """
+    lmap = get_language_map("python")
+    fn = _first("python", src)
+    assert all(not (e.start_line <= 7 <= e.end_line) for e in find_extractions(fn, lmap))
+
+
+def test_ts_span_holding_a_yield_is_not_offered():
+    src = """
+        function* chunks(items: string[], limit: number) {
+            let seen = 0
+            for (const item of items) {
+                if (item.length > limit) {
+                    seen += 1
+                    yield item
+                } else {
+                    seen -= 1
+                }
+            }
+            log(seen)
+            log(limit)
+            return seen
+        }
+        """
+    lmap = get_language_map("typescript")
+    fn = _first("typescript", src)
+    assert all(not (e.start_line <= 7 <= e.end_line) for e in find_extractions(fn, lmap))
+
+
+def test_rust_span_holding_an_exit_macro_is_not_offered():
+    src = """
+        fn paths(low: &mut Low, state: &State) -> anyhow::Result<Vec<String>> {
+            let mut paths = Vec::new();
+            for arg in low.positional.drain(..) {
+                if state.stdin_consumed && arg == "-" {
+                    anyhow::bail!("cannot read stdin twice");
+                }
+                paths.push(arg);
+            }
+            log::debug!("{}", paths.len());
+            log::debug!("{}", state.stdin_consumed);
+            Ok(paths)
+        }
+        """
+    lmap = get_language_map("rust")
+    fn = _first("rust", src)
+    assert all(not (e.start_line <= 6 <= e.end_line) for e in find_extractions(fn, lmap))
+
+
+# == May-def bookkeeping is not a read ===========================================
+
+
+def test_rust_if_let_binder_inside_the_span_is_not_a_param():
+    # Both ``if let`` arms bind their own ``var``; the first one's binding is
+    # out of scope by the time the span runs, so it cannot be passed in.
+    src = """
+        fn flag_doc(flag: &Flag, out: &mut String) {
+            if let Some(var) = flag.doc_variable() {
+                out.push_str(var);
+            }
+            let name = flag.name_long();
+            out.push_str(name);
+            if let Some(var) = flag.doc_variable() {
+                if var.len() > 3 {
+                    out.push_str(var);
+                }
+            }
+            out.push_str("\n");
+            let doc = flag.doc_long();
+            if doc.len() > 10 {
+                out.push_str(doc);
+            }
+            out.push_str("\n");
+            out.push_str("\n");
+        }
+        """
+    lmap = get_language_map("rust")
+    spans = [e for e in find_extractions(_first("rust", src), lmap) if e.start_line <= 8 <= e.end_line]
+    assert spans
+    assert all("var" not in e.params for e in spans)
+
+
+def test_rust_let_inside_a_match_arm_is_not_a_param():
+    src = """
+        fn analyse(kind: &Kind, limit: usize) -> usize {
+            match kind {
+                Kind::One(items) => {
+                    let mut total = items.len();
+                    total
+                }
+                Kind::Many(items) => {
+                    let mut total = 0;
+                    for item in items.iter() {
+                        if item.len() > limit {
+                            total += limit;
+                        } else {
+                            total += item.len();
+                        }
+                    }
+                    total
+                }
+            }
+        }
+        """
+    lmap = get_language_map("rust")
+    fn = _first("rust", src)
+    spans = [e for e in find_extractions(fn, lmap) if e.start_line == 9]
+    assert spans
+    assert all("total" not in e.params for e in spans)
+
+
+def test_rust_span_ending_on_a_consumed_tail_if_is_not_offered():
+    # The ``else`` block's last ``if`` is its value, read by the ``let``.
+    src = """
+        fn matcher(names: &[String], dir: &str, case: bool) -> usize {
+            let found = if names.is_empty() {
+                0
+            } else {
+                let wanted: Vec<&String> = names.iter().filter(|n| n.len() > 2).collect();
+                log(dir);
+                log(case);
+                if wanted.is_empty() {
+                    0
+                } else {
+                    let m = wanted.len();
+                    m + 1
+                }
+            };
+            found
+        }
+        """
+    lmap = get_language_map("rust")
+    fn = _first("rust", src)
+    assert all(e.end_line != 14 for e in find_extractions(fn, lmap))
+
+
+def test_rust_span_ending_on_an_if_in_a_loop_body_is_still_offered():
+    src = """
+        fn tally(items: &[usize], limit: usize, out: &mut Vec<usize>) -> usize {
+            let count = items.len();
+            for item in items {
+                let doubled = item * 2;
+                log(doubled);
+                log(limit);
+                if doubled > limit {
+                    out.push(limit);
+                } else {
+                    out.push(doubled);
+                }
+            }
+            count
+        }
+        """
+    lmap = get_language_map("rust")
+    fn = _first("rust", src)
+    assert any(e.end_line == 12 for e in find_extractions(fn, lmap))
+
+
+def test_rust_match_arm_binders_are_params_of_a_span_in_the_arm():
+    src = """
+        fn class_regex(re: &mut String, tokens: &[Token]) {
+            for tok in tokens.iter() {
+                match *tok {
+                    Token::Class { negated, ref ranges } => {
+                        re.push('[');
+                        if negated {
+                            re.push('^');
+                        }
+                        for r in ranges {
+                            if r.0 == r.1 {
+                                re.push(r.0);
+                            } else {
+                                re.push(r.1);
+                            }
+                        }
+                        re.push(']');
+                    }
+                    None => {}
+                    std::i32::MAX => {}
+                    consts::PI => {}
+                    y if y > 2 => {}
+                }
+            }
+        }
+        """
+    fn = _first("rust", src)
+    defs = {(d.var, d.line) for d in fn.def_use.definitions}
+    assert ("negated", 5) in defs and ("ranges", 5) in defs
+    bogus = {"None", "Token", "Class", "std", "i32", "MAX", "consts", "PI"}
+    assert not any(var in bogus for var, _ in defs)
+    spans = [e for e in find_extractions(fn, get_language_map("rust")) if e.start_line <= 7]
+    assert spans
+    assert all({"negated", "ranges"} <= set(e.params) for e in spans)
+
+
+# == A declaration the code after the span still needs ==========================
+
+
+def test_go_span_declaring_a_name_assigned_after_it_is_not_offered():
+    # ``var out []int`` moves with the span, but ``out = formats`` and the
+    # return after it still name it; liveness alone saw no OUT.
+    src = """
+        package main
+
+        func paths(formats []int, link bool) ([]int, map[int]int) {
+            targets := make(map[int]int)
+            for i, f := range formats {
+                if f > 2 {
+                    targets[f] = i
+                } else {
+                    targets[f] = -i
+                }
+            }
+            var out []int
+            if link {
+                out = formats
+            }
+            return out, targets
+        }
+        """
+    lmap = get_language_map("go")
+    spans = find_extractions(_first("go", src), lmap)
+    # Holding ``var out`` is fine only when the span returns ``out``.
+    assert all("out" in e.returns for e in spans if e.start_line <= 13 <= e.end_line)
+    assert any(e.end_line == 12 for e in spans)  # the loop alone is still offered
+
+
+def test_go_name_declared_afresh_after_the_span_does_not_refuse_it():
+    src = """
+        package main
+
+        func load(items []string) int {
+            total := 0
+            for _, it := range items {
+                n, err := parse(it)
+                if err == nil {
+                    total += n
+                }
+                log(it)
+                log(n)
+            }
+            for i := 0; i < total; i++ {
+                if i%2 == 0 {
+                    total--
+                }
+            }
+            m, err := finish(total)
+            if err != nil {
+                return 0
+            }
+            return m
+        }
+        """
+    lmap = get_language_map("go")
+    fn = _first("go", src)
+    assert any(e.start_line <= 7 and e.end_line >= 12 for e in find_extractions(fn, lmap))
+
+
+# == Rust ``let`` binds a new name ================================================
+
+
+def _rust_in_out(src: str, s: int, e: int):
+    from repowise.core.analysis.health.dataflow import slice as slicing
+
+    fn = _first("rust", src)
+    def_use = fn.def_use
+    def_lines, use_lines = slicing._var_lines(def_use)
+    return slicing._infer_in_out(
+        def_lines,
+        use_lines,
+        s,
+        e,
+        slicing._declared_before_read(def_use),
+        reads=slicing._reads_observing(fn, def_lines),
+    )
+
+
+def test_rust_let_reading_the_name_it_shadows_keeps_it_an_input():
+    src = """
+    fn f(a: i32) -> i32 {
+        let x = a * 2;
+        println!("{}", x);
+        let x = x + 1;
+        let y = x * 3;
+        y
+    }
+    """
+    assert _rust_in_out(src, 5, 6) == (("x",), ("y",))
+
+
+def test_rust_let_else_binder_is_the_spans_own():
+    src = """
+    fn f(o: Option<i32>, k: i32) -> i32 {
+        let base = k + 1;
+        let Some(v) = o else { return 0; };
+        let w = v + base;
+        w
+    }
+    """
+    assert _rust_in_out(src, 4, 5) == (("base", "o"), ("w",))
+
+
+def test_rust_nested_let_after_the_span_does_not_make_an_output():
+    src = """
+    fn f(a: i32, c: bool) -> i32 {
+        let mut x = a;
+        if c { x += 1; } else { x -= 1; }
+        if a > 2 { x *= 2; }
+        {
+            let x = 5;
+            println!("{}", x);
+        }
+        0
+    }
+    """
+    assert _rust_in_out(src, 3, 5) == (("a", "c"), ())
+
+
+def test_rust_span_splitting_a_closure_from_its_let_local_is_refused():
+    fn = _first(
+        "rust",
+        """
+        fn f(a: i32, c: bool) -> i32 {
+            let mut n = 0;
+            let mut inc = || n += 1;
+            if c { inc(); } else { inc(); }
+            if a > 1 { inc(); }
+            n
+        }
+        """,
+    )
+    with pytest.MonkeyPatch.context() as mp:
+        from repowise.core.analysis.health.dataflow import slice as slicing
+
+        mp.setattr(slicing, "_MAX_BODY_SHARE", float("inf"))
+        mp.setattr(slicing, "_MIN_SLICE_NLOC", 1)
+        spans = find_extractions(fn, get_language_map("rust"))
+    # The closure writes ``n``, so no span may hold it without ``n``'s reads.
+    assert [(x.start_line, x.end_line) for x in spans] == [(5, 6)]
+
+
+def test_csharp_local_declared_and_read_on_one_line_in_the_span_is_not_a_parameter():
+    fn = _first(
+        "csharp",
+        """
+        class Demo {
+            int Run(int[] a, int n) {
+                int sum = 0;
+                for (int j = 0; j < n; j++) {
+                    int t = a[j];
+                    sum += t;
+                }
+                int total = 0;
+                for (int k = 0; k < n; k++) {
+                    int t = a[k]; total += t;
+                    if (t > 0) {
+                        total += 1;
+                    } else {
+                        total -= 1;
+                    }
+                }
+                return sum + total;
+            }
+        }
+        """,
+    )
+
+    extractions = find_extractions(fn, get_language_map("csharp"))
+
+    assert extractions, "expected the second loop as an extraction"
+    assert all("t" not in x.params for x in extractions)
+    assert (("a", "n"), ("total",)) in [(x.params, x.returns) for x in extractions]
+
+
+def test_csharp_switch_arm_binder_inside_the_span_is_not_a_param():
+    src = """
+        class Demo {
+            int Process(object obj, int limit) {
+                switch (obj) {
+                    case int i:
+                        int armVal = i * 2;
+                        log(armVal);
+                        break;
+                    default:
+                        break;
+                }
+                int total = 0;
+                for (int j = 0; j < limit; j++) {
+                    total += j;
+                }
+                for (int k = 0; k < limit; k++) {
+                    if (k > 0) {
+                        total += k;
+                    } else {
+                        total -= k;
+                    }
+                }
+                return total;
+            }
+        }
+        """
+    lmap = get_language_map("csharp")
+    fn = _first("csharp", src)
+    spans = find_extractions(fn, lmap)
+    assert spans
+    for s in spans:
+        assert "armVal" not in s.params
+
+
+def test_csharp_delegate_call_records_callee_as_read():
+    src = """
+        class Demo {
+            int M(Func<int, int> cb, int n) {
+                var r = 0;
+                if (n > 0) {
+                    r = cb(n);
+                    r += 1;
+                }
+                return r;
+            }
+        }
+        """
+    fn = _first("csharp", src)
+    from repowise.core.analysis.health.dataflow import slice as slicing
+
+    def_use = fn.def_use
+    dl, ul = slicing._var_lines(def_use)
+    params, returns = slicing._infer_in_out(
+        dl,
+        ul,
+        5,
+        7,
+        slicing._declared_before_read(def_use),
+        reads=slicing._reads_observing(fn, dl),
+    )
+    assert "cb" in params
+    assert "n" in params
+    assert returns == ("r",)
+
+
+def test_csharp_update_expression_inside_if_records_def():
+    src = """
+        class Demo {
+            int M(int a) {
+                int tryCount = 0;
+                int waitDuration = 0;
+                if (a > 0) {
+                    tryCount++;
+                    waitDuration = 5;
+                }
+                return tryCount + waitDuration;
+            }
+        }
+        """
+    fn = _first("csharp", src)
+    lmap = get_language_map("csharp")
+    from repowise.core.analysis.health.dataflow import slice as slicing
+
+    def_use = fn.def_use
+    dl, ul = slicing._var_lines(def_use)
+    _, returns = slicing._infer_in_out(
+        dl,
+        ul,
+        5,
+        8,
+        slicing._declared_before_read(def_use),
+        reads=slicing._reads_observing(fn, dl),
+    )
+    assert "tryCount" in returns
+    assert "waitDuration" in returns
+    extractions = find_extractions(fn, lmap)
+    assert not any(x.start_line <= 5 and x.end_line >= 8 for x in extractions)
+
+
+def test_csharp_lambda_writing_outer_local_records_def():
+    src = """
+        class Demo {
+            int M(int a) {
+                int tryCount = 0;
+                Action act = () => { tryCount++; };
+                act();
+                return tryCount;
+            }
+        }
+        """
+    fn = _first("csharp", src)
+    lmap = get_language_map("csharp")
+    assert any(occ.name == "tryCount" for occ in fn.def_use.captured.writes)
+    extractions = find_extractions(fn, lmap)
+    assert not any(x.start_line <= 4 and x.end_line >= 5 for x in extractions)
+
+
+def test_cpp_condition_declaration_records_use_of_initializer() -> None:
+    code = (
+        b"void f() {\n"
+        b"    if (auto v = settings.get(1)) {\n"
+        b"        use(v);\n"
+        b"    }\n"
+        b"    while (auto w = helper.next()) {\n"
+        b"        use(w);\n"
+        b"    }\n"
+        b"}\n"
+    )
+    import tree_sitter_cpp
+    from tree_sitter import Language, Parser
+
+    from repowise.core.analysis.health.complexity.languages import get_language_map
+    from repowise.core.analysis.health.dataflow.dialects.cpp import CppDefUseDialect
+
+    parser = Parser(Language(tree_sitter_cpp.language()))
+    tree = parser.parse(code)
+    fn = tree.root_node.children[0]
+    body = fn.child_by_field_name("body")
+    if_stmt = body.children[1]
+    while_stmt = body.children[2]
+
+    lmap = get_language_map("cpp")
+    dialect = CppDefUseDialect()
+
+    if_sdu = dialect.statement_def_use(if_stmt, lmap, head_only=True)
+    assert any(d.name == "v" for d in if_sdu.defs)
+    assert any(u.name == "settings" for u in if_sdu.uses)
+
+    while_sdu = dialect.statement_def_use(while_stmt, lmap, head_only=True)
+    assert any(d.name == "w" for d in while_sdu.defs)
+    assert any(u.name == "helper" for u in while_sdu.uses)
+
+
+# == Scala ======================================================================
+
+# Every Scala write shape in one method: ``val`` / ``var`` / ``lazy val``, a tuple
+# pattern, plain and compound assignment, a ``for`` head with a guard and a ``=``
+# binder, a ``case`` binding, and targets that are not locals.
+_SCALA_SHAPES = """
+class Demo {
+  var field = 0
+  def shapes(input: List[Int], base: Int): Int = {
+    var total = 0
+    val (p, q) = (1, 2)
+    lazy val w = p + q
+    total = total + base
+    total += input.head
+    this.field = 3
+    input(0) = 4
+    for (i <- input if i > 0; j = i * 2) { total += j }
+    val r = base match { case a if a > 1 => a; case (b, c) => b; case _ => 0 }
+    total + w + r
+  }
+}
+"""
+
+
+def test_scala_def_use_classification():
+    fn = _first("scala", _SCALA_SHAPES)
+    defs = {(d.var, d.declares) for d in fn.def_use.definitions}
+    assert {("total", True), ("p", True), ("q", True), ("w", True), ("r", True)} <= defs
+    assert {("i", True), ("j", True)} <= defs  # for generator + ``=`` binder
+    assert {("a", True), ("b", True), ("c", True)} <= defs  # case pattern bindings
+    assert {"input", "base"} <= _def_names(fn)  # parameters
+    # ``this.field = ...`` and ``input(0) = ...`` bind no local.
+    assert "field" not in _def_names(fn)
+    uses = _use_names(fn)
+    assert {"input", "base", "total", "i", "w", "r"} <= uses
+    assert "this" not in uses  # the receiver, not a variable
+
+
+def test_scala_compound_assignment_is_found_by_operator_text():
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(t: Int): Int = {
+            var x = 1
+            x += t
+            val sum = x + t
+            val le = x <= t
+            val ne = x != t
+            x *= 2
+            x
+          }
+        }
+        """,
+    )
+    writes = sorted(d.line for d in fn.def_use.definitions if d.var == "x" and not d.declares)
+    # Only ``x += t`` (line 5) and ``x *= 2`` (line 9): ``x + t``, ``x <= t`` and
+    # ``x != t`` are the same ``infix_expression`` and write nothing.
+    assert writes == [5, 9]
+    # A compound write also reads the old value.
+    assert any(u.name == "x" and u.line == 5 for b in fn.def_use.blocks.values() for u in b.uses)
+    assert not [d for d in fn.def_use.definitions if d.var in ("sum", "le", "ne") and d.may]
+
+
+def test_scala_collection_append_is_a_may_def_and_a_use():
+    # ``buf += x`` mutates a ListBuffer and rebinds nothing, but it is the same
+    # node as ``count += x`` on an ``Int`` var: both are a may-def plus a use.
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(t: Int): Int = {
+            val buf = scala.collection.mutable.ListBuffer.empty[Int]
+            buf += t
+            buf.size
+          }
+        }
+        """,
+    )
+    assert any(d.var == "buf" and d.may for d in fn.def_use.definitions)
+    assert any(u.name == "buf" and u.line == 5 for b in fn.def_use.blocks.values() for u in b.uses)
+
+
+def test_scala_named_argument_is_not_a_read_or_a_write():
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(p: P): Int = {
+            val a = 1
+            val p2 = p.copy(a = 2)
+            a + p2.a
+          }
+        }
+        """,
+    )
+    # ``a = 2`` is a named argument: it neither rebinds ``a`` nor reads it, and
+    # ``p`` is read, not written.
+    assert [d.var for d in fn.def_use.definitions if d.var == "a"] == ["a"]
+    assert "p" not in {d.var for d in fn.def_use.definitions if not d.declares and d.may}
+    assert "p" in _use_names(fn)
+
+
+def test_scala_lambda_does_not_leak_its_identifiers():
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(xs: List[Int], t: Int): Int = {
+            val g = xs.map { v => v + t }
+            g.sum
+          }
+        }
+        """,
+    )
+    assert "v" not in _use_names(fn)
+    assert "v" not in _def_names(fn)
+    assert "t" in {o.name for o in fn.def_use.captured.reads}  # a closure read still counts
+
+
+def test_scala_lambda_mutating_a_captured_var_is_a_closure_write():
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(xs: List[Int]): Int = {
+            var total = 0
+            xs.foreach { v => total += v }
+            total
+          }
+        }
+        """,
+    )
+    assert "total" in {o.name for o in fn.def_use.captured.writes}
+    assert "total" in {o.name for o in fn.def_use.captured.shared}
+
+
+def test_scala_catch_arm_writes_are_closure_writes():
+    # ``catch_kinds`` is empty for Scala, so the CFG never sees a handler arm; it
+    # is read as a closure instead of being dropped.
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(t: Int): Int = {
+            var x = 0
+            try { x = t } catch { case e: Exception => x = 1 }
+            x
+          }
+        }
+        """,
+    )
+    assert "x" in {o.name for o in fn.def_use.captured.writes}
+
+
+def test_scala_braceless_arms_keep_their_writes():
+    # ``if (c) errors += 1 else buf += r`` has no ``block``: the CFG builder hands
+    # over the arm's tokens one by one, so the dialect reads the arm whole.
+    fn = _first(
+        "scala",
+        """
+        class Demo {
+          def f(records: List[Int]): Int = {
+            var errors = 0
+            for (r <- records) if (r < 0) errors += 1 else println(r)
+            errors
+          }
+        }
+        """,
+    )
+    assert any(d.var == "errors" and d.may for d in fn.def_use.definitions)
+    assert not [u for b in fn.def_use.blocks.values() for u in b.uses if u.name == "+="]
+
+
+_SCALA_PROCESS = """
+class Demo {
+  def process(records: Array[Int], threshold: Int): Int = {
+    var errors = 0
+    val results = scala.collection.mutable.ListBuffer.empty[Int]
+    for (r <- records) {
+      if (r < 0) { errors += 1 } else { results += r }
+    }
+    var total = 0
+    var count = 0
+    for (v <- results) {
+      if (v > threshold) {
+        total += v
+        count += 1
+      } else {
+        total -= v
+      }
+    }
+    var average = 0
+    if (count > 0) {
+      average = total / count
+    }
+    average + errors
+  }
+}
+"""
+
+
+def test_scala_extract_method_fires():
+    lmap = get_language_map("scala")
+    extractions = find_extractions(_first("scala", _SCALA_PROCESS), lmap)
+    assert extractions, "expected at least one Scala extraction"
+    best = extractions[0]
+    assert "average" in best.returns
+    assert "results" in best.params and "threshold" in best.params
+    assert len(best.returns) <= 1
+    assert best.ccn_removed >= 1
+    assert best.slice_nloc >= 6
+
+
+def test_scala_braceless_arm_plans_match_the_braced_ones():
+    lmap = get_language_map("scala")
+    braceless = _SCALA_PROCESS.replace(
+        "if (r < 0) { errors += 1 } else { results += r }", "if (r < 0) errors += 1 else results += r"
+    )
+
+    def spans(src):
+        return [(e.start_line, e.end_line, e.params, e.returns) for e in find_extractions(_first("scala", src), lmap)]
+
+    assert spans(braceless) == spans(_SCALA_PROCESS)
+
+
+def test_scala_span_ending_in_the_final_expression_is_refused():
+    lmap = get_language_map("scala")
+    src = _SCALA_PROCESS
+    last_stmt_line = src.splitlines().index("    average + errors") + 1
+    for e in find_extractions(_first("scala", src), lmap):
+        # The block's last expression is the function's value: a span holding it
+        # would drop it, so none ends on it.
+        assert e.end_line < last_stmt_line
+    # ...and a span stopping before it returns the local the tail reads.
+    assert any("average" in e.returns for e in find_extractions(_first("scala", src), lmap))
+
+
+def test_scala_span_with_return_or_throw_is_refused():
+    lmap = get_language_map("scala")
+    src = _SCALA_PROCESS.replace(
+        "      average = total / count\n", "      average = total / count\n      if (average > 99) return 0\n"
+    )
+    assert "return 0" in src
+    ret_line = src.splitlines().index("      if (average > 99) return 0") + 1
+    for e in find_extractions(_first("scala", src), lmap):
+        assert not e.start_line <= ret_line <= e.end_line
+
+
+_SCALA_LAMBDA_LATE = """
+class Demo {
+  def process(records: List[Int], threshold: Int): Int = {
+    var errors = 0
+    val results = scala.collection.mutable.ListBuffer.empty[Int]
+    for (r <- records) {
+      if (r < 0) { errors += 1 } else { results += r }
+    }
+    var total = 0
+    var count = 0
+    for (v <- results) {
+      if (v > threshold) {
+        total += v
+        count += 1
+      } else {
+        total -= v
+      }
+    }
+    records.foreach { x =>
+      if (x > 99) RETURN
+    }
+    var average = 0
+    if (count > 0) {
+      average = total / count
+    }
+    average + errors
+  }
+}
+"""
+# The same method with the lambda first, so the spans after it stay clear of it.
+_SCALA_LAMBDA_EARLY = """
+class Demo {
+  def process(records: List[Int], threshold: Int): Int = {
+    var errors = 0
+    records.foreach { x =>
+      if (x > 99) RETURN
+    }
+    val results = scala.collection.mutable.ListBuffer.empty[Int]
+    for (r <- records) {
+      if (r < 0) { errors += 1 } else { results += r }
+    }
+    var total = 0
+    var count = 0
+    for (v <- results) {
+      if (v > threshold) {
+        total += v
+        count += 1
+      } else {
+        total -= v
+      }
+    }
+    var average = 0
+    if (count > 0) {
+      average = total / count
+    }
+    average + errors
+  }
+}
+"""
+_SCALA_LAMBDA_BODY = _SCALA_LAMBDA_LATE
+_SCALA_LAMBDA_RETURN = _SCALA_LAMBDA_LATE.replace("RETURN", "return x")
+_SCALA_LAMBDA_LOCAL = _SCALA_LAMBDA_LATE.replace("RETURN", "println(x)")
+
+
+def _scala_span_jump(src: str, needle: str) -> bool:
+    """The span walk's jump bit for the one statement holding *needle*."""
+    from repowise.core.analysis.health.dataflow.slice import _scan_for, _span_metrics
+
+    lmap = get_language_map("scala")
+    fn = _first("scala", src).fn_node
+    stmt = next(
+        n for n in _walk_nodes(fn) if needle in n.text.decode() and n.parent is not None
+        and n.parent.type in lmap.block_kinds
+    )
+    return _span_metrics([stmt], _scan_for(lmap, None, fn)).jump
+
+
+def _walk_nodes(node):
+    yield node
+    for c in node.children:
+        yield from _walk_nodes(c)
+
+
+def _scala_spans(src: str):
+    return find_extractions(_first("scala", src), get_language_map("scala"))
+
+
+def test_scala_lambda_exit_kinds_is_set_for_scala_only():
+    assert get_language_map("scala").lambda_exit_kinds == {"return_expression"}
+    # Every other language keeps a lambda ``return`` local: the default is empty.
+    assert not get_language_map("python").lambda_exit_kinds
+    assert not get_language_map("java").lambda_exit_kinds
+
+
+def test_scala_return_inside_a_lambda_in_the_span_is_a_jump():
+    # ``return x`` in the ``foreach`` lambda leaves ``process``, so a helper
+    # holding it would return from itself instead.
+    assert _scala_span_jump(_SCALA_LAMBDA_RETURN, "records.foreach")
+    assert not _scala_span_jump(_SCALA_LAMBDA_LOCAL, "records.foreach")
+
+
+def test_scala_span_holding_a_lambda_return_is_refused():
+    ret_line = _SCALA_LAMBDA_RETURN.splitlines().index("      if (x > 99) return x") + 1
+    local = [e for e in _scala_spans(_SCALA_LAMBDA_LOCAL) if e.start_line <= ret_line <= e.end_line]
+    assert local, "control: without the return, spans over the lambda are offered"
+    assert not [
+        e for e in _scala_spans(_SCALA_LAMBDA_RETURN) if e.start_line <= ret_line <= e.end_line
+    ]
+
+
+def test_scala_return_in_a_lambda_outside_the_span_is_still_extractable():
+    src = _SCALA_LAMBDA_EARLY.replace("RETURN", "return x")
+    ret_line = src.splitlines().index("      if (x > 99) return x") + 1
+    spans = _scala_spans(src)
+    assert spans, "a span clear of the lambda is still offered"
+    assert not [e for e in spans if e.start_line <= ret_line <= e.end_line]
+
+
+def test_scala_return_in_a_nested_def_inside_the_span_is_not_a_jump():
+    # The ``return`` belongs to the local ``def`` inside the lambda, not to
+    # ``process``: the lambda walk stops at a function boundary.
+    src = _SCALA_LAMBDA_LATE.replace(
+        "      if (x > 99) RETURN\n",
+        "      def local(y: Int): Int = { return y }\n      local(x)\n",
+    )
+    assert "def local" in src and "return y" in src
+    assert not _scala_span_jump(src, "records.foreach")
+    # ...while a ``return`` beside that def, in the lambda itself, still counts.
+    both = src.replace("      local(x)\n", "      if (x > 99) return x\n      local(x)\n")
+    assert _scala_span_jump(both, "records.foreach")
+
+
+def test_scala_extractions_are_deterministic():
+    lmap = get_language_map("scala")
+    fn = _first("scala", _SCALA_PROCESS)
+
+    def serialize():
+        return [
+            (e.start_line, e.end_line, e.params, e.returns, e.ccn_removed)
+            for e in find_extractions(fn, lmap)
+        ]
+
+    first = serialize()
+    for _ in range(3):
+        assert serialize() == first
+
+
+def test_scala_flagged_only_gate_skips_small_functions():
+    _require("scala")
+    lines = ["class Demo {", "  def big(x: Int): Int = {", "    var y = 0"]
+    for i in range(12):
+        lines += [f"    if (x == {i}) {{", f"      y = {i}", "    }"]
+    lines += ["    y", "  }", "  def tiny(): Int = 1", "}"]
+    result = build_cfgs_for_file("m.scala", "scala", "\n".join(lines).encode())
+    if result.stats.functions_seen == 0:
+        pytest.skip("tree-sitter language pack missing for scala")
+    assert result.stats.functions_seen == 2
+    assert result.stats.functions_built == 1
+    assert [fc.name for fc in result.functions] == ["big"]
+
+
+_SCALA_COUNTERS = """
+class Demo {
+  def f(xs: List[Int]): Int = {
+    var total = 0
+    val buf = scala.collection.mutable.ListBuffer.empty[Int]
+    var pos = 0
+    var neg = 0
+    for (x <- xs) {
+      if (x > 0) { buf += x; pos += 1 } else { buf += -x; neg += 1 }
+    }
+    var zeros = 0
+    for (x <- xs) {
+      if (x == 0) { zeros += 1 } else if (x > 100) { zeros -= 1 }
+    }
+    var seen = 0
+    TOTAL_LINE
+    seen += 1
+    var avg = 0
+    if (total > 0) {
+      avg = total / 2
+    } else {
+      avg = 1
+    }
+    val n = buf.size
+    avg + total + n + pos + neg + zeros + seen
+  }
+}
+"""
+
+
+def test_scala_closure_write_to_a_captured_var_blocks_a_split():
+    # The control reads ``total`` where a plain write sets it, so the tail
+    # ``if`` is a clean extraction. When a lambda writes ``total`` instead, the
+    # write happens when the closure runs, not where it is written: the span
+    # would read a stale copy, so it is refused.
+    lmap = get_language_map("scala")
+
+    def spans(total_line):
+        fn = _first("scala", _SCALA_COUNTERS.replace("TOTAL_LINE", total_line))
+        return {(e.start_line, e.end_line) for e in find_extractions(fn, lmap)}
+
+    assert spans("total += xs.size")
+    assert not spans("xs.foreach { v => total += v }")
+
+
+def test_scala_implicit_parameter_is_carried_by_a_span_that_calls():
+    # An implicit is a use no call site writes: a span holding a call carries it
+    # as a parameter (the helper's author marks it ``implicit``).
+    src = _SCALA_PROCESS.replace(
+        "(records: Array[Int], threshold: Int)", "(records: Array[Int], threshold: Int)(implicit ec: Ec)"
+    ).replace("total += v", "total += load(v)")
+    call_line = src.splitlines().index("        total += load(v)") + 1
+    spans = find_extractions(_first("scala", src), get_language_map("scala"))
+    with_call = [e for e in spans if e.start_line <= call_line <= e.end_line]
+    assert with_call
+    assert all("ec" in e.params for e in with_call)
+    # No implicit, no extra parameter.
+    plain = _SCALA_PROCESS.replace("total += v", "total += load(v)")
+    spans = find_extractions(_first("scala", plain), get_language_map("scala"))
+    assert spans and all("ec" not in e.params for e in spans)

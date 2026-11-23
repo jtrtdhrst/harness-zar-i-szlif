@@ -1,0 +1,554 @@
+"""Selection-contract tests, plus the synthetic fixtures its siblings share.
+
+Nothing below the concept tree costs tokens, so selection rations nothing:
+every candidate that clears its bucket's floor gets a page. These tests pin
+that, and pin the two properties that follow from it: the floor still keeps
+tests and pure re-export modules out, and selection does not depend on whether
+an API key is present.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from repowise.core.generation.models import GenerationConfig
+from repowise.core.generation.selection import (
+    FILE_PAGE_ASK_THRESHOLD,
+    FILE_PAGE_AUTO_CEILING,
+    SelectionInputs,
+    auto_file_page_cap,
+    count_documentable_files,
+    recommended_file_page_cap,
+    select_pages,
+)
+from repowise.core.generation.selection.scoring import score_file
+from repowise.core.generation.selection.selector import SPOTLIGHTS_PER_FILE, rank_symbol_candidates
+from repowise.core.ingestion.symbol_use import SymbolUse
+from repowise.core.test_paths import is_test_related_path
+
+# ---------------------------------------------------------------------------
+# Lightweight ParsedFile / Symbol stand-ins
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeFileInfo:
+    path: str
+    language: str = "python"
+    abs_path: str = ""
+    size_bytes: int = 5_000
+    is_test: bool = False
+    is_config: bool = False
+    is_api_contract: bool = False
+    is_entry_point: bool = False
+    git_hash: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.abs_path:
+            self.abs_path = f"/repo/{self.path}"
+
+
+@dataclass
+class FakeSymbol:
+    name: str
+    qualified_name: str = ""
+    kind: str = "function"
+    visibility: str = "public"
+    signature: str = "()"
+    # A docstring past its first sentence, so the symbol has something to add
+    # beyond its file page even with no resolved caller.
+    docstring: str | None = "Do one thing. Then another."
+    decorators: list[str] = field(default_factory=list)
+    is_async: bool = False
+    complexity_estimate: int = 1
+    parent_name: str | None = None
+    # A symbol id, language and a non-trivial span, so spotlight floors pass.
+    id: str = ""
+    language: str = "python"
+    start_line: int = 1
+    end_line: int = 10
+
+    def __post_init__(self) -> None:
+        if not self.qualified_name:
+            self.qualified_name = self.name
+
+
+@dataclass
+class FakeParsedFile:
+    file_info: FakeFileInfo
+    symbols: list[FakeSymbol] = field(default_factory=list)
+    imports: list[object] = field(default_factory=list)
+    exports: list[str] = field(default_factory=list)
+    docstring: str | None = None
+    parse_errors: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Fixture builder
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_repo(
+    n_files: int, *, entry_points: int = 0
+) -> tuple[list[FakeParsedFile], dict, dict, dict]:
+    """Return ``(parsed_files, pagerank, betweenness, community)``.
+
+    PageRank tapers linearly so the top file has 1.0 and the bottom
+    file has ~0.01. Community assignment buckets every 25 files into
+    one community. The first ``entry_points`` files are flagged as
+    entry points but given LOW PageRank so they would normally fall
+    outside the budget — useful for landmark pull-in tests.
+    """
+    parsed: list[FakeParsedFile] = []
+    pagerank: dict[str, float] = {}
+    betweenness: dict[str, float] = {}
+    community: dict[str, int] = {}
+
+    for i in range(n_files):
+        path = f"pkg{i // 25}/module_{i}.py"
+        # Flag the LAST `entry_points` files (lowest PageRank) as entry points.
+        is_ep = i >= n_files - entry_points if entry_points else False
+        fi = FakeFileInfo(path=path, is_entry_point=is_ep)
+        syms = [
+            FakeSymbol(name=f"func_{i}_{k}", qualified_name=f"module_{i}.func_{i}_{k}")
+            for k in range(3)
+        ]
+        parsed.append(FakeParsedFile(file_info=fi, symbols=syms))
+        pagerank[path] = 1.0 - (i / max(1, n_files - 1)) * 0.99
+        betweenness[path] = 0.0
+        community[path] = i // 25
+    return parsed, pagerank, betweenness, community
+
+
+# ---------------------------------------------------------------------------
+# Nothing is rationed
+# ---------------------------------------------------------------------------
+
+
+def _inputs(parsed, pagerank, betweenness, community, cfg):
+    return SelectionInputs(
+        parsed_files=parsed,
+        pagerank=pagerank,
+        betweenness=betweenness,
+        community=community,
+        community_info=None,
+        sccs=[],
+        git_meta_map=None,
+        config=cfg,
+    )
+
+
+def test_every_production_file_gets_a_page():
+    """No budget, so the file bucket is the whole floored candidate set."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(400)
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    assert len(sel.file_page_paths) == 400
+    assert set(sel.file_page_paths) == {p.file_info.path for p in parsed}
+
+
+def test_importance_floor_excludes_tests_and_reexports():
+    """The measured floor survives the tail it used to belong to.
+
+    Test files and pure ``__init__.py`` re-exports were proven to dilute
+    retrieval, so they get no page even though nothing is rationed any more.
+    Test support such as ``conftest.py`` is not a test and passes (#1497).
+    """
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(6)
+    extras = (
+        "tests/test_thing.py",
+        "pkg0/sub/tests/test_more.py",
+        "pkg0/__init__.py",
+        "e2e-tests/cli/run.ts",
+        "web/src/button.spec.ts",
+    )
+    for extra in extras:
+        # Stamped the way ingestion stamps it; symbols so the score floor passes.
+        fi = FakeFileInfo(path=extra, is_test=is_test_related_path(extra))
+        parsed.append(FakeParsedFile(file_info=fi, symbols=[FakeSymbol(name="helper")]))
+        pagerank[extra] = 1.0
+        betweenness[extra] = 0.0
+        community[extra] = 0
+
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+
+    spotlit = {path for path, _ in sel.symbol_spotlights}
+    for extra in extras:
+        assert extra not in sel.file_page_paths
+        if is_test_related_path(extra):
+            assert extra not in spotlit
+    assert len(sel.file_page_paths) == 6
+
+
+def test_test_support_files_pass_importance_floor():
+    """Test infrastructure and fixture files pass the floor to receive file pages."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(6)
+    extras = [
+        ("tests/conftest.py", "python"),
+        ("tests/fixtures/setup.py", "python"),
+        ("apps/console/e2e/helpers/hydration.ts", "typescript"),
+        ("apps/console/e2e/fixtures.ts", "typescript"),
+    ]
+    for path, lang in extras:
+        parsed.append(
+            FakeParsedFile(
+                file_info=FakeFileInfo(path=path, language=lang, is_test=True),
+                symbols=[FakeSymbol(name="fixture_helper")],
+            )
+        )
+        pagerank[path] = 0.1
+        betweenness[path] = 0.0
+        community[path] = 0
+
+    # Also add pure specs which must be excluded
+    test_specs = [
+        ("tests/unit/test_foo.py", "python"),
+        ("apps/console/e2e/specs/login.spec.ts", "typescript"),
+    ]
+    for path, lang in test_specs:
+        parsed.append(
+            FakeParsedFile(
+                file_info=FakeFileInfo(path=path, language=lang, is_test=True),
+                symbols=[FakeSymbol(name="test_login")],
+            )
+        )
+        pagerank[path] = 0.1
+        betweenness[path] = 0.0
+        community[path] = 0
+
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+
+    for path, _ in extras:
+        assert path in sel.file_page_paths, f"Expected {path} to receive a file_page"
+
+    for path, _ in test_specs:
+        assert path not in sel.file_page_paths, f"Expected {path} to be excluded"
+
+
+def test_test_penalty_skips_test_support():
+    """A support file scores as code; a test spec keeps the test penalty."""
+    kw = dict(pagerank=0.5, betweenness=0.0, max_pagerank=1.0, max_betweenness=0.0)
+    symbols = [FakeSymbol(name=f"s{i}") for i in range(5)]
+
+    def score(path: str, is_test: bool) -> float:
+        fi = FakeFileInfo(path=path, is_test=is_test)
+        return score_file(FakeParsedFile(file_info=fi, symbols=symbols), is_hotspot=False, **kw)
+
+    production = score("pkg/helpers.py", False)
+    assert score("tests/conftest.py", True) == production
+    assert score("tests/test_helpers.py", True) < production
+
+
+def test_selection_does_not_depend_on_having_a_key():
+    """Keyed and keyless runs select exactly the same pages.
+
+    ``deterministic`` decides how much the synthesis pages say, never which
+    pages exist. This is the property that lets a keyed and a keyless index of
+    the same commit share a byte-identical file layer, so it is asserted on the
+    selection rather than left to the renderer.
+    """
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(120)
+    keyed = select_pages(
+        _inputs(parsed, pagerank, betweenness, community, GenerationConfig(deterministic=False))
+    )
+    keyless = select_pages(
+        _inputs(parsed, pagerank, betweenness, community, GenerationConfig(deterministic=True))
+    )
+    assert keyed.counts() == keyless.counts()
+    assert keyed.file_page_paths == keyless.file_page_paths
+    assert keyed.symbol_spotlights == keyless.symbol_spotlights
+
+
+def test_spotlights_are_bounded_by_the_percentile():
+    """The bucket the budget share used to bound is bounded by the percentile."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(100)
+    total_symbols = sum(len(p.symbols) for p in parsed)
+
+    half = select_pages(
+        _inputs(
+            parsed, pagerank, betweenness, community, GenerationConfig(top_symbol_percentile=0.5)
+        )
+    )
+    tenth = select_pages(
+        _inputs(
+            parsed, pagerank, betweenness, community, GenerationConfig(top_symbol_percentile=0.1)
+        )
+    )
+
+    assert len(half.symbol_spotlights) == int(total_symbols * 0.5)
+    assert len(tenth.symbol_spotlights) == int(total_symbols * 0.1)
+    # Highest-scoring first, so the smaller set is a prefix of the larger.
+    assert tenth.symbol_spotlights == half.symbol_spotlights[: len(tenth.symbol_spotlights)]
+
+
+def test_default_config_takes_the_top_spotlight_share():
+    """The stock default is the bound large repos actually get.
+
+    The bucket restates what each symbol's file page already says, so the
+    default keeps the most-used 12% of the eligible symbols.
+    """
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(100)
+    total_symbols = sum(len(p.symbols) for p in parsed)
+
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+
+    assert len(sel.symbol_spotlights) == int(total_symbols * 0.12)
+
+
+def _one_file(*symbols: FakeSymbol) -> list[FakeParsedFile]:
+    return [FakeParsedFile(file_info=FakeFileInfo(path="pkg/a.py"), symbols=list(symbols))]
+
+
+def _spotlights(parsed, uses=None, pct: float = 1.0) -> list[str]:
+    inputs = _inputs(parsed, {"pkg/a.py": 1.0}, {}, {}, GenerationConfig(top_symbol_percentile=pct))
+    inputs.symbol_uses = uses
+    ranked, keep = rank_symbol_candidates(inputs)
+    return [name for _, (_, name) in ranked[:keep]]
+
+
+def test_spotlights_rank_the_symbol_not_its_file():
+    """A symbol called from many files outranks one in a higher-PageRank file."""
+    hub = FakeFileInfo(path="pkg/hub.py")
+    leaf = FakeFileInfo(path="pkg/leaf.py")
+    parsed = [
+        FakeParsedFile(file_info=hub, symbols=[FakeSymbol(name="idle", id="pkg/hub.py::idle")]),
+        FakeParsedFile(file_info=leaf, symbols=[FakeSymbol(name="used", id="pkg/leaf.py::used")]),
+    ]
+    inputs = _inputs(parsed, {"pkg/hub.py": 1.0, "pkg/leaf.py": 0.01}, {}, {}, GenerationConfig())
+    inputs.symbol_uses = {"pkg/leaf.py::used": SymbolUse(12, 12)}
+    ranked, _ = rank_symbol_candidates(inputs)
+    assert [name for _, (_, name) in ranked] == ["used", "idle"]
+
+
+def test_dunders_and_module_state_never_get_a_spotlight():
+    parsed = _one_file(
+        FakeSymbol(name="__init__", kind="method", parent_name="A", id="pkg/a.py::A::__init__"),
+        FakeSymbol(name="__all__", kind="variable", id="pkg/a.py::__all__"),
+        FakeSymbol(name="log", kind="variable", id="pkg/a.py::log"),
+        FakeSymbol(name="run", id="pkg/a.py::run"),
+    )
+    uses = {f"pkg/a.py::{n}": SymbolUse(50, 50) for n in ("A::__init__", "__all__", "log")}
+    assert _spotlights(parsed, uses) == ["run"]
+
+
+def test_values_and_trivial_bodies_need_heavy_use():
+    """A constant or a three-line body is printed whole on the file page."""
+    const = FakeSymbol(name="LIMIT", kind="constant", id="pkg/a.py::LIMIT", end_line=1)
+    tiny = FakeSymbol(name="tiny", id="pkg/a.py::tiny", end_line=3)
+    assert _spotlights(_one_file(const, tiny)) == []
+    heavy = {"pkg/a.py::LIMIT": SymbolUse(5, 5), "pkg/a.py::tiny": SymbolUse(5, 1)}
+    assert sorted(_spotlights(_one_file(const, tiny), heavy)) == ["LIMIT", "tiny"]
+
+
+def test_a_symbol_must_add_something_to_its_file_page():
+    """Uncalled, with a one-sentence docstring: the file page already says it all."""
+    bare = FakeSymbol(name="bare", id="pkg/a.py::bare", docstring="Do one thing.")
+    called = FakeSymbol(name="called", id="pkg/a.py::called", docstring=None)
+    documented = FakeSymbol(name="documented", id="pkg/a.py::documented")
+    uses = {"pkg/a.py::called": SymbolUse(1, 1)}
+    assert sorted(_spotlights(_one_file(bare, called, documented), uses)) == [
+        "called",
+        "documented",
+    ]
+
+
+def test_one_file_keeps_at_most_the_per_file_cap():
+    symbols = [FakeSymbol(name=f"f{i}", id=f"pkg/a.py::f{i}") for i in range(SPOTLIGHTS_PER_FILE + 4)]
+    uses = {s.id: SymbolUse(20, 20) for s in symbols}
+    assert len(_spotlights(_one_file(*symbols), uses)) == SPOTLIGHTS_PER_FILE
+
+
+def test_small_repo_still_gets_a_spotlight_at_the_default():
+    """MIN_SPOTLIGHTS keeps a tiny repo from losing the bucket entirely."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(1)
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    assert len(sel.symbol_spotlights) >= 1
+
+
+def test_module_bucket_is_never_rationed():
+    """The concept partition is total, so every group is emitted."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(300)
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    covered = {f for g in sel.module_groups for f in g.file_paths}
+    assert covered == {p.file_info.path for p in parsed}
+
+
+def test_empty_repo_emits_no_content_pages():
+    sel = select_pages(_inputs([], {}, {}, {}, GenerationConfig()))
+    assert sel.file_page_paths == []
+    assert sel.symbol_spotlights == []
+    assert sel.module_groups == []
+
+
+# ---------------------------------------------------------------------------
+# The one opt-in bound: max_file_pages
+# ---------------------------------------------------------------------------
+
+
+def test_file_bucket_is_unset_by_default():
+    """Unset means the size policy decides, not that a cap was chosen."""
+    assert GenerationConfig().max_file_pages is None
+
+
+def test_cap_takes_the_strongest_file_pages():
+    """The cap slices the ranking the selector already computed."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(400)
+    cfg = GenerationConfig(max_file_pages=50)
+
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, cfg))
+    uncapped = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+
+    assert len(sel.file_page_paths) == 50
+    # Same ranking, just cut short: the kept pages are the uncapped run's first 50.
+    assert sel.file_page_paths == uncapped.file_page_paths[:50]
+
+
+def test_cap_above_the_candidate_count_changes_nothing():
+    """A repo smaller than its cap is untouched by it."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(30)
+    capped = select_pages(
+        _inputs(parsed, pagerank, betweenness, community, GenerationConfig(max_file_pages=2000))
+    )
+    assert len(capped.file_page_paths) == 30
+
+
+def test_cap_leaves_the_other_buckets_alone():
+    """Bounding the file layer is not a request to shrink the concept tree."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(300)
+    capped = select_pages(
+        _inputs(parsed, pagerank, betweenness, community, GenerationConfig(max_file_pages=25))
+    )
+    uncapped = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    assert capped.counts()["file_page"] == 25
+    assert capped.counts()["module_page"] == uncapped.counts()["module_page"]
+    assert capped.counts()["symbol_spotlight"] == uncapped.counts()["symbol_spotlight"]
+
+
+def test_cap_is_deterministic():
+    """Same inputs, same cut — the sort is total, so the tie-break is the path."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(200)
+    cfg = GenerationConfig(max_file_pages=40)
+    first = select_pages(_inputs(parsed, pagerank, betweenness, community, cfg))
+    second = select_pages(_inputs(list(reversed(parsed)), pagerank, betweenness, community, cfg))
+    assert first.file_page_paths == second.file_page_paths
+
+
+# ---------------------------------------------------------------------------
+# The size policy: what an unset max_file_pages resolves to
+# ---------------------------------------------------------------------------
+
+
+def test_policy_leaves_normal_repos_alone():
+    """A 2,500-file repo would lose 500 pages and gain nothing measured."""
+    assert auto_file_page_cap(0) is None
+    assert auto_file_page_cap(FILE_PAGE_ASK_THRESHOLD + 500) is None
+    assert auto_file_page_cap(FILE_PAGE_AUTO_CEILING) is None
+
+
+def test_policy_holds_huge_repos_at_the_ceiling():
+    assert auto_file_page_cap(FILE_PAGE_AUTO_CEILING + 1) == FILE_PAGE_AUTO_CEILING
+    assert auto_file_page_cap(15_000) == FILE_PAGE_AUTO_CEILING
+
+
+def test_recommendation_never_contradicts_the_policy():
+    """Whatever the question recommends, the policy must not override it."""
+    for n in (0, 500, 2_000, 2_001, 4_000, 4_500, 4_501, 9_000, 50_000):
+        recommended = recommended_file_page_cap(n)
+        policy = auto_file_page_cap(n)
+        if policy is not None:
+            assert recommended == policy, n
+        elif recommended is not None:
+            assert recommended <= n, n
+
+
+def test_unset_config_applies_the_policy_to_a_huge_repo():
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(FILE_PAGE_AUTO_CEILING + 200)
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    assert len(sel.file_page_paths) == FILE_PAGE_AUTO_CEILING
+
+
+def test_unset_config_leaves_a_midsize_repo_whole():
+    """Just under the ceiling: every eligible file still gets a page."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(FILE_PAGE_AUTO_CEILING - 100)
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    assert len(sel.file_page_paths) == FILE_PAGE_AUTO_CEILING - 100
+
+
+def test_zero_refuses_the_policy():
+    """An explicit 0 means every eligible file, on a repo the policy would cap."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(FILE_PAGE_AUTO_CEILING + 200)
+    sel = select_pages(
+        _inputs(parsed, pagerank, betweenness, community, GenerationConfig(max_file_pages=0))
+    )
+    assert len(sel.file_page_paths) == FILE_PAGE_AUTO_CEILING + 200
+
+
+def test_explicit_cap_beats_the_policy_in_both_directions():
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(FILE_PAGE_AUTO_CEILING + 200)
+    tighter = select_pages(
+        _inputs(parsed, pagerank, betweenness, community, GenerationConfig(max_file_pages=100))
+    )
+    assert len(tighter.file_page_paths) == 100
+    looser = select_pages(
+        _inputs(
+            parsed,
+            pagerank,
+            betweenness,
+            community,
+            GenerationConfig(max_file_pages=FILE_PAGE_AUTO_CEILING + 100),
+        )
+    )
+    assert len(looser.file_page_paths) == FILE_PAGE_AUTO_CEILING + 100
+
+
+def test_test_symbols_hand_their_spotlight_slots_to_production():
+    """Tests outranking production must not shrink the production slice."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(20)
+    base = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+    for i in range(3):
+        path = f"aaa{i}/tests/test_thing.py"
+        fi = FakeFileInfo(path=path, is_test=True)
+        parsed.append(FakeParsedFile(file_info=fi, symbols=[FakeSymbol(name="helper")]))
+        pagerank[path] = 1.0
+
+    sel = select_pages(_inputs(parsed, pagerank, betweenness, community, GenerationConfig()))
+
+    assert set(base.symbol_spotlights) <= set(sel.symbol_spotlights)
+    assert not any(is_test_related_path(path) for path, _ in sel.symbol_spotlights)
+
+
+def test_count_documentable_files_matches_the_floor():
+    """The count a caller reports with is the count selection acts on."""
+    parsed, pagerank, betweenness, community = _build_synthetic_repo(20)
+    for extra in ("tests/test_thing.py", "pkg0/__init__.py"):
+        fi = FakeFileInfo(path=extra, is_test=is_test_related_path(extra))
+        parsed.append(FakeParsedFile(file_info=fi, symbols=[]))
+        pagerank[extra] = 1.0
+        betweenness[extra] = 0.0
+        community[extra] = 0
+    assert count_documentable_files(parsed) == 20
+
+
+def test_the_keep_count_honours_zero_all_and_the_small_repo_floor():
+    from repowise.core.generation.selection.selector import MIN_SPOTLIGHTS, _spotlight_keep
+
+    assert _spotlight_keep(500, 0.0) == 0
+    assert _spotlight_keep(500, 1.0) == 500
+    assert _spotlight_keep(500, 0.12) == 60
+    assert _spotlight_keep(30, 0.12) == MIN_SPOTLIGHTS
+    assert _spotlight_keep(4, 0.12) == 4
+
+
+def test_a_name_declared_twice_in_one_file_keeps_its_best_occurrence():
+    from repowise.core.generation.selection.selector import _first_per_target
+
+    ranked = [(3.0, ("a.py", "new")), (2.0, ("a.py", "run")), (1.0, ("a.py", "new"))]
+    assert _first_per_target(ranked) == [(3.0, ("a.py", "new")), (2.0, ("a.py", "run"))]
+
+
+def test_a_symbol_with_no_recorded_span_is_trivial():
+    """No line range reads as a zero-line body, so it needs heavy use."""
+    from repowise.core.generation.selection.scoring import spotlight_eligible
+
+    unranged = FakeSymbol(name="f", id="pkg/a.py::f", start_line=0, end_line=0)
+    assert not spotlight_eligible(unranged, SymbolUse(4, 4))
+    assert spotlight_eligible(unranged, SymbolUse(5, 5))

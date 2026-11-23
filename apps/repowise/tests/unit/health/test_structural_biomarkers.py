@@ -1,0 +1,197 @@
+"""Tests for Phase-3 structural / size biomarkers."""
+
+from __future__ import annotations
+
+from repowise.core.analysis.health.biomarkers import FileContext
+from repowise.core.analysis.health.biomarkers.large_method import LargeMethodDetector
+from repowise.core.analysis.health.biomarkers.primitive_obsession import (
+    PrimitiveObsessionDetector,
+)
+from repowise.core.analysis.health.biomarkers.repeated_nesting import RepeatedNestingDetector
+from repowise.core.analysis.health.complexity import FunctionComplexity, walk_file
+
+
+def _ctx(fns: list[FunctionComplexity]) -> FileContext:
+    return FileContext(
+        file_path="src/example.py",
+        language="python",
+        nloc=sum(f.nloc for f in fns),
+        has_test_file=False,
+        module=None,
+        all_functions=tuple(fns),
+        git_meta={},
+        dependents_count=0,
+        pagerank_score=0.0,
+    )
+
+
+# ---- repeated_nesting ----------------------------------------------------------
+
+
+def test_repeated_nesting_flags_several_nested_blocks():
+    fn = FunctionComplexity("rough", 1, 80, ccn=8, max_nesting=3, cognitive=15, nloc=50, bumps=4)
+    results = RepeatedNestingDetector().detect(_ctx([fn]))
+    assert len(results) == 1
+    assert results[0].details["bumps"] == 4
+
+
+def test_repeated_nesting_skips_flat_function():
+    fn = FunctionComplexity("flat", 1, 10, ccn=3, max_nesting=1, cognitive=2, nloc=8, bumps=0)
+    assert RepeatedNestingDetector().detect(_ctx([fn])) == []
+
+
+def test_repeated_nesting_requires_ccn_floor():
+    # Lots of bumps but very low CCN — could happen on synthetic inputs.
+    fn = FunctionComplexity("toy", 1, 20, ccn=2, max_nesting=2, cognitive=2, nloc=18, bumps=4)
+    assert RepeatedNestingDetector().detect(_ctx([fn])) == []
+
+
+# ---- large_method --------------------------------------------------------
+
+
+def test_large_method_severity_grades():
+    small = FunctionComplexity("small", 1, 50, ccn=3, max_nesting=1, cognitive=4, nloc=40)
+    big = FunctionComplexity("big", 1, 150, ccn=5, max_nesting=2, cognitive=10, nloc=130)
+    huge = FunctionComplexity("huge", 1, 300, ccn=10, max_nesting=3, cognitive=20, nloc=250)
+    d = LargeMethodDetector()
+    assert d.detect(_ctx([small])) == []
+    big_res = d.detect(_ctx([big]))
+    assert len(big_res) == 1
+    assert big_res[0].severity == "high"
+    huge_res = d.detect(_ctx([huge]))
+    assert huge_res[0].severity == "critical"
+
+
+# ---- primitive_obsession -------------------------------------------------
+
+
+# A filler function that lifts the enclosing file above the _MIN_FILE_NLOC floor
+# so primitive_obsession is evaluated (a wide signature in a tiny module is
+# idiomatic and suppressed — see test_primitive_obsession_skips_tiny_files).
+_FILLER = FunctionComplexity(
+    "filler", 1, 70, ccn=1, max_nesting=0, cognitive=0, nloc=70, param_count=0
+)
+
+
+def test_primitive_obsession_flags_wide_signature():
+    fn = FunctionComplexity(
+        "do_things", 1, 30, ccn=1, max_nesting=0, cognitive=0, nloc=24, param_count=7
+    )
+    out = PrimitiveObsessionDetector().detect(_ctx([fn, _FILLER]))
+    assert len(out) == 1
+    assert out[0].details["param_count"] == 7
+
+
+def test_primitive_obsession_finds_cpp_scalar_signature():
+    source = (
+        "int f(int a, int b, int c, int d, int e, int g, int h) {\n"
+        + "\n".join(f"    a += {i};" for i in range(61))
+        + "\n    return a;\n}\n"
+    )
+    walked = walk_file("a.cpp", "cpp", source.encode())
+    assert walked.file_nloc > 60
+    ctx = FileContext(
+        file_path="a.cpp", language="cpp", nloc=walked.file_nloc,
+        has_test_file=False, module=None, all_functions=tuple(walked.functions),
+    )
+    (finding,) = PrimitiveObsessionDetector().detect(ctx)
+    assert finding.function_name == "f"
+    assert finding.details == {
+        "param_count": 7, "typed_param_count": 7, "primitive_param_count": 7,
+        "bound_param_count": 0, "keyword_only_param_count": 0,
+    }
+
+
+def test_primitive_obsession_grace_for_constructors():
+    # 6 params on a regular fn fires; on a constructor it doesn't (grace = 2).
+    regular = FunctionComplexity(
+        "build", 1, 20, ccn=1, max_nesting=0, cognitive=0, nloc=14, param_count=6
+    )
+    ctor = FunctionComplexity(
+        "__init__", 1, 20, ccn=1, max_nesting=0, cognitive=0, nloc=14, param_count=6,
+        is_constructor=True,
+    )
+    d = PrimitiveObsessionDetector()
+    assert d.detect(_ctx([regular, _FILLER]))
+    assert d.detect(_ctx([ctor, _FILLER])) == []
+
+
+def test_primitive_obsession_ignores_small_signatures():
+    fn = FunctionComplexity(
+        "narrow", 1, 20, ccn=1, max_nesting=0, cognitive=0, nloc=14, param_count=3
+    )
+    assert PrimitiveObsessionDetector().detect(_ctx([fn, _FILLER])) == []
+
+
+def test_primitive_obsession_skips_tiny_files():
+    # A wide signature in a module below the file-NLOC floor is idiomatic
+    # (config/builder/forwarder), not a design smell — suppressed. (Phase-9
+    # failure-forensics: anti-predictive on the small-file size band.)
+    fn = FunctionComplexity(
+        "configure", 1, 12, ccn=1, max_nesting=0, cognitive=0, nloc=10, param_count=8
+    )
+    assert PrimitiveObsessionDetector().detect(_ctx([fn])) == []
+    # The same wide signature in a substantial module still fires.
+    assert PrimitiveObsessionDetector().detect(_ctx([fn, _FILLER]))
+
+
+def test_primitive_obsession_skips_fixed_signatures():
+    fn = FunctionComplexity(
+        "getRestHandlers", 1, 20, ccn=1, max_nesting=0, cognitive=0, nloc=14, param_count=9,
+        signature_fixed=True,
+    )
+    assert PrimitiveObsessionDetector().detect(_ctx([fn, _FILLER])) == []
+
+
+_ROLE_CONTROLLER = """@RestController
+class RoleController {
+  @DeleteMapping("/apps/{appId}/envs/{env}/clusters/{clusterName}/ns_roles/{roleType}")
+  public ResponseEntity<Void> removeClusterRoleFromUser(@PathVariable String appId,
+      @PathVariable String env, @PathVariable String clusterName, @PathVariable String roleType,
+      @RequestParam String user) {
+    roleService.remove(appId, env, clusterName, roleType, user);
+    return ResponseEntity.ok().build();
+  }
+
+  void removeInternal(String appId, String env, String clusterName, String roleType, String user) {
+    roleService.remove(appId, env, clusterName, roleType, user);
+  }
+
+  @GetMapping("/wide")
+  public void wide(@PathVariable String a, @PathVariable String b, @PathVariable String c,
+      @PathVariable String d, @PathVariable String e, @PathVariable String f,
+      String g, String h, String i, String j, String k, String l) {}
+}
+"""
+
+
+def test_primitive_obsession_counts_only_parameters_the_caller_chooses():
+    fns = walk_file("RoleController.java", "java", _ROLE_CONTROLLER.encode()).functions
+    out = {r.function_name: r for r in PrimitiveObsessionDetector().detect(_ctx([*fns, _FILLER]))}
+    # Four route segments and a query parameter: nothing left to group.
+    assert "removeClusterRoleFromUser" not in out
+    # The same five strings chosen by a caller still fire.
+    assert "removeInternal" in out
+    # Six bound and six free scalars: the free six still fire, and say so.
+    wide = out["wide"]
+    assert wide.details["bound_param_count"] == 6
+    assert "takes 12 parameters, 6 bound by the framework, 6 of 6 typed" in wide.reason
+
+
+def test_primitive_obsession_needs_mostly_primitive_params_when_typed():
+    def fn(typed: int, primitive: int) -> FunctionComplexity:
+        return FunctionComplexity(
+            "run", 1, 20, ccn=1, max_nesting=0, cognitive=0, nloc=14, param_count=6,
+            typed_param_count=typed, primitive_param_count=primitive,
+        )
+
+    d = PrimitiveObsessionDetector()
+    # Three of six is not a majority: rich types already group the values.
+    assert d.detect(_ctx([fn(6, 3), _FILLER])) == []
+    out = d.detect(_ctx([fn(6, 4), _FILLER]))
+    assert out and out[0].details["primitive_param_count"] == 4
+    assert "4 of 6 typed ones scalars or strings" in out[0].reason
+    # Untyped parameters leave the majority: one typed int of six still fires.
+    assert d.detect(_ctx([fn(1, 1), _FILLER]))
+    # An untyped signature has nothing to count and is judged on size alone.
+    assert d.detect(_ctx([fn(0, 0), _FILLER]))

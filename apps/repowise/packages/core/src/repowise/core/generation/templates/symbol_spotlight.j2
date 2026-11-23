@@ -1,0 +1,76 @@
+{#- Deterministic (no-LLM) symbol spotlight.
+
+    "Where it is used" reads only what the resolver resolved to this symbol:
+    calls, heritage and dispatch, the uses selection ranked it by. Production
+    uses are listed and calls from tests are counted,
+    since a hub's list is otherwise two dozen test helpers. With nothing
+    resolved the section says so in one line: the files importing the defining
+    module are on the file page, and listing them here called twenty-five
+    importers of ``parser.py`` the users of a constant they never touch.
+
+    The list stops at 25, the same bound ``file_page.j2`` puts on "Used by",
+    while the summary line keeps the true total.
+
+    No source copy: an agent reads the body with ``get_symbol`` or from the
+    file, and a copy here went stale with every edit to it. No question block
+    or footer either: neither said anything this page's identifiers do not.
+
+    The Overview's no-docstring sentence stays even though it reads like a
+    placeholder. It is what ``_extract_summary`` reads back as the page
+    summary, and it names the symbol, its kind and its file.
+-#}
+{#- The symbol's own name, not the synthetic dotted path built by joining
+    every directory above it. The file it lives in is on the line below, which
+    is where a reader looks for it and is the form ``get_symbol`` takes.
+-#}
+# {{ ctx.symbol_name }}
+{#- Kind and file lead only beside a docstring: without one the Overview
+    sentence names both, and the line would say it twice. A complexity of 1 is
+    every constant and empty constructor, so it is not worth a field. -#}
+{%- set head = [] -%}
+{%- if ctx.docstring -%}
+{%- set _ = head.append("**" ~ labels.kind ~ ":** " ~ ctx.kind ~ ((" (" ~ labels.async_marker ~ ")") if ctx.is_async else "")) -%}
+{%- set _ = head.append("**" ~ labels.defined_in ~ ":** `" ~ ctx.file_path ~ "`") -%}
+{%- endif -%}
+{%- if ctx.complexity_estimate and ctx.complexity_estimate > 1 -%}
+{%- set _ = head.append("**" ~ labels.estimated_complexity ~ ":** " ~ ctx.complexity_estimate) -%}
+{%- endif %}
+{%- if head %}
+
+{{ head | join(" | ") }}
+{%- endif %}
+{%- if ctx.signature %}
+
+```
+{{ ctx.signature }}
+```
+{%- endif %}
+
+## {{ labels.overview }}
+
+{% if ctx.docstring %}{{ ctx.docstring | as_markdown }}{% else %}{{ labels.symbol_overview.format(symbol=ctx.symbol_name, article=labels.article_an if ctx.kind and ctx.kind[0] in "aeiou" else labels.article_a, kind=ctx.kind or labels.symbol_kind_fallback, path=ctx.file_path) }}{% endif %}
+{%- if ctx.decorators %}
+
+## {{ labels.decorators }}
+{% for d in ctx.decorators %}
+- `{{ d }}`
+{%- endfor %}
+{%- endif %}
+
+## {{ labels.where_used }}
+{% set tests = ctx.test_call_sites -%}
+{%- set calls = ctx.call_sites | length %}
+{% if calls -%}
+{{ labels.call_sites_summary.format(count=calls, call_word=labels.call_site_plural if calls != 1 else labels.call_site_singular) }}{% if tests %} {{ labels.call_sites_tests.format(count=tests) }}{% endif %}
+{% for site in ctx.call_sites[:25] %}
+- {% if site.caller == "__module__" %}{{ labels.module_scope }}{% else %}`{{ site.caller }}`{% endif %}{% if site.caller_file %} {{ labels.in_file.format(path=site.caller_file) }}{% endif %}
+{%- endfor %}
+{%- if calls > 25 %}
+
+_{{ labels.and_more.format(count=calls - 25) }}_
+{%- endif %}
+{%- elif tests -%}
+{{ labels.only_test_calls.format(count=tests, call_word=labels.call_site_plural if tests != 1 else labels.call_site_singular) }}
+{%- else -%}
+{{ labels.no_call_sites }}
+{%- endif %}

@@ -1,0 +1,241 @@
+/**
+ * Relation edge routing. Pure, browser-free and unit-testable.
+ *
+ * Phase 2 drew straight perimeter-to-perimeter lines that ran across whatever
+ * boxes happened to sit between the endpoints. This routes each relation as a
+ * directed curve that *leaves a box from the side facing its partner* and bows
+ * outward (control points projected along the side normal) so it bends around
+ * the boxes in between. When several edges share a side they fan out into
+ * distinct slots, so a dense level reads as separate connectors rather than one
+ * overdrawn smear. The renderer (`nodes.ts`) only strokes the resulting beziers;
+ * all of the geometry decisions live here where they can be tested headlessly.
+ */
+
+import type { Rect } from "./camera";
+import {
+  EDGE_CONTROL_PROJECTION,
+  EDGE_MAX_SLOTS,
+  EDGE_SLOT_GAP_FRACTION,
+} from "./constants";
+
+export type Side = "top" | "right" | "bottom" | "left";
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** A cubic-bezier route plus the approach angle for the arrowhead. */
+export interface EdgeRoute {
+  start: Point;
+  c1: Point;
+  c2: Point;
+  end: Point;
+  endAngle: number;
+}
+
+/** One relation to route; `id` is any stable key for determinism. */
+export interface EdgeInput {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  coupling: string;
+  edgeCount: number;
+  /** The relation's verb (`ZoomRelation.label`), carried through for its arrow label. */
+  label?: string;
+}
+
+export interface RoutedEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  coupling: string;
+  edgeCount: number;
+  label?: string;
+  route: EdgeRoute;
+}
+
+export interface RouteOptions {
+  projection?: number;
+  slotGap?: number;
+  maxSlots?: number;
+}
+
+const NORMAL: Record<Side, Point> = {
+  top: { x: 0, y: -1 },
+  right: { x: 1, y: 0 },
+  bottom: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+};
+
+function centre(r: Rect): Point {
+  return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+}
+
+/**
+ * The side of `r` that faces point `p`: the side whose outward normal best
+ * aligns with the direction to `p`, normalised by the box half-extents so a wide
+ * box still picks left/right correctly rather than always top/bottom.
+ */
+export function facingSide(r: Rect, p: Point): Side {
+  const c = centre(r);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  const hx = r.w / 2 || 1;
+  const hy = r.h / 2 || 1;
+  if (Math.abs(dx) / hx >= Math.abs(dy) / hy) return dx >= 0 ? "right" : "left";
+  return dy >= 0 ? "bottom" : "top";
+}
+
+/** Position along a box side, fanned into one of `count` evenly spaced slots. */
+export function slotAnchor(
+  r: Rect,
+  side: Side,
+  slot: number,
+  count: number,
+  gapFraction: number,
+): Point {
+  const m = Math.max(1, count);
+  const idx = slot - (m - 1) / 2; // centred: ..., -1, 0, 1, ...
+  const horizontal = side === "top" || side === "bottom";
+  const span = horizontal ? r.w : r.h;
+  // Clamp the gap so the full fan never spills past the side.
+  const gap = Math.min(gapFraction * span, span / (m + 1));
+  if (horizontal) {
+    return { x: r.x + r.w / 2 + idx * gap, y: side === "top" ? r.y : r.y + r.h };
+  }
+  return { x: side === "left" ? r.x : r.x + r.w, y: r.y + r.h / 2 + idx * gap };
+}
+
+/**
+ * Cubic control points projected outward from each anchor along its side normal,
+ * by a fraction of the endpoint gap. This is what bows the curve away from the
+ * boxes between the endpoints instead of cutting straight through them.
+ */
+export function controlPoints(
+  start: Point,
+  startSide: Side,
+  end: Point,
+  endSide: Side,
+  projection: number,
+): [Point, Point] {
+  // Floor the projection so coincident endpoints still get a non-degenerate
+  // (if tiny) curve rather than a zero-length bezier that renders as a dot.
+  const dist = Math.max(0.5, Math.hypot(end.x - start.x, end.y - start.y) * projection);
+  const n1 = NORMAL[startSide];
+  const n2 = NORMAL[endSide];
+  return [
+    { x: start.x + n1.x * dist, y: start.y + n1.y * dist },
+    { x: end.x + n2.x * dist, y: end.y + n2.y * dist },
+  ];
+}
+
+/** Tangent coordinate along a side, used to order a fan so its edges don't cross. */
+function tangentKey(side: Side, other: Point): number {
+  return side === "top" || side === "bottom" ? other.x : other.y;
+}
+
+interface Pending {
+  e: EdgeInput;
+  fromRect: Rect;
+  toRect: Rect;
+  fromSide: Side;
+  toSide: Side;
+  slotS: number;
+  cntS: number;
+  slotT: number;
+  cntT: number;
+}
+
+function bucketPush(buckets: Map<string, Pending[]>, key: string, p: Pending): void {
+  const list = buckets.get(key);
+  if (list) list.push(p);
+  else buckets.set(key, [p]);
+}
+
+/**
+ * Resolve every edge to a concrete bezier route: choose facing sides, fan edges
+ * that share a side into slots (ordered so the fan does not self-cross), and
+ * project control points. Edges whose endpoints are missing from `rects` are
+ * dropped. Pure and deterministic.
+ */
+export function routeEdges(
+  edges: readonly EdgeInput[],
+  rects: Map<string, Rect>,
+  opts: RouteOptions = {},
+): RoutedEdge[] {
+  const projection = opts.projection ?? EDGE_CONTROL_PROJECTION;
+  const slotGap = opts.slotGap ?? EDGE_SLOT_GAP_FRACTION;
+  const maxSlots = opts.maxSlots ?? EDGE_MAX_SLOTS;
+
+  const pending: Pending[] = [];
+  const buckets = new Map<string, Pending[]>();
+  for (const e of edges) {
+    const fromRect = rects.get(e.sourceId);
+    const toRect = rects.get(e.targetId);
+    if (!fromRect || !toRect) continue;
+    const fromSide = facingSide(fromRect, centre(toRect));
+    const toSide = facingSide(toRect, centre(fromRect));
+    const p: Pending = {
+      e,
+      fromRect,
+      toRect,
+      fromSide,
+      toSide,
+      slotS: 0,
+      cntS: 1,
+      slotT: 0,
+      cntT: 1,
+    };
+    pending.push(p);
+    bucketPush(buckets, `${e.sourceId}\u0000${fromSide}\u0000S`, p);
+    bucketPush(buckets, `${e.targetId}\u0000${toSide}\u0000T`, p);
+  }
+
+  for (const [key, list] of buckets) {
+    const isSource = key.endsWith("\u0000S");
+    list.sort((a, b) => {
+      const ka = isSource
+        ? tangentKey(a.fromSide, centre(a.toRect))
+        : tangentKey(a.toSide, centre(a.fromRect));
+      const kb = isSource
+        ? tangentKey(b.fromSide, centre(b.toRect))
+        : tangentKey(b.toSide, centre(b.fromRect));
+      return ka - kb || (a.e.id < b.e.id ? -1 : 1);
+    });
+    // Spread the (tangent-ordered) edges across at most `maxSlots` anchors
+    // proportionally, so a side with more than `maxSlots` edges groups adjacent
+    // ones onto a shared slot monotonically rather than aliasing distant edges
+    // onto the same anchor (which would make their lines cross).
+    const n = list.length;
+    const count = Math.min(n, maxSlots);
+    list.forEach((p, i) => {
+      const slot = count <= 1 || n <= 1 ? 0 : Math.round((i * (count - 1)) / (n - 1));
+      if (isSource) {
+        p.slotS = slot;
+        p.cntS = count;
+      } else {
+        p.slotT = slot;
+        p.cntT = count;
+      }
+    });
+  }
+
+  const out: RoutedEdge[] = [];
+  for (const p of pending) {
+    const start = slotAnchor(p.fromRect, p.fromSide, p.slotS, p.cntS, slotGap);
+    const end = slotAnchor(p.toRect, p.toSide, p.slotT, p.cntT, slotGap);
+    const [c1, c2] = controlPoints(start, p.fromSide, end, p.toSide, projection);
+    const endAngle = Math.atan2(end.y - c2.y, end.x - c2.x);
+    out.push({
+      id: p.e.id,
+      sourceId: p.e.sourceId,
+      targetId: p.e.targetId,
+      coupling: p.e.coupling,
+      edgeCount: p.e.edgeCount,
+      ...(p.e.label !== undefined ? { label: p.e.label } : {}),
+      route: { start, c1, c2, end, endAngle },
+    });
+  }
+  return out;
+}

@@ -1,0 +1,375 @@
+"""CRUD operations for dead-code findings (repowise persistence layer)."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+from typing import Any
+
+from sqlalchemy import delete, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from repowise.core.analysis.dead_code.deletion_gate import effective_safe_to_delete
+from repowise.core.analysis.dead_code.models import DeadCodeFindingData, DeadCodeKind
+from repowise.core.analysis.dead_code.risk_factors import path_risk_factors
+from repowise.core.analysis.dead_code.serving import (
+    CrossRepoLookup,
+    is_safe,
+    serve_findings,
+    tier_of,
+)
+from repowise.core.analysis.finding_registry import excluded_types
+
+from ...models import DeadCodeFinding, _new_uuid
+from .._shared import _BATCH_SIZE, _batch_delete_in, _finding_file_path
+from ..repository import stamp_analysis_ran
+from .shown import gated_counts, shown, ungated
+
+
+def _dead_code_row_kwargs(finding: Any, repository_id: str) -> dict:
+    """Normalize a DeadCodeFindingData-like object or plain dict into kwargs
+    for the ``DeadCodeFinding`` ORM row."""
+    if hasattr(finding, "kind"):
+        data = {
+            "kind": str(finding.kind.value)
+            if hasattr(finding.kind, "value")
+            else str(finding.kind),
+            "file_path": finding.file_path,
+            "symbol_name": finding.symbol_name,
+            "symbol_kind": finding.symbol_kind,
+            "confidence": finding.confidence,
+            "reason": finding.reason,
+            "last_commit_at": finding.last_commit_at,
+            "commit_count_90d": finding.commit_count_90d,
+            "lines": finding.lines,
+            "start_line": finding.start_line,
+            "end_line": finding.end_line,
+            "evidence_json": json.dumps(finding.evidence if hasattr(finding, "evidence") else []),
+            "safe_to_delete": finding.safe_to_delete,
+            "primary_owner": finding.primary_owner,
+            "age_days": finding.age_days,
+        }
+    else:
+        data = dict(finding)
+        if "evidence" in data:
+            data["evidence_json"] = json.dumps(data.pop("evidence"))
+
+    return {
+        "id": _new_uuid(),
+        "repository_id": repository_id,
+        **{
+            k: v
+            for k, v in data.items()
+            if k not in ("id", "repository_id") and hasattr(DeadCodeFinding, k)
+        },
+    }
+
+
+def finding_data_from_row(row: DeadCodeFinding) -> DeadCodeFindingData:
+    """The analyzer's finding for a stored row: the inverse of ``_dead_code_row_kwargs``.
+
+    Risk factors are not stored, so they are re-derived from the path, and
+    deletion-readiness is re-derived the way every read surface does it.
+    """
+    return DeadCodeFindingData(
+        kind=DeadCodeKind(row.kind),
+        file_path=row.file_path,
+        symbol_name=row.symbol_name,
+        symbol_kind=row.symbol_kind,
+        confidence=row.confidence,
+        reason=row.reason,
+        last_commit_at=row.last_commit_at,
+        commit_count_90d=row.commit_count_90d,
+        lines=row.lines,
+        evidence=json.loads(row.evidence_json or "[]"),
+        safe_to_delete=effective_safe_to_delete(
+            row.confidence, row.file_path, row.safe_to_delete, row.kind
+        ),
+        primary_owner=row.primary_owner,
+        age_days=row.age_days,
+        risk_factors=list(path_risk_factors(row.file_path)),
+        start_line=row.start_line,
+        end_line=row.end_line,
+    )
+
+
+async def _lines_column_rejects_null(session: AsyncSession) -> bool:
+    """True for a SQLite store created before ``lines`` became nullable.
+
+    Local SQLite stores never run Alembic and the schema reconciler is
+    additive-only, so such a store keeps ``lines NOT NULL``. Inserting an
+    unknown (NULL) count there would fail the whole findings write.
+    """
+    bind = session.get_bind()
+    if bind.dialect.name != "sqlite":
+        return False
+    rows = await session.execute(text("PRAGMA table_info(dead_code_findings)"))
+    return any(row[1] == "lines" and row[3] for row in rows)
+
+
+def _new_rows(findings: list[Any], repository_id: str, *, null_lines_as_zero: bool) -> list:
+    rows = []
+    for finding in findings:
+        kwargs = _dead_code_row_kwargs(finding, repository_id)
+        # Deliberate shortcut: a legacy NOT NULL store can't hold "unknown",
+        # so an unreadable file's count is stored as 0 there rather than the
+        # write failing. Ceiling: that store shows 0 lines for such files
+        # until its table is rebuilt (a fresh store gets the nullable column).
+        if null_lines_as_zero and kwargs.get("lines") is None:
+            kwargs["lines"] = 0
+        rows.append(DeadCodeFinding(**kwargs))
+    return rows
+
+
+async def save_dead_code_findings(
+    session: AsyncSession,
+    repository_id: str,
+    findings: list[dict],
+) -> None:
+    """Persist dead code findings, replacing any existing open findings for the repo."""
+    await session.execute(
+        delete(DeadCodeFinding).where(
+            DeadCodeFinding.repository_id == repository_id,
+            DeadCodeFinding.status == "open",
+        )
+    )
+
+    null_lines_as_zero = await _lines_column_rejects_null(session)
+    for i in range(0, len(findings), _BATCH_SIZE):
+        batch = findings[i : i + _BATCH_SIZE]
+        session.add_all(_new_rows(batch, repository_id, null_lines_as_zero=null_lines_as_zero))
+        await session.flush()
+    await stamp_analysis_ran(session, repository_id, "dead_code")
+
+
+def _finding_identity(finding: Any) -> tuple:
+    """The (file, kind, symbol) triple that makes two findings the same finding.
+
+    Compared against ``DeadCodeFinding`` rows, whose ``kind`` column holds the
+    enum's *value*. Both shapes reach here: the dataclass (workspace path) and
+    ``dataclasses.asdict`` output (CLI path), and ``asdict`` leaves the
+    ``DeadCodeKind`` member intact rather than converting it. ``DeadCodeKind``
+    is a ``StrEnum``, so ``str()`` happens to give the value today; unwrapping
+    ``.value`` states the requirement instead of inheriting it from the mixin.
+    """
+    kind = finding.kind if hasattr(finding, "kind") else finding.get("kind", "")
+    symbol = finding.symbol_name if hasattr(finding, "kind") else finding.get("symbol_name")
+    return (_finding_file_path(finding), str(getattr(kind, "value", kind)), symbol)
+
+
+async def replace_dead_code_findings(
+    session: AsyncSession,
+    repository_id: str,
+    findings: list[Any],
+    *,
+    scope: frozenset[str] | set[str] | None = None,
+) -> None:
+    """Replace open dead-code findings, for *scope* or for the whole repository.
+
+    The incremental update path used to replace findings only for the files
+    that changed, which meant an unchanged file kept whatever verdict the last
+    full index gave it. Dead code is a cross-file property — removing the last
+    import of a module makes *that module* dead, and it is not in the change
+    set — so a change-scoped write can never express the result of the
+    analysis that produced it. The analyzer computes the repo-wide truth
+    either way; this persists it rather than discarding the inconvenient part.
+
+    *scope* is the set of file paths the caller can actually speak for, and
+    ``None`` means all of them. It is not a performance knob and not a
+    threshold: dead-code confidence is scored from per-file git metadata, and
+    a file the caller has no metadata for scores 0.7 with
+    ``safe_to_delete=True`` however actively it is committed to. Writing that
+    would be worse than writing nothing, so a caller holding partial metadata
+    passes the part it has and every other file keeps its stored verdict.
+    Rows outside *scope* are neither deleted nor inserted.
+
+    Findings the user has acted on are not resurrected. The delete is scoped
+    to ``status == "open"``, so a dismissed or resolved row survives it, and
+    any incoming finding matching such a row by (file, kind, symbol) is
+    dropped rather than re-inserted as a fresh ``open`` duplicate. Without
+    that second half a repo-wide write would re-open every dismissal on every
+    update, which the old change-scoped write only did for changed files.
+
+    There is no unique constraint on that triple (and ``symbol_name`` is
+    nullable, so one would not bite without a functional index), hence
+    delete-then-insert with the surviving keys filtered out in Python rather
+    than an ``ON CONFLICT`` upsert.
+    """
+    acted_on = await _replace_open_rows(session, repository_id, scope)
+
+    writable = [
+        f
+        for f in findings
+        if (scope is None or _finding_file_path(f) in scope)
+        and _finding_identity(f) not in acted_on
+    ]
+    null_lines_as_zero = await _lines_column_rejects_null(session)
+    for i in range(0, len(writable), _BATCH_SIZE):
+        batch = writable[i : i + _BATCH_SIZE]
+        session.add_all(_new_rows(batch, repository_id, null_lines_as_zero=null_lines_as_zero))
+        await session.flush()
+    await stamp_analysis_ran(session, repository_id, "dead_code")
+
+
+async def _replace_open_rows(
+    session: AsyncSession, repository_id: str, scope: frozenset[str] | set[str] | None
+) -> set[tuple]:
+    """Delete the open rows in *scope*; return the (file, kind, symbol) of its acted-on rows.
+
+    Acted-on rows are few, so they are read repo-wide and scoped here.
+    """
+    repo = DeadCodeFinding.repository_id == repository_id
+    acted = await session.execute(
+        select(DeadCodeFinding.file_path, DeadCodeFinding.kind, DeadCodeFinding.symbol_name).where(
+            repo, DeadCodeFinding.status != "open"
+        )
+    )
+    acted_on = {tuple(r) for r in acted if scope is None or r[0] in scope}
+    is_open = DeadCodeFinding.status == "open"
+    if scope is None:
+        await session.execute(delete(DeadCodeFinding).where(repo, is_open))
+    else:
+        await _batch_delete_in(
+            session, DeadCodeFinding, DeadCodeFinding.file_path, scope, prefilter=(repo, is_open)
+        )
+    await session.flush()
+    return acted_on
+
+
+async def get_dead_code_findings(
+    session: AsyncSession,
+    repository_id: str,
+    *,
+    kind: str | None = None,
+    min_confidence: float = 0.0,
+    status: str = "open",
+    safe_to_delete: bool | None = None,
+    limit: int | None = None,
+    include_withheld: bool = False,
+    include_unverified: bool = False,
+    file_paths: Sequence[str] | None = None,
+) -> list[DeadCodeFinding]:
+    """Return dead code findings filtered by kind, confidence, and status.
+
+    Kinds the finding-type registry withholds are left out unless
+    ``include_withheld``; naming a provisional ``kind`` is an explicit request.
+    Files of a language the registry gates for dead code are left out unless
+    ``include_unverified``, which also opts into every provisional kind.
+
+    ``safe_to_delete`` and ``limit`` exist so a caller that wants a short
+    preview does not have to load every open finding in the repository and
+    then throw most of them away in Python. Overview does exactly that for a
+    five-row list. ``file_paths`` scopes to a set of files (an empty sequence
+    matches nothing), on the repository/path index.
+    """
+    q = select(DeadCodeFinding).where(
+        DeadCodeFinding.repository_id == repository_id,
+        DeadCodeFinding.status == status,
+        DeadCodeFinding.confidence >= min_confidence,
+    )
+    if kind is not None:
+        q = q.where(DeadCodeFinding.kind == kind)
+    if not include_withheld:
+        q = q.where(
+            shown(
+                "dead_code",
+                DeadCodeFinding.kind,
+                DeadCodeFinding.file_path,
+                requested=[kind] if kind else (),
+                include_unverified=include_unverified,
+            )
+        )
+    if safe_to_delete is not None:
+        q = q.where(DeadCodeFinding.safe_to_delete.is_(safe_to_delete))
+    if file_paths is not None:
+        q = q.where(DeadCodeFinding.file_path.in_(list(file_paths)))
+    q = q.order_by(DeadCodeFinding.confidence.desc())
+    if limit is not None:
+        q = q.limit(limit)
+    result = await session.execute(q)
+    return list(result.scalars().all())
+
+
+async def update_dead_code_status(
+    session: AsyncSession,
+    finding_id: str,
+    status: str,
+    note: str | None = None,
+) -> DeadCodeFinding | None:
+    """Update the status (and optional note) of a dead code finding."""
+    finding = await session.get(DeadCodeFinding, finding_id)
+    if finding is None:
+        return None
+    finding.status = status
+    if note is not None:
+        finding.note = note
+    await session.flush()
+    return finding
+
+
+async def get_dead_code_summary(
+    session: AsyncSession,
+    repository_id: str,
+    *,
+    include_unverified: bool = False,
+    lookup: CrossRepoLookup | None = None,
+    alias: str | None = None,
+) -> dict:
+    """Return aggregate dead code statistics over the findings a surface shows.
+
+    ``gated`` counts the open findings a language gate held back, by language.
+    In a workspace, *lookup* and *alias* apply the cross-repo cut first, so the
+    counts match the list (:func:`serve_findings`).
+    """
+    scope = (
+        DeadCodeFinding.repository_id == repository_id,
+        DeadCodeFinding.status == "open",
+        DeadCodeFinding.kind.not_in(excluded_types(include_provisional=include_unverified)),
+    )
+    result = await session.execute(
+        select(DeadCodeFinding).where(
+            *scope,
+            ungated(
+                "dead_code",
+                DeadCodeFinding.file_path,
+                DeadCodeFinding.kind,
+                include_unverified=include_unverified,
+            ),
+        )
+    )
+    findings = serve_findings(list(result.scalars().all()), lookup, alias)
+    gated = await gated_counts(
+        session,
+        "dead_code",
+        DeadCodeFinding,
+        *scope,
+        kind_col=DeadCodeFinding.kind,
+        include_unverified=include_unverified,
+    )
+
+    summary: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    total_lines = 0
+    by_kind: dict[str, int] = {}
+
+    for f in findings:
+        summary[tier_of(f.confidence)] += 1
+        total_lines += f.lines or 0
+        by_kind[f.kind] = by_kind.get(f.kind, 0) + 1
+
+    # Re-derive effective safety from confidence + path risk factors rather
+    # than trusting the persisted boolean alone, so findings written before the
+    # risk-factor logic existed (or in a config/bootstrap/database/environment
+    # file the allowlist missed) are not counted as deletion-ready.
+    # Totals sum the known counts; an unknown (NULL) count adds nothing.
+    deletable = [f for f in findings if is_safe(f)]
+    deletable_lines = sum(f.lines or 0 for f in deletable)
+
+    return {
+        "total_findings": len(findings),
+        "confidence_summary": summary,
+        "deletable_lines": deletable_lines,
+        "safe_to_delete_count": len(deletable),
+        "total_lines": total_lines,
+        "by_kind": by_kind,
+        "gated": gated,
+    }
