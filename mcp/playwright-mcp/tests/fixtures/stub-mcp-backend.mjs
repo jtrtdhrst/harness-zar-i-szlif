@@ -130,6 +130,11 @@ function handleGet(req, res) {
 }
 
 const server = createServer((req, res) => {
+  // Real Playwright streamable HTTP returned alternating empty 400s for
+  // upstream Connection: close. Enforce the transport contract in regression.
+  if (process.env.STUB_REQUIRE_KEEPALIVE === "1" && req.headers.connection !== "keep-alive") {
+    return json(res, 400, { error: "upstream must keep connection alive" });
+  }
   const path = new URL(req.url ?? "/", "http://x").pathname;
   if (path !== "/mcp") return json(res, 404, { error: "not found" });
   if (req.method === "POST") {

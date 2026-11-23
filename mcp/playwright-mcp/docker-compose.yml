@@ -1,5 +1,6 @@
 services:
   playwright-mcp:
+    init: true
     build: .
     image: local/playwright-mcp:0.0.83
     restart: unless-stopped

@@ -50,3 +50,21 @@ suite can drive a stub backend. Do not change it in production.
 ```bash
 npm test           # lifecycle regression suite (stub backend, no Chromium)
 ```
+
+
+## Production transport + browser E2E (2026-11-23)
+
+- The MCP dependency is pinned by package-lock.json; npm ci and the matching
+  playwright-core browser install run in the Docker build, not in an ad-hoc
+  running container. Browser and MCP smokes fail the build on a missing binary.
+- The backend launches with --isolated so separate MCP clients do not contend
+  for the same persisted Chrome-for-Testing browser profile.
+- The proxy deliberately forwards Connection: keep-alive upstream, even when
+  its external client disconnects after each POST or holds an SSE stream.
+  Playwright returned alternating HTTP 400/200 for upstream Connection: close.
+- The service needs a PID 1 init/reaper (docker-compose.yml uses init: true)
+  to avoid orphan Chromium processes exhausting the PIDs limit.
+- Release verification must use initialize, tools/list, browser_navigate,
+  browser_snapshot and browser_tabs in the deployed image, then repeat from
+  each permitted agent's Hermes MCP identity. HTTP 200 alone, a container
+  healthcheck or a direct backend test is insufficient.
