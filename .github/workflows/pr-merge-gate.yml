@@ -27,7 +27,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check HEAD^1 HEAD
+          # Vendor source is byte-pinned to a reviewed upstream Git tree.
+          # Do NOT rewrite the vendor's native whitespace or silently skip validation:
+          # validate its complete immutable source tree, then lint all authored paths.
+          if git diff --name-only HEAD^1 HEAD -- apps/repowise | grep -q .; then
+            python3 -m unittest discover -s scripts -p test_repowise_app_source.py -v
+          fi
+          git diff --check HEAD^1 HEAD -- . ':(exclude)apps/repowise/**'
           while IFS= read -r -d '' file; do
             [[ -f "$file" ]] || continue
             case "$file" in
@@ -35,4 +41,4 @@ jobs:
               *.sh) bash -n "$file" ;;
               *.mjs|*.cjs) node --check "$file" ;;
             esac
-          done < <(git diff --name-only -z --diff-filter=ACMR HEAD^1 HEAD)
+          done < <(git diff --name-only -z --diff-filter=ACMR HEAD^1 HEAD -- . ':(exclude)apps/repowise/**')
