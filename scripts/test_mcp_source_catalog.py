@@ -9,8 +9,8 @@ class SourceLayoutTests(unittest.TestCase):
         cls.rows=json.loads((ROOT/"ops/coolify-service-registry.json").read_text())["resources"]
     def test_all_38_distinct_live_coolify_resources(self):
         self.assertEqual(len(self.rows),38)
-        self.assertEqual(len({x["uuid"] for x in self.rows}),36)
-        self.assertEqual(len({x["name"] for x in self.rows}),36)
+        self.assertEqual(len({x["uuid"] for x in self.rows}),38)
+        self.assertEqual(len({x["name"] for x in self.rows}),38)
         self.assertEqual(sum(x["type"]=="application" for x in self.rows),13)
         self.assertEqual(sum(x["type"]=="service" for x in self.rows),25)
     def test_source_owner_is_real_not_a_dummy_directory(self):
