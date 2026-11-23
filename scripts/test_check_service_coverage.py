@@ -71,6 +71,50 @@ class ServiceCoverageTests(unittest.TestCase):
                 check(root, config)
 
 
+    def test_rejects_unclassified_nested_mcp_directory(self):
+        temp, root, config = self.fixture({"mode": "manual_only", "reason": "manual gate"})
+        with temp:
+            (root / "mcp" / "brand-new-mcp").mkdir(parents=True)
+            data = json.loads(config.read_text())
+            data["entries"]["mcp"] = {"mode": "manual_only", "reason": "group"}
+            config.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "root coverage mismatch"):
+                check(root, config)
+
+    def test_nested_mcp_workflow_must_keep_exact_pr_source_path_filter(self):
+        workflow = (
+            "name: nested service test\\non:\\n  pull_request:\\n    paths:\\n"
+            "      - 'mcp/coolify-mcp/**'\\n"
+            "      - '.github/workflows/test.yml'\\n"
+        )
+        temp, root, config = self.fixture(
+            {"mode": "manual_only", "reason": "manual gate"}, workflow
+        )
+        with temp:
+            (root / "mcp" / "coolify-mcp").mkdir(parents=True)
+            data = json.loads(config.read_text())
+            data["entries"]["mcp"] = {"mode": "manual_only", "reason": "group"}
+            data["entries"]["mcp/coolify-mcp"] = {
+                "mode": "workflow",
+                "workflows": [".github/workflows/test.yml"],
+            }
+            config.write_text(json.dumps(data))
+            self.assertEqual(check(root, config), (5, 1))
+            ci = root / ".github/workflows/test.yml"
+            ci.write_text(workflow.replace("      - 'mcp/coolify-mcp/**'\\n", ""))
+            with self.assertRaisesRegex(ValueError, "does not path-filter"):
+                check(root, config)
+
+    def test_rejects_unclassified_nested_worker_directory(self):
+        temp, root, config = self.fixture({"mode": "manual_only", "reason": "manual gate"})
+        with temp:
+            (root / "workers" / "new-worker").mkdir(parents=True)
+            data = json.loads(config.read_text())
+            data["entries"]["workers"] = {"mode": "manual_only", "reason": "group"}
+            config.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "root coverage mismatch"):
+                check(root, config)
+
     def test_required_test_step_rejects_missing_or_bypassed_tests(self):
         workflow = (
             "name: test\non:\n  pull_request:\njobs:\n  guard:\n"
