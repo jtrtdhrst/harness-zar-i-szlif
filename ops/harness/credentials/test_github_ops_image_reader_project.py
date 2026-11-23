@@ -22,8 +22,8 @@ class ScopeTests(unittest.TestCase):
         self.valid = {
             "role": m.ROLE, "app_id": m.APP_ID,
             "installation_id": m.INSTALLATION_ID,
-            "repositories": ["jtrtdhrst/harness-zar-i-szlif"],
-            "permissions": {"contents": "read", "metadata": "read"},
+            "repositories": ["jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"],
+            "permissions": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
             "token": "t" * 50,
             "expires_at": (self.now + datetime.timedelta(minutes=35)).isoformat(),
         }
@@ -34,13 +34,15 @@ class ScopeTests(unittest.TestCase):
     def test_extra_repo_write_scope_and_token_role_are_denied(self):
         changes = [
             {"role": "github-ops-reader"},
+            {"role": "github-ops-reader-harness"},
             {"role": "github-ops-writer"},
             {"app_id": m.APP_ID + 1},
             {"installation_id": m.INSTALLATION_ID + 1},
             {"repositories": ["jtrtdhrst/zar-i-szlif"]},
-            {"repositories": ["jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"]},
-            {"permissions": {"contents": "write", "metadata": "read"}},
-            {"permissions": {"contents": "read", "metadata": "read", "actions": "read"}},
+            {"repositories": ["jtrtdhrst/harness-zar-i-szlif"]},
+            {"repositories": ["jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif", "another/repo"]},
+            {"permissions": {"actions": "read", "administration": "read", "contents": "write", "deployments": "read", "metadata": "read"}},
+            {"permissions": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read", "issues": "read"}},
             {"token": "wrong token value"},
             {"expires_at": (self.now + datetime.timedelta(minutes=9)).isoformat()},
             {"expires_at": (self.now + datetime.timedelta(minutes=61)).isoformat()},
@@ -50,7 +52,9 @@ class ScopeTests(unittest.TestCase):
                 m.validate_grant({**self.valid, **change}, self.now)
 
     def test_unknown_and_duplicate_repo_are_denied(self):
-        for repos in ([], ["jtrtdhrst/harness-zar-i-szlif"] * 2, "jtrtdhrst/harness-zar-i-szlif"):
+        for repos in ([], ["jtrtdhrst/harness-zar-i-szlif"] * 2,
+                      ["jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/harness-zar-i-szlif"],
+                      "jtrtdhrst/harness-zar-i-szlif"):
             with self.subTest(repos=repos), self.assertRaises(RuntimeError):
                 m.validate_grant({**self.valid, "repositories": repos}, self.now)
 
