@@ -71,6 +71,6 @@ same project.
 - Mautic, Supabase, Opik Core, ComfyUI Engine and Qdrant DB are runtime resources; do not invent local owner-source folders for vendor or unknown-source images.
 - `mcp/opik-mcp/` and `workers/opik-run-enricher/` are separate components, whereas `ops/` contains shared deployment metadata, not an Opik process.
 
-`mcp/qdrant-mcp/` is the canonical source of the running Qdrant MCP service. Qdrant database is a separate upstream runtime; removing historical `qdrant/` metadata does not delete its deployed collections or volumes. Any retirement of live resources requires separate inventory and migration.
+Qdrant MCP has been retired: merged PR #182 deleted `mcp/qdrant-mcp/` and removed its build roots; merged PR #234 removed its edge route and Worker configuration. The obsolete Coolify MCP service UUID `a4zgmthjspz8hwvyu6llr8dh` is exited and awaits a confirmed, authorized deletion. Do not restart or rebuild it. The separate Qdrant vector database UUID `eciprwgeyol4znmdd0dpu3xc` and its collections/volumes are preserved.
 
 The retired root inventories `kod-aplikacji/` and `kod-mcp/` do not own current production MCP source. The Coolify inventory above describes **runtime resources only**, not their ownership by this repository. Removing Git paths does not delete services, images, databases, Docker volumes or secrets.
