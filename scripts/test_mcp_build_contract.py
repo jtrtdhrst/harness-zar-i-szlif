@@ -118,9 +118,9 @@ class McpSourceBuildContract(unittest.TestCase):
         doc = (ROOT / "ops/repowise/MCP_SOURCE_BUILDS.md").read_text()
         owned = owned_services()
         self.assertIn(f"## Current {len(owned)} source-owned MCPs", doc)
-        documented = set(re.findall(r"(?m)^\\| ([a-z][a-z0-9-]*mcp) \\| \\x60[a-z0-9]", doc))
+        documented = set(re.findall(r"(?m)^\| ([a-z][a-z0-9-]*mcp) \| [\x60]", doc))
         self.assertEqual(documented, set(owned), "Repowise MCP table differs from the owned-source registry")
-        self.assertIn("Retired \\x60qdrant-mcp\\x60", doc)
+        self.assertIn("Retired `qdrant-mcp`", doc)
 
     def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
         services = owned_services()
