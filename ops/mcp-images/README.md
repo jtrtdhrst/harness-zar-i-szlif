@@ -9,3 +9,5 @@ Jedno miejsce: **[catalog.json](catalog.json)**. Obejmuje 19 zasobów MCP/gatewa
 **Qdrant:** kod `server.py`, `requirements.txt` i `Dockerfile` jest odzyskany i ma taki sam SHA-256 jak pliki działającego kontenera; nie oznacza to jeszcze, że obecnie działający obraz powstał z obecnego commita.
 
 Nie usuwaj obrazów oznaczonych w katalogu jako działające — dopiero rzeczywisty roll-out i test rollbacku mogą pozwolić na ich bezpieczne wycofanie.
+
+**Image-only GitHub Ops canaries:** the 38-resource fleet registry also includes two `github-ops-mcp` canaries. They are excluded from this 19-resource *production MCP/gateway* image catalog; their source is `mcp/github-mcp`, but each consumes an already-built OCI artifact, so do not mistake the Coolify `dockerimage` record for a Git source build.

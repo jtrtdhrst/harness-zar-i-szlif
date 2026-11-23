@@ -9,7 +9,7 @@ from __future__ import annotations
 MCP_SERVICES = frozenset({
     "comfy-mcp","coolify-mcp","emailens-mcp","hindsight-mcp",
     "mantic-mcp","multica-mcp","opik-mcp","plasmic-mcp",
-    "playwright-mcp","qdrant-mcp","supabase-mcp","ubuntu-mcp"
+    "playwright-mcp","supabase-mcp","ubuntu-mcp"
 })
 OTHER_ROOTS = {
     "github-ops-mcp": "mcp/github-mcp",

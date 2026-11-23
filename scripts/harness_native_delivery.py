@@ -106,8 +106,6 @@ SERVICES = {
                      "image_prefix": "z7ld1nac6jtmtm653dloefrg_emailens", "health_url": None},
     "plasmic-mcp": {"folder": "plasmic-mcp", "dockerfile": "Dockerfile",
                     "image_prefix": "local/plasmic-mcp", "health_url": None},
-    "qdrant-mcp": {"folder": "qdrant-mcp", "dockerfile": "Dockerfile",
-                   "image_prefix": "127.0.0.1:5000/mcp-qdrant-staging", "health_url": None},
     "supabase-mcp": {"folder": "supabase-mcp", "dockerfile": "Dockerfile",
                      "image_prefix": "selfhosted-supabase-mcp", "health_url": None},
     "opik-run-enricher": {"folder": "opik-run-enricher", "dockerfile": "Dockerfile",

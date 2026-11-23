@@ -12,7 +12,6 @@ on:
       - 'mcp/playwright-mcp/**'
       - 'mcp/opik-mcp/**'
       - 'mcp/hindsight-mcp/**'
-      - 'mcp/qdrant-mcp/**'
       - 'mcp/supabase-mcp/**'
       - 'mcp/ubuntu-mcp/**'
       - 'scripts/select_mcp_builds.py'
@@ -33,7 +32,6 @@ on:
           - playwright-mcp
           - opik-mcp
           - hindsight-mcp
-          - qdrant-mcp
           - supabase-mcp
           - ubuntu-mcp
 
