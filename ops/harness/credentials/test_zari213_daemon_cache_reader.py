@@ -407,12 +407,14 @@ class ScopedRoleTests(unittest.TestCase):
             }
             path = pathlib.Path(directory) / "implementer-harness.json"
             path.write_text(json.dumps(payload))
+            path.chmod(0o600)
             self.assertEqual(
                 broker.read_role_token(pathlib.Path(directory), "implementer-harness")["role"],
                 "implementer-harness",
             )
             payload["repositories"] = sorted(broker.ALLOWED_REPOS)
             path.write_text(json.dumps(payload))
+            path.chmod(0o600)
             with self.assertRaisesRegex(ValueError, "repository scope mismatch"):
                 broker.read_role_token(pathlib.Path(directory), "implementer-harness")
 
@@ -430,6 +432,7 @@ class TaskScopeHandlerTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         roles = pathlib.Path(directory.name) / "agent-roles.json"
         roles.write_text(json.dumps({"agent-1": "implementer"}))
+        roles.chmod(0o600)
         h = object.__new__(broker.Handler)
         h.request = Mock()
         h.request.getsockopt.return_value = struct.pack("3i", 900, 997, 981)
