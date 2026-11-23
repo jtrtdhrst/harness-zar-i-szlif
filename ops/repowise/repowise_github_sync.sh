@@ -21,7 +21,9 @@ MCP=repowise-mcp-lecwi3emh9hjxir7gphmalie
 STAGE_ONLY=${REPOWISE_SYNC_STAGE_ONLY:-0}
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 STAGE=$BASE/staging-sync-$STAMP-$$
-BACKUP=$BASE/rollback/sync-$STAMP-$$
+BACKUP=$BASE/rollback/sync-$STAMP-$
+DECISIONS_REL=.repowise/decisions.yaml
+DECISIONS_SAVE=$BACKUP/preserved-harness-decisions.yaml
 TEST_MCP=repowise-stage-smoke-$STAMP-$$
 INDEX_IMAGE=$(docker inspect --format '{{.Config.Image}}' "$MCP")
 
@@ -100,6 +102,17 @@ prepare_live_sources() {
     git -c "safe.directory=$STAGE/$repo" -C "$STAGE/$repo" merge-base --is-ancestor "$old" "$expected" || fail "source-non-fast-forward repo=$repo"
     mapfile -d '' -t changed < <(git -c "safe.directory=$STAGE/$repo" -C "$STAGE/$repo" diff --name-only -z "$old" "$expected")
     for path in "${changed[@]}"; do
+      if [[ $repo == harness && $path == "$DECISIONS_REL" ]] &&
+         [[ -n $(git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" status --porcelain -- "$path") ]]; then
+        # A generated, accepted decision store is tracked by OLD Git, but
+        # current main intentionally deletes that tracked path. Preserve it
+        # only when the independently indexed stage has identical bytes.
+        [[ -z $(git -c "safe.directory=$STAGE/$repo" -C "$STAGE/$repo" ls-tree -r --name-only "$expected" -- "$path") ]] || fail "decisions-still-tracked-in-target"
+        [[ -f "$LIVE/$repo/$path" && -f "$STAGE/$repo/$path" ]] || fail "decisions-preserve-missing"
+        cmp -s "$LIVE/$repo/$path" "$STAGE/$repo/$path" || fail "decisions-changed-since-stage"
+        echo "SOURCE_GENERATED_DECISIONS_ADMITTED bytes=$(wc -c < "$LIVE/$repo/$path")"
+        continue
+      fi
       [[ -z $(git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" status --porcelain -- "$path") ]] || fail "source-dirty-overlap repo=$repo path=$path"
     done
     git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" fetch --quiet --no-tags "$STAGE/$repo" "$expected" || fail "source-fetch-failed repo=$repo"
@@ -108,15 +121,31 @@ prepare_live_sources() {
 }
 
 advance_live_sources() {
-  local repo old expected now
+  local repo old expected now preserve_decisions
   for repo in product harness; do
     old=$BASELINE_PRODUCT_SHA
     expected=$PRODUCT_SHA
     [[ $repo == harness ]] && { old=$BASELINE_HARNESS_SHA; expected=$HARNESS_SHA; }
     now=$(git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" rev-parse HEAD)
     [[ $now == "$old" ]] || fail "source-head-drift-during-promotion repo=$repo"
+    preserve_decisions=0
+    if [[ $repo == harness && $old != "$expected" ]] &&
+       [[ -f "$LIVE/$repo/$DECISIONS_REL" && -f "$STAGE/$repo/$DECISIONS_REL" ]] &&
+       [[ -z $(git -c "safe.directory=$STAGE/$repo" -C "$STAGE/$repo" ls-tree -r --name-only "$expected" -- "$DECISIONS_REL") ]]; then
+      cmp -s "$LIVE/$repo/$DECISIONS_REL" "$STAGE/$repo/$DECISIONS_REL" || fail "decisions-promotion-source-changed"
+      [[ -d "$BACKUP" && ! -e "$DECISIONS_SAVE" ]] || fail "decisions-backup-not-ready"
+      cp -p "$LIVE/$repo/$DECISIONS_REL" "$DECISIONS_SAVE" || fail "decisions-preserve-copy-failed"
+      cmp -s "$DECISIONS_SAVE" "$STAGE/$repo/$DECISIONS_REL" || fail "decisions-preserve-readback-failed"
+      git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" restore --source=HEAD --worktree -- "$DECISIONS_REL" || fail "decisions-source-restore-failed"
+      preserve_decisions=1
+    fi
     if [[ $old != "$expected" ]]; then
       git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" merge --ff-only "$expected" || fail "source-fast-forward-failed repo=$repo"
+    fi
+    if [[ $preserve_decisions == 1 ]]; then
+      cp -p "$DECISIONS_SAVE" "$LIVE/$repo/$DECISIONS_REL" || fail "decisions-post-merge-restore-failed"
+      cmp -s "$DECISIONS_SAVE" "$LIVE/$repo/$DECISIONS_REL" || fail "decisions-post-merge-readback-failed"
+      echo "SOURCE_GENERATED_DECISIONS_PRESERVED"
     fi
     [[ $(git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" rev-parse HEAD) == "$expected" ]] || fail "source-advance-readback-failed repo=$repo"
     echo "SOURCE_ADVANCED repo=$repo commit=$expected"
@@ -129,9 +158,18 @@ restore_live_sources() {
     baseline=$BASELINE_PRODUCT_SHA
     [[ $repo == harness ]] && baseline=$BASELINE_HARNESS_SHA
     now=$(git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" rev-parse HEAD) || return 1
+    if [[ $repo == harness && -f "$DECISIONS_SAVE" && $now != "$baseline" ]] &&
+       [[ -f "$LIVE/$repo/$DECISIONS_REL" ]]; then
+      cmp -s "$DECISIONS_SAVE" "$LIVE/$repo/$DECISIONS_REL" || return 1
+      mv "$LIVE/$repo/$DECISIONS_REL" "$BACKUP/preserved-harness-decisions-after-failure.yaml" || return 1
+    fi
     if [[ $now != "$baseline" ]]; then
       # Native merge-aware reset preserves unrelated dirty paths, unlike --hard.
       git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" reset --merge "$baseline" || return 1
+    fi
+    if [[ $repo == harness && -f "$DECISIONS_SAVE" ]]; then
+      cp -p "$DECISIONS_SAVE" "$LIVE/$repo/$DECISIONS_REL" || return 1
+      cmp -s "$DECISIONS_SAVE" "$LIVE/$repo/$DECISIONS_REL" || return 1
     fi
     [[ $(git -c "safe.directory=$LIVE/$repo" -C "$LIVE/$repo" rev-parse HEAD) == "$baseline" ]] || return 1
     echo "SOURCE_ROLLBACK_OK repo=$repo commit=$baseline"
