@@ -4,6 +4,7 @@ Source ownership is taken from the versioned Coolify registry and build roots.
 This does NOT attest an OCI digest, authorize production promotion or prove E2E.
 """
 import json
+import re
 import runpy
 import unittest
 from pathlib import Path
@@ -30,6 +31,20 @@ def build_roots():
     return {
         row["id"]: row for row in json.loads(ROOTS.read_text())["resources"]
     }
+
+
+
+def require_mandatory_evidence_action(source, action):
+    """Do not silently skip attest or artifact steps after a successful image push."""
+    # These workflows use precisely six-space-indented top-level step entries.
+    # Verify the action's own step, not a reassuring string elsewhere in YAML.
+    steps = re.split(r"(?m)(?=^      - (?:name|uses):)", source)
+    matches = [step for step in steps if "uses: " + action in step]
+    if len(matches) != 1:
+        raise AssertionError("missing_or_duplicated_evidence_step:" + action)
+    block = matches[0]
+    if re.search(r"(?m)^        (?:if|continue-on-error):\\s*", block):
+        raise AssertionError("conditional_or_nonblocking_evidence_step:" + action)
 
 
 class McpSourceBuildContract(unittest.TestCase):
@@ -84,9 +99,25 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertIn("attestations: write", source)
                 self.assertIn("actions/attest@", source)
                 self.assertIn("actions/upload-artifact@", source)
+                require_mandatory_evidence_action(source, "actions/attest@")
+                require_mandatory_evidence_action(source, "actions/upload-artifact@")
                 self.assertIn("release_authorized", source)
                 self.assertIn("production_verified", source)
                 self.assertNotIn("git reset --hard origin/main", source)
+
+    def test_nonblocking_or_conditional_attestation_is_rejected(self):
+        """Regress the exact soft-failure configuration identified in CTO review."""
+        for flow in (GENERAL_FLOW, RUNTIME_FLOW, COOLIFY_FLOW):
+            source = (WORKFLOWS / flow).read_text()
+            for action in ("actions/attest@", "actions/upload-artifact@"):
+                original = "        uses: " + action
+                self.assertIn(original, source, (flow, action))
+                for injected in ("        continue-on-error: true\\n",
+                                 "        if: always()\\n"):
+                    mutated = source.replace(original, injected + original, 1)
+                    with self.subTest(workflow=flow, action=action, injected=injected):
+                        with self.assertRaises(AssertionError):
+                            require_mandatory_evidence_action(mutated, action)
 
     def test_no_unknown_vendor_image_is_falsely_marked_source_owned(self):
         rows = {
