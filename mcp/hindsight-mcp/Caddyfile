@@ -1,0 +1,318 @@
+:8080 {
+  @healthz path /healthz
+  handle @healthz {
+    respond "ok" 200
+  }
+  @health path /health /version
+  handle @health {
+    reverse_proxy hindsight:8888
+  }
+  @mcp_cho {
+    path /mcp/hermes-cho/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CHO}"
+  }
+  handle @mcp_cho {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_cho {
+    path /v1/default/banks/hermes-cho/memories /v1/default/banks/hermes-cho/memories/recall /v1/default/banks/hermes-cho/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CHO}"
+  }
+  handle @api_cho {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_ceo {
+    path /mcp/hermes-ceo/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CEO}"
+  }
+  handle @mcp_ceo {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_ceo {
+    path /v1/default/banks/hermes-ceo/memories /v1/default/banks/hermes-ceo/memories/recall /v1/default/banks/hermes-ceo/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CEO}"
+  }
+  handle @api_ceo {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_cto {
+    path /mcp/hermes-cto/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CTO}"
+  }
+  handle @mcp_cto {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_cto {
+    path /v1/default/banks/hermes-cto/memories /v1/default/banks/hermes-cto/memories/recall /v1/default/banks/hermes-cto/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CTO}"
+  }
+  handle @api_cto {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_cpo {
+    path /mcp/hermes-cpo/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CPO}"
+  }
+  handle @mcp_cpo {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_cpo {
+    path /v1/default/banks/hermes-cpo/memories /v1/default/banks/hermes-cpo/memories/recall /v1/default/banks/hermes-cpo/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CPO}"
+  }
+  handle @api_cpo {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_coo {
+    path /mcp/hermes-coo/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_COO}"
+  }
+  handle @mcp_coo {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_coo {
+    path /v1/default/banks/hermes-coo/memories /v1/default/banks/hermes-coo/memories/recall /v1/default/banks/hermes-coo/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_COO}"
+  }
+  handle @api_coo {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_cmo {
+    path /mcp/hermes-cmo/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CMO}"
+  }
+  handle @mcp_cmo {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_cmo {
+    path /v1/default/banks/hermes-cmo/memories /v1/default/banks/hermes-cmo/memories/recall /v1/default/banks/hermes-cmo/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_CMO}"
+  }
+  handle @api_cmo {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_engineer {
+    path /mcp/hermes-engineer/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_ENGINEER}"
+  }
+  handle @mcp_engineer {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_engineer {
+    path /v1/default/banks/hermes-engineer/memories /v1/default/banks/hermes-engineer/memories/recall /v1/default/banks/hermes-engineer/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_ENGINEER}"
+  }
+  handle @api_engineer {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_mcp_engineer {
+    path /mcp/hermes-mcp-engineer/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_MCP_ENGINEER}"
+  }
+  handle @mcp_mcp_engineer {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_mcp_engineer {
+    path /v1/default/banks/hermes-mcp-engineer/memories /v1/default/banks/hermes-mcp-engineer/memories/recall /v1/default/banks/hermes-mcp-engineer/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_MCP_ENGINEER}"
+  }
+  handle @api_mcp_engineer {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_harness_engineer {
+    path /mcp/hermes-harness-engineer/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_HARNESS_ENGINEER}"
+  }
+  handle @mcp_harness_engineer {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_harness_engineer {
+    path /v1/default/banks/hermes-harness-engineer/memories /v1/default/banks/hermes-harness-engineer/memories/recall /v1/default/banks/hermes-harness-engineer/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_HARNESS_ENGINEER}"
+  }
+  handle @api_harness_engineer {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_mascot_designer {
+    path /mcp/hermes-mascot-designer/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_MASCOT_DESIGNER}"
+  }
+  handle @mcp_mascot_designer {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_mascot_designer {
+    path /v1/default/banks/hermes-mascot-designer/memories /v1/default/banks/hermes-mascot-designer/memories/recall /v1/default/banks/hermes-mascot-designer/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_MASCOT_DESIGNER}"
+  }
+  handle @api_mascot_designer {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_designer {
+    path /mcp/hermes-designer/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_DESIGNER}"
+  }
+  handle @mcp_designer {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_designer {
+    path /v1/default/banks/hermes-designer/memories /v1/default/banks/hermes-designer/memories/recall /v1/default/banks/hermes-designer/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_DESIGNER}"
+  }
+  handle @api_designer {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_ui_qa {
+    path /mcp/hermes-ui-qa/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_UI_QA}"
+  }
+  handle @mcp_ui_qa {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_ui_qa {
+    path /v1/default/banks/hermes-ui-qa/memories /v1/default/banks/hermes-ui-qa/memories/recall /v1/default/banks/hermes-ui-qa/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_UI_QA}"
+  }
+  handle @api_ui_qa {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_lifecycle_ops {
+    path /mcp/hermes-lifecycle-ops/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_LIFECYCLE_OPS}"
+  }
+  handle @mcp_lifecycle_ops {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_lifecycle_ops {
+    path /v1/default/banks/hermes-lifecycle-ops/memories /v1/default/banks/hermes-lifecycle-ops/memories/recall /v1/default/banks/hermes-lifecycle-ops/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_LIFECYCLE_OPS}"
+  }
+  handle @api_lifecycle_ops {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @mcp_email_creative {
+    path /mcp/hermes-email-creative/*
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_EMAIL_CREATIVE}"
+  }
+  handle @mcp_email_creative {
+    reverse_proxy hindsight:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  @api_email_creative {
+    path /v1/default/banks/hermes-email-creative/memories /v1/default/banks/hermes-email-creative/memories/recall /v1/default/banks/hermes-email-creative/reflect
+    method POST
+    header Authorization "Bearer {$HINDSIGHT_BANK_TOKEN_EMAIL_CREATIVE}"
+  }
+  handle @api_email_creative {
+    reverse_proxy hindsight:8888 {
+      header_up -Authorization
+      header_up -X-Bank-Id
+    }
+  }
+  @vectorize_admin {
+    path /mcp /mcp/
+    query access_token={$VECTORIZE_ADMIN_MCP_TOKEN}
+  }
+  handle @vectorize_admin {
+    uri query -access_token
+    reverse_proxy hindsight-admin:8888 {
+      header_up Authorization "Bearer {$HINDSIGHT_UPSTREAM_MCP_TOKEN}"
+      header_up -X-Bank-Id
+    }
+  }
+  handle {
+    respond "Not Found" 404
+  }
+}

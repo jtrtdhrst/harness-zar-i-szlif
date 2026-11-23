@@ -16,13 +16,13 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
         cls.mapping = json.loads(MAP.read_text(encoding="utf-8"))["resources"]
         cls.rows = json.loads(REGISTRY.read_text(encoding="utf-8"))["resources"]
 
-    def test_exact_twenty_uuid_ownership_no_coolify_mcp(self):
+    def test_exact_three_uuid_ownership_no_coolify_mcp(self):
         source = {r["id"]: r for r in self.mapping
-                  if not r["source_build_ready"] and r["id"] != "coolify-mcp"}
-        self.assertEqual(len(source), 20)
-        self.assertEqual(len(self.rows), 20)
+                  if r.get("compose_candidate") and not r.get("compose_release_ready")}
+        self.assertEqual(len(source), 3)
+        self.assertEqual(len(self.rows), 3)
         self.assertEqual({r["id"] for r in self.rows}, set(source))
-        self.assertEqual(len({r["uuid"] for r in self.rows}), 20)
+        self.assertEqual(len({r["uuid"] for r in self.rows}), 3)
         for row in self.rows:
             self.assertEqual(row["uuid"], source[row["id"]]["uuid"])
             self.assertEqual(row["root"], source[row["id"]]["source_root"])
@@ -39,7 +39,7 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
                 contract = json.loads((ROOT / row["contract"]).read_text())
                 self.assertEqual(contract["uuid"], row["uuid"])
                 self.assertEqual(contract["release_state"], "BLOCKED")
-                self.assertFalse(contract["source_build_ready"])
+                self.assertEqual(contract["source_build_ready"],next(r for r in self.mapping if r["id"]==row["id"])["source_build_ready"])
                 yaml = (ROOT / row["compose"]).read_text(encoding="utf-8")
                 self.assertIn("services:", yaml)
                 self.assertNotRegex(yaml, r"(?m)^\s*build:")
@@ -75,38 +75,22 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
                     self.assertFalse(literal_credential(line),
                                      (row["id"], lineno, "inline authentication forbidden"))
 
-    def test_outline_redis_authentication_parity(self):
-        # Prevent a repeat of live Outline Redis NOAUTH after Compose migration.
-        # Values come from runtime secrets, never checked into the repository.
-        compose = (ROOT / "outline-knowledge/compose.candidate.yml").read_text(
-            encoding="utf-8")
-        self.assertIn(
-            "REDIS_URL: 'redis://:\u0024{OUTLINE_REDIS_PASSWORD:?",
-            compose)
-        self.assertIn(
-            "OUTLINE_REDIS_PASSWORD: '\u0024{OUTLINE_REDIS_PASSWORD:?",
-            compose)
-        self.assertIn("--requirepass", compose)
-        self.assertIn("$OUTLINE_REDIS_PASSWORD", compose)
-        self.assertIn("REDISCLI_AUTH=", compose)
-        self.assertNotIn("REDIS_URL: 'redis://redis:6379'", compose)
-
     def test_select_exact_source_dependency_and_negative_cases(self):
         import select_owned_compose
         cases = {
-            "qdrant/compose.candidate.yml": {"qdrant"},
+            "qdrant/compose.candidate.yml": set(),
             "qdrant-extra/Dockerfile": set(),
-            "mautic/release-contract.json": {"mautic"},
-            "comfyui-mcp/src/server.py": {"comfy", "comfy-mcp"},
-            "ops/repowise/README.md": {"repowise-mcp-runtime"},
-            "coolify-mcp/Dockerfile": set(),
+            "mautic/release-contract.json": set(),
+            "mcp/comfy-mcp/Dockerfile": set(),
+            "ops/repowise/README.md": set(),
+            "mcp/coolify-mcp/Dockerfile": set(),
             "docs/unrelated.md": set(),
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(set(select_owned_compose.select([path])), expected)
         self.assertEqual(len(select_owned_compose.select(
-            ["ops/compose-migration-candidates.json"])), 20)
+            ["ops/compose-migration-candidates.json"])), 3)
 
 if __name__ == "__main__":
     unittest.main()

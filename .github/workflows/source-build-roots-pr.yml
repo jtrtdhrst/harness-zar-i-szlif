@@ -5,6 +5,8 @@ on:
     paths:
       - 'ops/service-build-roots.json'
       - 'scripts/test_service_build_roots.py'
+      - 'scripts/test_mcp_build_contract.py'
+      - 'ops/repowise/MCP_SOURCE_BUILDS.md'
       - 'ops/repowise/compose.publisher.owned.yaml'
       - 'ops/repowise/Dockerfile.publisher'
       - '.github/workflows/source-build-roots-pr.yml'
@@ -22,8 +24,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Verify exactly 10 source-ready roots and staged Coolify root
+      - name: Verify exactly 14 source-ready roots and staged Coolify root
         run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
+      - name: Fail closed if any owned MCP loses its main SHA-bound publisher
+        run: python3 -m unittest discover -s scripts -p 'test_mcp_build_contract.py' -v
       - name: Validate standalone RepoWise staging Compose rooted at its own folder
         run: docker compose -f ops/repowise/compose.publisher.owned.yaml config --quiet
       - name: Build staging publisher from owned context with protocol tests
@@ -42,7 +46,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Derive exact 10-source matrix from canonical versioned mapping
+      - name: Derive exact 14-source matrix from canonical versioned mapping
         id: map
         shell: bash
         run: |
@@ -56,10 +60,11 @@ jobs:
               "github-ops-mcp", "hermes-gateway", "multica-mcp",
               "repowise-deployment-publisher-staging", "emailens-mcp",
               "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
-              "mantic-mcp", "playwright-mcp",
+              "mantic-mcp", "playwright-mcp", "comfy-mcp",
+              "coolify-mcp", "hindsight-mcp", "opik-mcp",
           }
           ready = [r for r in data["resources"] if r["source_build_ready"]]
-          if len(ready) != 10 or {r["id"] for r in ready} != expected:
+          if len(ready) != 14 or {r["id"] for r in ready} != expected:
               raise SystemExit("source_ready_set_changed_without_review")
           matrix = []
           for r in ready:
@@ -67,15 +72,15 @@ jobs:
               dockerfile = Path(r["build_dockerfile"])
               if root.is_absolute() or ".." in root.parts or root.as_posix() in (".", ""):
                   raise SystemExit("unsafe_source_root:" + r["id"])
-              if dockerfile.parent != root or not dockerfile.is_file():
+              if not dockerfile.is_relative_to(root) or not dockerfile.is_file() or not dockerfile.resolve().is_relative_to(root.resolve()):
                   raise SystemExit("owned_Dockerfile_missing:" + r["id"])
-              matrix.append({"service": r["id"], "root": root.as_posix(), "file": dockerfile.name})
+              matrix.append({"service": r["id"], "root": root.as_posix(), "file": dockerfile.relative_to(root).as_posix()})
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n")
           print("Source root matrix:", [x["service"] for x in matrix])
           PY
 
-  build-all-10-owned-sources:
+  build-all-15-owned-sources:
     needs: [verify-owned-source, detect-ready-roots]
     runs-on: ubuntu-latest
     timeout-minutes: 60

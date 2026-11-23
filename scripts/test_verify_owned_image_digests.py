@@ -17,8 +17,8 @@ class ImageDigestGuardTests(unittest.TestCase):
         self.assertFalse(guard.validate_ref(None))
 
     def test_real_registry_requires_unresolved_variables(self):
-        errors = guard.check(["local-build-registry"], env={})
-        self.assertTrue(any("PINNED_IMAGE_LOCAL_BUILD_REGISTRY" in x for x in errors))
+        errors = guard.check(["opik-mcp"], env={})
+        self.assertTrue(any("PINNED_IMAGE_OPIK_MCP" in x for x in errors))
         self.assertTrue(any("unknown resource" in x
                             for x in guard.check(["does-not-exist"], env={})))
 

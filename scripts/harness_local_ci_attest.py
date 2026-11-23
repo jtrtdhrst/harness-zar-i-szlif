@@ -44,6 +44,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from harness_source_roots import source_path_prefix
 
 SCHEMA = 1
 POLICY_SCHEMA = 1
@@ -212,7 +213,7 @@ def validate_identity(service, source_sha, changed_paths, image_digest):
         raise Denied("invalid_image_digest")
     if not isinstance(changed_paths, list) or not changed_paths:
         raise Denied("changed_paths_missing")
-    prefix = service + "/"
+    prefix = source_path_prefix(service)
     for path in changed_paths:
         if not isinstance(path, str) or not path.startswith(prefix) or path.startswith("/") or "/../" in path:
             raise Denied("changed_paths_outside_service")

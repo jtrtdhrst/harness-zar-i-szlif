@@ -62,6 +62,7 @@ import re
 import secrets
 import subprocess
 import sys
+from harness_source_roots import source_path_prefix
 import time
 import urllib.request
 from pathlib import Path
@@ -70,13 +71,13 @@ from harness_delivery_controller import git_changed_paths, load_artifacts, run_p
 from harness_release_admission import SHA, Denied, evaluate, evaluate_build, load_gate_file
 from harness_release_parity import ParityFailure, check_source as check_upstream_source
 
-REPO = "miloszspyrka-code/harness-zar-i-szlif"
+REPO = "jtrtdhrst/harness-zar-i-szlif"
 REGISTRY = "127.0.0.1:5000"
 # Trusted-main GHCR publishing is owned by mcp-images-ghcr.yml (PR #186).
 # AUTO deployment consumes that immutable digest, NEVER builds a second image.
-GHCR = "ghcr.io/miloszspyrka-code"
+GHCR = "ghcr.io/jtrtdhrst"
 GHCR_SOURCE_SERVICES = frozenset({
-    "emailens-mcp", "mantic-mcp", "plasmic-mcp",
+    "coolify-mcp", "emailens-mcp", "mantic-mcp", "plasmic-mcp",
     "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
 })
 COOLIFY = "http://127.0.0.1:8001/api/v1"
@@ -93,6 +94,9 @@ HEALTH_DEADLINE = 240
 # UUID and kind are deliberately absent: they come from the reviewed manifest,
 # which is the single allowlist for what may be touched.
 SERVICES = {
+    "coolify-mcp": {"folder": "coolify-mcp", "dockerfile": "Dockerfile",
+                     "image_prefix": "ghcr.io/stumason/coolify-mcp",
+                     "health_url": None},
     "mantic-mcp": {"folder": "mantic-mcp", "dockerfile": "Dockerfile.http",
                    "image_prefix": "local/mantic-mcp", "health_url": None},
     "playwright-mcp": {"folder": "playwright-mcp", "dockerfile": "Dockerfile",
@@ -102,8 +106,6 @@ SERVICES = {
                      "image_prefix": "z7ld1nac6jtmtm653dloefrg_emailens", "health_url": None},
     "plasmic-mcp": {"folder": "plasmic-mcp", "dockerfile": "Dockerfile",
                     "image_prefix": "local/plasmic-mcp", "health_url": None},
-    "qdrant-mcp": {"folder": "qdrant-mcp", "dockerfile": "Dockerfile",
-                   "image_prefix": "127.0.0.1:5000/mcp-qdrant-staging", "health_url": None},
     "supabase-mcp": {"folder": "supabase-mcp", "dockerfile": "Dockerfile",
                      "image_prefix": "selfhosted-supabase-mcp", "health_url": None},
     "opik-run-enricher": {"folder": "opik-run-enricher", "dockerfile": "Dockerfile",
@@ -115,12 +117,22 @@ SERVICES = {
 }
 
 
+# The source-only migration relocates code, not Coolify names or UUIDs.
+# Runtime path attribution must use the same strict reviewed ownership map
+# as the signed-CI attester and release admission checker.
+for _service, _spec in SERVICES.items():
+    _spec["folder"] = source_path_prefix(_service).rstrip("/")
+
+
 def image_tag(service, source_sha, registry=REGISTRY):
     return f"{registry}/harness-{service}:{source_sha[:12]}"
 
 
 def image_reference(service, digest, registry=REGISTRY):
-    return f"{registry}/harness-{service}@{digest}"
+    # Owned Coolify MCP publishes as /coolify-mcp; other Harness sources keep
+    # their existing /harness-<service> image names.
+    name = "coolify-mcp" if service == "coolify-mcp" and registry == GHCR else f"harness-{service}"
+    return f"{registry}/{name}@{digest}"
 
 
 class Host:
@@ -194,15 +206,25 @@ def verify_source(repo, source_sha):
 
 
 def image_pattern(service, spec, registry=REGISTRY):
-    """Match the previously pinned image or this registry's image already deployed."""
+    """Match only an exact allowed image repository plus a valid tag or digest.
+
+    A prefix such as coolify-mcp must NEVER match coolify-mcp-attacker or
+    coolify-mcp.evil. Match to the end of the YAML scalar (optional comment).
+    """
     current = f"{registry}/harness-{service}"
-    prefixes = sorted({
+    prefixes = {
         spec["image_prefix"], current,
         f"{REGISTRY}/harness-{service}",
         f"{GHCR}/harness-{service}",
-    }, key=len, reverse=True)
-    alternation = "|".join(re.escape(prefix) for prefix in prefixes)
-    return re.compile(r"(?m)^(\s*image:\s*)(['\"]?)(?:" + alternation + r")[^'\"\s]*\2")
+    }
+    if service == "coolify-mcp":
+        prefixes.add(f"{GHCR}/coolify-mcp")
+    alternation = "|".join(re.escape(prefix) for prefix in sorted(prefixes, key=len, reverse=True))
+    tag_or_digest = r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]*|@sha256:[a-f0-9]{64})?"
+    return re.compile(
+        r"(?m)^([ \t]*image:[ \t]*)(['\"]?)(?:" + alternation + r")"
+        + tag_or_digest + r"\2(?=[ \t]*(?:#.*)?$)"
+    )
 
 
 def compose_for(host, uuid):
@@ -213,6 +235,54 @@ def compose_for(host, uuid):
     return raw
 
 
+def remove_coolify_oauth_shadow_bind(compose):
+    """Remove only the known legacy mount inside services.coolify-mcp.volumes.
+
+    Strictly supports the Coolify-emitted two-space service / four-space field
+    indentation. Unknown layouts fail closed, rather than modifying another
+    service or silently retaining an OAuth shadow over the new image. The
+    caller snapshots the untouched original Compose before any provider write.
+    """
+    lines = compose.splitlines(keepends=True)
+    clean = [line.rstrip("\r\n") for line in lines]
+    roots = [i for i, line in enumerate(clean)
+             if re.fullmatch(r"services:[ \t]*(?:#.*)?", line)]
+    if len(roots) != 1:
+        raise RuntimeError("coolify-mcp: Compose services block missing or ambiguous")
+    root = roots[0]
+    root_end = next((i for i in range(root + 1, len(lines))
+                     if clean[i].strip() and not clean[i].lstrip().startswith("#")
+                     and not clean[i][0].isspace()), len(lines))
+    targets = [i for i in range(root + 1, root_end)
+               if re.fullmatch(r"  coolify-mcp:[ \t]*(?:#.*)?", clean[i])]
+    if len(targets) != 1:
+        raise RuntimeError("coolify-mcp: target Compose service missing or ambiguous")
+    start = targets[0]
+    end = next((i for i in range(start + 1, root_end)
+                if clean[i].startswith("  ") and not clean[i].startswith("   ")
+                and not clean[i].lstrip().startswith("#")
+                and clean[i].split("#", 1)[0].rstrip().endswith(":")), root_end)
+    exact_bind = re.compile(
+        r"[ ]{4,}-[ \t]*(?P<quote>[\'\"]?)/opt/coolify-mcp/oauth\.js:/app/dist/lib/oauth\.js:ro(?P=quote)[ \t]*"
+    )
+    hits = [i for i, line in enumerate(clean) if exact_bind.fullmatch(line)]
+    shadow_count = sum("/app/dist/lib/oauth.js" in line for line in clean)
+    if not hits and not shadow_count:
+        return compose
+    if len(hits) != 1 or shadow_count != 1 or not (start < hits[0] < end):
+        raise RuntimeError("coolify-mcp: unexpected OAuth shadow bind; refusing release")
+    volume_headers = [i for i in range(start + 1, end)
+                      if re.fullmatch(r"    volumes:[ \t]*(?:#.*)?", clean[i])]
+    if len(volume_headers) != 1 or not (volume_headers[0] < hits[0]):
+        raise RuntimeError("coolify-mcp: OAuth shadow is not in target volumes")
+    for line in clean[volume_headers[0] + 1:hits[0]]:
+        plain = line.split("#", 1)[0].rstrip()
+        if (plain.startswith("    ") and not plain.startswith("     ")
+                and plain.endswith(":") and not plain.lstrip().startswith("-")):
+            raise RuntimeError("coolify-mcp: ambiguous volumes section")
+    return "".join(lines[:hits[0]] + lines[hits[0] + 1:])
+
+
 def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     """Patch one image and persist a unique, private snapshot for this attempt."""
     raw = compose_for(host, uuid)
@@ -220,6 +290,8 @@ def patch_compose(host, uuid, service, spec, tag, *, on_backup=None):
     patched, count = pattern.subn(lambda match: f"{match.group(1)}{match.group(2)}{tag}{match.group(2)}", raw)
     if count != 1:
         raise RuntimeError(f"expected exactly one {spec['image_prefix']} image line, found {count}")
+    if service == "coolify-mcp":
+        patched = remove_coolify_oauth_shadow_bind(patched)
     # A second promotion in the same second must never overwrite the first
     # snapshot. The controller is privileged; the raw compose may contain
     # secrets, so no world-readable file may exist even during the write.
@@ -711,9 +783,9 @@ def resolve_verified_checkout_tip(repo, pinned_sha, base_sha):
 
 
 TRUSTED_ORIGINS = (
-    r"https://github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-    r"git@github\.com:miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
-    r"ssh://git@github\.com/miloszspyrka-code/harness-zar-i-szlif(?:\.git)?",
+    r"https://github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+    r"git@github\.com:jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
+    r"ssh://git@github\.com/jtrtdhrst/harness-zar-i-szlif(?:\.git)?",
 )
 
 
@@ -1075,7 +1147,7 @@ def main(argv=None):
         # controller. Report it as pending; never pretend it was deployed.
         unmodelled = sorted(service for service in entries
                             if service not in SERVICES
-                            and any(path == service or path.startswith(service + "/") for path in paths))
+                            and any(path == source_path_prefix(service).rstrip("/") or path.startswith(source_path_prefix(service)) for path in paths))
         held = [service for service in unmodelled
                 if (entries[service].get("promotion_state") == "hold"
                     and entries[service].get("auto_deploy_expected") is False
@@ -1084,7 +1156,7 @@ def main(argv=None):
         if unsupported:
             raise Denied("service_not_in_transport:" + ",".join(unsupported))
         manual_paths = {p for p in paths for service in held
-                        if p == service or p.startswith(service + "/")}
+                        if p == source_path_prefix(service).rstrip("/") or p.startswith(source_path_prefix(service))}
         paths = [p for p in paths if p not in manual_paths]
         pending_paths = sorted((set(all_paths) - set(paths)) if args.service
                                else manual_paths)

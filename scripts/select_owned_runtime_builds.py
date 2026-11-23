@@ -10,10 +10,10 @@ import subprocess
 
 REPOSITORY = "jtrtdhrst/harness-zar-i-szlif"
 SERVICE_ROOTS = {
-    "github-ops-mcp": ("github-mcp", "github-mcp/Dockerfile"),
+    "github-ops-mcp": ("mcp/github-mcp", "mcp/github-mcp/Dockerfile"),
     "hermes-gateway": ("integrations/hermes-paperclip/gateway",
                        "integrations/hermes-paperclip/gateway/Dockerfile"),
-    "multica-mcp": ("multica-mcp", "multica-mcp/Dockerfile"),
+    "multica-mcp": ("mcp/multica-mcp", "mcp/multica-mcp/Dockerfile"),
     "repowise-deployment-publisher-staging": (
         "ops/repowise", "ops/repowise/Dockerfile.publisher"),
 }

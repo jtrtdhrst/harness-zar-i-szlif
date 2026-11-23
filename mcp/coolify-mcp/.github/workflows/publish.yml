@@ -1,0 +1,127 @@
+name: Publish to npm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+  # Manual re-run of the MCP Registry publish only (e.g. after a failed
+  # registry step) — the npm/MCPB/release steps stay skipped because the
+  # version already exists on npm.
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check if version changed
+        id: version
+        run: |
+          # Get the version from package.json
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Check if this version exists on npm
+          if npm view @masonator/coolify-mcp@$CURRENT_VERSION version 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        if: steps.version.outputs.exists == 'false'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        if: steps.version.outputs.exists == 'false'
+        run: npm ci
+
+      - name: Run tests
+        if: steps.version.outputs.exists == 'false'
+        run: npm test
+
+      # A release carries the Coolify docs index as it stands today (#372).
+      # Best effort: if coolify.io is unreachable the committed bundle ships.
+      - name: Refresh the bundled docs index
+        if: steps.version.outputs.exists == 'false'
+        continue-on-error: true
+        run: npm run docs:index
+
+      - name: Build
+        if: steps.version.outputs.exists == 'false'
+        run: npm run build
+
+      - name: Publish to npm
+        if: steps.version.outputs.exists == 'false'
+        run: npm publish --access public
+
+      - name: Build MCPB bundle
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          # Rebuild node_modules with production deps only (dist/ is already built);
+          # --ignore-scripts skips the husky prepare hook, which is a dev dependency
+          rm -rf node_modules
+          npm ci --omit=dev --ignore-scripts
+          npx --yes @anthropic-ai/mcpb pack . coolify-mcp.mcpb
+
+      - name: Extract changelog for version
+        if: steps.version.outputs.exists == 'false'
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.current }}"
+          # Extract the section for this version from CHANGELOG.md
+          # Matches from ## [version] until the next ## [ or end of file
+          NOTES=$(awk "/^## \\[$VERSION\\]/{flag=1; next} /^## \\[/{flag=0} flag" CHANGELOG.md)
+          # Handle multi-line output for GitHub Actions
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.version.outputs.current }}
+          name: v${{ steps.version.outputs.current }}
+          body: |
+            ## What's Changed
+
+            ${{ steps.changelog.outputs.notes }}
+
+            ---
+
+            📦 [View on npm](https://www.npmjs.com/package/@masonator/coolify-mcp/v/${{ steps.version.outputs.current }})
+
+            🖱️ One-click Claude Desktop install: download `coolify-mcp.mcpb` below and drag it into Settings → Extensions.
+          files: coolify-mcp.mcpb
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+      - name: Publish to MCP Registry
+        if: steps.version.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Asset naming is goreleaser-style (linux_amd64), NOT uname-style
+          # (linux_x86_64) — hardcode since GitHub runners are always linux/amd64
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          # npm propagation can lag right after publish — retry a few times
+          for i in 1 2 3; do
+            ./mcp-publisher publish && exit 0
+            echo "Registry publish attempt $i failed; retrying in 30s..."
+            sleep 30
+          done
+          exit 1
+
+      - name: Skip publish (version exists)
+        if: steps.version.outputs.exists == 'true'
+        run: echo "Version ${{ steps.version.outputs.current }} already exists on npm, skipping publish"
