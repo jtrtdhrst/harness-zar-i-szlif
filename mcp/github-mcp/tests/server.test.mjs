@@ -625,6 +625,12 @@ test('single-repo rotating Harness reader enforces exact GitHub App scope and fa
    assert.equal((await health()).ready,true);
    assert.equal((await health()).writes_enabled,false);
    assert.equal((await call()).structuredContent.full_name,REPO);
+   const denied=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer narrow-reader-only'},
+     body:JSON.stringify({jsonrpc:'2.0',id:7,method:'tools/call',params:{name:'github_repo_info',
+       arguments:{repo:'jtrtdhrst/zar-i-szlif'}}})});
+   const blocked=(await denied.json()).result;
+   assert.match(blocked.content[0].text,/REPO_DENIED/,'product access is rejected locally');
+   assert.equal(seen.length,1,'product never reaches GitHub provider');
    write(role('b'.repeat(50)));
    assert.equal((await call()).structuredContent.full_name,REPO,'rotation without restart');
    assert.deepEqual(seen,['Bearer '+'a'.repeat(50),'Bearer '+'b'.repeat(50)]);
@@ -652,6 +658,52 @@ test('rotating reader role cannot be configured as writer or arbitrary credentia
  for(const role of ['github-ops-writer','admin','github-ops-reader-harness-writer']){
    assert.throws(()=>makeServer({tokenFileRole:role,githubToken:''}),/Unsupported read-only GitHub App credential role/);
  }
+ assert.throws(()=>makeServer({tokenFileRole:'github-ops-reader-harness',writesEnabled:true}),
+   /Single-repository read-only role cannot enable writes/);
+});
+
+test('reader credential rejects symlink, multiple hard links, world-readable and non-root inode',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,chownSync,linkSync,symlinkSync,renameSync,unlinkSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-file-hardening-')),file=join(dir,'token.json');
+ const other=join(dir,'hard-link'),real=join(dir,'real.json');
+ const payload={token:'a'.repeat(50),role:'github-ops-reader-harness',app_id:5398752,
+   installation_id:173456397,expires_at:new Date(Date.now()+1800000).toISOString(),
+   repositories:[REPO],permissions:{contents:'read',metadata:'read'}};
+ writeFileSync(file,JSON.stringify(payload),{mode:0o600});
+ let s=null,seen=0;
+ try {
+   s=makeServer({callerToken:'hardened-owner',tokenFile:file,
+     tokenFileRole:'github-ops-reader-harness',githubToken:'',
+     fetchImpl:async()=>{seen++;return new Response(JSON.stringify({full_name:REPO}),{status:200})}});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const call=async()=> {
+     const r=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer hardened-owner'},
+       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+         params:{name:'github_repo_info',arguments:{repo:REPO}}})});
+     return (await r.json()).result;
+   };
+   assert.equal((await call()).structuredContent.full_name,REPO);
+   chmodSync(file,0o644);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   chmodSync(file,0o660);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   chmodSync(file,0o600);
+   linkSync(file,other);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   unlinkSync(other);
+   renameSync(file,real);symlinkSync(real,file);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   unlinkSync(file);renameSync(real,file);
+   if(process.getuid()===0){
+     chownSync(file,1001,1001);
+     assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+     chownSync(file,0,0);
+   }
+   assert.equal((await call()).structuredContent.full_name,REPO,'valid inode restores service');
+   assert.equal(seen,2,'no external calls for rejected token files');
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
 test('branch delete requires exact repository, branch and SHA grant before provider calls',async()=>{
