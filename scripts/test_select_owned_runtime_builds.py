@@ -36,8 +36,8 @@ class OwnedRuntimeSelectorTests(unittest.TestCase):
 
     def test_mcp_and_coolify_are_other_build_lanes(self):
         self.assertEqual(selector.select([
-            "plasmic-mcp/src/index.ts", "mantic-mcp/src/index.ts",
-            "coolify-mcp/src/index.ts", "opik-mcp/access-guard/guard.py",
+            "mcp/plasmic-mcp/src/index.ts", "mcp/mantic-mcp/src/index.ts",
+            "mcp/coolify-mcp/src/index.ts", "mcp/opik-mcp/access-guard/guard.py",
             "scripts/test_service_build_roots.py"], event_name="push"), [])
 
     def test_control_change_rebuilds_only_exact_four(self):

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "qdrant-mcp",
+  "uuid": "a4zgmthjspz8hwvyu6llr8dh",
+  "root": "qdrant-mcp",
+  "release_state": "BLOCKED",
+  "source_build_ready": true,
+  "observed_at": "2026-11-22",
+  "kind": "compose",
+  "candidate": "compose.candidate.yml",
+  "required_digest_images": [
+    {
+      "key": "PINNED_IMAGE_QDRANT_MCP_1",
+      "observed_image": "127.0.0.1:5000/harness-qdrant-mcp:deb907a88591"
+    }
+  ],
+  "observed_components": [
+    {
+      "name": "qdrant-mcp",
+      "image": "127.0.0.1:5000/harness-qdrant-mcp:deb907a88591"
+    }
+  ],
+  "existing_app_volumes": [],
+  "external_host_binds": [],
+  "removed_unowned_build": false,
+  "secret_literals_replaced": 0,
+  "watch_paths": [
+    "mcp/qdrant-mcp/"
+  ],
+  "required_release_gates": [
+    "independent exact SHA review",
+    "OCI digest verification",
+    "volume and secret parity",
+    "database backup/restore proof",
+    "authorized controller release",
+    "production positive and negative E2E",
+    "rollback proof"
+  ]
+}

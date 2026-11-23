@@ -8,44 +8,44 @@
     {
       "id": "plasmic",
       "uuid": "mzmlcorgkfgdy44hqfmmtxgw",
-      "root": "plasmic",
-      "compose": "plasmic/compose.candidate.yml",
-      "contract": "plasmic/release-contract.json",
+      "root": "apps/plasmic",
+      "compose": "apps/plasmic/compose.candidate.yml",
+      "contract": "apps/plasmic/release-contract.json",
       "watch_paths": [
-        "plasmic/"
+        "apps/plasmic/"
       ],
       "release_ready": false
     },
     {
       "id": "hindsight-mcp",
       "uuid": "aglen8ervlo2lpi30oz8iii9",
-      "root": "hindsight-mcp",
-      "compose": "hindsight-mcp/compose.candidate.yml",
-      "contract": "hindsight-mcp/release-contract.json",
+      "root": "mcp/hindsight-mcp",
+      "compose": "mcp/hindsight-mcp/compose.candidate.yml",
+      "contract": "mcp/hindsight-mcp/release-contract.json",
       "watch_paths": [
-        "hindsight-mcp/"
+        "mcp/hindsight-mcp/"
       ],
       "release_ready": false
     },
     {
       "id": "opik-mcp",
       "uuid": "egasedqaofxnzcqppuxi805h",
-      "root": "opik-mcp",
-      "compose": "opik-mcp/compose.candidate.yml",
-      "contract": "opik-mcp/release-contract.json",
+      "root": "mcp/opik-mcp",
+      "compose": "mcp/opik-mcp/compose.candidate.yml",
+      "contract": "mcp/opik-mcp/release-contract.json",
       "watch_paths": [
-        "opik-mcp/"
+        "mcp/opik-mcp/"
       ],
       "release_ready": false
     },
     {
       "id": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "root": "qdrant-mcp",
-      "compose": "qdrant-mcp/compose.candidate.yml",
-      "contract": "qdrant-mcp/release-contract.json",
+      "root": "mcp/qdrant-mcp",
+      "compose": "mcp/qdrant-mcp/compose.candidate.yml",
+      "contract": "mcp/qdrant-mcp/release-contract.json",
       "watch_paths": [
-        "qdrant-mcp/"
+        "mcp/qdrant-mcp/"
       ],
       "release_ready": false
     }

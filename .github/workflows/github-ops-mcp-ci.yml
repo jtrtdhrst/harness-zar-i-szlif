@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'github-mcp/**'
+      - 'mcp/github-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
       - 'ops/harness/credentials/github-ops-token-project.py'
       - 'ops/harness/credentials/multica-git-credential-broker.py'
@@ -18,7 +18,7 @@ on:
       - '.github/workflows/github-ops-mcp-ci.yml'
   push:
     paths:
-      - 'github-mcp/**'
+      - 'mcp/github-mcp/**'
       - 'ops/harness/credentials/multica-zar-github-app-refresh.py'
       - 'ops/harness/credentials/github-ops-token-project.py'
       - 'ops/harness/credentials/multica-git-credential-broker.py'
@@ -47,7 +47,7 @@ jobs:
         with:
           node-version: '24'
       - name: Syntax validation
-        run: node --check github-mcp/server.mjs
+        run: node --check mcp/github-mcp/server.mjs
       - name: Validate GitHub App credential broker source
         run: |
           python3 -m py_compile ops/harness/credentials/multica-zar-github-app-refresh.py ops/harness/credentials/github-ops-token-project.py
@@ -64,8 +64,8 @@ jobs:
       # Run inside the unprivileged BuildKit sandbox (root in the build stage),
       # not as host root or by relaxing production credential checks.
       - name: MCP HTTP regression tests (isolated image build)
-        run: docker build --target verify -t github-ops-mcp:verify ./github-mcp
+        run: docker build --target verify -t github-ops-mcp:verify ./mcp/github-mcp
       - name: Build production Dockerfile
-        run: docker build -t github-ops-mcp:ci ./github-mcp
+        run: docker build -t github-ops-mcp:ci ./mcp/github-mcp
       - name: Validate packaged server syntax
         run: docker run --rm --entrypoint node github-ops-mcp:ci --check /app/server.mjs

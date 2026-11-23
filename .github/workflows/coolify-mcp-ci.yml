@@ -2,7 +2,7 @@ name: Coolify MCP owned source build and E2E
 on:
   pull_request:
     paths:
-      - 'coolify-mcp/**'
+      - 'mcp/coolify-mcp/**'
       - '.github/workflows/coolify-mcp-ci.yml'
       - 'scripts/service-coverage.json'
       - 'ops/release-lanes.json'
@@ -14,7 +14,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'coolify-mcp/**'
+      - 'mcp/coolify-mcp/**'
       - '.github/workflows/coolify-mcp-ci.yml'
       - 'scripts/service-coverage.json'
       - 'ops/release-lanes.json'
@@ -40,15 +40,15 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: coolify-mcp/package-lock.json
+          cache-dependency-path: mcp/coolify-mcp/package-lock.json
       - name: Install owned upstream
-        working-directory: coolify-mcp
+        working-directory: mcp/coolify-mcp
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build owned runtime
-        working-directory: coolify-mcp
+        working-directory: mcp/coolify-mcp
         run: npm run build
       - name: Coolify MCP E2E
-        working-directory: coolify-mcp
+        working-directory: mcp/coolify-mcp
         run: npm test -- --runInBand
       - name: Release source coverage
         run: python3 scripts/check_service_coverage.py
@@ -82,8 +82,8 @@ jobs:
       - uses: docker/build-push-action@v6
         id: build
         with:
-          context: ./coolify-mcp
-          file: ./coolify-mcp/Dockerfile
+          context: ./mcp/coolify-mcp
+          file: ./mcp/coolify-mcp/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/coolify-mcp:sha-${{ github.sha }}
           labels: |
@@ -104,7 +104,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "${#SOURCE_SHA}" -eq 40
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          test -f coolify-mcp/Dockerfile
+          test -f mcp/coolify-mcp/Dockerfile
           mkdir -p "$RUNNER_TEMP/coolify-mcp-release"
           python3 - <<'PY'
           import json, os, pathlib, re
@@ -113,7 +113,7 @@ jobs:
           assert re.fullmatch(r"sha256:[a-f0-9]{64}", e["DIGEST"])
           data = {"schema_version": 1, "service": "coolify-mcp",
                   "source_repository": e["SOURCE_REPO"], "source_sha": e["SOURCE_SHA"],
-                  "source_root": "coolify-mcp", "dockerfile": "coolify-mcp/Dockerfile",
+                  "source_root": "mcp/coolify-mcp", "dockerfile": "mcp/coolify-mcp/Dockerfile",
                   "image": e["IMAGE"], "image_digest": e["DIGEST"],
                   "subject": e["IMAGE"] + "@" + e["DIGEST"],
                   "release_authorized": False, "production_verified": False}

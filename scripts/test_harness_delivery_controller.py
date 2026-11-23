@@ -72,7 +72,7 @@ def attestation(**overrides):
         "source_sha": SOURCE,
         "image_digest": DIGEST,
         "tests": [{"command": "/usr/bin/python3 -m unittest -q", "exit": 0}],
-        "changed_paths": ["mantic-mcp/src/server.ts"],
+        "changed_paths": ["mcp/mantic-mcp/src/server.ts"],
         "artifact_manifest_digest": "sha256:" + "d" * 64,
     }
     base.update(overrides)
@@ -151,7 +151,7 @@ PREVIOUS = "sha256:" + "9" * 64
 
 
 class ControllerRefusalTests(unittest.TestCase):
-    def run_controller(self, transport, artifacts=None, paths=("mantic-mcp/src/server.ts",),
+    def run_controller(self, transport, artifacts=None, paths=("mcp/mantic-mcp/src/server.ts",),
                        man=None, state_path=None, lock_path=None, source_sha=SOURCE):
         return controller.run_promotion(man or manifest(), list(paths),
                                         artifacts or (lambda service: bundle()), transport,
@@ -168,7 +168,7 @@ class ControllerRefusalTests(unittest.TestCase):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
         with self.assertRaises(gate.Denied) as caught:
             controller.run_promotion(
-                manifest(), ["mantic-mcp/src/server.ts"],
+                manifest(), ["mcp/mantic-mcp/src/server.ts"],
                 lambda service: {}, transport, now=NOW, source_sha=SOURCE,
                 pre_admitted={"mantic-mcp": {
                     "service": "mantic-mcp", "source_sha": SOURCE,
@@ -229,7 +229,7 @@ class ControllerRefusalTests(unittest.TestCase):
     def test_documentation_change_alongside_a_service_change_still_gates_the_service(self):
         transport = FakeTransport(running={"mantic-mcp": PREVIOUS})
         report = self.run_controller(
-            transport, paths=("docs/SOURCE-ONLY-AND-LOCAL-BUILDS.md", "mantic-mcp/src/server.ts"),
+            transport, paths=("docs/SOURCE-ONLY-AND-LOCAL-BUILDS.md", "mcp/mantic-mcp/src/server.ts"),
             artifacts=lambda service: bundle(grant=None))
         self.assertEqual(report["unclassified_paths"], ["docs/SOURCE-ONLY-AND-LOCAL-BUILDS.md"])
         self.assertEqual(report["decisions"][0]["reason"], "release_lane_on_hold")
@@ -284,7 +284,7 @@ class ControllerRefusalTests(unittest.TestCase):
 
     def test_invalid_source_sha_denies_before_any_decision(self):
         with self.assertRaises(gate.Denied) as caught:
-            controller.run_promotion(manifest(), ["mantic-mcp/src/server.ts"],
+            controller.run_promotion(manifest(), ["mcp/mantic-mcp/src/server.ts"],
                                      lambda service: bundle(), FakeTransport(), now=NOW,
                                      source_sha="not-a-sha")
         self.assertEqual(str(caught.exception), "invalid_source_sha")
@@ -300,7 +300,7 @@ class ControllerRefusalTests(unittest.TestCase):
 class ControllerPromotionTests(unittest.TestCase):
     def authorized(self, transport, **kwargs):
         return controller.run_promotion(
-            manifest(promotion_state="approved"), ["mantic-mcp/src/server.ts"],
+            manifest(promotion_state="approved"), ["mcp/mantic-mcp/src/server.ts"],
             lambda service: bundle(), transport, now=NOW, source_sha=SOURCE, **kwargs)
 
     def test_authorized_change_is_built_deployed_and_read_back(self):
@@ -496,7 +496,7 @@ class ControllerPromotionTests(unittest.TestCase):
 
     def test_plan_mode_reports_admissible_without_transport(self):
         report = controller.run_promotion(manifest(promotion_state="approved"),
-                                          ["mantic-mcp/src/server.ts"],
+                                          ["mcp/mantic-mcp/src/server.ts"],
                                           lambda service: bundle(), None, now=NOW,
                                           source_sha=SOURCE)
         self.assertEqual(report["decisions"][0]["decision"], "admissible_no_transport")
@@ -680,7 +680,7 @@ class ArtifactLoadingTests(unittest.TestCase):
 
         return attester.build_attestation(
             "mantic-mcp", SOURCE, [{"command": "true", "exit": 0}],
-            ["mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
+            ["mcp/mantic-mcp/src/server.ts"], DIGEST, self.KEY, runner_uid=1000,
             policy_digest=attestation()["policy_digest"])
 
     def load(self, attestation_doc, key_path="key", key=None):

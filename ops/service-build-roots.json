@@ -2,16 +2,16 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "branch": "main",
-  "observed_at": "2026-11-22",
+  "observed_at": "2026-11-23",
   "description": "Only real source-owned MCP/integration roots. Upstream and local image-only services are inventoried separately without ghost code folders. Ready does not imply production deploy.",
   "resources": [
     {
       "id": "github-ops-mcp",
       "uuid": "t09dqe2eppn2eiqmhzlf8xzp",
-      "source_root": "github-mcp",
-      "build_dockerfile": "github-mcp/Dockerfile",
+      "source_root": "mcp/github-mcp",
+      "build_dockerfile": "mcp/github-mcp/Dockerfile",
       "source_build_ready": true,
-      "reason": "Coolify already builds from /github-mcp with watch github-mcp/**; auto-deploy intentionally disabled."
+      "reason": "Canonical source is mcp/github-mcp. Live Coolify base_directory=/github-mcp and watch_paths=github-mcp/** (readback 2026-11-23); must change to /mcp/github-mcp and mcp/github-mcp/** in an authorized release before next build. Auto-deploy is disabled."
     },
     {
       "id": "hermes-gateway",
@@ -24,10 +24,10 @@
     {
       "id": "multica-mcp",
       "uuid": "5o4edyfjo0wftfg08mtkknir",
-      "source_root": "multica-mcp",
-      "build_dockerfile": "multica-mcp/Dockerfile",
+      "source_root": "mcp/multica-mcp",
+      "build_dockerfile": "mcp/multica-mcp/Dockerfile",
       "source_build_ready": true,
-      "reason": "Coolify Git source already builds from /multica-mcp."
+      "reason": "Canonical source is mcp/multica-mcp. Live Coolify base_directory=/multica-mcp and watch_paths=multica-mcp/** (readback 2026-11-23); must change to /mcp/multica-mcp and mcp/multica-mcp/** in an authorized release before next build. Auto-deploy is disabled."
     },
     {
       "id": "repowise-deployment-publisher-staging",
@@ -40,108 +40,108 @@
     {
       "id": "plasmic",
       "uuid": "mzmlcorgkfgdy44hqfmmtxgw",
-      "source_root": "plasmic",
-      "build_dockerfile": "plasmic/studio.Dockerfile",
+      "source_root": "apps/plasmic",
+      "build_dockerfile": "apps/plasmic/studio.Dockerfile",
       "source_build_ready": false,
       "reason": "Three application images plus PostgreSQL; versioned multi-image Compose and source-context E2E not completed.",
-      "compose_candidate": "plasmic/compose.candidate.yml",
-      "release_contract": "plasmic/release-contract.json",
+      "compose_candidate": "apps/plasmic/compose.candidate.yml",
+      "release_contract": "apps/plasmic/release-contract.json",
       "compose_release_ready": false
     },
     {
       "id": "hindsight-mcp",
       "uuid": "aglen8ervlo2lpi30oz8iii9",
-      "source_root": "hindsight-mcp",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Caddy proxy Compose configuration remains only in Coolify; dedicated source folder missing.",
-      "compose_candidate": "hindsight-mcp/compose.candidate.yml",
-      "release_contract": "hindsight-mcp/release-contract.json",
+      "source_root": "mcp/hindsight-mcp",
+      "build_dockerfile": "mcp/hindsight-mcp/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Real in-repository source and build Dockerfile are available; current production uses an older image and release remains gated. The source-owned candidate is NOT a deployment or production E2E.",
+      "compose_candidate": "mcp/hindsight-mcp/compose.candidate.yml",
+      "release_contract": "mcp/hindsight-mcp/release-contract.json",
       "compose_release_ready": false
     },
     {
       "id": "opik-mcp",
       "uuid": "egasedqaofxnzcqppuxi805h",
-      "source_root": "opik-mcp",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "Access guard Dockerfile is under opik-mcp/access-guard but full multi-container MCP service build is not represented by single owned context.",
-      "compose_candidate": "opik-mcp/compose.candidate.yml",
-      "release_contract": "opik-mcp/release-contract.json",
+      "source_root": "mcp/opik-mcp",
+      "build_dockerfile": "mcp/opik-mcp/backend/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Real in-repository source and build Dockerfile are available; current production uses an older image and release remains gated. The source-owned candidate is NOT a deployment or production E2E.",
+      "compose_candidate": "mcp/opik-mcp/compose.candidate.yml",
+      "release_contract": "mcp/opik-mcp/release-contract.json",
       "compose_release_ready": false
     },
     {
       "id": "emailens-mcp",
       "uuid": "16qnapdkj0qqqmeokepdechk",
-      "source_root": "emailens-mcp",
-      "build_dockerfile": "emailens-mcp/Dockerfile",
+      "source_root": "mcp/emailens-mcp",
+      "build_dockerfile": "mcp/emailens-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     },
     {
       "id": "plasmic-mcp",
       "uuid": "a6ci2beifbinzckfnneiqnjd",
-      "source_root": "plasmic-mcp",
-      "build_dockerfile": "plasmic-mcp/Dockerfile",
+      "source_root": "mcp/plasmic-mcp",
+      "build_dockerfile": "mcp/plasmic-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     },
     {
       "id": "coolify-mcp",
       "uuid": "f7smgdueq8frlex9lfhp9iji",
-      "source_root": "coolify-mcp",
-      "build_dockerfile": "coolify-mcp/Dockerfile",
-      "source_build_ready": false,
-      "reason": "PR #221 owns a real Dockerfile but is not merged into trusted main; live service still runs external stumason image."
+      "source_root": "mcp/coolify-mcp",
+      "build_dockerfile": "mcp/coolify-mcp/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Source and Dockerfile are available in mcp/coolify-mcp. Production currently runs ghcr.io/jtrtdhrst/coolify-mcp@sha256:3680d1b58fbc6c5097ac3f525e9e1b0aaec390be0a05ab5580eba322f70d734d (Coolify readback 2026-11-23); this does not attest or deploy the new directory layout, which remains gated."
     },
     {
       "id": "qdrant-mcp",
       "uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "source_root": "qdrant-mcp",
-      "build_dockerfile": null,
-      "source_build_ready": false,
-      "reason": "No qdrant-mcp source folder in Harness main; live image cannot be reproduced from a declared folder.",
-      "compose_candidate": "qdrant-mcp/compose.candidate.yml",
-      "release_contract": "qdrant-mcp/release-contract.json",
+      "source_root": "mcp/qdrant-mcp",
+      "build_dockerfile": "mcp/qdrant-mcp/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Real in-repository source and build Dockerfile are available; current production uses an older image and release remains gated. The source-owned candidate is NOT a deployment or production E2E.",
+      "compose_candidate": "mcp/qdrant-mcp/compose.candidate.yml",
+      "release_contract": "mcp/qdrant-mcp/release-contract.json",
       "compose_release_ready": false
     },
     {
       "id": "supabase-mcp",
       "uuid": "tjit4c8m0kjh8brkmdhyvkde",
-      "source_root": "supabase-mcp",
-      "build_dockerfile": "supabase-mcp/Dockerfile",
+      "source_root": "mcp/supabase-mcp",
+      "build_dockerfile": "mcp/supabase-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     },
     {
       "id": "comfy-mcp",
       "uuid": "kkhfw0napmeaqewgdirwhc1h",
-      "source_root": "comfy-mcp",
-      "build_dockerfile": "comfy-mcp/Dockerfile",
+      "source_root": "mcp/comfy-mcp",
+      "build_dockerfile": "mcp/comfy-mcp/Dockerfile",
       "source_build_ready": true,
-      "reason": "Canonical MCP source migrated from comfyui-mcp into comfy-mcp/. Production still runs prior local image until reviewed immutable OCI deployment."
+      "reason": "Canonical MCP source migrated from comfyui-mcp into mcp/comfy-mcp/. Production still runs prior local image until reviewed immutable OCI deployment."
     },
     {
       "id": "ubuntu-mcp",
       "uuid": "lcnjb3vreec7saihkhan6akh",
-      "source_root": "ubuntu-mcp",
-      "build_dockerfile": "ubuntu-mcp/Dockerfile",
+      "source_root": "mcp/ubuntu-mcp",
+      "build_dockerfile": "mcp/ubuntu-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     },
     {
       "id": "mantic-mcp",
       "uuid": "bioufw4uxwuhmr51ueyahf0u",
-      "source_root": "mantic-mcp",
-      "build_dockerfile": "mantic-mcp/Dockerfile.http",
+      "source_root": "mcp/mantic-mcp",
+      "build_dockerfile": "mcp/mantic-mcp/Dockerfile.http",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     },
     {
       "id": "playwright-mcp",
       "uuid": "9e4fzsodixl4qzzap4zg0ntp",
-      "source_root": "playwright-mcp",
-      "build_dockerfile": "playwright-mcp/Dockerfile",
+      "source_root": "mcp/playwright-mcp",
+      "build_dockerfile": "mcp/playwright-mcp/Dockerfile",
       "source_build_ready": true,
       "reason": "Build context and source Dockerfile are entirely inside the declared folder; promotion remains gated."
     }
