@@ -36,6 +36,26 @@ class RepoAdmissionTests(unittest.TestCase):
         self.assertIn("c.content ILIKE '%CHANGES_REQUESTED%'", sql)
         self.assertIn("c.deleted_at IS NULL", sql)
 
+    def test_harness_query_has_workspace_anchored_read_only_security_gate(self):
+        sql = gate.query(HARNESS, 215, "ZARI-213")
+        self.assertIn("'issue_count', COUNT(*)", sql)
+        self.assertIn("workspace_id='" + gate.WORKSPACE + "'", sql)
+        self.assertIn("number=213", sql)
+        self.assertIn("z.status = 'done'", sql)
+        self.assertIn("jsonb_typeof(z.metadata->'security_hold') = 'boolean'", sql)
+        self.assertIn("z.metadata->'security_hold' = 'false'::jsonb", sql)
+        self.assertIn("AS zari213_release_state", sql)
+        self.assertFalse(any(
+            word in sql.upper()
+            for word in ("INSERT INTO", "UPDATE ", "DELETE FROM", "ALTER TABLE", "DROP TABLE")
+        ))
+
+    def test_product_query_does_not_apply_harness_security_hold(self):
+        sql = gate.query(PRODUCT, 215, "ZARI-190")
+        self.assertIn("NULL::json AS zari213_release_state", sql)
+        self.assertNotIn("z.workspace_id='" + gate.WORKSPACE + "'", sql)
+        self.assertNotIn("'issue_count', COUNT(*)", sql)
+
     def test_stale_or_malformed_sha_denied(self):
         with self.assertRaisesRegex(gate.Denied, "invalid_sha"):
             gate.validate_input(HARNESS, 215, "abc", MERGE, "ZARI-213")
@@ -44,26 +64,117 @@ class RepoAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.Denied, "invalid_issue_ref"):
             gate.validate_input(HARNESS, 215, HEAD, MERGE, "213")
 
-    def approval_row(self, *, status="in_review", reviewer=CTO, producer=HE):
+    def released_security_state(self):
         return {
+            "issue_count": 1,
+            "status_done": True,
+            "security_hold_is_boolean": True,
+            "security_hold_is_false": True,
+        }
+
+    def approval_row(self, *, status="in_review", reviewer=CTO, producer=HE,
+                     repo=HARNESS, issue_number=213, security_state="released",
+                     include_security_state=True):
+        row = {
             "issue_id": "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc",
-            "issue_number": 213,
-            "issue_description": "Canonical https://github.com/" + HARNESS + "/pull/215",
+            "issue_number": issue_number,
+            "issue_description": "Canonical https://github.com/" + repo + "/pull/215",
             "issue_status": status,
             "producer_id": producer,
             "producer_runs": 1,
             "comments": [{
                 "author_type": "agent",
                 "author_id": reviewer,
-                "content": "RELEASE_APPROVED " + HEAD + "\nREPOSITORY " + HARNESS + "\nPR 215\nPRODUCER " + producer,
+                "content": "RELEASE_APPROVED " + HEAD + "\nREPOSITORY " + repo + "\nPR 215\nPRODUCER " + producer,
                 "source_task_id": TASK,
                 "created_at": "2026-11-22T15:00:00Z",
             }],
         }
+        if include_security_state:
+            row["zari213_release_state"] = (
+                self.released_security_state() if security_state == "released" else security_state
+            )
+        return row
 
     def test_security_hold_fails_before_approval(self):
         with self.assertRaisesRegex(gate.Denied, "issue_not_reviewable"):
             gate.verify(self.approval_row(status="blocked"), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_explicit_done_and_false_hold_is_admitted(self):
+        with patch.object(gate, "task_record", return_value={
+            "agent_id": CTO, "issue_id": "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc", "status": "completed"
+        }):
+            outcome = gate.verify(self.approval_row(status="done"), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+        self.assertTrue(outcome["verified"])
+
+    def test_true_hold_blocks_even_when_zari213_is_done(self):
+        state = {
+            "issue_count": 1, "status_done": True,
+            "security_hold_is_boolean": True, "security_hold_is_false": False,
+        }
+        row = self.approval_row(status="done", security_state=state)
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_missing_security_gate_result_fails_closed(self):
+        row = self.approval_row(status="done", include_security_state=False)
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(row, HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_missing_security_hold_field_fails_closed(self):
+        state = {
+            "issue_count": 1, "status_done": True,
+            "security_hold_is_boolean": False, "security_hold_is_false": False,
+        }
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(self.approval_row(status="done", security_state=state),
+                        HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_wrong_security_hold_type_fails_closed(self):
+        state = {
+            "issue_count": 1, "status_done": True,
+            "security_hold_is_boolean": 1, "security_hold_is_false": True,
+        }
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(self.approval_row(status="done", security_state=state),
+                        HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_absent_canonical_issue_fails_closed(self):
+        state = {
+            "issue_count": 0, "status_done": False,
+            "security_hold_is_boolean": False, "security_hold_is_false": False,
+        }
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(self.approval_row(status="done", security_state=state),
+                        HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_duplicate_canonical_issues_fail_closed(self):
+        state = {
+            "issue_count": 2, "status_done": True,
+            "security_hold_is_boolean": True, "security_hold_is_false": True,
+        }
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(self.approval_row(status="done", security_state=state),
+                        HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_hold_denial_precedes_target_issue_status(self):
+        state = {
+            "issue_count": 1, "status_done": True,
+            "security_hold_is_boolean": True, "security_hold_is_false": False,
+        }
+        with self.assertRaisesRegex(gate.Denied, "zari213_security_hold_active"):
+            gate.verify(self.approval_row(status="blocked", security_state=state),
+                        HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
+
+    def test_product_release_is_not_blocked_by_harness_security_hold(self):
+        row = self.approval_row(
+            status="done", repo=PRODUCT, issue_number=190, include_security_state=False
+        )
+        with patch.object(gate, "task_record", return_value={
+            "agent_id": CTO, "issue_id": row["issue_id"], "status": "completed"
+        }):
+            outcome = gate.verify(row, PRODUCT, 215, HEAD, MERGE, "ZARI-190", "fake")
+        self.assertTrue(outcome["verified"])
 
     def test_independent_exact_sha_review_can_pass(self):
         with patch.object(gate, "task_record", return_value={"agent_id": CTO, "issue_id": "01a1e0ac-5d9e-7c46-8add-67be5ff69dcc", "status": "completed"}):

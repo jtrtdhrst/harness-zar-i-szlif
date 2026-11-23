@@ -1,6 +1,18 @@
 name: Native Product Release Gate CI
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/paperclip_native_release_gate.py"
+      - "scripts/test_paperclip_native_release_gate.py"
+      - "scripts/product_native_promotion.py"
+      - "scripts/test_product_native_promotion.py"
+      - "scripts/test_product_squash_release.py"
+      - "scripts/product_image_delivery.py"
+      - "scripts/test_product_image_delivery.py"
+      - "ops/systemd/product-native-promotion.*"
+      - ".github/workflows/native-product-release-ci.yml"
   push:
     branches: [main]
     paths:
@@ -9,6 +21,8 @@ on:
       - "scripts/product_native_promotion.py"
       - "scripts/test_product_native_promotion.py"
       - "scripts/test_product_squash_release.py"
+      - "scripts/product_image_delivery.py"
+      - "scripts/test_product_image_delivery.py"
       - "ops/systemd/product-native-promotion.*"
       - ".github/workflows/native-product-release-ci.yml"
 
@@ -20,6 +34,26 @@ permissions:
   contents: read
 
 jobs:
+  validate-unprivileged-pr:
+    # PR code is executed only on an ephemeral hosted runner with no secrets.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Run real source regressions, including malicious marker-path swap
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_product_native_promotion.py -v
+          python3 -m unittest discover -s scripts -p test_product_image_delivery.py -v
+          python3 -m unittest discover -s scripts -p test_paperclip_native_release_gate.py -v
+          python3 -m unittest discover -s scripts -p test_product_squash_release.py -v
+          python3 -m py_compile scripts/product_image_delivery.py scripts/product_native_promotion.py
+
   validate-native-product-release:
     # PR YAML is untrusted. Validate exact PR trees in the root-owned rootless
     # premerge lane; only reviewed main may execute on the persistent runner.
@@ -34,7 +68,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = 'push'
           test "$GITHUB_REF" = 'refs/heads/main'
-          test "$GITHUB_REPOSITORY" = 'miloszspyrka-code/harness-zar-i-szlif'
+          test "$GITHUB_REPOSITORY" = 'jtrtdhrst/harness-zar-i-szlif'
           test "$(id -un)" = actions-zis
           ! test -w /var/run/docker.sock
           ! test -r /opt/zis-actions-runner/.credentials
@@ -47,4 +81,5 @@ jobs:
           python3 -m unittest discover -s scripts -p test_paperclip_native_release_gate.py -v
           python3 -m unittest discover -s scripts -p test_product_native_promotion.py -v
           python3 -m unittest discover -s scripts -p test_product_squash_release.py -v
-          python3 -m py_compile scripts/paperclip_native_release_gate.py scripts/product_native_promotion.py
+          python3 -m unittest discover -s scripts -p test_product_image_delivery.py -v
+          python3 -m py_compile scripts/paperclip_native_release_gate.py scripts/product_native_promotion.py scripts/product_image_delivery.py

@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-ALLOWED_REPOS = {"miloszspyrka-code/harness-zar-i-szlif", "miloszspyrka-code/zar-i-szlif"}
+ALLOWED_REPOS = {"jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"}
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 CONTAINER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,126}\Z")
 

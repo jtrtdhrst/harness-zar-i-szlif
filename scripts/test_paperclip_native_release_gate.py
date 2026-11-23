@@ -2,7 +2,7 @@
 import unittest
 from paperclip_native_release_gate import Denied, verify
 
-REPO="miloszspyrka-code/zar-i-szlif"
+REPO="jtrtdhrst/zar-i-szlif"
 HEAD="a"*40
 MERGE="b"*40
 PR=155
@@ -25,6 +25,12 @@ def valid():
 class NativeReleaseGateTests(unittest.TestCase):
     def permit(self, row):
         return verify([row],REPO,PR,HEAD,MERGE)
+
+    def test_current_repo_only_and_legacy_owner_denied(self):
+        self.assertTrue(self.permit(valid())["verified"])
+        old_repo = "miloszspyrka-code/zar-i-szlif"
+        with self.assertRaisesRegex(Denied, "invalid_repository_or_pr"):
+            verify([valid()], old_repo, PR, HEAD, MERGE)
 
     def test_exact_positive_review(self):
         x=self.permit(valid())

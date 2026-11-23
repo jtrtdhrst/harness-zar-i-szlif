@@ -14,7 +14,23 @@ import subprocess
 import sys
 
 ALLOWED_REPOS = {"jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"}
+HARNESS_REPO = "jtrtdhrst/harness-zar-i-szlif"
 WORKSPACE = "28378cc8-2c3a-4f8e-af1c-63e308407b17"
+ZARI213_NUMBER = 213
+ZARI213_RELEASE_STATE_SQL = f"""(
+    SELECT json_build_object(
+        'issue_count', COUNT(*),
+        'status_done', COALESCE(BOOL_AND(z.status = 'done'), FALSE),
+        'security_hold_is_boolean', COALESCE(BOOL_AND(
+            jsonb_typeof(z.metadata->'security_hold') = 'boolean'
+        ), FALSE),
+        'security_hold_is_false', COALESCE(BOOL_AND(
+            z.metadata->'security_hold' = 'false'::jsonb
+        ), FALSE)
+    )
+    FROM issue z
+    WHERE z.workspace_id='{WORKSPACE}' AND z.number={ZARI213_NUMBER}
+)"""
 REVIEWERS = {
     "3a54e0b4-6526-4de5-a1fd-e66e205cb3b4",  # independent CTO only
 }
@@ -47,10 +63,12 @@ def query(repo, pr, issue_ref):
             "i.id IN (SELECT c.issue_id FROM comment c JOIN issue i2 ON i2.id=c.issue_id "
             f"WHERE c.deleted_at IS NULL AND c.content LIKE '%{url}%' AND i2.workspace_id='{WORKSPACE}')"
         )
+    security_gate = ZARI213_RELEASE_STATE_SQL if repo == HARNESS_REPO else "NULL::json"
     return f"""
 SELECT row_to_json(t)::text FROM (
  SELECT i.id issue_id, i.number issue_number, i.status issue_status, i.description issue_description,
         i.assignee_id producer_id, i.title issue_title,
+        {security_gate} AS zari213_release_state,
         (SELECT json_agg(json_build_object(
             'id', c.id, 'author_type', c.author_type, 'author_id', c.author_id,
             'content', c.content, 'created_at', c.created_at,
@@ -93,10 +111,25 @@ def task_record(task_id, db_container):
     return rows[0]
 
 
+def zari213_release_authorized(state):
+    return (
+        isinstance(state, dict)
+        and type(state.get("issue_count")) is int
+        and state.get("issue_count") == 1
+        and state.get("status_done") is True
+        and state.get("security_hold_is_boolean") is True
+        and state.get("security_hold_is_false") is True
+    )
+
+
 def verify(row, repo, pr, head_sha, merge_sha, issue_ref, db_container):
     validate_input(repo, pr, head_sha, merge_sha, issue_ref)
     if not isinstance(row, dict):
         raise Denied("missing_or_ambiguous_issue")
+    # Harness releases are blocked until the unique canonical ZARI-213 issue is
+    # done and carries an explicit JSON boolean security_hold=false.
+    if repo == HARNESS_REPO and not zari213_release_authorized(row.get("zari213_release_state")):
+        raise Denied("zari213_security_hold_active")
     if row.get("issue_status") not in ("done", "in_review"):
         raise Denied("issue_not_reviewable")
     if issue_ref is not None and row.get("issue_number") != int(ISSUE_REF.fullmatch(issue_ref).group(1)):

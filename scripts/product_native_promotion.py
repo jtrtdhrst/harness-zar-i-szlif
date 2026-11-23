@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-REPO = "miloszspyrka-code/zar-i-szlif"
+REPO = "jtrtdhrst/zar-i-szlif"
 APP_ID = 5398752
 INSTALL_ID = 173456397
 RELEASE_REF = "ci-approved"
@@ -147,10 +147,10 @@ def run(argv, timeout=30, allow_fail=False):
 
 
 GITHUB_PATH = re.compile(
-    r"^/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
+    r"^/repos/jtrtdhrst/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
 # Pagination query is allowed only on the check-run annotations resource.
 GITHUB_ANNOTATIONS_PATH = re.compile(
-    r"^/repos/miloszspyrka-code/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
+    r"^/repos/jtrtdhrst/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
     r"(\?per_page=[0-9]{1,3}(&page=[0-9]{1,5})?)?$")
 ANNOTATIONS_PAGE_SIZE = 100
 ANNOTATIONS_MAX_PAGES = 20
@@ -327,7 +327,7 @@ def historical_foreign_check(sha, row):
 TRUSTED_PRODUCT_WORKFLOW_ID = 405924339
 TRUSTED_PRODUCT_WORKFLOW = ".github/workflows/product-ci.yml"
 PRODUCT_JOB_URL = re.compile(
-    r"^https://github\.com/miloszspyrka-code/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
+    r"^https://github\.com/jtrtdhrst/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
 )
 
 
@@ -838,24 +838,42 @@ def save(data):
     os.replace(tmp, STATE)
 
 
-def require_verified_local_image_delivery():
-    """Never advance ci-approved before real runner/registry/deploy E2E."""
-    ready = Path("/var/lib/paperclip-gitops/zis-image-promotion-ready.json")
+def require_verified_local_image_delivery(prior_sha):
+    """Prove the PRIOR release is still the verified immutable live image.
+
+    The candidate's independent review and CI are checked by candidate_history;
+    the prior image receipt must never be reused for a different live SHA.
+    """
+    if not isinstance(prior_sha, str) or not SHA.fullmatch(prior_sha):
+        raise Denied("invalid_prior_release_sha")
     runner = Path("/opt/zis-actions-runner/.runner")
-    if not runner.is_file() or not ready.is_file():
+    if not runner.is_file():
         raise Denied("local_image_delivery_unverified")
     try:
-        data = json.loads(ready.read_text(encoding="utf8"))
-    except (OSError, ValueError):
+        # One root-owned O_NOFOLLOW inode is validated and read in the existing
+        # delivery worker. Never follow an attacker-controlled marker path.
+        import product_image_delivery as image_delivery
+        data = image_delivery.read_build_attestation()
+    except (ImportError, OSError, ValueError, KeyError, PermissionError):
         raise Denied("local_image_delivery_unverified") from None
+    image = f"127.0.0.1:5000/zar-i-szlif-web:{prior_sha}"
     expected = {"schema_version": 1, "verified": True,
                 "registry": "127.0.0.1:5000",
                 "coolify_image_app_uuid": "cs847jiwtuq5rlm8ntjeohgf",
-                "runner": "zis-local-build"}
+                "runner": "zis-local-build", "sha": prior_sha,
+                "image": image}
+    digest = data.get("digest") if isinstance(data, dict) else None
     if (not isinstance(data, dict)
-            or any(type(data.get(k)) is not type(v) or data[k] != v
-                   for k, v in expected.items())):
-        raise Denied("local_image_delivery_unverified")
+            or any(type(data.get(k)) is not type(v) or data.get(k) != v
+                   for k, v in expected.items())
+            or not isinstance(digest, str)
+            or re.fullmatch(r"sha256:[a-f0-9]{64}", digest) is None):
+        raise Denied("local_image_delivery_stale_or_unverified")
+    proof = image_delivery.target_readback(prior_sha)
+    if (proof.get("ok") is not True
+            or proof.get("sha") != prior_sha
+            or proof.get("image_digest") != digest):
+        raise Denied("prior_release_live_digest_mismatch")
 
 
 def process(plan=False):
@@ -885,7 +903,7 @@ def process(plan=False):
     summary = {"main":current,"prior":release,"reviewed_prs":[x["pr"] for x in verified]}
     if plan:
         return {"result":"admissible", "delivery_gate":"local_image_delivery_required", **summary}
-    require_verified_local_image_delivery()
+    require_verified_local_image_delivery(release)
     github_api("/repos/" + REPO + "/git/refs/heads/" + RELEASE_REF, method="patch", body={"sha":current,"force":False})
     if ref(RELEASE_REF) != current:
         raise Denied("release_ref_readback_mismatch")
