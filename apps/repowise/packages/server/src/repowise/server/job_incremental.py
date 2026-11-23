@@ -1,0 +1,268 @@
+"""Incremental page regeneration for sync jobs: rewrite only what changed."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import structlog
+
+from repowise.server.job_state import _load_state, _read_head_sha
+
+logger = structlog.get_logger(__name__)
+
+
+async def _incremental_page_regen(
+    repo_path: Path,
+    result: Any,
+    llm_client: Any,
+    job_config: dict,
+    progress: Any | None,
+    repo_wiki_style: str = "comprehensive",
+    *,
+    vector_store: Any | None = None,
+    prior_pages: dict[str, Any] | None = None,
+    session_factory: Any | None = None,
+    repo_id: str | None = None,
+) -> list:
+    """Regenerate only wiki pages affected by recent changes.
+
+    Uses the graph from the just-completed pipeline run + git diff to detect
+    which pages need updating.  Returns a list of GeneratedPage objects (may
+    be empty if nothing changed or no base ref is available).
+    """
+    try:
+        stale_pages = await _stale_page_ages(session_factory, repo_id)
+
+        plan = await asyncio.to_thread(
+            _plan_incremental_page_regen,
+            repo_path,
+            result,
+            job_config,
+            stale_pages,
+        )
+        if plan is None:
+            return []
+        affected_parsed, affected_source, changed_count, affected_count, cascade_budget = plan
+
+        logger.info(
+            "incremental_page_regen_start",
+            changed_files=changed_count,
+            affected_pages=affected_count,
+            cascade_budget=cascade_budget,
+        )
+
+        if progress:
+            progress.on_phase_start("generation", affected_count)
+
+        from repowise.core.generation import ContextAssembler, PageGenerator
+
+        generation_config = _incremental_generation_config(repo_path, job_config, repo_wiki_style)
+        assembler = ContextAssembler(generation_config, repo_path=repo_path)
+        # As in the CLI: re-embed re-rendered pages, reuse unchanged ones.
+        generator = PageGenerator(
+            llm_client,
+            assembler,
+            generation_config,
+            vector_store=vector_store,
+            prior_pages=prior_pages or {},
+            repo_path=repo_path,
+        )
+
+        pages = await generator.generate_all(
+            affected_parsed,
+            affected_source,
+            result.graph_builder,
+            result.repo_structure,
+            result.repo_name,
+            git_meta_map=result.git_meta_map,
+            repo_path=repo_path,
+        )
+        pages += await _render_structure_pages(
+            repo_path,
+            result,
+            llm_client,
+            generation_config,
+            rendered_paths=[pf.file_info.path for pf in affected_parsed],
+            stale_ids=await _stale_structure_ids(session_factory, repo_id),
+            vector_store=vector_store,
+            prior_pages=prior_pages or {},
+        )
+
+        logger.info("incremental_page_regen_done", pages=len(pages))
+        return pages
+
+    except Exception as exc:
+        logger.warning("incremental_page_regen_failed", error=str(exc))
+        return []
+
+
+async def _stale_page_ages(session_factory: Any | None, repo_id: str | None) -> dict[str, float]:
+    """Stale-page ages, so a constrained cascade budget reaches the oldest stale
+    pages first (issues #847 / #851)."""
+    if session_factory is None or repo_id is None:
+        return {}
+    try:
+        from repowise.core.persistence import get_session, get_stale_file_page_ages
+
+        async with get_session(session_factory) as session:
+            return await get_stale_file_page_ages(session, repo_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("incremental_page_regen_stale_lookup_failed", error=str(exc))
+        return {}
+
+
+async def _stale_structure_ids(session_factory: Any | None, repo_id: str | None) -> set[str]:
+    """Stale whole-repo structure page ids (cycles), which only an id render heals.
+
+    An unreachable store degrades to "nothing stale": the missing-page render
+    still runs and the next sync retries. Any other error is a bug and raises.
+    """
+    if session_factory is None or repo_id is None:
+        return set()
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from repowise.core.persistence import get_session, get_stale_update_targets
+
+    try:
+        async with get_session(session_factory) as session:
+            _paths, page_ids = await get_stale_update_targets(session, repo_id)
+            return page_ids
+    except (SQLAlchemyError, OSError) as exc:
+        logger.warning("incremental_structure_stale_lookup_failed", error=str(exc))
+        return set()
+
+
+async def _render_structure_pages(
+    repo_path: Path,
+    result: Any,
+    llm_client: Any,
+    generation_config: Any,
+    *,
+    rendered_paths: list[str],
+    stale_ids: set[str],
+    vector_store: Any | None,
+    prior_pages: dict[str, Any],
+) -> list:
+    """Render the cycle, API-contract and infra pages a file-scoped pass cannot.
+
+    The ids are the ones ``repowise update`` renders: stale ones, selected ones
+    the store lacks, and the infra pages of changed files. Rendered from the
+    whole parse with the ladder scoped to those ids, so no model is called.
+    """
+    from dataclasses import replace
+
+    from repowise.core.generation import ContextAssembler, PageGenerator
+    from repowise.core.generation.selection.selector import structure_ids_for_incremental_run
+
+    page_ids = stale_ids | structure_ids_for_incremental_run(
+        result.parsed_files, result.graph_builder, prior_pages, rendered_paths
+    )
+    if not page_ids:
+        return []
+    config = replace(generation_config, file_pages_only=False)
+    generator = PageGenerator(
+        llm_client,
+        ContextAssembler(config, repo_path=repo_path),
+        config,
+        vector_store=vector_store,
+        prior_pages=prior_pages,
+        repo_path=repo_path,
+    )
+    return await generator.generate_all(
+        result.parsed_files,
+        result.source_map,
+        result.graph_builder,
+        result.repo_structure,
+        result.repo_name,
+        git_meta_map=result.git_meta_map,
+        repo_path=repo_path,
+        only_page_ids=page_ids,
+    )
+
+
+def _incremental_generation_config(repo_path: Path, job_config: dict, repo_wiki_style: str) -> Any:
+    """The ``GenerationConfig`` a sync's incremental regeneration runs with."""
+    from repowise.core.generation import GenerationConfig
+
+    # A per-page style override in the job config wins over the repo default.
+    from repowise.core.generation.styles import resolve_style
+    from repowise.core.reasoning import resolve_reasoning
+    from repowise.core.repo_config import load_repo_config
+
+    effective_style = resolve_style(
+        job_config.get("style") or repo_wiki_style, repo_path=repo_path
+    ).name
+    repo_cfg = load_repo_config(repo_path)
+    return GenerationConfig.from_repo_config(
+        repo_cfg,
+        reasoning=resolve_reasoning(config=repo_cfg),
+        wiki_style=effective_style,
+        language=repo_cfg.get("language", "en"),
+        # parsed_files holds only the changed files, so repo-wide pages
+        # (level 3 and up) would be written from a truncated view.
+        file_pages_only=True,
+    )
+
+
+def _plan_incremental_page_regen(
+    repo_path: Path,
+    result: Any,
+    job_config: dict,
+    stale_pages: dict[str, float],
+) -> tuple[list[Any], dict[str, Any], int, int, int] | None:
+    """Build an incremental regeneration plan without blocking the event loop.
+
+    The caller runs this whole synchronous unit (git, ``ChangeDetector``, graph
+    ranking) in a worker thread.
+    """
+    state = _load_state(repo_path)
+    base_ref = state.get("last_sync_commit") or job_config.get("before")
+    if not base_ref:
+        logger.info("incremental_page_regen_skipped", reason="no_base_ref")
+        return None
+
+    head = _read_head_sha(repo_path)
+    if not head:
+        return None
+    if head == base_ref:
+        logger.info("incremental_page_regen_skipped", reason="no_new_commits")
+        return None
+
+    from repowise.core.ingestion import ChangeDetector
+    from repowise.core.ingestion.change_detector import compute_adaptive_budget
+    from repowise.core.repo_config import load_repo_config
+
+    detector = ChangeDetector(
+        repo_path,
+        exclude_patterns=load_repo_config(repo_path).get("exclude_patterns"),
+        include_submodules=bool(state.get("include_submodules", False)),
+        include_nested_repos=bool(state.get("include_nested_repos", False)),
+    )
+    file_diffs = detector.get_changed_files(base_ref, head)
+    if not file_diffs:
+        return None
+
+    cascade_budget = compute_adaptive_budget(file_diffs, result.file_count)
+    affected = detector.get_affected_pages(
+        file_diffs,
+        result.graph_builder.graph(),
+        cascade_budget,
+        pagerank=result.graph_builder.pagerank(),
+        stale_pages=stale_pages,
+    )
+    if not affected.regenerate:
+        logger.info("incremental_page_regen_skipped", reason="no_affected_pages")
+        return None
+
+    regen_set = set(affected.regenerate)
+    affected_parsed = [pf for pf in result.parsed_files if pf.file_info.path in regen_set]
+    affected_source = {p: s for p, s in result.source_map.items() if p in regen_set}
+    return (
+        affected_parsed,
+        affected_source,
+        len(file_diffs),
+        len(affected.regenerate),
+        cascade_budget,
+    )

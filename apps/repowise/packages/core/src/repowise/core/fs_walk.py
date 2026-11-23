@@ -1,0 +1,520 @@
+"""Pruned filesystem walking — the ONE way to scan a repo tree.
+
+Every repo-wide file-discovery scan in repowise MUST go through this module.
+``Path.rglob`` descends into ``node_modules``, ``.venv``, ``__pycache__`` and
+— critically — **nested git repositories** (a checkout that physically
+contains sibling/vendored repos). That has two failure modes we have shipped
+and fixed more than once:
+
+1. **Performance** — an unpruned walk over a directory that holds 30+ sibling
+   repos (each with its own ``node_modules`` / ``.venv``) turns a <2s scan
+   into minutes, while holding the GIL and starving concurrent phases.
+2. **Correctness** — manifests from a *different* repo (``hugo/go.mod``,
+   ``eShop/*.sln``) leak into the current repo's resolver context.
+
+History: this logic first shipped privately in ``dynamic_hints/_walk.py``
+(perf incident: 5-10 min stalls per extractor), then again in
+``resolvers/ts_workspace.py`` (PR #368: 365s → 0.02s), while ~20 other
+``rglob`` call sites stayed unpruned. This module is the single shared
+implementation; ``tests/unit/ingestion/test_fs_walk.py`` carries a guard
+test that fails on any new direct ``rglob`` call in ``packages/core``.
+
+Guarantees:
+  - Junk directories are pruned **at traversal time** (``dirnames[:] =``),
+    never post-hoc.
+  - Nested git repos (a subdirectory with its own ``.git`` dir *or* file —
+    worktrees and submodules use a ``.git`` file) are pruned by default.
+    Detection is free: ``.git`` appears in ``os.walk``'s own listings.
+  - Symlinks are never followed; junction/hard-link cycles are detected via
+    realpath tracking (Windows ``os.walk`` can't see them via inodes). Only a
+    link is resolved; a plain directory's real path is its parent's plus its
+    name, read from the listing at no extra system call.
+  - A link (symlink or junction) whose target is **inside** the walk root is
+    pruned, so the target's subtree is walked exactly once and under its own
+    name. Recording the target as visited instead let whichever of the pair
+    sorted first win, and a link sorted ahead of its target silently removed
+    the target from the walk.
+  - Depth is capped as a final safety net.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import os
+import stat
+from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
+
+import structlog
+
+log = structlog.get_logger(__name__)
+
+__all__ = ["PRUNED_DIRS", "PRUNED_DIRS_DERIVED", "WalkSnapshot", "iter_glob", "walk_repo"]
+
+# Directory basenames that can NEVER hold first-party source or manifests:
+# VCS metadata, package/venv caches, and tool caches. Pruned at every level
+# of the walk. Keep this list strictly to never-source names: anything a
+# real project could plausibly use as a source directory (``build``,
+# ``out``, ``dist``, ``coverage`` — coveragepy's main package literally
+# lives in ``coverage/``) belongs in :data:`PRUNED_DIRS_DERIVED` instead,
+# and ambiguous names (``bin``, ``obj``, ``lib``, ``vendor``, ``target``)
+# stay out of both — callers post-filter (dotnet skips ``bin``/``obj``,
+# go skips ``vendor``).
+PRUNED_DIRS: frozenset[str] = frozenset(
+    {
+        # VCS / metadata
+        ".git",
+        ".hg",
+        ".svn",
+        # Python environments / caches
+        ".venv",
+        "venv",
+        ".env",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        # JS / TS
+        "node_modules",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        ".parcel-cache",
+        ".yarn",
+        ".pnpm-store",
+        # Tool caches
+        ".gradle",
+        ".cache",
+        # Editor / IDE
+        ".idea",
+        ".vscode",
+        # Coverage / test outputs (unambiguous names only)
+        "htmlcov",
+        ".nyc_output",
+        # Repowise / data
+        ".repowise",
+        ".lancedb",
+    }
+)
+
+# PRUNED_DIRS plus derived-output names that occasionally double as real
+# source dirs. Use for scans where derived trees would only add noise
+# (dynamic hints' settings/router extraction); do NOT use for manifest
+# discovery. ``build``, ``coverage``, ``dist`` and ``target`` are not listed:
+# the traverser's ``is_output_dir`` decides them per directory, so pass it as
+# ``prune`` to skip only real output and still read a source package that has
+# one of those names, as the indexer does.
+PRUNED_DIRS_DERIVED: frozenset[str] = PRUNED_DIRS | frozenset({"out"})
+
+# Safety net: bail if walk depth grows pathologically. Real-world repos
+# rarely exceed depth 20; anything beyond strongly suggests a cycle.
+_MAX_WALK_DEPTH = 64
+
+
+def _normcase(p: str) -> str:
+    """Path in the filesystem's own case convention (a no-op off Windows)."""
+    return os.path.normcase(p)
+
+
+def _is_within(candidate: str, root_real: str) -> bool:
+    """True when *candidate* is *root_real* or sits underneath it.
+
+    String-prefixed on purpose: both sides are already ``realpath`` output, so
+    there is nothing left to resolve, and ``commonpath`` raises across drives
+    (a junction to ``D:\\`` from a walk rooted on ``C:\\`` is the normal case
+    this has to answer ``False`` for, not raise on).
+    """
+    root = _normcase(root_real.rstrip(os.sep))
+    cand = _normcase(candidate.rstrip(os.sep))
+    return cand == root or cand.startswith(root + os.sep)
+
+
+def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
+    """True for a Windows junction or other mount point (never off Windows).
+
+    Free: on Windows ``stat(follow_symlinks=False)`` is served from the
+    listing's own attributes. A failed read answers True so ``realpath`` decides.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        attrs = entry.stat(follow_symlinks=False).st_file_attributes
+    except OSError:
+        return True
+    return bool(attrs & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _scan(top: str) -> Iterator[tuple[str, list[str], list[str], set[str]]]:
+    """``os.walk(top, followlinks=False)``, top-down, plus each listing's links.
+
+    ``os.walk`` reads every entry's link state and drops it, then ``realpath``
+    had to ask the filesystem again: two ``_getfinalpathname`` calls per
+    directory on Windows, about 2/3 of a pruned walk. Keeping the state lets
+    :func:`walk_repo` resolve only the links. Mutating the yielded dirnames
+    prunes the descent, exactly as with ``os.walk``.
+    """
+    stack = [top]
+    while stack:
+        dirpath = stack.pop()
+        dirnames: list[str] = []
+        filenames: list[str] = []
+        links: set[str] = set()
+        symlinks: set[str] = set()
+        try:
+            with os.scandir(dirpath) as it:
+                for entry in it:
+                    try:
+                        is_dir = entry.is_dir()
+                    except OSError:
+                        is_dir = False
+                    if not is_dir:
+                        filenames.append(entry.name)
+                        continue
+                    dirnames.append(entry.name)
+                    try:
+                        is_symlink = entry.is_symlink()
+                    except OSError:
+                        is_symlink = True
+                    if is_symlink:
+                        symlinks.add(entry.name)
+                        links.add(entry.name)
+                    elif _is_reparse_point(entry):
+                        links.add(entry.name)
+        except OSError:
+            continue
+        yield dirpath, dirnames, filenames, links
+        # Like ``os.walk(followlinks=False)``: a symlink is listed, never
+        # entered; a junction is entered, so walk_repo's realpath checks
+        # are what stop it.
+        stack.extend(
+            os.path.join(dirpath, d) for d in reversed(dirnames) if d not in symlinks
+        )
+
+
+def walk_repo(
+    root: Path | str,
+    *,
+    prune_dirs: frozenset[str] = PRUNED_DIRS,
+    prune_nested_git: bool = True,
+    max_depth: int = _MAX_WALK_DEPTH,
+    prune: Callable[[Path], bool] | None = None,
+) -> Iterator[tuple[Path, list[str], list[str]]]:
+    """Top-down walk over *root* with pruning. Yields ``(dirpath, dirnames, filenames)``.
+
+    Use this (instead of :func:`iter_glob`) when one pass should collect
+    several kinds of files — match against ``filenames`` yourself.
+
+    Args:
+        root:             Directory to walk.
+        prune_dirs:       Directory *basenames* skipped at every level.
+        prune_nested_git: Skip any non-root directory that contains its own
+                          ``.git`` entry (dir or file) — i.e. another repo.
+        max_depth:        Hard depth cap (cycle safety net).
+        prune:            Optional per-directory check, called with each
+                          subdirectory's path after *prune_dirs*; a ``True``
+                          answer skips it. For decisions a name cannot make
+                          (``is_output_dir`` for ``build``/``dist``/...).
+
+    ``dirnames`` is yielded *after* pruning; callers may prune further by
+    mutating it in place, exactly like ``os.walk``.
+    """
+    root_path = Path(root)
+    if not root_path.is_dir():
+        return
+
+    try:
+        root_real = os.path.realpath(root_path)
+    except OSError:
+        return
+    base_depth = root_real.rstrip(os.sep).count(os.sep)
+    visited_real: set[str] = {root_real}
+    # Resolved path of each directory queued for descent, keyed by the path
+    # the walk yields it under, so a plain child resolves by a join.
+    top = os.fspath(root_path)
+    real_of: dict[str, str] = {top: root_real}
+
+    is_root = True
+    for dirpath, dirnames, filenames, links in _scan(top):
+        # Nested git repo? ``.git`` shows up in this dir's own listing — no
+        # extra stat calls needed. The walk root itself is exempt (it IS the
+        # repo being scanned); the top-down walk always yields it first.
+        if is_root:
+            is_root = False
+        elif prune_nested_git and (".git" in dirnames or ".git" in filenames):
+            dirnames[:] = []
+            continue
+
+        # Skip junk directories at every level.
+        dirnames[:] = [d for d in dirnames if d not in prune_dirs]
+        if prune is not None:
+            parent = Path(dirpath)
+            dirnames[:] = [d for d in dirnames if not prune(parent / d)]
+
+        # Drop any dir whose realpath we've already entered — catches
+        # Windows junctions and other cycles ``os.walk`` can't detect via
+        # inode (Windows doesn't expose real inodes outside NTFS proper).
+        cycle_pruned: list[str] = []
+        # The resolved form of *this* directory, so "is the child itself a link"
+        # can be asked without the answer depending on the path the caller
+        # happened to pass in. Comparing ``realpath(child)`` against
+        # ``abspath(child)`` looks equivalent and is not: ``abspath`` resolves
+        # nothing, so a symlink anywhere in the *root's own prefix* makes every
+        # child at every depth compare unequal, and the walk prunes the entire
+        # tree. That is not exotic — macOS ``/tmp`` is a symlink to
+        # ``/private/tmp``, container bind mounts and mapped drives do the same,
+        # and a repo checked out under one would have indexed as empty.
+        # Carrying each directory's resolved path down from its parent keeps
+        # both sides of the comparison resolved to the same depth, so only a
+        # genuine reparse point differs.
+        parent_real = real_of.pop(dirpath, None)
+        if parent_real is None:
+            try:
+                parent_real = os.path.realpath(dirpath)
+            except OSError:
+                parent_real = str(dirpath)
+        for d in dirnames:
+            child = os.path.join(dirpath, d)
+            # Only a link can resolve anywhere but ``parent_real/d``, so only a
+            # link pays for ``realpath``.
+            if d in links:
+                try:
+                    child_real = os.path.realpath(child)
+                except OSError:
+                    cycle_pruned.append(d)
+                    continue
+            else:
+                child_real = os.path.join(parent_real, d)
+            # A reparse point — symlink, junction, bind mount — resolving
+            # somewhere else. Its target is NOT territory this entry owns, and
+            # recording it as visited is what let a link *delete* its target's
+            # subtree from the walk: whichever of the two sorted first won, and
+            # a link sorted ahead of its target removed the target entirely
+            # (measured on a synthetic tree: ``linked -> svc`` took ``svc`` and
+            # ``svc/api`` out of the result, 6 directories down to 4).
+            #
+            # In-tree targets are pruned instead: the walk reaches them under
+            # their real name, and descending the link as well would either
+            # duplicate the subtree or — for a junction, which ``followlinks``
+            # does not suppress because Windows tags it a mount point rather
+            # than a symlink — report every file under the *link's* path
+            # instead of its own. Out-of-tree targets keep the old behaviour;
+            # they are a genuine external tree, and cycle protection still
+            # needs their realpath because ``os.walk`` will descend a junction
+            # into one.
+            if _normcase(child_real) != _normcase(
+                os.path.join(parent_real, d)
+            ) and _is_within(child_real, root_real):
+                cycle_pruned.append(d)
+                continue
+            if child_real in visited_real:
+                cycle_pruned.append(d)
+                continue
+            visited_real.add(child_real)
+            real_of[child] = child_real
+        if cycle_pruned:
+            dirnames[:] = [d for d in dirnames if d not in cycle_pruned]
+
+        # Final safety net: refuse to descend beyond max_depth.
+        cur_depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
+        if cur_depth >= max_depth:
+            log.warning(
+                "fs_walk.depth_exceeded",
+                root=str(root_path),
+                depth=cur_depth,
+                at=dirpath,
+            )
+            dirnames[:] = []
+            continue
+
+        yield Path(dirpath), dirnames, filenames
+
+
+def _matches(rel_posix: str, basename: str, pattern: str) -> bool:
+    """``rglob`` matching semantics for one already-walked entry.
+
+    Patterns without ``/`` match the basename (``"*.go"``, ``"go.mod"``).
+    Patterns with ``/`` match the *tail* of the root-relative posix path,
+    mirroring ``Path.rglob`` == ``glob("**/" + pattern)``:
+    ``"META-INF/services"``, ``"META-INF/spring/*.imports"``.
+    """
+    if "/" not in pattern:
+        return fnmatch.fnmatch(basename, pattern)
+    return fnmatch.fnmatch(rel_posix, pattern) or fnmatch.fnmatch(rel_posix, "*/" + pattern)
+
+
+class WalkSnapshot:
+    """One pruned walk, replayed for many :func:`iter_glob`-style queries.
+
+    Callers that issue several ``iter_glob`` queries against the same tree
+    (the dynamic-hint extractors run ~40 of them) pay one filesystem walk
+    here and answer every query from memory. Replay preserves
+    :func:`iter_glob` semantics and yield order exactly: entries are stored
+    in walk order, files before directories per directory, and ``/``-tail
+    patterns match against paths relative to the *query* root.
+
+    Queries rooted below the snapshot root are served from the snapshot's
+    subtree (os.walk pre-order keeps a subtree's entries in the same
+    relative order a direct walk of that subtree would produce). A query
+    root outside the snapshot tree falls back to a live walk.
+    """
+
+    __slots__ = ("_entries", "_prune", "_prune_dirs", "_prune_nested_git", "root")
+
+    def __init__(
+        self,
+        root: Path | str,
+        *,
+        prune_dirs: frozenset[str] = PRUNED_DIRS,
+        prune_nested_git: bool = True,
+        prune: Callable[[Path], bool] | None = None,
+    ) -> None:
+        self.root = Path(root)
+        self._prune_dirs = prune_dirs
+        self._prune_nested_git = prune_nested_git
+        self._prune = prune
+        # (dirpath, root-relative posix dir ('' for the root), dirnames, filenames)
+        self._entries: list[tuple[Path, str, list[str], list[str]]] = []
+        for dirpath, dirnames, filenames in walk_repo(
+            self.root, prune_dirs=prune_dirs, prune_nested_git=prune_nested_git, prune=prune
+        ):
+            rel = dirpath.relative_to(self.root).as_posix()
+            self._entries.append(
+                (dirpath, "" if rel == "." else rel, list(dirnames), list(filenames))
+            )
+
+    @classmethod
+    def from_files(cls, root: Path | str, rel_paths: Iterable[str]) -> WalkSnapshot:
+        """Build a snapshot from an already-discovered file list, with no walk.
+
+        *rel_paths* are root-relative posix file paths (e.g. the ingestion
+        traverser's ``FileInfo.path`` values). The snapshot answers
+        :meth:`iter_glob` queries against exactly that file set — directory
+        entries are reconstructed from the paths so directory-name patterns
+        and subtree-rooted queries keep working. Entries are emitted in
+        sorted preorder, which is deterministic but not necessarily the
+        order a live walk would produce; callers that need a stable order
+        must sort their results (the dynamic-hints registry does).
+        """
+        snap = cls.__new__(cls)
+        snap.root = Path(root)
+        snap._prune_dirs = PRUNED_DIRS
+        snap._prune_nested_git = True
+        snap._prune = None
+        files_by_dir: dict[str, set[str]] = {"": set()}
+        subdirs: dict[str, set[str]] = {"": set()}
+        for rel in rel_paths:
+            rel_dir, _, name = rel.rpartition("/")
+            files_by_dir.setdefault(rel_dir, set()).add(name)
+            # Register the ancestor chain so every intermediate directory
+            # exists as an entry even when it holds no files directly.
+            child_dir = rel_dir
+            while child_dir:
+                parent, _, seg = child_dir.rpartition("/")
+                subdirs.setdefault(parent, set()).add(seg)
+                files_by_dir.setdefault(parent, set())
+                child_dir = parent
+        snap._entries = []
+
+        def _emit(rel_dir: str) -> None:
+            dirnames = sorted(subdirs.get(rel_dir, ()))
+            filenames = sorted(files_by_dir.get(rel_dir, ()))
+            dirpath = snap.root if rel_dir == "" else snap.root / rel_dir
+            snap._entries.append((dirpath, rel_dir, dirnames, filenames))
+            for d in dirnames:
+                _emit(f"{rel_dir}/{d}" if rel_dir else d)
+
+        _emit("")
+        return snap
+
+    def iter_glob(self, root: Path | str, patterns: str | Iterable[str]) -> Iterator[Path]:
+        """Replay of ``iter_glob(root, patterns)`` against the snapshot."""
+        query_root = Path(root)
+        pats = (patterns,) if isinstance(patterns, str) else tuple(patterns)
+
+        sub_rel: str | None
+        if query_root == self.root:
+            sub_rel = None
+        else:
+            try:
+                sub_rel = query_root.relative_to(self.root).as_posix()
+            except ValueError:
+                # Outside the snapshot tree: serve live with the same pruning.
+                yield from iter_glob(
+                    query_root,
+                    pats,
+                    prune_dirs=self._prune_dirs,
+                    prune_nested_git=self._prune_nested_git,
+                    prune=self._prune,
+                )
+                return
+
+        for dirpath, rel_dir, dirnames, filenames in self._entries:
+            if sub_rel is None:
+                q_rel = rel_dir
+            elif rel_dir == sub_rel:
+                q_rel = ""
+            elif rel_dir.startswith(sub_rel + "/"):
+                q_rel = rel_dir[len(sub_rel) + 1 :]
+            else:
+                continue
+            prefix = "" if q_rel == "" else q_rel + "/"
+            for name in filenames:
+                if any(_matches(prefix + name, name, p) for p in pats):
+                    yield dirpath / name
+            for name in dirnames:
+                if any(_matches(prefix + name, name, p) for p in pats):
+                    yield dirpath / name
+
+
+def glob_via(
+    snapshot: WalkSnapshot | None,
+    root: Path | str,
+    patterns: str | Iterable[str],
+    *,
+    prune_nested_git: bool = True,
+) -> Iterator[Path]:
+    """:func:`iter_glob`, answered from *snapshot* when the caller has one.
+
+    The seam for scans that run several queries against one tree and are
+    reached from a context that can hold the walk. Yield order and matching
+    are identical either way, so a caller cannot behave differently for
+    having been given a snapshot.
+    """
+    if snapshot is not None:
+        return snapshot.iter_glob(root, patterns)
+    return iter_glob(root, patterns, prune_nested_git=prune_nested_git)
+
+
+def iter_glob(
+    root: Path | str,
+    patterns: str | Iterable[str],
+    *,
+    prune_dirs: frozenset[str] = PRUNED_DIRS,
+    prune_nested_git: bool = True,
+    prune: Callable[[Path], bool] | None = None,
+) -> Iterator[Path]:
+    """Pruned drop-in for ``root.rglob(pattern)``.
+
+    Mirrors ``rglob`` semantics — files *and* directories whose name matches
+    are yielded — but skips junk directories, nested git repos, symlinks,
+    and cycles (see :func:`walk_repo`).
+
+    Accepts one pattern or several (one walk, any-match). Patterns may
+    contain ``/`` to match a relative-path tail (``"META-INF/services"``).
+    """
+    root_path = Path(root)
+    pats = (patterns,) if isinstance(patterns, str) else tuple(patterns)
+
+    for dirpath, dirnames, filenames in walk_repo(
+        root_path, prune_dirs=prune_dirs, prune_nested_git=prune_nested_git, prune=prune
+    ):
+        rel_dir = dirpath.relative_to(root_path).as_posix()
+        prefix = "" if rel_dir == "." else rel_dir + "/"
+        for name in filenames:
+            if any(_matches(prefix + name, name, p) for p in pats):
+                yield dirpath / name
+        for name in dirnames:
+            if any(_matches(prefix + name, name, p) for p in pats):
+                yield dirpath / name
