@@ -59,8 +59,9 @@ def main():
     # auth.json symlink must fail to open under the task kernel policy.
     result["global_codex_auth_denied"] = denied(ROOT / "auth.json")
     result["own_codex_auth_denied"] = denied(ROOT / "profiles" / a.own_role / "auth.json")
-    if a.require_projected_env:
-        result["own_role_env"] = allowed(ROOT / "profiles" / a.own_role / ".env")
+    # This is mandatory for all roles. Keep the legacy CLI flag accepted for
+    # compatibility, but never let omitting it bypass the private-env check.
+    result["own_role_env"] = allowed(ROOT / "profiles" / a.own_role / ".env")
     print(json.dumps({"checks": result, "passed": all(result.values())}, sort_keys=True))
     if not all(result.values()):
         raise SystemExit(1)
