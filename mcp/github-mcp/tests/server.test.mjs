@@ -638,6 +638,7 @@ test('single-repo rotating Harness reader enforces exact GitHub App scope and fa
      {repositories:[REPO,'jtrtdhrst/zar-i-szlif']},
      {repositories:['jtrtdhrst/zar-i-szlif']},
      {permissions:{contents:'write',metadata:'read'}},
+     {permissions:{contents:'read'}},
      {permissions:{actions:'read',contents:'read',metadata:'read'}},
      {role:'github-ops-reader'},
      {expires_at:new Date(Date.now()+30000).toISOString()}
