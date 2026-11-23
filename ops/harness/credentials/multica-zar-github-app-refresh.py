@@ -27,10 +27,13 @@ ROLE_PERMISSIONS = {
     "harness-reader": {"contents": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
     "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
+    # Dedicated, non-brokered credential for a digest-pinned GitHub Ops MCP image.
+    "github-ops-reader-harness": {"contents": "read", "metadata": "read"},
+    "github-ops-reader-image": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
     "github-ops-writer": {"actions": "write", "contents": "write", "pull_requests": "write", "metadata": "read"},
 }
-ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",)}
-ROLE_REPOS = {"harness-reader": (REPOS[0],)}
+ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",), "github-ops-reader-harness": ("harness-zar-i-szlif",)}
+ROLE_REPOS = {"harness-reader": (REPOS[0],), "github-ops-reader-harness": (REPOS[0],)}
 # Scoped agent grants are consumed by the broker; runner is a separate privileged role.
 for _base in ("implementer", "reviewer", "release"):
     for _suffix, _repo, _name in (("harness", REPOS[0], REPO_NAMES[0]),
@@ -164,7 +167,21 @@ def main():
             payload = mint(role)
             write_token(role, payload)
             summary[role] = payload["expires_at"]
-        print(json.dumps({"refreshed": True, "roles": sorted(summary), "expiry": min(summary.values())}))
+    # Reuse this native 15-minute role refresh as the rotation owner for an
+    # optional image-only application. The projector has no minting rights.
+    # The deployment owner must opt in with BOTH non-secret identifiers;
+    # legacy refreshes remain identical unless explicitly configured.
+    app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
+    volume = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
+    if bool(app_uuid) != bool(volume):
+        raise RuntimeError("Incomplete image-reader rotation configuration")
+    if app_uuid:
+        projection = subprocess.run(
+            [sys.executable, "/usr/local/libexec/github-ops-image-reader-project.py"],
+            capture_output=True, text=True, timeout=25, check=False)
+        if projection.returncode != 0:
+            raise RuntimeError("Dedicated GitHub Ops image-reader projection failed")
+    print(json.dumps({"refreshed": True, "roles": sorted(summary), "expiry": min(summary.values())}))
     return 0
 
 

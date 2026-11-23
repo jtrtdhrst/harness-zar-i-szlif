@@ -593,6 +593,172 @@ test('rotating GitHub App writer file governs only verified POST and fails close
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
+test('single-repo rotating Harness reader enforces exact GitHub App scope and fail-closed rotation',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-reader-harness-')),file=join(dir,'reader.json');
+ const seen=[];
+ const role=(token,overrides={})=>({
+   token,role:'github-ops-reader-harness',app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:[REPO],permissions:{contents:'read',metadata:'read'},...overrides
+ });
+ const write=v=>{writeFileSync(file,JSON.stringify(v),{mode:0o600});chmodSync(file,0o600)};
+ let s=null;
+ try {
+   write(role('a'.repeat(50)));
+   s=makeServer({callerToken:'narrow-reader-only',githubToken:'',tokenFile:file,
+     tokenFileRole:'github-ops-reader-harness',writesEnabled:false,
+     fetchImpl:async(url,opts)=>{
+       seen.push(opts.headers.Authorization);
+       return new Response(JSON.stringify({full_name:REPO,default_branch:'main'}),{status:200});
+     }});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const health=async()=> (await (await fetch(base+'/health')).json());
+   const call=async()=> {
+     const res=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer narrow-reader-only'},
+       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+         params:{name:'github_repo_info',arguments:{repo:REPO}}})});
+     return (await res.json()).result;
+   };
+   assert.equal((await health()).ready,true);
+   assert.equal((await health()).writes_enabled,false);
+   assert.equal((await call()).structuredContent.full_name,REPO);
+   const denied=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer narrow-reader-only'},
+     body:JSON.stringify({jsonrpc:'2.0',id:7,method:'tools/call',params:{name:'github_repo_info',
+       arguments:{repo:'jtrtdhrst/zar-i-szlif'}}})});
+   const blocked=(await denied.json()).result;
+   assert.match(blocked.content[0].text,/REPO_DENIED/,'product access is rejected locally');
+   assert.equal(seen.length,1,'product never reaches GitHub provider');
+   write(role('b'.repeat(50)));
+   assert.equal((await call()).structuredContent.full_name,REPO,'rotation without restart');
+   assert.deepEqual(seen,['Bearer '+'a'.repeat(50),'Bearer '+'b'.repeat(50)]);
+   for(const altered of [
+     {repositories:[REPO,'jtrtdhrst/zar-i-szlif']},
+     {repositories:['jtrtdhrst/zar-i-szlif']},
+     {permissions:{contents:'write',metadata:'read'}},
+     {permissions:{contents:'read'}},
+     {permissions:{actions:'read',contents:'read',metadata:'read'}},
+     {role:'github-ops-reader'},
+     {expires_at:new Date(Date.now()+30000).toISOString()}
+   ]){
+     write(role('c'.repeat(50),altered));
+     assert.equal((await health()).ready,false,'invalid scope must fail readiness');
+     const out=await call();
+     assert.equal(out.isError,true);
+     assert.match(out.content[0].text,/AUTH_SCOPE_INVALID|AUTH_FILE_EXPIRED/);
+     assert.equal(seen.length,2,'no GitHub provider call on invalid scope');
+   }
+   write(role('d'.repeat(50)));
+   assert.equal((await call()).structuredContent.full_name,REPO,'recover after valid rotation');
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
+test('rotating reader role cannot be configured as writer or arbitrary credential role',()=>{
+ for(const role of ['github-ops-writer','admin','github-ops-reader-harness-writer']){
+   assert.throws(()=>makeServer({tokenFileRole:role,githubToken:''}),/Unsupported read-only GitHub App credential role/);
+ }
+ assert.throws(()=>makeServer({tokenFileRole:'github-ops-reader-harness',writesEnabled:true}),
+   /Dedicated read-only reader role cannot enable writes/);
+});
+
+test('parity image reader serves both legacy repositories, rejects third and all writes',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-parity-reader-')),file=join(dir,'reader.json');
+ const permissions={actions:'read',administration:'read',contents:'read',deployments:'read',metadata:'read'};
+ const repos=[REPO,'jtrtdhrst/zar-i-szlif'];
+ const role=(token,patch={})=>({token,role:'github-ops-reader-image',
+   app_id:5398752,installation_id:173456397,
+   expires_at:new Date(Date.now()+2400000).toISOString(),
+   repositories:repos,permissions,...patch});
+ const put=x=>{writeFileSync(file,JSON.stringify(x),{mode:0o600});chmodSync(file,0o600)};
+ let s=null,providerCalls=0;
+ try{
+   put(role('p'.repeat(50)));
+   s=makeServer({callerToken:'parity-owner',tokenFile:file,
+     tokenFileRole:'github-ops-reader-image',githubToken:'',writesEnabled:false,
+     fetchImpl:async(url,opts)=>{providerCalls++;
+       return new Response(JSON.stringify({full_name:new URL(url).pathname.replace('/repos/',''),default_branch:'main'}),{status:200});
+     }});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const call=async(name,repo,extra={})=>{
+     const r=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
+       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+         params:{name,arguments:{repo,...extra}}})});
+     return (await r.json()).result;
+   };
+   const tools=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
+     body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list'})});
+   assert.equal((await tools.json()).result.tools.length,20);
+   assert.equal((await call('github_repo_info',REPO)).structuredContent.full_name,REPO);
+   assert.equal((await call('github_repo_info','jtrtdhrst/zar-i-szlif')).structuredContent.full_name,'jtrtdhrst/zar-i-szlif');
+   assert.match((await call('github_repo_info','another/repo')).content[0].text,/REPO_DENIED/);
+   assert.match((await call('github_create_branch',REPO,
+     {branch:'feature/parity-test',expected_sha:'a'.repeat(40)})).content[0].text,/WRITE_DISABLED/);
+   assert.equal(providerCalls,2,'no GitHub traffic for unknown repo or denied write');
+   for(const altered of [
+     {repositories:[REPO]},
+     {permissions:{...permissions,issues:'read'}},
+     {permissions:{actions:'read',contents:'read',deployments:'read',metadata:'read'}},
+     {role:'github-ops-reader'},
+   ]){
+     put(role('q'.repeat(50),altered));
+     assert.equal((await (await fetch(base+'/health')).json()).ready,false);
+     assert.match((await call('github_repo_info',REPO)).content[0].text,/AUTH_SCOPE_INVALID/);
+     assert.equal(providerCalls,2);
+   }
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+assert.throws(()=>makeServer({tokenFileRole:'github-ops-reader-image',writesEnabled:true}),
+  /Dedicated read-only reader role cannot enable writes/);
+
+test('reader credential rejects symlink, multiple hard links, world-readable and non-root inode',async()=>{
+ const {mkdtempSync,writeFileSync,chmodSync,chownSync,linkSync,symlinkSync,renameSync,unlinkSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const dir=mkdtempSync(join(tmpdir(),'github-ops-file-hardening-')),file=join(dir,'token.json');
+ const other=join(dir,'hard-link'),real=join(dir,'real.json');
+ const payload={token:'a'.repeat(50),role:'github-ops-reader-harness',app_id:5398752,
+   installation_id:173456397,expires_at:new Date(Date.now()+1800000).toISOString(),
+   repositories:[REPO],permissions:{contents:'read',metadata:'read'}};
+ writeFileSync(file,JSON.stringify(payload),{mode:0o600});
+ let s=null,seen=0;
+ try {
+   s=makeServer({callerToken:'hardened-owner',tokenFile:file,
+     tokenFileRole:'github-ops-reader-harness',githubToken:'',
+     fetchImpl:async()=>{seen++;return new Response(JSON.stringify({full_name:REPO}),{status:200})}});
+   await new Promise(r=>s.listen(0,'127.0.0.1',r));
+   const base='http://127.0.0.1:'+s.address().port;
+   const call=async()=> {
+     const r=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer hardened-owner'},
+       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',
+         params:{name:'github_repo_info',arguments:{repo:REPO}}})});
+     return (await r.json()).result;
+   };
+   assert.equal((await call()).structuredContent.full_name,REPO);
+   chmodSync(file,0o644);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   chmodSync(file,0o660);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   chmodSync(file,0o600);
+   linkSync(file,other);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   unlinkSync(other);
+   renameSync(file,real);symlinkSync(real,file);
+   assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+   unlinkSync(file);renameSync(real,file);
+   if(process.getuid()===0){
+     chownSync(file,1001,1001);
+     assert.match((await call()).content[0].text,/AUTH_FILE_UNTRUSTED/);
+     chownSync(file,0,0);
+   }
+   assert.equal((await call()).structuredContent.full_name,REPO,'valid inode restores service');
+   assert.equal(seen,2,'no external calls for rejected token files');
+ }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
+});
+
 test('branch delete requires exact repository, branch and SHA grant before provider calls',async()=>{
   const f=await fixture({writesEnabled:true,pushToken:'test-push-token',approved:false});
   try {
