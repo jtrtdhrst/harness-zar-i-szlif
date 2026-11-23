@@ -1,0 +1,550 @@
+import { describe, it, expect } from '@jest/globals';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  checkStartupConfig,
+  cfAccessHeaders,
+  mergeCfAccessHeaders,
+  ensureStateFileWritable,
+  looksInternalBaseUrl,
+} from '../lib/startup-check.js';
+
+// A base env that passes every check, so each test breaks exactly one thing.
+const cleanEnv = (): NodeJS.ProcessEnv => ({
+  COOLIFY_BASE_URL: 'https://coolify.example.com',
+  COOLIFY_ACCESS_TOKEN: '7|abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef',
+});
+
+describe('checkStartupConfig', () => {
+  it('passes a clean config with no errors or warnings', () => {
+    expect(checkStartupConfig(cleanEnv(), 'http')).toEqual({ errors: [], warnings: [] });
+  });
+
+  // The failure story behind the check: a macOS Keychain entry stored the
+  // literal string `${COOLIFY_ACCESS_TOKEN}`, every call 401ed, and the team
+  // rewrote 30 tool calls against the CLI before anyone found it.
+  it('catches an unexpanded ${VAR} placeholder in the token', () => {
+    const env = cleanEnv();
+    env.COOLIFY_ACCESS_TOKEN = '${COOLIFY_ACCESS_TOKEN}';
+    const { errors } = checkStartupConfig(env, 'http');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('COOLIFY_ACCESS_TOKEN');
+    expect(errors[0]).toContain('unexpanded');
+  });
+
+  it('catches unexpanded placeholders in every checked variable', () => {
+    for (const name of [
+      'COOLIFY_BASE_URL',
+      'MCP_PUBLIC_URL',
+      'MCP_HOST',
+      'CF_ACCESS_CLIENT_ID',
+      'CF_ACCESS_CLIENT_SECRET',
+    ]) {
+      const env = cleanEnv();
+      env.CF_ACCESS_CLIENT_ID = 'id.access';
+      env.CF_ACCESS_CLIENT_SECRET = 'cf-sentinel-secret';
+      env[name] = '${SERVICE_FQDN_COOLIFYMCP}';
+      const { errors } = checkStartupConfig(env, 'http');
+      expect(errors.some((e) => e.includes(name) && e.includes('unexpanded'))).toBe(true);
+    }
+  });
+
+  it('ignores MCP_PUBLIC_URL on stdio, where it is never read', () => {
+    // A shared .env between a stdio config and an HTTP deployment must not
+    // stop a stdio server that would run fine.
+    const env = cleanEnv();
+    env.MCP_PUBLIC_URL = '${SERVICE_FQDN_COOLIFYMCP}';
+    expect(checkStartupConfig(env, 'stdio')).toEqual({ errors: [], warnings: [] });
+    expect(checkStartupConfig(env, 'http').errors).toHaveLength(1);
+  });
+
+  it('ignores MCP_HOST on stdio, where it is never read', () => {
+    const env = cleanEnv();
+    env.MCP_HOST = '${HOST}';
+    expect(checkStartupConfig(env, 'stdio')).toEqual({ errors: [], warnings: [] });
+    expect(checkStartupConfig(env, 'http').errors).toHaveLength(1);
+  });
+
+  it('catches a braceless $VAR placeholder', () => {
+    const env = cleanEnv();
+    env.COOLIFY_ACCESS_TOKEN = '$COOLIFY_ACCESS_TOKEN';
+    const { errors } = checkStartupConfig(env, 'http');
+    expect(errors.some((e) => e.includes('unexpanded'))).toBe(true);
+  });
+
+  // Fetch's header normalization strips *outer* whitespace of the composed
+  // `Bearer <token>` value, so a trailing newline (an --env-file or mounted
+  // k8s secret preserves one) actually works — flagging it would refuse
+  // startup for a config that is fine today.
+  it('says nothing about trailing whitespace in the token (normalized away, works)', () => {
+    const env = cleanEnv();
+    env.COOLIFY_ACCESS_TOKEN = '7|sentinelsecretvalue\n';
+    expect(checkStartupConfig(env, 'http')).toEqual({ errors: [], warnings: [] });
+    env.COOLIFY_ACCESS_TOKEN = '7|sentinelsecretvalue ';
+    expect(checkStartupConfig(env, 'http')).toEqual({ errors: [], warnings: [] });
+  });
+
+  it('errors on leading whitespace in the token (survives as part of the credential)', () => {
+    for (const value of [' 7|sentinelsecretvalue', '\t7|sentinelsecretvalue']) {
+      const env = cleanEnv();
+      env.COOLIFY_ACCESS_TOKEN = value;
+      const { errors } = checkStartupConfig(env, 'http');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('leading whitespace');
+    }
+  });
+
+  it('errors on an interior line break in the token (fetch refuses to send it)', () => {
+    const env = cleanEnv();
+    env.COOLIFY_ACCESS_TOKEN = '7|sentinel\nsecretvalue';
+    const { errors } = checkStartupConfig(env, 'http');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('line break');
+  });
+
+  it('errors on an interior line break in a CF Access value', () => {
+    const env = cleanEnv();
+    env.CF_ACCESS_CLIENT_ID = 'id.access';
+    env.CF_ACCESS_CLIENT_SECRET = 'cf-sent\ninel-secret';
+    const { errors } = checkStartupConfig(env, 'http');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('CF_ACCESS_CLIENT_SECRET');
+    expect(errors[0]).toContain('line break');
+  });
+
+  it('errors on an unparseable base URL', () => {
+    const env = cleanEnv();
+    env.COOLIFY_BASE_URL = 'not a url at all';
+    const { errors } = checkStartupConfig(env, 'http');
+    expect(
+      errors.some((e) => e.includes('COOLIFY_BASE_URL') && e.includes('not a usable URL')),
+    ).toBe(true);
+  });
+
+  it('errors on a non-http scheme', () => {
+    const env = cleanEnv();
+    env.COOLIFY_BASE_URL = 'ftp://coolify.example.com';
+    const { errors } = checkStartupConfig(env, 'http');
+    expect(errors.some((e) => e.includes('must be http or https'))).toBe(true);
+  });
+
+  it('errors when the base URL ends in /api/v1 (guaranteed 404 on every call)', () => {
+    for (const suffix of ['/api/v1', '/api/v1/']) {
+      const env = cleanEnv();
+      env.COOLIFY_BASE_URL = `https://coolify.example.com${suffix}`;
+      const { errors } = checkStartupConfig(env, 'http');
+      expect(errors.some((e) => e.includes('/api/v1 itself'))).toBe(true);
+    }
+  });
+
+  it('warns when the base URL ends in /api (could be a deliberate proxy prefix)', () => {
+    const env = cleanEnv();
+    env.COOLIFY_BASE_URL = 'https://coolify.example.com/api';
+    const { errors, warnings } = checkStartupConfig(env, 'http');
+    expect(errors).toEqual([]);
+    expect(warnings.some((w) => w.includes('/api/v1 itself'))).toBe(true);
+  });
+
+  it('leaves unset and empty variables alone (the entry points own required-var errors)', () => {
+    expect(checkStartupConfig({}, 'http')).toEqual({ errors: [], warnings: [] });
+    expect(checkStartupConfig({ COOLIFY_ACCESS_TOKEN: '' }, 'http')).toEqual({
+      errors: [],
+      warnings: [],
+    });
+  });
+
+  it('errors when exactly one CF Access variable is set, naming the missing one', () => {
+    const idOnly = cleanEnv();
+    idOnly.CF_ACCESS_CLIENT_ID = 'id.access';
+    expect(checkStartupConfig(idOnly, 'http').errors[0]).toContain(
+      'CF_ACCESS_CLIENT_SECRET is not',
+    );
+
+    const secretOnly = cleanEnv();
+    secretOnly.CF_ACCESS_CLIENT_SECRET = 'cf-sentinel-secret';
+    expect(checkStartupConfig(secretOnly, 'http').errors[0]).toContain(
+      'CF_ACCESS_CLIENT_ID is not',
+    );
+  });
+
+  it('accepts the CF Access pair together, and neither', () => {
+    const both = cleanEnv();
+    both.CF_ACCESS_CLIENT_ID = 'id.access';
+    both.CF_ACCESS_CLIENT_SECRET = 'cf-sentinel-secret';
+    expect(checkStartupConfig(both, 'http').errors).toEqual([]);
+    expect(checkStartupConfig(cleanEnv(), 'http').errors).toEqual([]);
+  });
+
+  // The iron rule of #368: messages name variables and shapes, never values.
+  it('never echoes a value in any message, whatever is wrong with it', () => {
+    const env: NodeJS.ProcessEnv = {
+      COOLIFY_BASE_URL: 'https://sentinel-host.example.com/api/v1',
+      COOLIFY_ACCESS_TOKEN: ' 9|sentinelsecretvalue\t',
+      MCP_PUBLIC_URL: 'prefix${UNEXPANDED}suffix-sentinel',
+      CF_ACCESS_CLIENT_SECRET: 'cf-sentinel-secret',
+    };
+    const { errors, warnings } = checkStartupConfig(env, 'http');
+    const output = [...errors, ...warnings].join('\n');
+    expect(errors.length + warnings.length).toBeGreaterThanOrEqual(3);
+    for (const sentinel of ['sentinelsecretvalue', 'suffix-sentinel', 'cf-sentinel-secret']) {
+      expect(output).not.toContain(sentinel);
+    }
+  });
+});
+
+describe('cfAccessHeaders', () => {
+  it('returns both headers when both variables are set', () => {
+    expect(
+      cfAccessHeaders({ CF_ACCESS_CLIENT_ID: 'id.access', CF_ACCESS_CLIENT_SECRET: 's3cret' }),
+    ).toEqual({
+      'CF-Access-Client-Id': 'id.access',
+      'CF-Access-Client-Secret': 's3cret',
+    });
+  });
+
+  it('returns undefined when either or both are missing', () => {
+    expect(cfAccessHeaders({})).toBeUndefined();
+    expect(cfAccessHeaders({ CF_ACCESS_CLIENT_ID: 'id.access' })).toBeUndefined();
+    expect(cfAccessHeaders({ CF_ACCESS_CLIENT_SECRET: 's3cret' })).toBeUndefined();
+    expect(
+      cfAccessHeaders({ CF_ACCESS_CLIENT_ID: '', CF_ACCESS_CLIENT_SECRET: 's3cret' }),
+    ).toBeUndefined();
+  });
+});
+
+describe('mergeCfAccessHeaders', () => {
+  const cfEnv: NodeJS.ProcessEnv = {
+    CF_ACCESS_CLIENT_ID: 'env-id',
+    CF_ACCESS_CLIENT_SECRET: 'env-secret',
+  };
+
+  it('combines env CF headers with CLI headers', () => {
+    expect(mergeCfAccessHeaders(cfEnv, { 'X-Custom': 'v' })).toEqual({
+      'CF-Access-Client-Id': 'env-id',
+      'CF-Access-Client-Secret': 'env-secret',
+      'X-Custom': 'v',
+    });
+  });
+
+  it('lets a --header flag override a CF header case-insensitively (no comma-joined duplicates)', () => {
+    const merged = mergeCfAccessHeaders(cfEnv, { 'cf-access-client-id': 'cli-id' });
+    expect(merged['cf-access-client-id']).toBe('cli-id');
+    // The env-derived spelling must be gone entirely — two spellings of the
+    // same header would be sent comma-joined and rejected by Access.
+    expect(merged['CF-Access-Client-Id']).toBeUndefined();
+    expect(merged['CF-Access-Client-Secret']).toBe('env-secret');
+  });
+
+  it('is just the CLI headers when no CF pair is configured', () => {
+    expect(mergeCfAccessHeaders({}, { 'X-Custom': 'v' })).toEqual({ 'X-Custom': 'v' });
+  });
+});
+
+describe('checkStartupConfig: the confirmation signing key (#341)', () => {
+  it('rejects a key too short to sign with', () => {
+    const env = cleanEnv();
+    env.MCP_REQUEST_STATE_KEY = 'nowhere near long enough';
+    const { errors } = checkStartupConfig(env, 'http');
+    // The codec throws on this, but it is built per request in HTTP mode — so
+    // without a boot-time check the operator meets it as a confirmation that
+    // mysteriously fails, once per attempt, forever.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('MCP_REQUEST_STATE_KEY');
+    expect(errors[0]).toContain('openssl rand -hex 32');
+  });
+
+  it('accepts a key of exactly the minimum length', () => {
+    const env = cleanEnv();
+    env.MCP_REQUEST_STATE_KEY = 'x'.repeat(32);
+    expect(checkStartupConfig(env, 'http').errors).toEqual([]);
+  });
+
+  it('says nothing when it is unset, because generating one is supported', () => {
+    expect(checkStartupConfig(cleanEnv(), 'http').errors).toEqual([]);
+  });
+
+  it('reports the placeholder rather than the length when the value is unexpanded', () => {
+    const env = cleanEnv();
+    env.MCP_REQUEST_STATE_KEY = '${MCP_REQUEST_STATE_KEY}';
+    const { errors } = checkStartupConfig(env, 'http');
+    // Both checks would fire on this string. Only the one naming the actual
+    // cause is useful, so the length check stands aside for it.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).not.toContain('32 bytes');
+  });
+});
+
+describe('ensureStateFileWritable (#417)', () => {
+  const scratch = (): string => mkdtempSync(join(tmpdir(), 'state-check-'));
+
+  // A path whose parent is a regular file. Every user gets ENOTDIR from it,
+  // root included, which makes it a portable stand-in for the report's
+  // root-owned /data on machines where the chmod case below cannot run.
+  const behindAFile = (dir: string): string => {
+    const blocker = join(dir, 'not-a-dir');
+    writeFileSync(blocker, '');
+    return join(blocker, 'state.json');
+  };
+
+  it('treats the empty path as in-memory and touches nothing', () => {
+    expect(ensureStateFileWritable('', false)).toBeUndefined();
+  });
+
+  it('passes a file in a directory this process can write', () => {
+    const dir = scratch();
+    try {
+      expect(ensureStateFileWritable(join(dir, 'state.json'), true)).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('creates a missing directory rather than objecting to it', () => {
+    // The write path has always created it on demand; the check must not be
+    // stricter than the thing it stands in for, or a first boot on a fresh
+    // volume would refuse to start.
+    const dir = scratch();
+    try {
+      const file = join(dir, 'nested', 'deeper', 'state.json');
+      expect(ensureStateFileWritable(file, true)).toBeUndefined();
+      expect(existsSync(join(dir, 'nested', 'deeper'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a stale temp file this process cannot replace, which access(2) would pass', () => {
+    // Server run once as root and then as this user, say. The directory is
+    // writable, so an access check says yes; the write the provider actually
+    // performs says no. A directory in the temp file's place gives every
+    // user the same answer, root included.
+    const dir = scratch();
+    try {
+      const file = join(dir, 'state.json');
+      mkdirSync(`${file}.tmp`);
+      const problem = ensureStateFileWritable(file, true);
+      expect(problem).toContain('MCP_OAUTH_STATE_FILE points at');
+      expect(problem).toContain('EISDIR');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves nothing behind when the write succeeds', () => {
+    const dir = scratch();
+    try {
+      const file = join(dir, 'state.json');
+      expect(ensureStateFileWritable(file, true)).toBeUndefined();
+      expect(existsSync(`${file}.tmp`)).toBe(false);
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a directory that cannot be created, naming the variable and the path', () => {
+    const dir = scratch();
+    try {
+      const file = behindAFile(dir);
+      const problem = ensureStateFileWritable(file, true);
+      expect(problem).toContain('MCP_OAUTH_STATE_FILE points at');
+      expect(problem).toContain(file);
+      // Node reports a file in the way of a recursive mkdir as EEXIST on some
+      // versions and ENOTDIR on others; either is the errno the operator needs.
+      expect(problem).toMatch(/E(EXIST|NOTDIR)/);
+      // The operator typed this path. Telling them about the container image
+      // would be answering a question they did not ask.
+      expect(problem).not.toContain('container image');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('explains where the default comes from when nothing was configured', () => {
+    const dir = scratch();
+    try {
+      const file = behindAFile(dir);
+      const problem = ensureStateFileWritable(file, false);
+      expect(problem).toContain(`defaults to ${file}`);
+      expect(problem).toContain('container image');
+      expect(problem).toContain('MCP_OAUTH_STATE_FILE=');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The report's actual shape: the directory exists and belongs to someone
+  // else. A recursive mkdir on an existing directory is a silent no-op, so
+  // only the access probe after it catches this. Root can write anywhere, so
+  // the case is unobservable as root and skipped rather than faked.
+  const asNonRoot = process.getuid?.() === 0 ? it.skip : it;
+  asNonRoot('refuses a directory that exists but cannot be written into', () => {
+    const dir = scratch();
+    const locked = join(dir, 'locked');
+    mkdirSync(locked);
+    chmodSync(locked, 0o500);
+    try {
+      const problem = ensureStateFileWritable(join(locked, 'state.json'), false);
+      expect(problem).toContain('EACCES');
+      expect(problem).toContain(locked);
+    } finally {
+      chmodSync(locked, 0o700);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('checkStartupConfig: dashboard links (#342)', () => {
+  it('rejects a COOLIFY_UI_URL that is not a URL', () => {
+    expect(checkStartupConfig({ COOLIFY_UI_URL: 'coolify.example.com' }, 'stdio').errors).toContain(
+      'COOLIFY_UI_URL must start with http:// or https://',
+    );
+  });
+
+  it('warns when the base URL is internal and no UI URL is set', () => {
+    const { warnings } = checkStartupConfig({ COOLIFY_BASE_URL: 'http://coolify:8080' }, 'http');
+    expect(warnings.join(' ')).toContain('COOLIFY_UI_URL');
+  });
+
+  it('says nothing for a public base URL, localhost, or an internal one with a UI URL set', () => {
+    for (const env of [
+      { COOLIFY_BASE_URL: 'https://coolify.example.com' },
+      { COOLIFY_BASE_URL: 'http://localhost:8000' },
+      { COOLIFY_BASE_URL: 'http://coolify:8080', COOLIFY_UI_URL: 'https://coolify.example.com' },
+    ]) {
+      expect(checkStartupConfig(env, 'http')).toEqual({ errors: [], warnings: [] });
+    }
+  });
+});
+
+describe('looksInternalBaseUrl (#342)', () => {
+  it.each([
+    ['http://coolify:8080', true],
+    ['http://localhost:8000', false],
+    ['http://10.0.0.5:8000', false],
+    ['https://coolify.example.com', false],
+    ['http://[::1]:8000', false],
+    ['not a url', false],
+  ])('%s → %s', (url, internal) => {
+    expect(looksInternalBaseUrl(url)).toBe(internal);
+  });
+});
+
+describe('checkStartupConfig: COOLIFY_INSTANCES entries (#383)', () => {
+  const TOKEN = '7|abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef';
+  const fleet = (entries: unknown[]): NodeJS.ProcessEnv => ({
+    COOLIFY_INSTANCES: JSON.stringify(entries),
+  });
+  const entry = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name: 'staging',
+    url: 'https://staging.example.com',
+    token: TOKEN,
+    ...overrides,
+  });
+
+  it('passes clean entries with no errors or warnings', () => {
+    expect(checkStartupConfig(fleet([entry(), entry({ name: 'prod' })]), 'stdio')).toEqual({
+      errors: [],
+      warnings: [],
+    });
+  });
+
+  it('names the entry and the field for each single-instance check, never the value', () => {
+    const cases: Array<[Record<string, unknown>, 'errors' | 'warnings', string]> = [
+      [{ url: 'https://staging.example.com/api/v1' }, 'errors', 'url ends with /api/v1'],
+      [{ url: 'https://staging.example.com/api' }, 'warnings', 'url ends with /api'],
+      [{ url: 'https://exa mple.com' }, 'errors', 'url is not a usable URL'],
+      [{ url: '${STAGING_URL}' }, 'errors', 'url contains an unexpanded'],
+      [{ token: ` ${TOKEN}` }, 'errors', 'token has leading whitespace'],
+      [
+        { token: `${TOKEN.slice(0, 10)}\n${TOKEN.slice(10)}` },
+        'errors',
+        'token contains a line break',
+      ],
+      [
+        { headers: { 'CF-Access-Client-Id': 'abc\ndef' } },
+        'errors',
+        'header "CF-Access-Client-Id" contains a line break',
+      ],
+      [{ ui_url: 'coolify.example.com' }, 'errors', 'ui_url must start with http'],
+      [
+        { url: 'http://coolify:8080' },
+        'warnings',
+        'url is an internal address and its ui_url is unset',
+      ],
+      [{ ui_url: 'https://${UI_HOST}' }, 'errors', 'ui_url contains an unexpanded'],
+      [
+        { headers: { 'X Custom': 'v' } },
+        'errors',
+        'has a header name that is not a valid HTTP header name',
+      ],
+    ];
+    for (const [overrides, kind, message] of cases) {
+      const result = checkStartupConfig(
+        fleet([entry({ name: 'prod' }), entry(overrides)]),
+        'stdio',
+      );
+      expect(result[kind]).toEqual([
+        expect.stringContaining(`COOLIFY_INSTANCES[1] ("staging") ${message}`),
+      ]);
+      expect(result[kind === 'errors' ? 'warnings' : 'errors']).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain(TOKEN.slice(3));
+    }
+  });
+
+  it('reports every bad entry at once, not the first', () => {
+    const { errors } = checkStartupConfig(
+      fleet([
+        entry({ name: 'a', url: 'https://a.example.com/api/v1' }),
+        entry({ name: 'b', token: ` ${TOKEN}` }),
+      ]),
+      'stdio',
+    );
+    expect(errors).toEqual([
+      expect.stringContaining('COOLIFY_INSTANCES[0] ("a") url ends with /api/v1'),
+      expect.stringContaining('COOLIFY_INSTANCES[1] ("b") token has leading whitespace'),
+    ]);
+  });
+
+  it('a name the parser would refuse is not echoed', () => {
+    const { errors } = checkStartupConfig(
+      fleet([entry({ name: 'not a\nvalid name', url: 'https://a.example.com/api/v1' })]),
+      'stdio',
+    );
+    expect(errors).toEqual([expect.stringMatching(/^COOLIFY_INSTANCES\[0\] url ends with/)]);
+  });
+
+  it('a custom header value may contain ${, as a --header flag may', () => {
+    const env = fleet([entry({ headers: { 'X-Template': 'literal ${not-a-var}' } })]);
+    expect(checkStartupConfig(env, 'stdio')).toEqual({ errors: [], warnings: [] });
+  });
+
+  it('names an unexpanded COOLIFY_INSTANCES instead of leaving it to read as bad JSON', () => {
+    const { errors } = checkStartupConfig({ COOLIFY_INSTANCES: '${COOLIFY_INSTANCES}' }, 'stdio');
+    expect(errors).toEqual([expect.stringContaining('COOLIFY_INSTANCES contains an unexpanded')]);
+  });
+
+  it('skips fields of the wrong type, which the parser reports', () => {
+    for (const overrides of [{ name: 7 }, { headers: 'X-A: b' }, { headers: { 'X-A': 7 } }]) {
+      const result = checkStartupConfig(fleet([entry(overrides)]), 'stdio');
+      expect(result).toEqual({ errors: [], warnings: [] });
+    }
+  });
+
+  it('an internal url with ui_url set does not warn', () => {
+    const env = fleet([
+      entry({ url: 'http://coolify:8080', ui_url: 'https://coolify.example.com' }),
+    ]);
+    expect(checkStartupConfig(env, 'stdio').warnings).toEqual([]);
+  });
+
+  it('leaves JSON the parser rejects to the parser', () => {
+    for (const raw of ['not json', '{"name":"x"}', '[null, 3]', '[{"name":"x"}]']) {
+      expect(checkStartupConfig({ COOLIFY_INSTANCES: raw }, 'stdio')).toEqual({
+        errors: [],
+        warnings: [],
+      });
+    }
+  });
+});
