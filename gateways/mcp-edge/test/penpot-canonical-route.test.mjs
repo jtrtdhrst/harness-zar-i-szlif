@@ -55,8 +55,8 @@ test('An unrelated MCP service keeps its original /mcp route', async (t) => {
     requested = String(url);
     return new Response('ok');
   });
-  const response = await worker.fetch(new Request('https://qdrant-mcp.zariszlif.pl/mcp'),
-    { UPSTREAM_URL: 'https://qdrant-engine.zariszlif.pl/mcp' });
+  const response = await worker.fetch(new Request('https://supabase-mcp.zariszlif.pl/mcp'),
+    { UPSTREAM_URL: 'https://supabase-engine.zariszlif.pl/mcp' });
   assert.equal(response.status, 200);
   assert.equal(new URL(requested).pathname, '/mcp');
 });
