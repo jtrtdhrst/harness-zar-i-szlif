@@ -10,7 +10,7 @@
 4. Publishing is not deployment. Production Coolify uses only the authorized immutable `image@sha256:...`; do not auto-promote on push or alter persistent volumes/OAuth state. Preserve CTO exact-SHA review, COO release authorization, CI verification, approved per-service UUID, production digest readback, positive/negative MCP E2E and rollback.
 5. RepoWise indexes Git source facts and reviewed docs; running image SHA/digest, deployment state and ChatGPT MCP behavior require independent runtime evidence. Answer **UNKNOWN / NOT VERIFIED** when missing.
 
-## Current 13 source-owned MCPs
+## Current 12 source-owned MCPs
 
 Every row below is derived from `ops/coolify-service-registry.json` and `ops/service-build-roots.json` and enforced by `scripts/test_mcp_build_contract.py`. All paths are relative to this repository. `mcp-images-ghcr` publishes `ghcr.io/jtrtdhrst/harness-<service>:sha-<SHA>`; `owned-runtime-images-ghcr` uses that naming rule for GitHub Ops and Multica; `coolify-mcp-ci` publishes `ghcr.io/jtrtdhrst/coolify-mcp:sha-<SHA>`.
 
@@ -26,11 +26,12 @@ Every row below is derived from `ops/coolify-service-registry.json` and `ops/ser
 | opik-mcp | `egasedqaofxnzcqppuxi805h` | `mcp/opik-mcp` | `backend/Dockerfile` | `mcp-images-ghcr.yml` |
 | plasmic-mcp | `a6ci2beifbinzckfnneiqnjd` | `mcp/plasmic-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 | playwright-mcp | `9e4fzsodixl4qzzap4zg0ntp` | `mcp/playwright-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
-| qdrant-mcp | `a4zgmthjspz8hwvyu6llr8dh` | `mcp/qdrant-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 | supabase-mcp | `tjit4c8m0kjh8brkmdhyvkde` | `mcp/supabase-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 | ubuntu-mcp | `lcnjb3vreec7saihkhan6akh` | `mcp/ubuntu-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 
 Additional owned non-MCP runtime image roots (Hermes Gateway and RepoWise deployment publisher staging) use `owned-runtime-images-ghcr.yml`; this table excludes them because their service identifiers are not MCPs.
+
+- Retired `qdrant-mcp` (source retirement merged as PR #182): `mcp/qdrant-mcp` and its MCP image build selection were removed from `main`; the separate `qdrant` database is preserved. Do not treat the exited legacy MCP service as a source-owned build target or revive its deployment.
 
 ## Exceptions, not evidence of source ownership
 
