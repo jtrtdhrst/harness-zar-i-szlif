@@ -182,6 +182,8 @@ class ProductSquashTests(unittest.TestCase):
         self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/main'",workflow)
         self.assertIn("runs-on: [self-hosted, linux, x64, local-build]",workflow)
         self.assertIn("test \"$(id -un)\" = actions-zis",workflow)
+        self.assertIn("test \"$GITHUB_REPOSITORY\" = 'jtrtdhrst/harness-zar-i-szlif'",workflow)
+        self.assertNotIn("miloszspyrka-code",workflow)
         self.assertIn("! test -w /var/run/docker.sock",workflow)
         self.assertIn("persist-credentials: false",workflow)
         self.assertIn("test_product_squash_release.py -v",workflow)
