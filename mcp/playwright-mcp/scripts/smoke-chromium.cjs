@@ -106,4 +106,3 @@ async function run() {
   console.log(JSON.stringify({ ok: true, cleanup: { browserClosed: true }, ...outcome }, null, 2));
   process.exitCode = 0;
 })();
-

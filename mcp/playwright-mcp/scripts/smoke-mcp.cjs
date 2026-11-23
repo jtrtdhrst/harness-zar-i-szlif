@@ -203,6 +203,79 @@ async function run(ctx) {
   const url = `data:text/html,<title>${PAGE_TITLE}</title><p id=v>1</p>`;
   const nav = await post(ctx.port, { jsonrpc: "2.0", id: 3, method: "tools/call",
     params: { name: "browser_navigate", arguments: { url } } }, sid);
-  const snaps
+  const snapshot = validateBrowserResult(nav, url);
 
-... [2870 characters truncated]
+  const after = JSON.parse((await get(ctx.port, "/healthz")).text);
+  if (!after.backend) fail("BACKEND_NOT_RUNNING", `/healthz reports backend=${after.backend} after a successful call`);
+
+  return {
+    check: "mcp-idle-proxy-browser",
+    entrypoint: PROXY,
+    backendEntry: BACKEND_ENTRY,
+    port: ctx.port,
+    backendPort: ctx.backendPort,
+    bootMs: Date.now() - t0,
+    toolCount: names.length,
+    toolUsed: "browser_navigate",
+    pageUrl: snapshot.pageUrl,
+    pageTitle: snapshot.pageTitle,
+    snapshotLine: snapshot.snapshotLine,
+    healthz: after,
+  };
+}
+
+// Always runs. Stops the proxy, which sends SIGTERM/SIGKILL to the backend
+// process group (and therefore Chromium), then proves both ports are closed.
+async function cleanup(ctx) {
+  const report = { proxyExited: !!ctx.exited, proxyPort: ctx.port, backendPort: ctx.backendPort,
+    proxyPortClosed: false, backendPortClosed: null };
+  if (ctx.proxy && !ctx.exited) {
+    ctx.proxy.kill("SIGTERM");
+    const deadline = Date.now() + 15000;
+    while (!ctx.exited && Date.now() < deadline) await sleep(200);
+    if (!ctx.exited) {
+      ctx.proxy.kill("SIGKILL");
+      const hard = Date.now() + 5000;
+      while (!ctx.exited && Date.now() < hard) await sleep(100);
+    }
+  }
+  report.proxyExited = !!ctx.exited;
+  for (let i = 0; i < 25 && await portOpen(ctx.port); i++) await sleep(200);
+  report.proxyPortClosed = !(await portOpen(ctx.port));
+  if (ctx.backendPort) {
+    for (let i = 0; i < 25 && await portOpen(ctx.backendPort); i++) await sleep(200);
+    report.backendPortClosed = !(await portOpen(ctx.backendPort));
+  }
+  return report;
+}
+
+(async () => {
+  const ctx = { proxy: null, port: null, backendPort: null, exited: null, logs: "" };
+  let outcome = null;
+  let failure = null;
+  try {
+    outcome = await run(ctx);
+  } catch (e) {
+    failure = e instanceof SmokeFailure ? e : new SmokeFailure("SMOKE_ERROR", String((e && e.message) || e));
+  } finally {
+    ctx.cleanup = await cleanup(ctx);
+  }
+  // An open port after cleanup means we leaked a process: never a clean run.
+  const orphans = [];
+  if (!ctx.cleanup.proxyPortClosed) orphans.push(`proxy port ${ctx.cleanup.proxyPort}`);
+  if (ctx.cleanup.backendPortClosed === false) orphans.push(`backend port ${ctx.cleanup.backendPort}`);
+
+  const base = { entrypoint: PROXY, backendEntry: BACKEND_ENTRY, cleanup: ctx.cleanup };
+  if (!failure && orphans.length) {
+    failure = new SmokeFailure("ORPHAN_PROCESS", `still listening after cleanup: ${orphans.join(", ")}`);
+  }
+  if (failure) {
+    console.error(JSON.stringify({ ok: false, code: failure.code, detail: failure.detail, ...base,
+      logs: ctx.logs.slice(-1500) }, null, 2));
+    process.exitCode = 1;
+    return;
+  }
+  console.log(JSON.stringify({ ok: true, ...outcome, ...base }, null, 2));
+  process.exitCode = 0;
+})();
+

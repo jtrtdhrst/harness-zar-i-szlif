@@ -208,6 +208,72 @@ function handler(clientReq, clientRes) {
     clientRes.end(JSON.stringify({ ok: true, backend: !!backend, idleSeconds: Math.round((Date.now() - lastActive) / 1000), inFlight, openStreams }));
     return;
   }
-  if (url.pathname !== "/mcp") { clientRes.writeHead(404).end('{"error"
+  if (url.pathname !== "/mcp") { clientRes.writeHead(404).end('{"error":"not found"}'); return; }
+  if (clientReq.method === "POST") {
+    touch(); // only real MCP traffic keeps the backend alive
+    const chunks = [];
+    let size = 0;
+    clientReq.on("data", (c) => { size += c.length; if (size > 10 * 1024 * 1024) clientReq.destroy(); else chunks.push(c); });
+    clientReq.on("end", () => handleMcp(clientReq, clientRes, chunks));
+    return;
+  }
+  if (clientReq.method === "GET" || clientReq.method === "DELETE") {
+    const sid = clientReq.headers["mcp-session-id"];
+    if (!sid) { clientRes.writeHead(404).end('{"error":"unknown session"}'); return; }
+    touch(); // an SSE channel held by a client is live session traffic
+    ensureBackend((err) => {
+      if (err || !backend) { clientRes.writeHead(502).end('{"error":"backend unavailable"}'); return; }
+      const be = backend;
+      openStreams++;
+      let released = false;
+      const release = () => { if (released) return; released = true; openStreams--; };
+      const proxy = http.request({ host: "127.0.0.1", port: be.port, method: clientReq.method, path: "/mcp",
+        // No `timeout` here on purpose. A GET stream is client-held and may stay
+        // silent for as long as the server has no event to send; imposing the
+        // POST deadline on it severed live event channels and dropped
+        // `openStreams` to 0, which then let the idle watcher kill a backend
+        // whose browser context was still in use.
+        // Preserve an SSE stream through the same persistent upstream connection policy.
+        headers: { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "keep-alive" } },
+        (bRes) => {
+          const h = { ...bRes.headers }; delete h["connection"]; delete h["transfer-encoding"];
+          clientRes.writeHead(bRes.statusCode, h);
+          bRes.on("data", touch);
+          bRes.on("end", release);
+          bRes.on("close", release);
+          bRes.pipe(clientRes);
+        });
+      proxy.on("error", () => { release(); if (!clientRes.headersSent) clientRes.writeHead(502).end(); else clientRes.end(); });
+      clientRes.on("close", release);
+      proxy.end();
+    });
+    return;
+  }
+  clientRes.writeHead(405).end('{"error":"method not allowed"}');
+}
 
-... [3110 characters truncated]
+for (const p of LISTEN_PORTS) {
+  http.createServer(handler).listen(p, "0.0.0.0", () => log(`listening on :${p}/mcp (idle ${IDLE_SECONDS}s)`));
+}
+
+// idle watcher: kill ONLY the backend (proxy stays, respawns on demand).
+// Never while a request is in flight or a client holds a stream: that would
+// terminate a live MCP session and reset its browser context to about:blank.
+setInterval(() => {
+  if (closing || !backend || busy()) return;
+  const idle = (Date.now() - lastActive) / 1000;
+  if (idle > IDLE_SECONDS) {
+    log(`idle ${Math.round(idle)}s > ${IDLE_SECONDS}s, stopping backend`);
+    killBackend();
+  }
+}, 5000).unref();
+
+function shutdown(sig) {
+  if (closing) return;
+  closing = true;
+  log(`received ${sig}`);
+  killBackend();
+  setTimeout(() => process.exit(0), 500).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
