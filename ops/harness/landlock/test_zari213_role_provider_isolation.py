@@ -2,6 +2,7 @@
 
 Runs offline: fake profiles, no OAuth, no provider requests, no service writes.
 """
+import ast
 import importlib.util
 import os
 from pathlib import Path
@@ -72,6 +73,26 @@ class RoleProviderIsolationTests(unittest.TestCase):
         (profile / ".env").chmod(0o644)
         with self.assertRaisesRegex(ValueError, "not private"):
             policy.private_role_env_file(self.home, "cho", os.getuid())
+
+    def test_projector_canary_and_launcher_role_contract_match(self):
+        credentials = ROOT.parent / "credentials"
+        source = (credentials / "role_env_projector.py").read_text(encoding="utf-8")
+        module = ast.parse(source)
+        mapping_node = next(
+            node.value for node in module.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ROLE_PROVIDER"
+                    for target in node.targets)
+        )
+        role_map = ast.literal_eval(mapping_node)
+        self.assertEqual(set(role_map), set(ROLES))
+        self.assertEqual(set(role_map.values()), {"opencode-go"})
+        canary = (credentials / "test_provider_acl_canary.py").read_text(encoding="utf-8")
+        self.assertIn("CODEX = set()", canary)
+        self.assertIn('"global_codex_auth_denied"', canary)
+        self.assertIn('"own_codex_auth_denied"', canary)
+        self.assertNotIn('"own_model_auth"', canary)
+        self.assertIn("OpenCode-only", (ROOT / "README.md").read_text(encoding="utf-8"))
 
     def test_no_shared_oauth_grant_in_launch_path(self):
         source = LAUNCHER.read_text(encoding="utf-8")
