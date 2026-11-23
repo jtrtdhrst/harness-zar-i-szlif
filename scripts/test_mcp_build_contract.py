@@ -80,6 +80,12 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertIn("digest", source.lower())
                 self.assertIn("push", source)
                 self.assertIn("org.opencontainers.image.source", source)
+                self.assertIn("id-token: write", source)
+                self.assertIn("attestations: write", source)
+                self.assertIn("actions/attest@", source)
+                self.assertIn("actions/upload-artifact@", source)
+                self.assertIn("release_authorized", source)
+                self.assertIn("production_verified", source)
                 self.assertNotIn("git reset --hard origin/main", source)
 
     def test_no_unknown_vendor_image_is_falsely_marked_source_owned(self):
