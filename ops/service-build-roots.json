@@ -480,12 +480,11 @@
         "uuid": "a4zgmthjspz8hwvyu6llr8dh",
         "name": "qdrant-mcp",
         "type": "service",
-        "source": "owned-code",
-        "provenance_kind": "owned-source",
-        "source_root": "mcp/qdrant-mcp",
-        "build_dockerfile": "mcp/qdrant-mcp/Dockerfile",
-        "source_build_ready": true,
-        "release_eligible": false
+        "source": "retired-runtime",
+        "provenance_kind": "retired-runtime",
+        "source_build_ready": false,
+        "release_eligible": false,
+        "retirement_note": "Qdrant MCP retired by owner; Qdrant DB service is preserved; no source build or release."
       },
       {
         "id": "supabase-mcp",

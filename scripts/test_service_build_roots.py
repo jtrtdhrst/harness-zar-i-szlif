@@ -178,6 +178,14 @@ def inventory_errors(data, registry, root):
                 errors.append("owned_source_root_missing:" + row["uuid"])
             if not dockerfile.is_file() or not dockerfile.is_relative_to(source_root):
                 errors.append("owned_source_dockerfile_missing_or_outside_root:" + row["uuid"])
+        elif kind == "retired-runtime":
+            if (reference["source"] != "retired-runtime" or
+                    row.get("source_build_ready") is not False or
+                    row.get("release_eligible") is not False or
+                    row.get("source_root") or row.get("build_dockerfile")):
+                errors.append("retired_runtime_must_not_build_or_release:" + row["uuid"])
+            if (root / "mcp/qdrant-mcp").exists():
+                errors.append("retired_runtime_code_still_present:" + row["uuid"])
         elif kind == "vendor-image":
             pins = row.get("pinned_images", [])
             configured = set(row.get("configured_images", []))
