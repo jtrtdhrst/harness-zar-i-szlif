@@ -59,6 +59,18 @@ def objective_scores(meta:dict[str,Any])->dict[str,float]:
     scores={'multica_run_completed':float(status=='completed')}
     if meta.get('go_quota_pricing_status')=='estimated' and type(meta.get('go_quota_estimate_usd')) in (int,float):
         scores['go_quota_usage_equivalent_usd']=float(meta['go_quota_estimate_usd'])
+    entries=meta.get('usage_token_counts')
+    complete=isinstance(entries,list) and bool(entries) and all(
+        isinstance(e,dict) and all(type(e.get(k)) is int and 0<=e[k]<10**10 for k in REQUIRED)
+        for e in entries)
+    scores['multica_usage_measured']=float(complete)
+    if complete:
+        for key in REQUIRED:
+            scores['multica_'+key]=float(sum(e[key] for e in entries))
+    for key in ('queue_wait_seconds','dispatch_to_start_seconds','run_elapsed_seconds','attempt'):
+        value=meta.get(key)
+        if type(value) in (int,float) and 0<=value<10**9:
+            scores['multica_'+key]=float(value)
     return scores
 
 if __name__=='__main__':
@@ -73,7 +85,13 @@ if __name__=='__main__':
     sample['usage_token_counts'][0]['cache_write_tokens']=0
     sample['usage_token_counts'][0]['model']='unknown'
     assert price_usage(sample,'2026-11-19T07:00:00Z')['go_quota_pricing_status']=='unavailable'
-    assert objective_scores({'run_status':'failed'})=={'multica_run_completed':0.0}
-    assert objective_scores({'run_status':'completed'})=={'multica_run_completed':1.0}
+    assert objective_scores({'run_status':'failed'})=={'multica_run_completed':0.0,'multica_usage_measured':0.0}
+    assert objective_scores({'run_status':'completed'})=={'multica_run_completed':1.0,'multica_usage_measured':0.0}
     assert 'release_approved' not in objective_scores({'run_status':'completed'})
+    sample['queue_wait_seconds']=7
+    scores=objective_scores(sample)
+    assert scores['multica_cache_read_tokens']==1000000
+    assert scores['multica_queue_wait_seconds']==7
+    assert scores['multica_usage_measured']==1
+    assert objective_scores({'run_status':'completed','usage_token_counts':[{'input_tokens':1}]})['multica_usage_measured']==0
     print('PRICE_PEAK_OFFPEAK_UNKNOWN_AND_OBJECTIVE_SCORE_TESTS PASS')
