@@ -30,7 +30,7 @@ FTS_DDL = 'CREATE VIRTUAL TABLE page_fts USING fts5(page_id UNINDEXED,title,cont
 FTS_INSERT = """INSERT INTO page_fts(page_id,title,content,summary,target_path,vocabulary,digest)
 SELECT id,COALESCE(title,''),COALESCE(content,''),COALESCE(summary,''),COALESCE(target_path,''),
 CASE WHEN json_valid(metadata_json) THEN COALESCE(json_extract(metadata_json,'$.file_vocabulary'),'') ELSE '' END,
-COALESCE(digest,'') FROM wiki_pages WHERE repository_id=?"""
+COALESCE(digest,'') FROM wiki_pages WHERE repository_id=? AND COALESCE(freshness_status,'fresh')!='tombstone'"""
 FTS_SHADOWS = {'page_fts_config', 'page_fts_content', 'page_fts_data', 'page_fts_docsize', 'page_fts_idx'}
 INDIRECT = {
     'component_snapshots': 'SELECT c.* FROM component_snapshots c JOIN snapshot_runs p ON c.run_id=p.id WHERE p.repository_id=?',
@@ -221,7 +221,7 @@ def check_wiki(path, repo, sha, full=True):
         if rows[0][2] != f'/workspace/{repo}' or rows[0][3] != sha:
             fail(f'{path}: wrong repo path/SHA: {rows[0][2]} {rows[0][3]}')
         target_id = rows[0][0]
-        pages = {r[0] for r in db.execute('SELECT id FROM wiki_pages WHERE repository_id=?', (target_id,))}
+        pages = {r[0] for r in db.execute("SELECT id FROM wiki_pages WHERE repository_id=? AND COALESCE(freshness_status,'fresh')!='tombstone'", (target_id,))}
         fts = [r[0] for r in db.execute('SELECT page_id FROM page_fts')]
         if not pages or len(fts) != len(pages) or set(fts) != pages:
             fail(f'{path}: page/FTS mismatch pages={len(pages)} FTS={len(fts)}')
@@ -302,12 +302,12 @@ def partition_wiki(path, repo, sha):
                 actual = row_digest(owner_rows(db, table, cols, target_id))
                 if actual != expected:
                     fail(f'{path}: target data changed unexpectedly in {table}')
-            page_ids = {r[0] for r in db.execute('SELECT id FROM wiki_pages WHERE repository_id=?', (target_id,))}
+            page_ids = {r[0] for r in db.execute("SELECT id FROM wiki_pages WHERE repository_id=? AND COALESCE(freshness_status,'fresh')!='tombstone'", (target_id,))}
             fts_ids = [r[0] for r in db.execute('SELECT page_id FROM page_fts')]
             if len(fts_ids) != len(page_ids) or set(fts_ids) != page_ids:
                 fail(f'{path}: rebuilt FTS mismatch pages={len(page_ids)} FTS={len(fts_ids)}')
             token = None
-            for (title,) in db.execute('SELECT title FROM wiki_pages WHERE repository_id=?', (target_id,)):
+            for (title,) in db.execute("SELECT title FROM wiki_pages WHERE repository_id=? AND COALESCE(freshness_status,'fresh')!='tombstone'", (target_id,)):
                 words = re.findall(r'[A-Za-z0-9_]{4,}', title or '')
                 if words:
                     token = words[0]
