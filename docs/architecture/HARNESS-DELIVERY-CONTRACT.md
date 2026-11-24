@@ -1,10 +1,16 @@
 # Harness MCP delivery — authoritative operator & agent contract
 
-Status: **source contract, not evidence of a successful production release**. Read alongside `ops/release-lanes.json`, `scripts/harness_native_delivery.py`, `scripts/harness_release_admission.py`, `scripts/harness_release_parity.py`, `ops/harness/INSTALL-RUNBOOK.md`, and the *live* Coolify/VPS configuration. For execution state consult native Multica issue ZARI-240, not this document.
+Status: **source contract, not evidence of a successful production release**. Read alongside `ops/release-lanes.json`, `scripts/harness_native_delivery.py`, `scripts/harness_release_admission.py`, `scripts/harness_release_parity.py`, `ops/harness/INSTALL-RUNBOOK.md`, and the *live* Coolify/VPS configuration. For execution state consult native Multica issue ZARI-298 (supersedes historical ZARI-240), not this document.
 
-## Ownership / one release path
+## Target native Git-backed delivery (2026-11-24)
 
-- Repository: `miloszspyrka-code/harness-zar-i-szlif`, branch `main`; product `miloszspyrka-code/zar-i-szlif` has a **different** product release mechanism. An arbitrary feature branch is never a production source.
+The target for Harness MCPs is a single canonical source root per service on protected `main`, reviewed PR and trusted CI, native Coolify GitHub push-triggered build from that root, production cutover, immutable running-image/source evidence, authenticated functional acceptance and rollback. Existing pasted Compose Service resources do not acquire Git autodeploy by changing image tags. Migrate them to reviewed Git-backed Applications without losing persistent state, endpoint identity or authorization. Set `HEAD`, `main`, source-specific `watch_paths` and auto-deploy only for the admitted production resource; do not enable duplicate candidates. Do not replace the existing safety/admission gates or create another controller. The legacy controller/timer described below is retained as historical and transitional evidence, not a second target deployment mechanism; its timer was observed disabled/inactive on 2026-11-24.
+
+The live status ledger is [MCP source and migration inventory](../../mcp/README.md). A green build, enabled setting, or current RepoWise index alone is not production E2E. RepoWise queries must use `harness`, exact paths and current Git SHA; weak synthesis, vector retrieval degradation and archived Paperclip results are not authoritative. CHO coordinates independent Harness acceptance, Harness Engineer implements, COO handles authorized release, and independent QA verifies production. CTO and MCP Engineer own Product work, not Harness implementation.
+
+## Existing controller / transitional release path
+
+- Repository: `jtrtdhrst/harness-zar-i-szlif`, branch `main`; product `jtrtdhrst/zar-i-szlif` has a **different** product release mechanism. An arbitrary feature branch is never a production source.
 - Existing root-owned controller: `/usr/local/libexec/harness_native_delivery.py`, systemd oneshot `harness-image-delivery.service`, timer `harness-image-delivery.timer`; authoritative source `scripts/harness_native_delivery.py`. **Do not introduce a competing controller, extra watchdog or parallel deployment worker.**
 - Service source/transport allowlist: `SERVICES` in the controller **AND** the reviewed `ops/release-lanes.json` entry. They are not interchangeable. A missing build context, missing Coolify UUID, unsupported resource, unknown runtime Dockerfile or `HOLD` must never become an automatic build.
 - Operator (COO / designated release operator) owns the privileged VPS and Coolify write. CHO owns independent per-UUID release authorization for Harness MCPs; CTO reviews exact source and security independently; Harness Engineer prepares source and tests. Do not self-review or fake agent/grant/CI evidence.
