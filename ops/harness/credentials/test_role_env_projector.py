@@ -19,8 +19,6 @@ class RoleProjectionTests(unittest.TestCase):
         self.profiles.mkdir(parents=True)
         self.keys.mkdir()
         self.uid, self.gid = (os.getuid() or 997), (os.getgid() or 997)
-        for item in [self.root, *self.root.rglob("*"), self.keys, *self.keys.rglob("*")]:
-            os.chown(item, self.uid, self.gid)
         self.role_keys = {}
         for index, role in enumerate(ROLE_PROVIDER):
             profile = self.profiles / role
@@ -47,6 +45,9 @@ class RoleProjectionTests(unittest.TestCase):
             (keydir / "api-key").chmod(0o600)
         (self.root / ".env").write_text("GLOBAL_DECOY_MUST_NOT_BE_READ\n")
         (self.root / ".env").chmod(0o600)
+        for item in [self.root, *self.root.rglob("*"), self.keys, *self.keys.rglob("*")]:
+            if not item.is_symlink():
+                os.chown(item, self.uid, self.gid)
 
     def call_project(self, apply=False):
         with mock.patch("role_env_projector.os.geteuid", return_value=self.uid):
