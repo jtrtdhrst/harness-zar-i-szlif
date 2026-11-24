@@ -6,7 +6,7 @@ Never exports prompt, model response, errors, paths, comments or credentials.
 import argparse,datetime,json,re,subprocess,sys,urllib.error,urllib.parse,urllib.request,uuid
 from pathlib import Path
 from value_metrics import price_usage, objective_scores
-from execution_hygiene import pairing_metrics, scores as tool_flow_scores
+from execution_hygiene import pairing_metrics, native_items, elapsed, scores as tool_flow_scores
 CLI='/opt/experiments/multica-poc/bin/multica'
 BASE='http://127.0.0.1:5173/api/v1/private'
 WORKSPACES={
@@ -80,6 +80,12 @@ def run_payload(run,issue,workspace):
      source_issue_id=issue_id,source_run_id=run_id,agent_id=agent_id,runtime_id=runtime_id,
      run_status=status,attempt=attempt if type(attempt)==int else None,
      usage_token_counts=usage)
+  for key,first,last in (
+      ('queue_wait_seconds',run.get('created_at'),run.get('started_at')),
+      ('dispatch_to_start_seconds',run.get('dispatched_at'),run.get('started_at')),
+      ('run_elapsed_seconds',run.get('started_at'),run.get('completed_at'))):
+    delta=elapsed(first,last)
+    if delta is not None:meta[key]=delta
   meta.update(price_usage(meta,created))
   if sdk_thread_id:
     # The lifecycle trace continues to group by ISSUE; SDK roots use session IDs.
@@ -96,15 +102,25 @@ def sync_objective_scores(item,record,proj):
     raise RuntimeError('score_wrong_project')
   previous={s.get('name'):s for s in (record.get('feedback_scores') or []) if isinstance(s,dict)}
   scores=objective_scores(item['metadata'])
-  scores.update(tool_flow_scores(item['metadata']))
+  if 'tool_flow_state' in item['metadata']:
+    scores.update(tool_flow_scores(item['metadata']))
   for name,value in scores.items():
     prior=previous.get(name)
     if prior is not None and prior.get('source')!='sdk':
       raise RuntimeError('refuse_override_non_sdk_score')
     if prior is not None and prior.get('value')==value:
       continue
-    reason=('Native run terminal status (NOT correctness or E2E proof)' if name=='multica_run_completed'
-            else 'Estimated OpenCode Go quota usage from published rates; NOT an invoice')
+    reasons={
+      'multica_run_completed':'Native terminal status, not correctness or E2E proof',
+      'go_quota_usage_equivalent_usd':'Estimated Go quota usage, not billed cost',
+      'multica_tool_pairing_ratio':'Matched native tool-use/result events; not operation success',
+      'multica_tool_calls_observed':'Native tool-use count; not accepted delivery',
+      'multica_first_observed_tool_call_seconds':'Time to first observed tool use, not first valid action',
+      'multica_repeated_tool_name_calls':'Repeated tool names, not proof of an execution loop',
+      'multica_tool_flow_measured':'Native tool-event collection available and identity matched',
+      'multica_usage_measured':'All four native usage categories present',
+    }
+    reason=reasons.get(name,'Observed native run metadata; not accepted delivery')
     route='/traces/'+urllib.parse.quote(item['id'],safe='')+'/feedback-scores'
     state,_=api('PUT',route,{'name':name,'value':value,'source':'sdk','reason':reason})
     if state!=204:
@@ -115,14 +131,14 @@ def sync_objective_scores(item,record,proj):
       raise RuntimeError('opik_score_readback_failed')
     previous=have
 
-def export_one(profile,limit,dry,scan_window_days=None,quality_items=0):
+def export_one(profile,limit,dry,scan_window_days=None,quality_items=0,offset=0):
   workspace=WORKSPACES[profile]
   try:
     visible=cli(workspace,'workspace','list')
   except Exception:
     print('SKIP',profile,'reason=owner_auth_unavailable' if profile=='zar' else 'reason=test_cli_unavailable')
     return 0
-  if not any(x.get('id')==workspace['workspace_id'] for x in visible):raise RuntimeError('wrong_workspace_auth')
+  if not any(x.get('id')==workspace['workspace_id'] for x in native_items(visible)):raise RuntimeError('wrong_workspace_auth')
   collected=[]
   # Stable bounds across pagination. A later update is picked up next timer cycle.
   filters=[]
@@ -136,7 +152,7 @@ def export_one(profile,limit,dry,scan_window_days=None,quality_items=0):
           *filters,'--fields','id,identifier,workspace_id,status')
     for issue in d.get('issues',[]):
       if issue.get('workspace_id')!=workspace['workspace_id']:raise RuntimeError('cross_workspace_issue_rejected')
-      for run in cli(workspace,'issue','runs',issue['id']):
+      for run in native_items(cli(workspace,'issue','runs',issue['id'])):
         item=run_payload(run,issue,workspace)
         if item:collected.append(item)
     if not d.get('has_more'):break
@@ -146,15 +162,22 @@ def export_one(profile,limit,dry,scan_window_days=None,quality_items=0):
     return 0
   proj=ensure_project(workspace['project'])
   count=0;already=0
-  for index,item in enumerate(collected[:limit]):
-    if index<quality_items:
+  quality_remaining=quality_items
+  for item in collected[offset:offset+limit]:
+    status,old=api('GET','/traces/'+urllib.parse.quote(item['id'],safe=''))
+    if status==200 and (old.get('project_id')!=proj or (old.get('metadata') or {}).get('source_run_id')!=item['id']):
+      raise RuntimeError('trace_id_conflict')
+    prior_meta=old.get('metadata') or {} if status==200 else {}
+    if quality_remaining and (prior_meta.get('tool_flow_state')!='measured' or 'repeated_tool_name_calls' not in prior_meta):
+      quality_remaining-=1
       try:
-        # Process native messages in memory only; do not export tool payload.
+        # Only aggregate locally; never export message content.
         items=cli(workspace,'issue','run-messages',item['id'])
-        item['metadata'].update(pairing_metrics(items))
+        item['metadata'].update(pairing_metrics(items,item['start_time'],item['id'],item['metadata']['source_issue_id']))
       except Exception:
         item['metadata']['tool_flow_state']='unavailable'
-    status,old=api('GET','/traces/'+urllib.parse.quote(item['id'],safe=''))
+    elif 'tool_flow_state' not in prior_meta:
+      item['metadata']['tool_flow_state']='not_sampled'
     if status==200:
       if old.get('project_id')!=proj or (old.get('metadata') or {}).get('source_run_id')!=item['id']:
         raise RuntimeError('trace_id_conflict')
@@ -189,12 +212,14 @@ def main():
   p.add_argument('--dry-run',action='store_true')
   p.add_argument('--scan-window-days',type=int)
   p.add_argument('--quality-items',type=int,default=0)
+  p.add_argument('--offset',type=int,default=0,help='Bounded backfill offset within the scan window')
   args=p.parse_args()
   if args.max_items<1 or args.max_items>250:raise RuntimeError('invalid_limit')
   if args.scan_window_days is not None and not 1<=args.scan_window_days<=30:raise RuntimeError('invalid_scan_window')
   if args.quality_items<0 or args.quality_items>args.max_items:raise RuntimeError('invalid_quality_items')
+  if args.offset<0:raise RuntimeError('invalid_offset')
   for profile in ['test','zar'] if args.profile=='both' else [args.profile]:
-    export_one(profile,args.max_items,args.dry_run,args.scan_window_days,args.quality_items)
+    export_one(profile,args.max_items,args.dry_run,args.scan_window_days,args.quality_items,args.offset)
 if __name__=='__main__':
   try:main()
   except Exception as e:
