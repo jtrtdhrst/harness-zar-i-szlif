@@ -32,7 +32,6 @@ ROLE_PROVIDER = {
     "ui-qa": "custom:rolebroker",
 }
 MARKER = "# multica-provider-env-projection-v1"
-BROKER = "rolebroker"
 BROKER_PORT = 7468
 MODEL = "gpt-6-luna"
 
@@ -86,7 +85,7 @@ def _configure(text, role):
         elif inside and line and not line[0].isspace() and not line.startswith("#"):
             inside = False
         elif inside:
-            m = re.fullmatch(r"  provider:\\s*([a-z0-9-]+(?::[a-z0-9-]+)?)\\s*", line)
+            m = re.fullmatch(r"  provider:\s*([a-z0-9-]+(?::[a-z0-9-]+)?)\s*", line)
             if m:
                 provider_idx.append(idx)
     if blocks != 1 or len(provider_idx) != 1:
@@ -109,10 +108,10 @@ def _configure(text, role):
             j += 1
         if len(starts) != 1 or lines[i:j] != block:
             raise RuntimeError(f"unmanaged Hermes providers block: {role}")
-        return "\\n".join(lines) + "\\n"
+        return "\n".join(lines) + "\n"
     while lines and not lines[-1]:
         lines.pop()
-    return "\\n".join(lines + [""] + block) + "\\n"
+    return "\n".join(lines + [""] + block) + "\n"
 
 
 def _atomic_replace(path, content):
@@ -161,10 +160,10 @@ def project(root=ROOT, key_root=KEY_ROOT, uid=None, gid=None, apply=False):
             env_old = None
         else:
             env_old = _read_private(env_path, uid)
-            if not env_old.startswith(MARKER + "\\n"):
+            if not env_old.startswith(MARKER + "\n"):
                 raise RuntimeError(f"refusing to overwrite unmanaged role .env: {role}")
         key = _read_role_key(role, uid, key_root)
-        env_new = f"{MARKER}\\n# role={role}; provider={expected_provider}\\nROLE_BROKER_API_KEY={key}\\n"
+        env_new = f"{MARKER}\n# role={role}; provider={expected_provider}\nROLE_BROKER_API_KEY={key}\n"
         prepared.append((role, config_path, config_old, config_new, env_path, env_old, env_new))
     changed = [item for item in prepared if item[2] != item[3] or item[5] != item[6]]
     if not apply:
