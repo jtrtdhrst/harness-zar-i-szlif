@@ -22,6 +22,11 @@ ROLES = frozenset(("ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
                    "email-creative", "engineer", "harness-engineer",
                    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"))
 MODEL_ALLOWLIST = frozenset(("gpt-6-luna",))
+MODEL_ALIASES = frozenset(("gpt-6-luna", "openai-codex/gpt-6-luna"))
+
+def canonical_model(value: object) -> str | None:
+    """Accept only the pinned Luna model and its Multica Codex-qualified ID."""
+    return "gpt-6-luna" if isinstance(value, str) and value in MODEL_ALIASES else None
 MAX_BODY = 1_048_576
 KEY_ROOT = Path("/srv/multica-zar/.config/hermes")
 
@@ -180,8 +185,16 @@ async def responses(request: web.Request):
         document = json.loads(body)
     except (ValueError, UnicodeDecodeError, web.HTTPException):
         return error(400, "invalid_json")
-    if not isinstance(document, dict) or document.get("model") not in MODEL_ALLOWLIST:
+    if not isinstance(document, dict):
         return error(403, "model_not_allowed")
+    model = canonical_model(document.get("model"))
+    if model is None:
+        return error(403, "model_not_allowed")
+    # Hermes/Multica may retain the provider-qualified ID; Codex upstream expects
+    # the native model identifier. Rewrite only the exact pinned alias.
+    if document["model"] != model:
+        document["model"] = model
+        body = json.dumps(document, separators=(",", ":")).encode("utf-8")
     if document.get("stream") is not True or document.get("store") is not False:
         return error(400, "codex_requires_stream_true_store_false")
     if "input" not in document:
