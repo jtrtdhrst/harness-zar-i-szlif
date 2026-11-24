@@ -1,0 +1,10 @@
+# Source-managed copy of the existing host timer; cadence is unchanged.
+[Unit]
+Description=Daily isolated CI Docker image retention
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

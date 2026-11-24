@@ -233,3 +233,40 @@ are additional requirements before a delivery issue becomes Done.
   be maintained by an operator or an existing scheduler; this change installs no
   fetcher, no new timer, no baseline state and no SHA reconstruction.
 
+## Isolated CI Docker image retention (operator only)
+
+The host already has the zis-ci-image-retention.service and timer, but they
+were not tracked in this repository. Install these source files only from an
+independently reviewed, approved SHA. This bounded cleanup targets isolated CI
+daemons; it is not a production deployment or part of the release controller.
+
+The service skips while any Runner.Worker process is active. It targets only
+/run/zis-rootless-docker/docker.sock and /run/zis-ci-guest/docker.sock, pruning
+images unused for at least 72 hours. The rootful production Docker socket,
+application rollback images, containers and persistent volumes are outside
+its command scope.
+
+Before installing, record the current unit hashes and save root-owned backups:
+
+    install -o root -g root -m 0700 -d /var/lib/zis-ci-image-retention/backups
+    install -o root -g root -m 0600 /etc/systemd/system/zis-ci-image-retention.service /var/lib/zis-ci-image-retention/backups/service.before
+    install -o root -g root -m 0600 /etc/systemd/system/zis-ci-image-retention.timer /var/lib/zis-ci-image-retention/backups/timer.before
+    sha256sum /var/lib/zis-ci-image-retention/backups/service.before /var/lib/zis-ci-image-retention/backups/timer.before
+
+Install from the approved checkout at the reviewed SHA, verify both installed
+file hashes against that SHA, then reload and read back systemd:
+
+    CHECKOUT=/var/lib/harness-image-delivery/checkout
+    APPROVED_SHA=replace-with-reviewed-40-character-sha
+    git -C "$CHECKOUT" show "$APPROVED_SHA:ops/systemd/zis-ci-image-retention.service" | install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/zis-ci-image-retention.service
+    git -C "$CHECKOUT" show "$APPROVED_SHA:ops/systemd/zis-ci-image-retention.timer" | install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/zis-ci-image-retention.timer
+    sha256sum /etc/systemd/system/zis-ci-image-retention.service /etc/systemd/system/zis-ci-image-retention.timer
+    systemd-analyze verify /etc/systemd/system/zis-ci-image-retention.service /etc/systemd/system/zis-ci-image-retention.timer
+    systemctl daemon-reload
+    systemctl enable --now zis-ci-image-retention.timer
+    systemctl cat zis-ci-image-retention.service zis-ci-image-retention.timer
+    systemctl list-timers zis-ci-image-retention.timer
+
+Rollback: stop and disable the timer, restore the two backups to their original
+paths with owner root:root and mode 0644, run systemctl daemon-reload, then
+verify the restored unit and timer. Do not invoke cleanup during rollback.
