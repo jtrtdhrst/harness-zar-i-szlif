@@ -1,0 +1,142 @@
+"""Unit tests for the PageSelection intent resolver."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from repowise.core.generation.cascade import build_page_dependencies
+from repowise.core.generation.page_selection import (
+    PageRecord,
+    PageSelectionIntent,
+    resolve_page_selection,
+)
+from repowise.core.generation.scope import resolve_scope
+
+
+@dataclass(frozen=True)
+class _MG:
+    """Duck-typed stand-in for selection.ModuleGroup."""
+
+    key: str
+    file_paths: tuple[str, ...]
+
+
+def _records() -> list[PageRecord]:
+    return [
+        PageRecord("file_page:src/a.py", "file_page", "src/a.py", is_template=True),
+        PageRecord("file_page:src/b.py", "file_page", "src/b.py", is_template=False),
+        PageRecord(
+            "file_page:tests/t.py",
+            "file_page",
+            "tests/t.py",
+            is_template=True,
+            freshness_status="stale",
+        ),
+        PageRecord("module_page:src", "module_page", "src", is_template=True),
+        PageRecord("repo_overview:demo", "repo_overview", "demo", is_template=False),
+    ]
+
+
+def test_unwritten_selects_model_written_template_pages_only() -> None:
+    # File pages are structural: always templates, never written by a model.
+    result = resolve_page_selection(_records(), PageSelectionIntent(unwritten=True))
+    assert result.page_ids == {"module_page:src"}
+    assert result.unknown_page_ids == ()
+
+
+def test_unwritten_does_not_pull_written_module_pages_through_the_cascade() -> None:
+    # #3205: template file pages used to seed `--unwritten`, and the default
+    # `dependents` cascade then regenerated the written module page above them.
+    records = [
+        PageRecord("file_page:src/a.py", "file_page", "src/a.py", is_template=True),
+        PageRecord("file_page:lib/b.py", "file_page", "lib/b.py", is_template=True),
+        PageRecord("module_page:src", "module_page", "src", is_template=False),
+        PageRecord("module_page:lib", "module_page", "lib", is_template=True),
+        PageRecord("repo_overview:demo", "repo_overview", "demo", is_template=False),
+    ]
+    deps = build_page_dependencies(
+        module_groups=[_MG("src", ("src/a.py",)), _MG("lib", ("lib/b.py",))],
+        scc_groups=[],
+        repo_wide_ids=("repo_overview:demo",),
+    )
+    plan = resolve_scope(
+        records=records,
+        intent=PageSelectionIntent(unwritten=True),
+        cascade_mode="dependents",
+        deps=deps,
+    )
+    assert plan.generate_ids == {"module_page:lib"}
+
+
+def test_all_pages_selects_everything() -> None:
+    result = resolve_page_selection(_records(), PageSelectionIntent(all_pages=True))
+    assert len(result) == 5
+
+
+def test_stale_selects_stale_and_expired() -> None:
+    result = resolve_page_selection(_records(), PageSelectionIntent(stale=True))
+    assert result.page_ids == {"file_page:tests/t.py"}
+
+
+def test_pinned_selects_hand_requested_docs_always() -> None:
+    """A pinned page's doc was asked for once and must keep being
+    regenerated regardless of the selection heuristic (issue #812). Empty
+    intent — the caller's default — still includes it."""
+    records = [
+        PageRecord("file_page:src/c.py", "file_page", "src/c.py", is_template=True),
+        PageRecord(
+            "file_page:src/pinned.py", "file_page", "src/pinned.py", is_template=True, pinned=True
+        ),
+    ]
+    result = resolve_page_selection(records, PageSelectionIntent())
+    assert result.page_ids == {"file_page:src/pinned.py"}
+
+
+def test_path_glob_matches_prefix_and_glob() -> None:
+    # A bare directory prefix matches everything under it.
+    result = resolve_page_selection(_records(), PageSelectionIntent(path_globs=("src",)))
+    assert result.page_ids == {
+        "file_page:src/a.py",
+        "file_page:src/b.py",
+        "module_page:src",
+    }
+    # An explicit glob works too.
+    result = resolve_page_selection(_records(), PageSelectionIntent(path_globs=("src/*.py",)))
+    assert result.page_ids == {"file_page:src/a.py", "file_page:src/b.py"}
+
+
+def test_explicit_ids_report_unknown() -> None:
+    intent = PageSelectionIntent(page_ids=("file_page:src/a.py", "file_page:does/not/exist.py"))
+    result = resolve_page_selection(_records(), intent)
+    assert result.page_ids == {"file_page:src/a.py"}
+    assert result.unknown_page_ids == ("file_page:does/not/exist.py",)
+
+
+def test_selectors_union() -> None:
+    intent = PageSelectionIntent(stale=True, page_ids=("file_page:src/b.py",))
+    result = resolve_page_selection(_records(), intent)
+    assert result.page_ids == {"file_page:tests/t.py", "file_page:src/b.py"}
+
+
+def test_empty_intent_resolves_empty() -> None:
+    intent = PageSelectionIntent()
+    assert intent.is_empty()
+    assert resolve_page_selection(_records(), intent).page_ids == set()
+
+
+def test_windows_target_paths_normalize() -> None:
+    records = [PageRecord("file_page:src/a.py", "file_page", "src\\a.py", is_template=True)]
+    result = resolve_page_selection(records, PageSelectionIntent(path_globs=("src",)))
+    assert result.page_ids == {"file_page:src/a.py"}
+
+
+# ---------------------------------------------------------------------------
+# Test files do not enter the concept tree
+# ---------------------------------------------------------------------------
+#
+# The majority-vote group filter that used to live here is gone with the
+# per-directory grouping. Test files are now excluded before grouping runs,
+# one file at a time, so a production directory with a colocated test keeps
+# its page and the test file simply is not a member of it. That is asserted
+# against the real selector in
+# ``test_selection_concept_groups.py::test_test_files_never_enter_the_concept_tree``.

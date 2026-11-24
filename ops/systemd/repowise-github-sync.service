@@ -1,0 +1,26 @@
+[Unit]
+Description=Synchronize private GitHub Product and Harness main into Repowise indexes
+Wants=docker.service opencode-github-token-sync.timer
+After=docker.service opencode-github-token-sync.service
+ConditionPathExists=/opt/repowise-knowledge/sync-from-github.sh
+ConditionPathExists=/opt/repowise-knowledge/repowise_sync_gate.py
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/repowise-knowledge/sync-from-github.sh
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/repowise-knowledge /home/opencode/projects/repowise-mirrors /var/lib/docker /run/lock
+ReadOnlyPaths=/etc /usr
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

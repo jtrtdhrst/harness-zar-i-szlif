@@ -1,0 +1,189 @@
+import type { Metadata } from "next";
+import { ReviewNudgeHost } from "@/components/review/review-nudge-host";
+import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import Link from "next/link";
+import { getOverviewSummary } from "@/lib/api/overview";
+import { ApiClientError } from "@/lib/api/client";
+import { PageFrame } from "@repowise-dev/ui/shared/page-shell";
+import { getActions } from "@/lib/api/actions";
+import { getProviders } from "@/lib/api/providers";
+import { overviewAskSuggestions } from "@/lib/overview-ask";
+import { FirstIndexExperience } from "@/components/repos/first-index-experience";
+import { QuickActionsWrapper } from "@/components/dashboard/quick-actions-wrapper";
+import { AskAnythingRow } from "@/components/overview/ask-anything-row";
+import { NextActionsPanel } from "@/components/overview/next-actions-panel";
+import { PublishOverviewSection } from "@/components/hosted/publish";
+import { WelcomeMoment } from "@/components/welcome/welcome-moment";
+import { welcomeFigures } from "@/lib/welcome-moment";
+import { overviewBodyCopy, overviewRelativeTime } from "./overview-copy";
+import {
+  OverviewBody,
+  OverviewSection,
+  RepoIdentityHeader,
+  type OverviewRoutes,
+  type RepoIdentityMeta,
+} from "@repowise-dev/ui/overview";
+import type { OverviewSummaryResponse } from "@repowise-dev/types/overview";
+import { formatDateTime, formatLOC } from "@repowise-dev/ui/lib/format";
+
+export const metadata: Metadata = { title: "Overview" };
+
+interface Props {
+  params: Promise<{ id: string }>;
+}
+
+async function safeFetch<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch {
+    return null;
+  }
+}
+
+/** The header's chips: language, branch, head commit, size and last sync. */
+function identityMeta(
+  summary: OverviewSummaryResponse,
+  totalNloc: number | null,
+  lastActivityAt: string | null | undefined,
+  t: (key: string, values?: Record<string, string>) => string,
+  relativeTime: (iso: string) => string,
+): RepoIdentityMeta[] {
+  const meta: RepoIdentityMeta[] = [];
+  const primaryLanguage = summary.languages[0]?.language;
+  if (primaryLanguage) meta.push({ label: primaryLanguage, dot: true });
+  meta.push({ label: summary.repo.default_branch, mono: true });
+  if (summary.repo.head_commit) meta.push({ label: summary.repo.head_commit.slice(0, 7), mono: true });
+  if (totalNloc != null) {
+    meta.push({ label: t("identity.lines", { lines: formatLOC(totalNloc) }), mono: true });
+  }
+  if (lastActivityAt) {
+    meta.push({
+      label: t("identity.synced", { when: relativeTime(lastActivityAt) }),
+      title: formatDateTime(lastActivityAt),
+    });
+  }
+  return meta;
+}
+
+/**
+ * The local dashboard's repo Overview.
+ *
+ * Everything this file does is host-specific: fetch on the server, resolve the
+ * `/repos/{id}` route shape, and supply the two panels only the local app has
+ * (reindex actions in the header, the ask box). The page itself — what it
+ * says, in what order — is `OverviewBody` in the ui package, shared with
+ * hosted so a new signal lands on both surfaces at once instead of being added
+ * twice and drifting.
+ */
+export default async function OverviewPage({ params }: Props) {
+  const { id } = await params;
+
+  // Every fetch the page needs, in one wave, on the server. Nothing below
+  // renders client-side: this is a static read, so a hydration boundary would
+  // only buy a slower first paint and worse indexability.
+  const [summary, providers, actions] = await Promise.all([
+    // Only a 404 means the repo is gone; any other failure reaches the route
+    // error boundary instead of reading as "not found".
+    getOverviewSummary(id).catch((err: unknown) => {
+      if (err instanceof ApiClientError && err.status === 404) return null;
+      throw err;
+    }),
+    safeFetch(() => getProviders()),
+    safeFetch(() => getActions(id)),
+  ]);
+  if (!summary) notFound();
+
+  const tOverview = await getTranslations("overview");
+  const { repo, stats, health, sync } = summary;
+  const isFresh = stats.file_count === 0;
+  const base = `/repos/${id}`;
+  const totalNloc = stats.total_nloc ?? null;
+  const lastActivityAt = sync.last_sync_at ?? sync.last_resync_at ?? health.last_indexed_at;
+
+  // ── Identity ───────────────────────────────────────────────────────────
+  const meta = identityMeta(
+    summary,
+    totalNloc,
+    lastActivityAt,
+    tOverview,
+    await overviewRelativeTime(),
+  );
+
+  // Priced by the server; no rates means the dialog shows no estimate.
+  const active = providers?.active;
+  const costPer1k =
+    active?.input_cost_per_1k != null && active.output_cost_per_1k != null
+      ? { input: active.input_cost_per_1k, output: active.output_cost_per_1k }
+      : null;
+
+  const header = (
+    <RepoIdentityHeader
+      name={repo.name}
+      owner={repo.owner}
+      description={repo.local_path}
+      remoteUrl={repo.remote_url}
+      meta={isFresh ? [] : meta}
+      actions={
+        isFresh ? null : (
+          <QuickActionsWrapper
+            variant="header"
+            repoId={id}
+            repoName={repo.name}
+            pageCount={sync.page_count || stats.file_count}
+            modelName={providers?.active.model ?? sync.last_sync_model ?? ""}
+            costPer1k={costPer1k}
+            lastSyncAt={sync.last_sync_at}
+            lastResyncAt={sync.last_resync_at}
+          />
+        )
+      }
+    />
+  );
+
+  if (isFresh) {
+    return (
+      <PageFrame>
+        {header}
+        <FirstIndexExperience repoId={id} repoName={repo.name} />
+      </PageFrame>
+    );
+  }
+
+  // Coupling and the language graph take the shared defaults; `chat` is absent
+  // because this app answers that need with the ask box below instead of a
+  // route.
+  const routes: OverviewRoutes = { base, costs: `${base}/costs` };
+
+  return (
+    <OverviewBody
+      summary={summary}
+      routes={routes}
+      LinkComponent={Link}
+      copy={await overviewBodyCopy()}
+      slots={{
+        header: (
+          <>
+            {header}
+            <ReviewNudgeHost repoId={id} />
+            {/* A dialog: renders in a portal, so its slot here is only a mount point. */}
+            <WelcomeMoment
+              repoId={id}
+              repoName={repo.name}
+              fileCount={stats.file_count}
+              figures={welcomeFigures(summary)}
+              hotspotPath={summary.top_hotspots[0]?.file_path ?? null}
+            />
+          </>
+        ),
+        ask: <AskAnythingRow repoId={id} suggestions={overviewAskSuggestions(summary, tOverview)} />,
+        beforeExplore: <PublishOverviewSection repoId={id} />,
+        // A server that predates actions returns 404; the page then keeps the
+        // attention areas in their old place rather than showing an empty list.
+        actions: actions ? (
+          <NextActionsPanel repoId={id} data={actions} />
+        ) : undefined,
+      }}
+    />
+  );
+}

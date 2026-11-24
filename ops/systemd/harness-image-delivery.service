@@ -1,0 +1,33 @@
+# Reviewed replacement for /etc/systemd/system/harness-image-delivery.service
+# (ZARI-249). OPERATOR-ONLY: installed by the root operator following
+# ops/harness/INSTALL-RUNBOOK.md, never by an agent.
+#
+# Same unit name, same oneshot semantics and same 120-second timer as before -
+# this file replaces the service body only, because the old ExecStart ran the
+# hold-blind controller (`harness_image_delivery.py --auto`) and the reviewed
+# adapter does not read that invocation's arguments the same way.
+#
+# The ExecStart line is compared to a fixed reviewed invocation by
+# scripts/harness_install_preflight.py without importing host-installed code.
+# Exact root-owned unit and module hashes are checked separately.
+#
+# --auto exists because a 120-second timer cannot know a merge SHA in advance.
+# It does NOT reconstruct one: the exact pair comes from the operator-written
+# EnvironmentFile below, which the install runbook has the operator refresh when
+# the checkout advances. A missing or malformed range denies the cycle
+# (auto_source_range_missing / invalid_source_sha) with zero docker and zero
+# Coolify calls. The file is deliberately not optional (`-` prefix), so a host
+# without a range fails the unit instead of silently doing nothing.
+[Unit]
+Description=Harness image delivery from main (hold-aware admission)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/var/lib/harness-image-delivery/checkout
+EnvironmentFile=/var/lib/harness-image-delivery/source-range.env
+ExecStart=/usr/bin/python3 /usr/local/libexec/harness_native_delivery.py --mode deploy --auto --artifact-dir /var/lib/harness-image-delivery/gates --attestation-key /etc/paperclip-gitops/harness-attestation.key --state-dir /var/lib/harness-image-delivery/delivery
+Nice=10
+TimeoutStartSec=1800

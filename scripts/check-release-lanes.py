@@ -31,7 +31,7 @@ def check(data):
         must(lane.get("mode") in allowed, f"{name}: wrong mode")
         must(isinstance(lane.get("repository"), str) and "/" in lane["repository"], f"{name}: source missing")
         must(lane.get("review_required") is True and lane.get("exact_sha_required") is True, f"{name}: missing review/provenance gate")
-        expected_reviewer = "CTO" if lane["repository"] == "miloszspyrka-code/zar-i-szlif" else "CHO"
+        expected_reviewer = "CTO" if lane["repository"] == "jtrtdhrst/zar-i-szlif" else "CHO"
         must(lane.get("reviewer_role") == expected_reviewer, f"{name}: wrong review owner")
         must(bool(lane.get("observed_baseline")), f"{name}: missing observed baseline")
         if lane["mode"] == "git_promoted":
@@ -46,15 +46,31 @@ def check(data):
             must(lane.get("observed_no_public_host_ports") is True and lane.get("network_isolation_verified") is False, f"{name}: unsupported isolation claim")
         else:
             must(lane.get("auto_deploy_expected") is False, f"{name}: pinned image autopromotes")
+    auto_main_services = {
+        "emailens-mcp", "mantic-mcp", "plasmic-mcp",
+        "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
+    }
     for r in other:
         name, uuid, kind = r.get("id"), r.get("coolify_uuid"), r.get("coolify_kind")
         must(bool(name) and isinstance(uuid, str) and uuid not in uuids and len(uuid) >= 12, f"missing/duplicate resource: {name}")
         must(r.get("platform") == "coolify" and kind in counts, f"{name}: wrong platform/kind")
-        must(r.get("release_route") in ("coolify_reviewed_digest_manual", "inactive_no_promotion"), f"{name}: unsafe release route")
-        must(r.get("promotion_state") == "hold" and r.get("evidence_state") == "open", f"{name}: false attestation")
-        must(r.get("auto_deploy_expected") is False and r.get("review_required") is True, f"{name}: unreviewed/automatic release")
-        must(r.get("reviewer_role") == "CHO" and "CHO + CTO" not in str(r.get("release_contract", "")), f"{name}: duplicate/wrong Harness review")
-        must(r.get("exact_image_digest_required") is True and r.get("source_commit_required_when_source_built") is True, f"{name}: source/digest mismatch unguarded")
+        route = r.get("release_route")
+        must(route in ("coolify_reviewed_digest_manual", "inactive_no_promotion",
+                       "coolify_auto_main_digest"), f"{name}: unsafe release route")
+        if route == "coolify_auto_main_digest":
+            # Explicit, reviewed automatic lane: merge to trusted main is the
+            # release authorization; exact source/digest/health/rollback remain.
+            must(name in auto_main_services, f"{name}: auto lane not allowlisted")
+            must(r.get("promotion_state") == "auto_main", f"{name}: auto lane not declared")
+            must(r.get("auto_deploy_expected") is True, f"{name}: auto lane not automatic")
+            must(r.get("review_required") is True, f"{name}: auto lane lost review policy")
+            must(r.get("reviewer_role") == "CHO" and "CHO + CTO" not in str(r.get("release_contract", "")), f"{name}: duplicate/wrong Harness review")
+            must(r.get("exact_image_digest_required") is True and r.get("source_commit_required_when_source_built") is True, f"{name}: source/digest mismatch unguarded")
+        else:
+            must(r.get("promotion_state") == "hold" and r.get("evidence_state") == "open", f"{name}: false attestation")
+            must(r.get("auto_deploy_expected") is False and r.get("review_required") is True, f"{name}: unreviewed/automatic release")
+            must(r.get("reviewer_role") == "CHO" and "CHO + CTO" not in str(r.get("release_contract", "")), f"{name}: duplicate/wrong Harness review")
+            must(r.get("exact_image_digest_required") is True and r.get("source_commit_required_when_source_built") is True, f"{name}: source/digest mismatch unguarded")
         must(all(r.get(k) for k in ("observed_status", "observed_image_ref", "release_contract")), f"{name}: missing evidence/contract")
         uuids.add(uuid)
         counts[kind] += 1
@@ -73,7 +89,7 @@ def check(data):
     must(names == {"paperclip-mcp", "stronaglowna", "zariszlif-prawne"}, "existing Worker lost")
     must("product-panel" in ids, "product release lane absent")
     core = next((x for x in lanes if x["id"] == "paperclip-core"), None)
-    must(core is not None and core.get("repository") == "miloszspyrka-code/harness-zar-i-szlif" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0", "upstream Paperclip identity incorrect")
+    must(core is not None and core.get("repository") == "jtrtdhrst/harness-zar-i-szlif" and core.get("upstream_base_repository") == "paperclipai/paperclip" and core.get("upstream_base_ref") == "ghcr.io/paperclipai/paperclip:2026.1023.0", "upstream Paperclip identity incorrect")
     must(re.fullmatch(r"[0-9a-f]{40}", str(core.get("overlay_source_sha", ""))) is not None, "missing immutable Core overlay SHA")
     must(re.fullmatch(r"sha256:[0-9a-f]{64}", str(core.get("runtime_image_id", ""))) is not None, "missing immutable Core runtime image digest")
     must(str(core.get("artifact_source_ref", "")).startswith("local/paperclip-core-h03-candidate:"), "Paperclip Core runtime source reference incorrect")
@@ -126,6 +142,13 @@ if __name__ == "__main__":
     print(f"PASS: {classified} root folders classified, {targeted} targeted CI roots")
     if options.self_test:
         suite = TestLoader().discover("scripts", pattern="test_check_service_coverage.py")
+        # ZARI-240: the fail-closed release admission gate and the root-invoked
+        # local-CI attester must run in the same PR-time lane as the structural
+        # release contract, so a hold/attestation regression cannot merge.
+        for pattern in ("test_harness_release_admission.py", "test_harness_local_ci_attest.py",
+                        "test_harness_delivery_controller.py", "test_harness_native_delivery.py",
+                        "test_harness_install_preflight.py", "test_harness_release_parity.py"):
+            suite.addTests(TestLoader().discover("scripts", pattern=pattern))
         result = TextTestRunner(verbosity=2).run(suite)
         if not result.wasSuccessful():
             raise SystemExit(1)

@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x, 24.x]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Security audit
+        # Shipped dependencies only. Dev tooling never reaches users, and a dev-only
+        # advisory with no upstream fix (GHSA-vfj7-8cjw-p6xm in braces) would
+        # otherwise block every PR. Dependabot still raises dev updates.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Format check
+        run: npx prettier --check .
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check client-vs-spec drift
+        run: npm run check:spec-drift
+
+      - name: Check openapi-chunks drift
+        run: npm run check:chunk-drift
+
+      - name: Check tool-count claims against the roster
+        run: npm run check:tool-count
+
+      - name: Build
+        run: npm run build
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == '20.x'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload test results to Codecov
+        if: matrix.node-version == '20.x'
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/junit.xml
+          fail_ci_if_error: false
+          verbose: true

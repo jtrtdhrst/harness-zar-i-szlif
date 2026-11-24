@@ -1,39 +1,123 @@
 {
   "schema_version": 1,
   "entries": {
-    ".github": {"mode": "manual_only", "reason": "Workflow definitions are validated by the workflow that invokes this checker."},
-    ".repowise": {"mode": "workflow", "workflows": [".github/workflows/release-lanes-policy.yml"]},
-    "_archive": {"mode": "manual_only", "reason": "Archived sources are retained for reference and are not built or released."},
-    "cloudflare-ingress": {"mode": "manual_only", "reason": "Existing ingress is a protected runtime resource; no repository build or promotion workflow is authorized."},
-    "comfy": {"mode": "manual_only", "reason": "Engine release requires a separately reviewed immutable artifact and manual Coolify promotion."},
-    "comfy-mcp": {"mode": "manual_only", "reason": "MCP release requires a separately reviewed immutable artifact and manual Coolify promotion."},
-    "comfyui-mcp": {"mode": "manual_only", "reason": "Legacy combined build source is retained pending migration; no automatic release."},
-    "coolify-mcp": {"mode": "manual_only", "reason": "Upstream-pinned runtime has no repository build workflow; release requires digest review."},
-    "docs": {"mode": "workflow", "workflows": [".github/workflows/release-lanes-policy.yml"]},
-    "emailens-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
-    "integrations": {"mode": "manual_only", "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."},
-    "kod-aplikacji": {"mode": "manual_only", "reason": "Coolify project inventory metadata only; product source belongs in zar-i-szlif."},
-    "kod-mcp": {"mode": "manual_only", "reason": "Coolify project inventory metadata only; not deployable source."},
-    "mantic-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
-    "mautic": {"mode": "manual_only", "reason": "Upstream application and data service; no repository build or automatic promotion."},
-    "mcp-edge": {"mode": "manual_only", "reason": "Retained legacy service; no targeted CI/release workflow."},
-    "multica": {"mode": "manual_only", "reason": "Non-MCP Multica source is retained for agent context; it must not trigger automatic image builds or production promotion."},
-    "multica-mcp": {"mode": "manual_only", "reason": "MCP has a separate scoped Coolify source binding; no GitHub Actions image-build workflow is declared until its CI path is verified."},
-    "opik": {"mode": "manual_only", "reason": "Upstream multi-container service; component digest and dependency-aware review required."},
-    "opik-mcp": {"mode": "workflow", "workflows": [".github/workflows/opik-mcp-access-guard.yml"]},
-    "opik-run-enricher": {"mode": "workflow", "workflows": [".github/workflows/opik-run-enricher.yml"]},
-    "ops": {"mode": "workflow", "workflows": [".github/workflows/release-lanes-policy.yml"]},
-    "paperclip": {"mode": "manual_only", "reason": "Paperclip Core is upstream/overlay managed and has no repository service CI/release workflow."},
-    "paperclip-mcp": {"mode": "workflow", "workflows": [".github/workflows/paperclip-mcp-ci.yml"]},
-    "plasmic": {"mode": "manual_only", "reason": "Multi-container WAB; reviewed component digests and dependency-aware rollback required."},
-    "plasmic-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
-    "playwright-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
-    "qdrant": {"mode": "manual_only", "reason": "Upstream database service; not built from this repository."},
-    "qdrant-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
-    "scripts": {"mode": "workflow", "workflows": [".github/workflows/release-lanes-policy.yml"]},
-    "shared-ingress": {"mode": "manual_only", "reason": "Shared runtime configuration is not automatically released from this repository."},
-    "supabase": {"mode": "manual_only", "reason": "Upstream multi-container service; component digest and dependency-aware rollback required."},
-    "supabase-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."},
-    "ubuntu-mcp": {"mode": "manual_only", "reason": "No targeted CI/release workflow; release requires reviewed digest and live readback."}
+    ".github": {
+      "mode": "manual_only",
+      "reason": "Workflow definitions are validated by the workflow that invokes this checker."
+    },
+    "apps": {
+      "mode": "manual_only",
+      "reason": "Plasmic WAB application, independent multi-image release; source integrity checked by service root registry."
+    },
+    "docs": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/release-lanes-policy.yml"
+      ]
+    },
+    "gateways": {
+      "mode": "manual_only",
+      "reason": "MCP edge proxy source; review and test gateway code separately. No implicit production changes."
+    },
+    "integrations": {
+      "mode": "manual_only",
+      "reason": "Hermes candidate image workflow is manual dispatch only; production promotion remains separately gated."
+    },
+    "mcp": {
+      "mode": "manual_only",
+      "reason": "Umbrella for source layout only: every nested mcp/<service>/ has its own mandatory explicit disposition below."
+    },
+    "mcp/comfy-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/comfy-arkcodex-compat.yml"
+      ]
+    },
+    "mcp/coolify-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/coolify-mcp-ci.yml"
+      ],
+      "required_test_step": {
+        "job": "verify",
+        "name": "Coolify MCP E2E",
+        "working_directory": "mcp/coolify-mcp",
+        "run": "npm test -- --runInBand"
+      }
+    },
+    "mcp/emailens-mcp": {
+      "mode": "manual_only",
+      "reason": "No targeted PR CI for emailens implementation; requires independent source review, immutable digest and authorized live E2E."
+    },
+    "mcp/github-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/github-ops-mcp-ci.yml"
+      ]
+    },
+    "mcp/hindsight-mcp": {
+      "mode": "manual_only",
+      "reason": "Source Docker build is validated in PR build matrix; no specific PR behavioural coverage; production remains gated."
+    },
+    "mcp/mantic-mcp": {
+      "mode": "manual_only",
+      "reason": "Source Docker build is validated in PR build matrix; no per-service behavioral CI workflow; production remains gated."
+    },
+    "mcp/multica-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/release-lanes-policy.yml"
+      ],
+      "required_test_step": {
+        "job": "validate-release-lanes",
+        "name": "Test Multica MCP adapter on trusted main",
+        "working_directory": "mcp/multica-mcp",
+        "run": "npm test"
+      }
+    },
+    "mcp/opik-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/opik-mcp-access-guard.yml"
+      ]
+    },
+    "mcp/plasmic-mcp": {
+      "mode": "manual_only",
+      "reason": "Source Docker build checked in PR matrix; independently authorized integration E2E and digest release required."
+    },
+    "mcp/playwright-mcp": {
+      "mode": "manual_only",
+      "reason": "Source Docker build checked in PR matrix; independently authorized integration E2E and digest release required."
+    },
+    "mcp/supabase-mcp": {
+      "mode": "manual_only",
+      "reason": "Source Docker build checked in PR matrix; independently authorized privilege-negative E2E and digest release required."
+    },
+    "mcp/ubuntu-mcp": {
+      "mode": "manual_only",
+      "reason": "Source Docker build checked in PR matrix; independently authorized host-operation-negative E2E and digest release required."
+    },
+    "ops": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/release-lanes-policy.yml"
+      ]
+    },
+    "scripts": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/release-lanes-policy.yml"
+      ]
+    },
+    "workers": {
+      "mode": "manual_only",
+      "reason": "Worker group only: nested workers/opik-run-enricher has independent mandatory workflow coverage."
+    },
+    "workers/opik-run-enricher": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/opik-run-enricher.yml"
+      ]
+    }
   }
 }

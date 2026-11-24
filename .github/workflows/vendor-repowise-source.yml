@@ -1,0 +1,102 @@
+name: RepoWise ZARI-286 pinned upstream import and isolated Docker CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/repowise/**'
+      - 'ops/repowise/repowise-app-source.json'
+      - 'scripts/test_repowise_app_source.py'
+      - '.github/workflows/vendor-repowise-source.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/repowise/**'
+      - 'ops/repowise/repowise-app-source.json'
+      - 'scripts/test_repowise_app_source.py'
+      - '.github/workflows/vendor-repowise-source.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repowise-zari-286-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-immutable-source-and-build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Source SHA, exact tree and licensing checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p test_repowise_app_source.py -v
+          python3 -m compileall -q apps/repowise/packages/core/src/repowise apps/repowise/packages/cli/src apps/repowise/packages/server/src
+      - name: Full Docker build from the exact owned application root
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --progress=plain -f apps/repowise/docker/Dockerfile -t repowise-zari-286-ci:${{ github.sha }} apps/repowise
+      - name: Version smoke
+        run: docker run --rm --entrypoint repowise repowise-zari-286-ci:${{ github.sha }} --version
+
+  publish-reviewed-main-image:
+    if: github.repository == 'jtrtdhrst/harness-zar-i-szlif' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout immutable main revision without persisted Git credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Attest canonical source SHA and exact upstream tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'jtrtdhrst/harness-zar-i-szlif'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD:apps/repowise)" = 'fe223cb9efd9ed04583522b132089c4770c66ea0'
+          python3 -m unittest discover -s scripts -p test_repowise_app_source.py -v
+          test -f apps/repowise/docker/Dockerfile
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish source-owned immutable-SHA-tagged RepoWise OCI
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/repowise
+          file: ./apps/repowise/docker/Dockerfile
+          push: true
+          tags: ghcr.io/jtrtdhrst/harness-repowise:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/jtrtdhrst/harness-zar-i-szlif
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=0.60.1
+      - name: Validate published immutable digest; never auto-deploy
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "RepoWise source: $GITHUB_REPOSITORY@$SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published image: ghcr.io/jtrtdhrst/harness-repowise@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Production promotion: NOT AUTHORIZED by image publication; COO and ZARI-213 HOLD still apply" >> "$GITHUB_STEP_SUMMARY"

@@ -1,1 +1,36 @@
 /.build/
+
+# Python caches are generated under scripts/, ops/ and test trees.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/
+
+# Local secrets (documentation examples remain trackable)
+.env
+.env.*
+!**/.env.example
+!**/.env.*.example
+!**/.env.sample
+**/.envrc.local
+
+# Node, package managers, web builds, QA caches
+**/node_modules/
+**/.next/
+**/.nuxt/
+**/dist/
+**/build/
+**/coverage/
+**/.cache/
+**/.turbo/
+**/.npm/
+**/.pnpm-store/
+**/playwright-report/
+**/test-results/
+*.tsbuildinfo
+*.log
+.DS_Store
+Thumbs.db

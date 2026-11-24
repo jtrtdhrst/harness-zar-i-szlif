@@ -1,0 +1,23 @@
+# Dedicated, isolated Plasmic Canvas Host origin (not the Studio origin).
+# Active production config: /data/caddy/Caddyfile
+http://plasmic-host.51.89.174.58.sslip.io {
+    @not_acme not path /.well-known/acme-challenge/*
+    redir @not_acme https://plasmic-host.51.89.174.58.sslip.io{uri} 308
+}
+
+plasmic-host.51.89.174.58.sslip.io {
+    encode zstd gzip
+    @host_assets path /static/*
+    handle @host_assets {
+        reverse_proxy plasmic-studio:8080 {
+            flush_interval -1
+        }
+    }
+    handle {
+        respond "Not Found" 404
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+}

@@ -1,0 +1,99 @@
+# Build and format-check the marketing site, separately from the MCP server.
+#
+# Deliberately its own workflow, triggered only by changes under site/ (plus
+# the repo files the build reads: README and docs for /llms-full.txt, the
+# evals roster for the tool count, package.json for the version). The site and the published npm package
+# share a repository and nothing else: site/ is excluded from the npm tarball
+# (`files: ["dist"]`), from the MCPB bundle (.mcpbignore), from root eslint and
+# from root prettier. This job is the last piece of that — before it existed,
+# an unformatted file in site/ failed all three MCP build matrix jobs.
+#
+# Nothing here gates the npm release. If the site breaks, the server still ships.
+name: Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'Dockerfile.docs'
+      - 'README.md'
+      - 'docs/*.md'
+      - 'evals/src/contract/__toolsnaps__/_roster.json'
+      - 'package.json'
+      - '.github/workflows/site.yml'
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'Dockerfile.docs'
+      - 'README.md'
+      - 'docs/*.md'
+      - 'evals/src/contract/__toolsnaps__/_roster.json'
+      - 'package.json'
+      - '.github/workflows/site.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Type check
+        # tsconfig extends astro/tsconfigs/strict; without this step that
+        # strictness is decorative — nothing else runs the compiler over
+        # .astro files.
+        run: npm run check
+
+      - name: Test
+        # The contact endpoint takes unauthenticated POSTs and feeds form
+        # fields into SES subject/reply-to headers. Its CRLF stripping is the
+        # header-injection defence, and this is what regression-tests it.
+        run: npm test
+
+      - name: Build
+        # Also exercises the tool count read from the evals roster snapshot and
+        # the version read from package.json, both of which throw on a shape
+        # they do not recognise.
+        run: npm run build
+
+      - name: Check the built page carries its SEO surface
+        # These were all missing from the old site. A silent regression here is
+        # invisible until something is shared and renders as a bare link.
+        run: |
+          PAGE=dist/client/index.html
+          for needle in \
+            'rel="canonical"' \
+            'property="og:image"' \
+            'property="og:title"' \
+            'name="twitter:card"' \
+            'application/ld+json'
+          do
+            if ! grep -q "$needle" "$PAGE"; then
+              echo "::error::$needle missing from the built page"
+              exit 1
+            fi
+          done
+          test -f dist/client/robots.txt || { echo "::error::robots.txt missing"; exit 1; }
+          test -f dist/client/sitemap-index.xml || { echo "::error::sitemap missing"; exit 1; }
+          test -f dist/client/og.png || { echo "::error::og.png missing"; exit 1; }
+          test -f dist/client/llms.txt || { echo "::error::llms.txt missing"; exit 1; }
+          grep -q '^# Tool reference' dist/client/llms-full.txt || { echo "::error::llms-full.txt is missing docs/tools.md"; exit 1; }
+          VERSION=$(node -p "require('../package.json').version")
+          grep -q "\"softwareVersion\":\"$VERSION\"" "$PAGE" || { echo "::error::JSON-LD softwareVersion is not $VERSION"; exit 1; }
+          echo "SEO surface present."
