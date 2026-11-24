@@ -1,0 +1,13 @@
+[Unit]
+Description=Metadata-only Multica lifecycle events to existing self-hosted Opik
+After=network-online.target docker.service multica-zar-daemon.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ExecStart=/usr/bin/flock -n /run/multica-opik-export.lock /usr/bin/python3 /opt/operations/multica-opik/export.py --profile zar --max-items 40 --scan-window-days 3 --quality-items 10
+TimeoutStartSec=150
