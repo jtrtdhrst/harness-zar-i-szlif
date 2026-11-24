@@ -1,0 +1,25 @@
+[Unit]
+Description=Coolify read-only MCP stdio broker for Multica Harness Engineer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=multica-zar
+LoadCredential=coolify_readonly:/root/coolify-secrets/coolify_api_token_readonly
+Group=multica-zar
+WorkingDirectory=/srv/multica-zar
+UMask=0077
+ExecStart=/usr/bin/socat -d -d UNIX-LISTEN:/srv/multica-zar/.hermes/profiles/harness-engineer/coolify-mcp-readonly.sock,fork,unlink-early,mode=0600 EXEC:/usr/local/libexec/coolify-harness-readonly-mcp.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/multica-zar/.hermes/profiles/harness-engineer
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
