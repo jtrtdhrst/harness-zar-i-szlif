@@ -18,7 +18,9 @@ class RoleProjectionTests(unittest.TestCase):
         self.profiles = self.root / "profiles"
         self.profiles.mkdir(parents=True)
         self.keys.mkdir()
-        self.uid, self.gid = os.getuid(), os.getgid()
+        self.uid, self.gid = (os.getuid() or 997), (os.getgid() or 997)
+        for item in [self.root, *self.root.rglob("*"), self.keys, *self.keys.rglob("*")]:
+            os.chown(item, self.uid, self.gid)
         self.role_keys = {}
         for index, role in enumerate(ROLE_PROVIDER):
             profile = self.profiles / role
@@ -47,13 +49,14 @@ class RoleProjectionTests(unittest.TestCase):
         (self.root / ".env").chmod(0o600)
 
     def call_project(self, apply=False):
-        return project(self.root, key_root=self.keys, uid=self.uid, gid=self.gid, apply=apply)
+        with mock.patch("role_env_projector.os.geteuid", return_value=self.uid):
+            return project(self.root, key_root=self.keys, uid=self.uid, gid=self.gid, apply=apply)
 
     def test_root_invocation_refused_without_mutation(self):
         before = (self.profiles / "cho" / "config.yaml").read_bytes()
         with mock.patch("role_env_projector.os.geteuid", return_value=0):
             with self.assertRaisesRegex(PermissionError, "root execution refused"):
-                self.call_project(apply=True)
+                project(self.root, key_root=self.keys, uid=self.uid, gid=self.gid, apply=True)
         self.assertEqual((self.profiles / "cho" / "config.yaml").read_bytes(), before)
         self.assertTrue((self.profiles / "cho" / ".env").is_symlink())
 
