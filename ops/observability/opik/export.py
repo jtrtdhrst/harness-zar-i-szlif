@@ -168,7 +168,7 @@ def export_one(profile,limit,dry,scan_window_days=None,quality_items=0,offset=0)
     if status==200 and (old.get('project_id')!=proj or (old.get('metadata') or {}).get('source_run_id')!=item['id']):
       raise RuntimeError('trace_id_conflict')
     prior_meta=old.get('metadata') or {} if status==200 else {}
-    if quality_remaining and (prior_meta.get('tool_flow_state')!='measured' or 'repeated_tool_name_calls' not in prior_meta):
+    if quality_remaining and (prior_meta.get('tool_flow_state')!='measured' or 'repeated_tool_name_calls' not in prior_meta or prior_meta.get('retrieval_telemetry_version')!=1):
       quality_remaining-=1
       try:
         # Only aggregate locally; never export message content.
