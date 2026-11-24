@@ -102,3 +102,29 @@ negative grant lifecycle tests, Hindsight cross-bank checks, same-run Opik,
 GitHub/Coolify digest promotion and rollback **remain separate release gates**.
 The authoritative, ordered checks and evidence requirements are in the
 [operations runbook](../OPERATIONS-STATUS.md).
+
+## Plugin-loader concurrent-wait bound (container startup)
+
+v0.22.5 hardcodes `_CONCURRENT_LOAD_WAIT_SECS = 10.0` in `plugins/plugin_loader.py`.
+Inside `bounded_load_wait()` a caller that must not stall on another thread's in-flight
+plugin import gives up after that bound, marks the module stalled
+(`Skipping plugin … import still running after 10s`) and returns `None`. On a
+CPU-starved host the first import of a large plugin exceeds the bound and every
+concurrent per-turn caller skips that plugin.
+
+`install_plugin_load_wait.py` pins that file by SHA-256
+`b4d4e730df8d8163e45d4fb9dd305f61a1c6fb724ed4c3c7768eac880abba320` (v0.22.5, 12129 B)
+and makes the bound readable from `HERMES_PLUGIN_CONCURRENT_LOAD_WAIT_SECS`. The default
+stays 10.0 and any unusable value (non-numeric, non-finite, `<= 0`) falls back to it, so
+the image behaves identically unless the operator sets the variable. Rollback: unset the
+variable, or revert this commit. No profile, credential, auth or sandbox boundary is touched.
+
+Deliberately **not** fixed by this knob — separate causes, each needing its own evidence:
+
+- host CPU/memory starvation. The 300s container startup budget and the
+  `state_db_data_migrations` lease are upstream behaviour and unaffected by a plugin-load bound;
+- per-profile `wiki_fs` stdio MCP handshakes cancelled during boot. Per-server MCP
+  `connect_timeout` / `lazy` are profile-config levers, not image levers;
+- duplicate per-profile dashboard auth registration at boot (upstream).
+
+A healthy container, a green health probe or this unit-test suite is not native agent E2E.
