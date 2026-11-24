@@ -114,9 +114,10 @@ def _configure(text, role):
     return "\n".join(lines + [""] + block) + "\n"
 
 
-def _atomic_replace(path, content):
+def _atomic_replace(path, content, uid, gid):
     fd, temp = tempfile.mkstemp(prefix=".provider.project-", dir=path.parent)
     try:
+        os.fchown(fd, uid, gid)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             fd = -1
@@ -169,9 +170,9 @@ def project(root=ROOT, key_root=KEY_ROOT, uid=None, gid=None, apply=False):
     if not apply:
         return {"checked": len(prepared), "changes_needed": len(changed), "role_names": [r[0] for r in changed]}
     for role, config_path, _, config_new, env_path, env_old, env_new in changed:
-        _atomic_replace(config_path, config_new)
+        _atomic_replace(config_path, config_new, uid, gid)
         if env_old != env_new:
-            _atomic_replace(env_path, env_new)
+            _atomic_replace(env_path, env_new, uid, gid)
     return {"checked": len(prepared), "changed": len(changed), "role_names": [r[0] for r in changed]}
 
 
