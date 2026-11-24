@@ -99,6 +99,11 @@ class BrokerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status, 200)
         self.assertEqual(self.fake.calls[0][1]["model"], "gpt-6-luna")
 
+    async def test_rolebroker_model_alias_is_normalized_for_upstream(self):
+        r = await self.client.post("/p/cho/v1/responses", json=self.payload(model="custom:rolebroker/gpt-6-luna"), headers=self.auth())
+        self.assertEqual(r.status, 200)
+        self.assertEqual(self.fake.calls[0][1]["model"], "gpt-6-luna")
+
     async def test_broken_upstream_sse_is_sanitized_and_fails_terminally(self):
         from unittest.mock import patch
         with patch.object(Upstream, "content", BrokenStream()):
