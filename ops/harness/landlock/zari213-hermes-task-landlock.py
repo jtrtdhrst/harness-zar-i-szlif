@@ -9,11 +9,19 @@ import ctypes
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 
 TARGET = "/opt/hermes/.venv/bin/hermes"
 ROOT = Path("/srv/multica-zar/workspaces")
 UID_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
+# Root-owned trusted role/provider policy. Codex OAuth must go through the
+# existing loopback role broker; direct shared OAuth is never admitted.
+# Broker route and bearer are pinned to the invoking role.
+CODEX_ROLES = frozenset()
+OPENCODE_ROLES = frozenset()
+BROKER_ROLES = frozenset({"ceo", "cho", "cmo", "coo", "cpo", "cto", "designer", "email-creative", "engineer", "harness-engineer", "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"})
+
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 EXECUTE = 1
@@ -49,16 +57,151 @@ def checked_syscall(num, *args):
         raise OSError(ctypes.get_errno(), "landlock syscall denied")
     return value
 
-def grant(ruleset, path, rights):
+def grant(ruleset, path, rights, *, require_regular_nofollow=False):
     path = Path(path)
     if not path.exists():
+        if require_regular_nofollow:
+            raise FileNotFoundError(path)
         return
-    fd = os.open(str(path), os.O_PATH | os.O_CLOEXEC)
+    flags = os.O_PATH | os.O_CLOEXEC
+    if require_regular_nofollow:
+        # O_PATH|O_NOFOLLOW pins the symlink itself, never its secret target.
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(path), flags)
     try:
+        if require_regular_nofollow and not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("refusing non-regular/symlinked Git configuration")
         attr = PathBeneath(rights, fd)
         checked_syscall(445, ruleset, 1, ctypes.byref(attr), 0)
     finally:
         os.close(fd)
+
+def private_role_auth_file(shared_home: Path, role: str, uid: int) -> Path:
+    """Require a private role credential file; never follow common OAuth links.
+
+    This validates filesystem isolation, not whether upstream credentials have
+    distinct token identities. An independently provisioned role credential is
+    mandatory before enabling this stricter policy on the production daemon.
+    """
+    if role not in CODEX_ROLES:
+        raise ValueError("role is not authorized for Codex credentials")
+    directory = shared_home / "profiles" / role
+    entry = directory / "auth.json"
+    d = directory.lstat()  # reject role path symlinks
+    if (not stat.S_ISDIR(d.st_mode) or d.st_uid != uid or
+            stat.S_IMODE(d.st_mode) != 0o700):
+        raise ValueError("Codex role credential directory is not private")
+    f = entry.lstat()  # NEVER resolve a symlink into shared OAuth state
+    if (not stat.S_ISREG(f.st_mode) or f.st_uid != uid or
+            stat.S_IMODE(f.st_mode) != 0o600 or f.st_nlink != 1):
+        raise ValueError("Codex role credential must be a private regular file")
+    root_auth = shared_home / "auth.json"
+    try:
+        global_stat = root_auth.stat()
+    except FileNotFoundError:
+        global_stat = None
+    if global_stat and (f.st_dev, f.st_ino) == (global_stat.st_dev, global_stat.st_ino):
+        raise ValueError("Codex role credential aliases shared OAuth state")
+    return entry
+
+
+def role_model_provider(shared_home: Path, role: str, uid: int) -> str:
+    """Read only the trusted role-local provider selector; reject provider drift.
+
+    CTO may temporarily use the pre-approved OpenCode runtime for independent
+    review while its Codex OAuth login is unavailable. No other Codex role
+    silently inherits this exception.
+    """
+    if role not in CODEX_ROLES and role not in OPENCODE_ROLES and role not in BROKER_ROLES:
+        raise ValueError("role has no model credential policy")
+    config = shared_home / "profiles" / role / "config.yaml"
+    fd = os.open(config, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1):
+            raise ValueError("untrusted role model config")
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as file:
+            lines = file.read(65536).splitlines()
+    finally:
+        os.close(fd)
+    found = []
+    inside = False
+    blocks = 0
+    for line in lines:
+        if line.startswith("model:"):
+            blocks += 1
+            inside = True
+        elif inside and line and not line[0].isspace() and not line.startswith("#"):
+            inside = False
+        elif inside:
+            match = re.fullmatch(r"  provider:\s*([a-z0-9-]+(?::[a-z0-9-]+)?)\s*", line)
+            if match:
+                found.append(match.group(1))
+    if blocks != 1 or len(found) != 1:
+        raise ValueError("ambiguous role model provider")
+    provider = found[0]
+    approved = (
+        (role in OPENCODE_ROLES and provider == "opencode-go")
+        or (role in BROKER_ROLES and provider == "custom:rolebroker")
+    )
+    if provider == "custom:rolebroker":
+        expected_url = f"    base_url: http://127.0.0.1:7468/p/{role}/v1"
+        if lines.count(expected_url) != 1 or lines.count("    key_env: ROLE_BROKER_API_KEY") != 1 or lines.count("    api_mode: codex_responses") != 1:
+            raise ValueError("role broker provider is not pinned to this role")
+    if not approved:
+        raise ValueError("role model provider not approved")
+    return provider
+
+
+def private_role_env_file(shared_home: Path, role: str, uid: int) -> Path:
+    """Validate private role .env metadata, never expose the provider key."""
+    path = shared_home / "profiles" / role / ".env"
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1):
+            raise ValueError("role provider environment is not private")
+    finally:
+        os.close(fd)
+    return path
+
+
+def verified_hermes_home_profile(task: Path, home: Path, session_root: Path,
+                                 agent: str, role: str, uid: int) -> str:
+    """Accept only an owned task-private home or the exact persisted role session.
+
+    A task-local Hermes home is produced by Multica for fresh sessions. It
+    must not be mistaken for a foreign shared/persistent Hermes profile.
+    Never follow a symlink and never broaden the shared-profile READ grant.
+    """
+    if not UUID.fullmatch(agent) or not UID_NAME.fullmatch(role):
+        raise ValueError("invalid task agent/role identity for Hermes home")
+    resolved = home.resolve(strict=True)
+    if home != resolved:
+        raise ValueError("Hermes home is symlinked")
+    expected_task_home = task / "hermes-home"
+    if home == expected_task_home:
+        st = home.lstat()
+        if (not stat.S_ISDIR(st.st_mode) or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o700):
+            raise ValueError("task-local Hermes home is not private")
+        return role
+    try:
+        rel = home.relative_to(session_root / agent)
+    except ValueError:
+        raise ValueError("Hermes home outside own task/session") from None
+    if (len(rel.parts) != 2 or not UID_NAME.fullmatch(rel.parts[0])
+            or not UUID.fullmatch(rel.parts[1])):
+        raise ValueError("unverified persisted Hermes session for profile ACL")
+    if rel.parts[0] != role:
+        raise ValueError("foreign Hermes profile session")
+    st = home.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != uid or stat.S_IMODE(st.st_mode) != 0o700:
+        raise ValueError("persisted Hermes home is not private")
+    return role
+
 
 def task_scope():
     if not UUID.fullmatch(os.environ.get("MULTICA_TASK_ID", "")):
@@ -100,6 +243,9 @@ def restrict(task, tmpdir):
         # Without it, Landlock isolates the resolver's target and every model
         # provider request fails with EAI_AGAIN. No access to other /run paths.
         grant(ruleset, "/run/systemd/resolve/stub-resolv.conf", READ_FILE)
+        # Git needs the non-secret credential-helper configuration in the daemon home.
+        # Expose just this file as read-only; never the home tree or broker tokens.
+        grant(ruleset, "/srv/multica-zar/.gitconfig", READ_FILE, require_regular_nofollow=True)
         # Specific role credential only, not the union of all role keys.
         role = re.sub(r"[^a-z0-9]+", "-", os.environ.get("MULTICA_AGENT_NAME", "").lower()).strip("-")
         if UID_NAME.fullmatch(role):
@@ -133,12 +279,13 @@ def restrict(task, tmpdir):
         # profiles under the common Unix uid, bypassing repo/task isolation.
         shared_home = Path("/srv/multica-zar/.hermes")
         session_root = Path("/srv/multica-zar/.multica/profiles/zar-prod/hermes-sessions")
-        home_for_acl = Path(os.environ.get("HERMES_HOME", "")).resolve(strict=True)
-        rel_home = home_for_acl.relative_to(session_root / agent)
-        if (len(rel_home.parts) != 2 or not UID_NAME.fullmatch(rel_home.parts[0])
-                or not UUID.fullmatch(rel_home.parts[1])):
-            raise ValueError("unverified Hermes session for profile read ACL")
-        own_profile = rel_home.parts[0]
+        home_for_acl = Path(os.environ.get("HERMES_HOME", ""))
+        own_profile = verified_hermes_home_profile(
+            task, home_for_acl, session_root, agent, role, os.getuid())
+        if not UID_NAME.fullmatch(role) or own_profile != role:
+            raise ValueError("agent role and trusted persisted session profile disagree")
+        if role not in CODEX_ROLES and role not in OPENCODE_ROLES and role not in BROKER_ROLES:
+            raise ValueError("no approved model credential policy for this role")
         if own_profile != "default":
             own_shared = shared_home / "profiles" / own_profile
             if not own_shared.is_dir() or own_shared.is_symlink():
@@ -147,11 +294,27 @@ def restrict(task, tmpdir):
         # Only exact shared bootstrap files needed for profile symlinks;
         # never grant other profiles, global session DBs, logs or backups.
         grant(ruleset, shared_home / "installs", READ)
-        for name in ("auth.json", ".env", "auth.lock", "install_id",
-                     "SOUL.md", ".codex_gpt55_autoraise_notice",
-                     "models_dev_cache.json", "provider_models_cache.json",
-                     "context_length_cache.yaml"):
+        # Provider-scoped secrets: never grant global .env or auth.json.
+        # Every Codex role requires an independently provisioned local auth file;
+        # missing, linked, hardlinked or group-readable credentials fail closed.
+        bootstrap_names = ("auth.lock", "install_id", "SOUL.md",
+                           ".codex_gpt55_autoraise_notice",
+                           "models_dev_cache.json", "provider_models_cache.json",
+                           "context_length_cache.yaml")
+        for name in bootstrap_names:
             grant(ruleset, shared_home / name, READ_FILE)
+        provider = role_model_provider(shared_home, role, os.getuid())
+        if provider == "custom:rolebroker":
+            grant(ruleset, private_role_env_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
+        elif provider == "openai-codex":
+            grant(ruleset, private_role_auth_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
+        elif provider == "opencode-go":
+            grant(ruleset, private_role_env_file(shared_home, role, os.getuid()),
+                  READ_FILE, require_regular_nofollow=True)
+        else:
+            raise ValueError("role model provider not approved")
         # Hermes startup uses an existing per-install flock. Permit only
         # this single lock file to be opened for writing, never shared config
         # or a parent directory, so no other task's data becomes writable.
@@ -205,6 +368,53 @@ def restrict(task, tmpdir):
     finally:
         os.close(ruleset)
 
+def localize_private_vision_cache(home: Path, shared_profile: Path):
+    """Keep Hermes vision temp images inside the authenticated task session.
+
+    The daemon projects cache as a link to a shared role profile. Under Landlock
+    that shared profile is READ-only. Remove ONLY that exact expected link and
+    create a private cache/vision; never grant shared write or follow unknown links.
+    """
+    import errno
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    home_fd = os.open(home, flags)
+    try:
+        try:
+            link = os.readlink("cache", dir_fd=home_fd)
+        except OSError as exc:
+            if exc.errno not in (errno.EINVAL, errno.ENOENT):
+                raise
+            link = None
+        if link is not None:
+            if link != str(shared_profile / "cache"):
+                raise ValueError("unexpected Hermes cache symlink target")
+            os.unlink("cache", dir_fd=home_fd)
+        try:
+            os.mkdir("cache", 0o700, dir_fd=home_fd)
+        except FileExistsError:
+            pass
+        cache_fd = os.open("cache", flags, dir_fd=home_fd)
+        try:
+            st = os.fstat(cache_fd)
+            if st.st_uid != os.getuid() or (st.st_mode & 0o077):
+                raise ValueError("unsafe task-local Hermes cache")
+            try:
+                os.mkdir("vision", 0o700, dir_fd=cache_fd)
+            except FileExistsError:
+                pass
+            vision_fd = os.open("vision", flags, dir_fd=cache_fd)
+            try:
+                st = os.fstat(vision_fd)
+                if st.st_uid != os.getuid() or (st.st_mode & 0o077):
+                    raise ValueError("unsafe task-local vision cache")
+            finally:
+                os.close(vision_fd)
+        finally:
+            os.close(cache_fd)
+    finally:
+        os.close(home_fd)
+
+
 def localize_sqlite_locks(task):
     """Do not let Hermes SQLite lockfiles follow shared-profile symlinks.
 
@@ -240,6 +450,7 @@ def localize_sqlite_locks(task):
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
         fd = os.open(str(lock), flags, 0o600)
         os.close(fd)
+    localize_private_vision_cache(home, shared)
 
 
 def main():
