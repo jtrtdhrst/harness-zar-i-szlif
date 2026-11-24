@@ -22,10 +22,10 @@ ROLES = frozenset(("ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
                    "email-creative", "engineer", "harness-engineer",
                    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"))
 MODEL_ALLOWLIST = frozenset(("gpt-6-luna",))
-MODEL_ALIASES = frozenset(("gpt-6-luna", "openai-codex/gpt-6-luna"))
+MODEL_ALIASES = frozenset(("gpt-6-luna", "openai-codex/gpt-6-luna", "custom:rolebroker/gpt-6-luna"))
 
 def canonical_model(value: object) -> str | None:
-    """Accept only the pinned Luna model and its Multica Codex-qualified ID."""
+    """Accept only the pinned Luna model and its Multica provider-qualified IDs."""
     return "gpt-6-luna" if isinstance(value, str) and value in MODEL_ALIASES else None
 MAX_BODY = 1_048_576
 KEY_ROOT = Path("/srv/multica-zar/.config/hermes")
