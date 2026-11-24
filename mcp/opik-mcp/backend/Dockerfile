@@ -13,7 +13,7 @@ RUN python -c 'import pathlib,tarfile,hashlib,io; root=pathlib.Path("/app/source
 COPY backend/patch_score_batch.py /app/patch_score_batch.py
 RUN python /app/patch_score_batch.py /app/opik_mcp/writes/operations/observability.py
 COPY backend/execution_summary.py /app/opik_mcp/server/tools/execution_summary.py
-RUN python -c 'import hashlib,pathlib; p=pathlib.Path("/app/opik_mcp/server/tools/__init__.py"); s=p.read_bytes(); assert hashlib.sha256(s).hexdigest()=="cb85681240e3ce02a8459c98be25bc6b76b9727aa94e5e9457033d3418cab710", "unexpected_tool_registry"; a=b"    extend_advertised_schemas(mcp, toggles)"; assert s.count(a)==1; p.write_bytes(s.replace(a,b"    from opik_mcp.server.tools import execution_summary\\n    execution_summary.register(mcp)\\n"+a)); compile(p.read_bytes(),str(p),"exec")' \
+RUN python -c 'import hashlib,pathlib; p=pathlib.Path("/app/opik_mcp/server/tools/__init__.py"); s=p.read_bytes(); assert hashlib.sha256(s).hexdigest()=="cb85681240e3ce02a8459c98be25bc6b76b9727aa94e5e9457033d3418cab710", "unexpected_tool_registry"; a=b"    extend_advertised_schemas(mcp, toggles)"; assert s.count(a)==1; p.write_bytes(s.replace(a,b"    from opik_mcp.server.tools import execution_summary"+bytes([10])+b"    execution_summary.register(mcp)"+bytes([10])+a)); compile(p.read_bytes(),str(p),"exec")' \
  && python /app/opik_mcp/server/tools/execution_summary.py
 COPY backend/LICENSE /app/LICENSE
 RUN useradd --uid 10001 --create-home app
