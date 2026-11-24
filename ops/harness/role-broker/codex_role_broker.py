@@ -107,7 +107,7 @@ class RoleCapacity:
     state is deliberately local and restart reset (not a billing ledger).
     """
 
-    def __init__(self, *, quota: int = 8, window_seconds: float = 60.0,
+    def __init__(self, *, quota: int = 16, window_seconds: float = 60.0,
                  max_total: int = 3):
         from collections import deque
         self.quota = quota
