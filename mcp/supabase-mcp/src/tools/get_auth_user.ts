@@ -90,7 +90,7 @@ export const getAuthUserTool = {
                  if (validationError instanceof z.ZodError) {
                     console.error("Zod validation failed:", validationError.issues);
                     throw new Error(`Output validation failed: ${validationError.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
-                } 
+                }
                 throw validationError; // Rethrow other errors
             }
         });

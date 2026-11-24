@@ -19,7 +19,7 @@ type ListTablesInput = z.infer<typeof ListTablesInputSchema>;
 
 // Static JSON Schema for MCP capabilities
 const mcpInputSchema = {
-    type: 'object', 
+    type: 'object',
     properties: {},
     required: [],
 };

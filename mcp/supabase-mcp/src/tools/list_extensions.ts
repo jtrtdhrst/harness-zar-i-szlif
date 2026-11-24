@@ -16,7 +16,7 @@ const ListExtensionsInputSchema = z.object({});
 type ListExtensionsInput = z.infer<typeof ListExtensionsInputSchema>;
 // Static JSON Schema for MCP capabilities
 const mcpInputSchema = {
-    type: 'object', 
+    type: 'object',
     properties: {},
     required: [],
 };
