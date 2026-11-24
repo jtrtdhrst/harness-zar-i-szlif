@@ -13,7 +13,7 @@ The live status ledger is [MCP source and migration inventory](../../mcp/README.
 - Repository: `jtrtdhrst/harness-zar-i-szlif`, branch `main`; product `jtrtdhrst/zar-i-szlif` has a **different** product release mechanism. An arbitrary feature branch is never a production source.
 - Existing root-owned controller: `/usr/local/libexec/harness_native_delivery.py`, systemd oneshot `harness-image-delivery.service`, timer `harness-image-delivery.timer`; authoritative source `scripts/harness_native_delivery.py`. **Do not introduce a competing controller, extra watchdog or parallel deployment worker.**
 - Service source/transport allowlist: `SERVICES` in the controller **AND** the reviewed `ops/release-lanes.json` entry. They are not interchangeable. A missing build context, missing Coolify UUID, unsupported resource, unknown runtime Dockerfile or `HOLD` must never become an automatic build.
-- Operator (COO / designated release operator) owns the privileged VPS and Coolify write. CHO owns independent per-UUID release authorization for Harness MCPs; CTO reviews exact source and security independently; Harness Engineer prepares source and tests. Do not self-review or fake agent/grant/CI evidence.
+- Operator (COO / designated release operator) owns the privileged VPS and Coolify write. CHO owns independent Harness acceptance and per-UUID release authorization; Harness Engineer prepares source and tests. Historical CTO review references below describe earlier records, not future Harness dispatch. Formal independent GitHub review and independent production QA remain separate gates. Do not self-review or fake agent/grant/CI evidence.
 
 ## What actually runs
 
@@ -29,7 +29,7 @@ The installed `--auto` resolves **both** `HARNESS_BASE_SHA` and `HARNESS_SOURCE_
 
 The last observed Harness controller supports only the explicitly listed service transport routes, not every running Docker Compose service in Coolify. Manifest resources with `promotion_state=hold` or `auto_deploy_expected=false` are **not** evidence of configured autodeploy. Do not claim 13/13 routed Compose MCP deployments merely from configured image refs.
 
-## Agent preflight (mandatory for CHO / CTO / COO / Harness Engineer)
+## Agent preflight (mandatory for CHO / COO / Harness Engineer / independent QA)
 
 Read this file **from current GitHub main**, then read exact code/manifest/runbook. For repository analysis query RepoWise workspace `harness` (not `product`) and verify `list_repos` `last_commit_at_index == current GitHub main SHA`. On stale/low-confidence RepoWise answers, open exact GitHub files; never infer gate policy from an unrelated Paperclip legacy approval script. Inspect current Multica issue/run, PR reviews, trusted main CI, root-owned gate/artifact status and Coolify UUID before any release assertion.
 
