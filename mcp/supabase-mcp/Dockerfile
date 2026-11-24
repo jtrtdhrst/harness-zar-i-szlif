@@ -1,14 +1,14 @@
 # Self-hosted Supabase MCP — same image recipe as the running container
 # `selfhosted-supabase-mcp:latest` (bun runtime, non-root user `mcp`,
 # healthcheck on :3100).
-FROM docker.io/oven/bun:1.1.45-alpine AS builder
+FROM docker.io/oven/bun:1.2.23-alpine@sha256:0841c588f6304300baf1d395ae339ce09a6e18c4b6a7cdd4fddcbdb87a2f096a AS builder
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install
+RUN bun install --frozen-lockfile
 COPY src ./src
 RUN bun run build
 
-FROM docker.io/oven/bun:1.1.45-alpine
+FROM docker.io/oven/bun:1.2.23-alpine@sha256:0841c588f6304300baf1d395ae339ce09a6e18c4b6a7cdd4fddcbdb87a2f096a
 RUN addgroup -S mcp && adduser -S -G mcp mcp
 WORKDIR /app
 COPY --from=builder /app/package.json ./
