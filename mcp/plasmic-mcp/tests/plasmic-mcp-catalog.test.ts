@@ -62,6 +62,12 @@ const EXPECTED_TOOLS = [
   "plasmic_update_data_query",
   "plasmic_delete_data_query",
   "plasmic_bind_data_query",
+  // ZARI-260 native WAB Data Token CRUD.
+  "plasmic_list_data_tokens",
+  "plasmic_get_data_token",
+  "plasmic_create_data_token",
+  "plasmic_update_data_token",
+  "plasmic_delete_data_token",
 ];
 
 /** Narzędzia tylko do odczytu — nie zmieniają projektu Plasmic. */
@@ -88,6 +94,8 @@ const READ_ONLY_TOOLS = [
   "plasmic_get_capabilities",
   "plasmic_list_data_queries",
   "plasmic_get_data_query",
+  "plasmic_list_data_tokens",
+  "plasmic_get_data_token",
 ];
 
 /** Narzędzia zapisujące — platforma musi je widzieć jako zmiany. */
@@ -112,6 +120,9 @@ const WRITE_TOOLS = [
   "plasmic_update_data_query",
   "plasmic_delete_data_query",
   "plasmic_bind_data_query",
+  "plasmic_create_data_token",
+  "plasmic_update_data_token",
+  "plasmic_delete_data_token",
 ];
 
 type ToolAnnotations = {
@@ -213,7 +224,7 @@ async function withServer<T>(
 }
 
 describe("Plasmic MCP: katalog MCP == tools/list żywego serwera", () => {
-  it("tools/list zwraca dokładnie 42 narzędzia zgodne z kontraktem", async () => {
+  it("tools/list zwraca dokładnie 47 narzędzi zgodnych z kontraktem", async () => {
     const tools = await withServer(async (client) => {
       const res = await client.request("tools/list", {});
       assert.ok(res.result, `tools/list nie powiodło się: ${JSON.stringify(res.error)}`);

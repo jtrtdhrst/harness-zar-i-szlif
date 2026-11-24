@@ -1,0 +1,36 @@
+name: Plasmic MCP source CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mcp/plasmic-mcp/**'
+      - '.github/workflows/plasmic-mcp-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'mcp/plasmic-mcp/**'
+      - '.github/workflows/plasmic-mcp-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mcp/plasmic-mcp
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run isolated data-token, query and catalog fixtures
+        run: node --test tests/plasmic-data-tokens.test.ts tests/plasmic-data-queries.test.ts tests/plasmic-mcp-catalog.test.ts

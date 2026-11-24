@@ -16,7 +16,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repo = resolve(here, "../.."); // <repo>/plasmic-mcp/scripts -> <repo>
+// <repo>/mcp/plasmic-mcp/scripts -> <repo>. Resolve from the script location, never
+// from the caller's cwd, so the gate reads real source instead of failing ENOENT.
+const repo = resolve(here, "../../..");
 const problems = [];
 // A missing canonical source file is a release blocker, not a crash: the CI
 // assertion treats a non-zero exit as admissible only when it enumerates
