@@ -22,7 +22,7 @@ ROLES = frozenset(("ceo", "cho", "cmo", "coo", "cpo", "cto", "designer",
                    "email-creative", "engineer", "harness-engineer",
                    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"))
 MODEL_ALLOWLIST = frozenset(("gpt-6-luna",))
-MODEL_ALIASES = frozenset(("gpt-6-luna", "openai-codex/gpt-6-luna", "custom:rolebroker/gpt-6-luna"))
+MODEL_ALIASES = frozenset(("gpt-6-luna", "openai-codex/gpt-6-luna", "custom:rolebroker/gpt-6-luna", "rolebroker/gpt-6-luna"))
 
 def canonical_model(value: object) -> str | None:
     """Accept only the pinned Luna model and its Multica provider-qualified IDs."""
