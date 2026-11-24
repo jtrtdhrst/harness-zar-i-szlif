@@ -4,7 +4,7 @@ import * as nodePath from 'path';
 import { mkdirSync } from 'fs';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
 // import type { McpToolDefinition } from '@modelcontextprotocol/sdk/types.js'; // Removed incorrect import
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { runExternalCommand, redactDatabaseUrl } from './utils.js';
 
 /**
@@ -139,6 +139,7 @@ const mcpInputSchema = {
 // The tool definition - No explicit McpToolDefinition type needed
 export const generateTypesTool = {
     name: 'generate_typescript_types',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Generates TypeScript types from the database schema using the Supabase CLI (`supabase gen types`) and downloads the file to the specified absolute path. The tool returns the current platform (win32, darwin, linux) to help with path formatting. Requires DATABASE_URL configuration and Supabase CLI installed.',
     inputSchema: GenerateTypesInputSchema,
     mcpInputSchema: mcpInputSchema, // Add static JSON schema

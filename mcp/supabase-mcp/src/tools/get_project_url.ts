@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Input schema (none needed)
 const GetProjectUrlInputSchema = z.object({});
@@ -21,6 +21,7 @@ const mcpInputSchema = {
 // The tool definition
 export const getProjectUrlTool = {
     name: 'get_project_url',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Returns the configured Supabase project URL for this server.',
     inputSchema: GetProjectUrlInputSchema,
     mcpInputSchema: mcpInputSchema, // Add static JSON schema

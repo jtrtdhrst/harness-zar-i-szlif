@@ -142,7 +142,7 @@ describe('createAuthMiddleware', () => {
         test('accepts token that has not expired', () => {
             const { req, res, next } = createMocks();
             const validToken = createToken(
-                { sub: 'user-123' },
+                { sub: 'user-123', role: 'authenticated' },
                 { expiresIn: '1h' }
             );
             req.headers.authorization = `Bearer ${validToken}`;
@@ -172,7 +172,7 @@ describe('createAuthMiddleware', () => {
     describe('Successful authentication', () => {
         test('calls next() for valid token', () => {
             const { req, res, next } = createMocks();
-            const validToken = createToken({ sub: 'user-123' }, { expiresIn: '1h' });
+            const validToken = createToken({ sub: 'user-123', role: 'authenticated' }, { expiresIn: '1h' });
             req.headers.authorization = `Bearer ${validToken}`;
 
             middleware(req, res, next);
@@ -184,7 +184,7 @@ describe('createAuthMiddleware', () => {
 
         test('sets req.user with userId from sub claim', () => {
             const { req, res, next } = createMocks();
-            const validToken = createToken({ sub: 'user-abc-123' }, { expiresIn: '1h' });
+            const validToken = createToken({ sub: 'user-abc-123', role: 'authenticated' }, { expiresIn: '1h' });
             req.headers.authorization = `Bearer ${validToken}`;
 
             middleware(req, res, next);
@@ -196,7 +196,7 @@ describe('createAuthMiddleware', () => {
         test('sets req.user.email from token', () => {
             const { req, res, next } = createMocks();
             const validToken = createToken(
-                { sub: 'user-123', email: 'test@example.com' },
+                { sub: 'user-123', email: 'test@example.com', role: 'authenticated' },
                 { expiresIn: '1h' }
             );
             req.headers.authorization = `Bearer ${validToken}`;
@@ -208,7 +208,7 @@ describe('createAuthMiddleware', () => {
 
         test('sets req.user.email to null when not in token', () => {
             const { req, res, next } = createMocks();
-            const validToken = createToken({ sub: 'user-123' }, { expiresIn: '1h' });
+            const validToken = createToken({ sub: 'user-123', role: 'authenticated' }, { expiresIn: '1h' });
             req.headers.authorization = `Bearer ${validToken}`;
 
             middleware(req, res, next);
@@ -229,19 +229,64 @@ describe('createAuthMiddleware', () => {
             expect(req.user?.role).toBe('admin');
         });
 
-        test('defaults req.user.role to authenticated when not in token', () => {
+        test('rejects a token without a role claim (role must never be assumed)', () => {
             const { req, res, next } = createMocks();
-            const validToken = createToken({ sub: 'user-123' }, { expiresIn: '1h' });
+            const tokenWithoutRole = createToken({ sub: 'user-123' }, { expiresIn: '1h' });
+            req.headers.authorization = `Bearer ${tokenWithoutRole}`;
+
+            middleware(req, res, next);
+
+            expect(res.status).toHaveBeenCalledWith(401);
+            expect(res.json).toHaveBeenCalledWith({
+                error: 'Unauthorized',
+                message: 'Invalid token: missing role claim',
+            });
+            expect(req.user).toBeUndefined();
+            expect(next).not.toHaveBeenCalled();
+        });
+
+        test('rejects a token whose role claim is not a string', () => {
+            const { req, res, next } = createMocks();
+            const validToken = createToken(
+                { sub: 'user-123', role: 42 },
+                { expiresIn: '1h' }
+            );
             req.headers.authorization = `Bearer ${validToken}`;
 
             middleware(req, res, next);
 
-            expect(req.user?.role).toBe('authenticated');
+            expect(res.status).toHaveBeenCalledWith(401);
+            expect(next).not.toHaveBeenCalled();
+        });
+
+        test('rejects an empty role claim', () => {
+            const { req, res, next } = createMocks();
+            const validToken = createToken({ sub: 'user-123', role: '   ' }, { expiresIn: '1h' });
+            req.headers.authorization = `Bearer ${validToken}`;
+
+            middleware(req, res, next);
+
+            expect(res.status).toHaveBeenCalledWith(401);
+            expect(next).not.toHaveBeenCalled();
+        });
+
+        test('preserves an explicitly unknown role for downstream fail-closed policy', () => {
+            const { req, res, next } = createMocks();
+            const validToken = createToken(
+                { sub: 'user-123', role: 'custom_ops' },
+                { expiresIn: '1h' }
+            );
+            req.headers.authorization = `Bearer ${validToken}`;
+
+            middleware(req, res, next);
+
+            expect(req.user?.role).toBe('custom_ops');
+            expect(next).toHaveBeenCalled();
         });
 
         test('sets req.user.exp from token', () => {
             const { req, res, next } = createMocks();
-            const validToken = createToken({ sub: 'user-123' }, { expiresIn: '1h' });
+            const validToken = createToken({ sub: 'user-123', role: 'authenticated' }, { expiresIn: '1h' });
             req.headers.authorization = `Bearer ${validToken}`;
 
             middleware(req, res, next);
@@ -282,7 +327,7 @@ describe('createAuthMiddleware', () => {
         test('middleware with different secret rejects tokens from another secret', () => {
             const anotherMiddleware = createAuthMiddleware('different-secret');
             const { req, res, next } = createMocks();
-            const token = createToken({ sub: 'user-123' }, { expiresIn: '1h' });
+            const token = createToken({ sub: 'user-123', role: 'authenticated' }, { expiresIn: '1h' });
             req.headers.authorization = `Bearer ${token}`;
 
             anotherMiddleware(req, res, next);

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { handleSqlResponse, executeSqlWithFallback, isSqlErrorResponse } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Service types that can be queried for logs
 const LogServiceSchema = z.enum(['postgres', 'auth', 'storage', 'realtime', 'postgrest']);
@@ -50,6 +50,7 @@ const mcpInputSchema = {
 // Tool definition
 export const getLogsTool = {
     name: 'get_logs',
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     description: 'Gets logs for a Supabase service. Attempts to query the analytics stack first, then falls back to PostgreSQL CSV logs. Returns logs from the last 24 hours. Note: Log availability depends on your self-hosted installation configuration.',
     inputSchema: GetLogsInputSchema,
     mcpInputSchema: mcpInputSchema,

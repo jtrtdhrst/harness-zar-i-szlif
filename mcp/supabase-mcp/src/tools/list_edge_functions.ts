@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for edge function output
 const EdgeFunctionSchema = z.object({
@@ -29,6 +29,7 @@ const mcpInputSchema = {
 // Tool definition
 export const listEdgeFunctionsTool = {
     name: 'list_edge_functions',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists all deployed Supabase Edge Functions. Returns empty array if edge functions are not available or none are deployed.',
     inputSchema: ListEdgeFunctionsInputSchema,
     mcpInputSchema: mcpInputSchema,

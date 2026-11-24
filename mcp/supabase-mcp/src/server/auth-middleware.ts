@@ -37,6 +37,7 @@ const AUTH_ERROR_MESSAGES = {
     INVALID_FORMAT: 'Invalid Authorization header format. Expected: Bearer [token]',
     MISSING_TOKEN: 'Missing token in Authorization header',
     MISSING_SUBJECT: 'Invalid token: missing subject (sub) claim',
+    MISSING_ROLE: 'Invalid token: missing role claim',
     TOKEN_EXPIRED: 'Token has expired',
     VERIFICATION_FAILED: 'Failed to verify authentication token',
 } as const;
@@ -92,6 +93,18 @@ export function createAuthMiddleware(jwtSecret: string) {
                 return;
             }
 
+            // SECURITY: the role claim decides the privilege level, so an absent or
+            // non-string role must be rejected. Previously a missing role silently
+            // became 'authenticated', which granted regular tool access.
+            const roleClaim = typeof decoded.role === 'string' ? decoded.role.trim() : '';
+            if (!roleClaim) {
+                res.status(401).json({
+                    error: 'Unauthorized',
+                    message: AUTH_ERROR_MESSAGES.MISSING_ROLE,
+                });
+                return;
+            }
+
             // NOTE: Expiration is already checked by jwt.verify() above.
             // It throws TokenExpiredError if expired, which is caught below.
 
@@ -99,7 +112,7 @@ export function createAuthMiddleware(jwtSecret: string) {
             req.user = {
                 userId: decoded.sub,
                 email: decoded.email || null,
-                role: decoded.role || 'authenticated',
+                role: roleClaim,
                 exp: decoded.exp || 0,
             };
 

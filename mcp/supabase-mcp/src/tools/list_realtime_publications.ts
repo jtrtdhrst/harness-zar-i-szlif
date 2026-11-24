@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { handleSqlResponse } from './utils.js';
 import type { SqlSuccessResponse } from '../types/index.js';
 
@@ -34,6 +34,7 @@ export const mcpInputSchema = {
 // Tool definition
 export const listRealtimePublicationsTool = {
     name: 'list_realtime_publications',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Lists PostgreSQL publications, often used by Supabase Realtime.',
     mcpInputSchema,
     inputSchema: ListRealtimePublicationsInputSchema,

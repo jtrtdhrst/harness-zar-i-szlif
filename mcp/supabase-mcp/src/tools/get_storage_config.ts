@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for bucket configuration
 const BucketConfigSchema = z.object({
@@ -46,6 +46,7 @@ const mcpInputSchema = {
 // Tool definition
 export const getStorageConfigTool = {
     name: 'get_storage_config',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Gets storage configuration for Supabase Storage buckets. Returns bucket settings including file size limits, allowed MIME types, and public/private status.',
     inputSchema: GetStorageConfigInputSchema,
     mcpInputSchema: mcpInputSchema,

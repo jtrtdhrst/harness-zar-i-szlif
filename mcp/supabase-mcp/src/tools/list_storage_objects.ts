@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { PoolClient } from 'pg'; // Import PoolClient type
 
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 import { handleSqlResponse } from './utils.js';
 import type { SqlSuccessResponse } from '../types/index.js'; // Import the type
 
@@ -53,6 +53,7 @@ export const mcpInputSchema = {
 // Tool definition
 export const listStorageObjectsTool = {
     name: 'list_storage_objects',
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     description: 'Lists objects within a specific storage bucket, optionally filtering by prefix.',
     mcpInputSchema,
     inputSchema: ListStorageObjectsInputSchema,

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SelfhostedSupabaseClient } from '../client/index.js';
 import { handleSqlResponse, executeSqlWithFallback } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Schema for the output: array of connection details
 const GetDbConnectionsOutputSchema = z.array(z.object({
@@ -29,6 +29,7 @@ const mcpInputSchema = {
 // The tool definition
 export const getDatabaseConnectionsTool = {
     name: 'get_database_connections',
+    privilegeLevel: 'sensitive' as ToolPrivilegeLevel,
     description: 'Retrieves information about active database connections from pg_stat_activity.',
     inputSchema: GetDbConnectionsInputSchema,
     mcpInputSchema: mcpInputSchema,

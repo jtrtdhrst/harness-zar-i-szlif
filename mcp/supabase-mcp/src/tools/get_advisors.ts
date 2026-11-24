@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { executeSqlWithFallback, isSqlErrorResponse } from './utils.js';
-import type { ToolContext } from './types.js';
+import type { ToolContext, ToolPrivilegeLevel } from './types.js';
 
 // Advisor types
 const AdvisorTypeSchema = z.enum(['security', 'performance']);
@@ -222,6 +222,7 @@ const performanceChecks = {
 // Tool definition
 export const getAdvisorsTool = {
     name: 'get_advisors',
+    privilegeLevel: 'regular' as ToolPrivilegeLevel,
     description: 'Gets security or performance advisory notices for the database. Based on Supabase Splinter linting rules. Helps identify issues like missing RLS policies, unindexed foreign keys, and other common problems.',
     inputSchema: GetAdvisorsInputSchema,
     mcpInputSchema: mcpInputSchema,

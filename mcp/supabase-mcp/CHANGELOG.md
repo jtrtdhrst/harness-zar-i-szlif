@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Least-privilege tool policy (fail closed)**
+  - Unknown JWT roles now receive **no** tool privileges; the previous fallback to
+    `authenticated` (which granted `regular` access) is removed.
+  - Tokens without a non-empty string `role` claim are rejected with `401` instead of
+    being treated as `authenticated`.
+  - New `sensitive` privilege level for user data, PII, log contents, storage objects,
+    function source and connection activity. `authenticated` callers are limited to
+    schema metadata; `list_auth_users`, `get_auth_user`, `get_logs`,
+    `list_edge_function_logs`, `list_storage_objects`, `get_edge_function_details`,
+    `get_database_connections` and `get_cron_job_history` moved out of `regular`.
+  - `privilegeLevel` is now required: tools without a declared level are refused at
+    registration/call time instead of defaulting to `regular`. The tool list moved to
+    `src/tools/registry.ts` so the policy is testable in one place.
+- **Typed DDL surface `add_nullable_column`**: operator-pinned schema allowlist
+  (`SUPABASE_MCP_DDL_SCHEMA_ALLOWLIST`), reserved-schema deny list, strict identifier and
+  type validation, single transaction with `information_schema` readback, rollback by
+  default. Requires `DATABASE_URL`; never uses a service_role JWT.
+  - Readback is verified against the request before success is reported (column name,
+    `data_type`, `is_nullable = YES`, no default). `ADD COLUMN IF NOT EXISTS` silently
+    no-ops on an existing column, so a pre-existing column of another type, a `NOT NULL`
+    column or a defaulted column now fails the call and rolls back instead of being
+    reported as applied.
+
 ### Added
 
 - **HTTP Transport Mode**: Run MCP server in HTTP mode for Docker/Kong integration
