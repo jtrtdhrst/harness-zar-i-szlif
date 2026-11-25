@@ -1,6 +1,6 @@
 # Serwery MCP — jeden serwer = jeden katalog kodu
 
-Katalog `mcp/` zawiera tylko serwery MCP i ich kod/proxy bezpieczeństwa. Usługi Qdrant DB, Supabase DB, ComfyUI Engine, Plasmic WAB, Opik Core i Hindsight Core są odrębnymi aplikacjami opartymi na obrazach upstream i **nie** należą do `mcp/`.
+Katalog `mcp/` zawiera tylko serwery MCP i ich kod/proxy bezpieczeństwa. Usługi Supabase DB, ComfyUI Engine, Plasmic WAB, Opik Core i Hindsight Core są odrębnymi aplikacjami opartymi na obrazach upstream i **nie** należą do `mcp/`.
 
 | Serwer | Kod i rola | Dockerfile / build root | Coolify UUID | Stan kodu |
 | --- | --- | --- | --- | --- |
@@ -21,7 +21,7 @@ Katalog `mcp/` zawiera tylko serwery MCP i ich kod/proxy bezpieczeństwa. Usług
 
 **Źródła i obrazy to różne rzeczy:** [ops/mcp-images/catalog.json](../ops/mcp-images/catalog.json) zapisuje rzeczywiste obrazy i UUID; jeśli brak niezależnie potwierdzonego manifest digest/SHA, wydanie pozostaje niezweryfikowane.
 
-**Historia migracji:** Qdrant MCP został całkowicie wycofany ze źródeł w PR #182 i z konfiguracji bramy w PR #234. Nie przywracaj jego katalogu ani wpisu buildowego. Osobna baza danych Qdrant pozostaje aktywna. Hindsight MCP (PR #132) jest oddzielnym komponentem i zachowuje swoje niezależne sekrety i dane.
+**Historia migracji:** Hindsight MCP (PR #132) jest oddzielnym komponentem i zachowuje swoje niezależne sekrety i dane.
 
 ## Production migration evidence — 2026-11-24
 
@@ -43,7 +43,7 @@ Target: protected GitHub main → reviewed source-specific change → native Coo
 | Ubuntu | Service | Existing registry digest; candidate stopped | Preserve existing authorization boundaries |
 | RepoWise | Service + application | Full upstream source vendored under `apps/repowise/` by merged PR #235; runtime still uses upstream-backed delivery | ZARI-274/286, PR #196; resolve canonical MCP transport source and exact production mapping |
 
-The retired Qdrant MCP is excluded; the separate Qdrant database is not a MCP service. RepoWise is not yet a canonical folder under `mcp/` on the observed main. Cloudflare/cloudflared are outside this migration.
+RepoWise is not yet a canonical folder under `mcp/` on the observed main. Cloudflare/cloudflared are outside this migration.
 
 Coolify candidate deployment `l7krpcvsgj6vvxuayg3i9ugu`: native build passed from observed main; runtime failed due to missing scoped environment and non-root OAuth state directory permissions. Coolify rolled back the candidate. PR #245 fixes the directory; independent review, merge and functional E2E remain outstanding. Do not report this as a production release.
 
