@@ -19,6 +19,14 @@ PRODUCT = "jtrtdhrst/zar-i-szlif"
 
 
 class RepoAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        # Unit tests below cover the independent identity/review predicates.
+        # Simulate a separately authorized HOLD clearance here; the real
+        # fail-closed HOLD path is tested in test_zari213_security_hold_gate.
+        patcher = patch.object(gate, "enforce_persistent_security_hold", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_current_owner_repos_admitted(self):
         for repo in (HARNESS, PRODUCT):
             gate.validate_input(repo, 215, HEAD, MERGE, "ZARI-213")
@@ -61,7 +69,7 @@ class RepoAdmissionTests(unittest.TestCase):
             }],
         }
 
-    def test_security_hold_fails_before_approval(self):
+    def test_blocked_issue_status_denied_even_after_hold_clear(self):
         with self.assertRaisesRegex(gate.Denied, "issue_not_reviewable"):
             gate.verify(self.approval_row(status="blocked"), HARNESS, 215, HEAD, MERGE, "ZARI-213", "fake")
 

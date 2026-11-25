@@ -18,9 +18,13 @@ UID_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 # Root-owned, independently reviewed role/provider authority. Do not derive
 # this grant from task-writable profile YAML: that would let a task select the
 # more privileged OpenAI OAuth credential merely by changing its model field.
-CODEX_ROLES = frozenset({"ceo", "cho", "cmo", "coo", "cpo", "cto"})
-OPENCODE_ROLES = frozenset({"designer", "email-creative", "engineer",
-    "harness-engineer", "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"})
+# All workspace agents are authorized for the existing Hermes OpenCode provider.
+# No agent task may acquire shared Codex OAuth credentials, even as fallback.
+# This is a trusted, static allowlist; do NOT derive it from a task-writable file.
+CODEX_ROLES = frozenset()
+OPENCODE_ROLES = frozenset({"ceo", "cho", "cmo", "coo", "cpo", "cto",
+    "designer", "email-creative", "engineer", "harness-engineer",
+    "lifecycle-ops", "mascot-designer", "mcp-engineer", "ui-qa"})
 
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
@@ -142,9 +146,7 @@ def role_model_provider(shared_home: Path, role: str, uid: int) -> str:
         raise ValueError("ambiguous role model provider")
     provider = found[0]
     approved = (
-        (role in CODEX_ROLES and provider == "openai-codex")
-        or (role in OPENCODE_ROLES and provider == "opencode-go")
-        or (role == "cto" and provider == "opencode-go")
+        role in OPENCODE_ROLES and provider == "opencode-go"
     )
     if not approved:
         raise ValueError("role model provider not approved")

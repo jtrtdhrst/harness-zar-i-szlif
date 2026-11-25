@@ -1,0 +1,1093 @@
+"""FastMCP server instance, lifespan, and entry points."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import weakref
+from collections.abc import Iterable
+from contextlib import asynccontextmanager
+from typing import Any, NoReturn
+
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from repowise.core.persistence.database import (
+    create_engine,
+    get_configured_db_url,
+    get_repo_db_path,
+    init_db,
+    resolve_db_url,
+)
+from repowise.core.persistence.search import FullTextSearch
+from repowise.core.persistence.vector_store import InMemoryVectorStore
+from repowise.core.platform.telemetry import GROUP_LEAF_TYPES_ATTR
+from repowise.core.providers.embedding.base import (
+    KeylessEmbedder,
+    is_semantic_embedder,
+    warm_query_embedder,
+)
+from repowise.core.providers.embedding.caching import CachingEmbedder
+from repowise.server import __version__
+from repowise.server.mcp_server import _code_drift, _state
+from repowise.server.mcp_server._checkout import close_own_index_contexts
+from repowise.server.mcp_server._transport import (
+    CLIENT_CLOSED,
+    SERVER_FAULT,
+    classify_termination,
+    client_closure_types,
+    guard_stdout,
+    log_outcome,
+)
+from repowise.server.mcp_server._why_pointer import decisions_line
+
+_log = __import__("logging").getLogger("repowise.mcp")
+
+
+class StoreUnavailableError(RuntimeError):
+    """The repo-local index store cannot be created or opened.
+
+    Raised out of the lifespan so the process exits once with a message that
+    names the path and the fix. Before this the same failure escaped as a
+    bare traceback, and an MCP host treats a server that dies at startup as
+    one to respawn, so an unwritable .repowise became a crash loop. Click-free
+    because the server does not depend on the CLI; the mcp command turns it
+    into a clean non-zero exit.
+
+    ``reason`` is a fixed slug for anonymous telemetry, never message text:
+    ``store_open_failed``, ``db_url_unreachable`` or
+    ``workspace_default_failed``.
+    """
+
+    def __init__(self, message: str, *, reason: str = "store_open_failed") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+#: Store served for a directory with no ``.repowise/``: empty, so tools report
+#: "not indexed", and never written to disk.
+_NO_INDEX_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+
+def _store_unavailable(
+    where: str | None,
+    repo_path: str | None,
+    exc: BaseException,
+    *,
+    reason: str = "store_open_failed",
+) -> StoreUnavailableError:
+    """``where`` is the repo-local directory, or None when an env URL is in use;
+    a configured database gets its own remedy, not the directory one."""
+    if where is None:
+        return StoreUnavailableError(
+            f"repowise MCP: cannot open the configured database: {exc}. "
+            "Check REPOWISE_DB_URL and that the database server is reachable.",
+            reason="db_url_unreachable",
+        )
+    repo = repo_path or "the repository"
+    return StoreUnavailableError(
+        f"repowise MCP: cannot open the index store at {where}: {exc}. "
+        f"Run 'repowise init' in {repo} to create it, or fix the permissions "
+        "on that directory.",
+        reason=reason,
+    )
+
+
+# Per-embedder remediation hints, appended to the ERROR log and the `_meta`
+# warning so a misconfiguration is actionable without grepping SDK tracebacks.
+# Keyed by built-in embedder name; unknown/custom embedders fall back to the
+# generic exception message alone.
+_EMBEDDER_REMEDIATION: dict[str, str] = {
+    "openai": "set OPENAI_API_KEY in the MCP server's environment (and `pip install openai`)",
+    "gemini": (
+        "set GEMINI_API_KEY (or GOOGLE_API_KEY) in the MCP server's environment "
+        "(and `pip install google-genai`)"
+    ),
+    "ollama": "start Ollama, pull an embedding model, and set OLLAMA_BASE_URL if not local",
+    "openrouter": "set OPENROUTER_API_KEY in the MCP server's environment (and `pip install openai`)",
+}
+
+
+def _configured_embedder_name() -> str:
+    """The configured embedder: ``REPOWISE_EMBEDDER``, then the repo's pin.
+
+    Returns a lowercased name, or ``""`` when nothing is explicitly configured
+    (in which case MockEmbedder is the intended default, not a degradation).
+    No key detection: the server must query with the backend that wrote the
+    index, not one guessed from the environment.
+    """
+    from repowise.core.providers.embedding.resolve import resolve_embedder_name
+
+    name, source = resolve_embedder_name(repo_path=_state._repo_path or None, detect=False)
+    return "" if source == "default" else name
+
+
+def _persisted_embedder_key(name: str) -> str | None:
+    """The configured embedder's API key: env > repo ``.env`` > global config.
+
+    ``repowise mcp`` loads ``<repo>/.repowise/.env`` before starting, but a
+    workspace serves sibling repos whose ``.env`` is never read, and embedded
+    callers reach :func:`run_mcp` without the CLI at all. Without the
+    fallbacks the server builds a ``MockEmbedder`` and queries a real index
+    with vectors that cannot match it. ``None`` when the embedder needs no key
+    or none is persisted.
+    """
+    from repowise.core.providers.embedding.resolve import resolve_embedder_key
+
+    return resolve_embedder_key(name, _state._repo_path or None).key
+
+
+def _embedder_kwargs(name: str) -> dict[str, Any]:
+    """Constructor kwargs for *name*, from the resolver the CLI shares."""
+    from repowise.core.providers.embedding.resolve import embedder_kwargs
+
+    return embedder_kwargs(name, _state._repo_path or None)
+
+
+def _resolve_embedder():
+    """Resolve the embedder from ``REPOWISE_EMBEDDER`` / ``.repowise/config.yaml``.
+
+    Goes through the shared embedder registry (``get_embedder``) so *every*
+    backend is honoured — openai, gemini, openrouter, and any custom embedder
+    registered via ``register_embedder`` — not just a hardcoded subset.
+
+    When an embedder is **explicitly configured** but fails to initialise (most
+    often a missing API key, but also a missing SDK or an unknown name), we
+    still fall back to ``MockEmbedder`` so the server keeps serving non-RAG
+    tools — but we record the degradation in ``_state._embedder_status`` and log
+    at ``ERROR`` with the missing key and remediation. ``build_meta`` then
+    surfaces ``embedder_degraded`` in every tool's ``_meta`` envelope so callers
+    can detect that semantic search is running on mock vectors instead of the
+    real index, rather than the broken server masquerading as healthy (#306).
+
+    When nothing is configured (or ``mock`` is requested explicitly),
+    MockEmbedder is the intended default and is **not** flagged as degraded.
+    """
+    from repowise.core.providers.embedding import get_embedder
+
+    name = _configured_embedder_name()
+
+    if not name or name == "mock":
+        _state._embedder_status = {
+            "active": "mock",
+            "requested": name or None,
+            "degraded": False,
+        }
+        return KeylessEmbedder()
+
+    try:
+        embedder = get_embedder(name, **_embedder_kwargs(name))
+        _state._embedder_status = {"active": name, "requested": name, "degraded": False}
+        return embedder
+    except Exception as exc:
+        detail = str(exc).strip() or type(exc).__name__
+        reason = (
+            f"Configured embedder '{name}' failed to initialise ({detail}). "
+            "Semantic search (search_codebase, get_answer) is running on mock "
+            "vectors and CANNOT match the real index — results will be empty or "
+            "irrelevant."
+        )
+        remediation = _EMBEDDER_REMEDIATION.get(name)
+        if remediation:
+            reason += f" To fix: {remediation}, then restart the MCP server."
+        _log.error(reason, exc_info=True)
+        _state._embedder_status = {
+            "active": "mock",
+            "requested": name,
+            "degraded": True,
+            "reason": reason,
+        }
+        return KeylessEmbedder()
+
+
+def _query_embedder():
+    """The embedder this server answers queries with.
+
+    Wrapped so a repeated query does not pay the provider round trip again.
+
+    Only this process wraps: a CLI invocation is one-shot and serves a single
+    query, so a per-process cache could never hit there. The HTTP server
+    (``server/app.py``) is long-lived and would benefit, and is left unwrapped
+    only to keep this change to the surface the cost was measured on.
+
+    Keyless is left bare — :func:`is_semantic_embedder` identifies it by type
+    to switch the vector leg off, and a wrapper would defeat that.
+    """
+    embedder = _resolve_embedder()
+    return CachingEmbedder(embedder) if is_semantic_embedder(embedder) else embedder
+
+
+#: How often the running server re-reads release currency. The PyPI fetch
+#: itself is TTL-cached on disk for a day and shared with the CLI advisory, so
+#: this bounds only the in-process refresh, never the network.
+_RELEASE_RECHECK_S = 6 * 3600
+
+
+def _share_lifespan(server: Any) -> None:
+    """Keep process-scoped MCP resources alive while any session is active.
+
+    Streamable HTTP enters the low-level server lifespan once per session,
+    while the state it publishes is process-wide. Share one underlying
+    lifespan per event loop so one session cannot tear down another's state.
+    """
+    original = server.lifespan
+    managers: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
+
+    @asynccontextmanager
+    async def shared(app: Any):
+        loop = asyncio.get_running_loop()
+        manager = managers.get(loop)
+        if manager is None:
+            manager = {"lock": asyncio.Lock(), "active": 0, "context": None, "state": None}
+            managers[loop] = manager
+
+        async with manager["lock"]:
+            if manager["active"] == 0:
+                context = original(app)
+                try:
+                    state = await context.__aenter__()
+                except BaseException:
+                    manager["context"] = None
+                    manager["state"] = None
+                    raise
+                manager["context"] = context
+                manager["state"] = state
+            manager["active"] += 1
+            state = manager["state"]
+
+        error: BaseException | None = None
+        try:
+            yield state
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            async with manager["lock"]:
+                manager["active"] -= 1
+                if manager["active"] == 0:
+                    context = manager["context"]
+                    manager["context"] = None
+                    manager["state"] = None
+                    if context is not None:
+                        teardown_error = (
+                            None if isinstance(error, asyncio.CancelledError) else error
+                        )
+                        await context.__aexit__(
+                            type(teardown_error) if teardown_error is not None else None,
+                            teardown_error,
+                            teardown_error.__traceback__ if teardown_error is not None else None,
+                        )
+
+    server.lifespan = shared
+
+
+async def _poll_release_check() -> None:
+    """Keep ``_state._release_check`` current for the life of the server.
+
+    Runs off the event loop thread because the miss path does a network
+    fetch; a tool call never waits on it. Never raises: a failed check is
+    recorded as unknown and retried on the next pass.
+    """
+    from repowise.core.upgrade.release import check_latest_version_cached
+    from repowise.server import __version__
+
+    while True:
+        try:
+            _state._release_check = await asyncio.to_thread(
+                check_latest_version_cached, __version__
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _log.debug("repowise MCP: release check failed", exc_info=True)
+        await asyncio.sleep(_RELEASE_RECHECK_S)
+
+
+async def _watch_server_currency() -> None:
+    """Both lifespan watches on this server's own code: a newer release, and
+    the install changing under the running process."""
+    # return_exceptions: one watch failing must not leave the other uncancelled.
+    await asyncio.gather(_poll_release_check(), _code_drift.watch(), return_exceptions=True)
+
+
+async def _cancel_task(task: asyncio.Task) -> None:
+    """Cancel a lifespan background task and swallow its unwind."""
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+async def _served_repository_id(factory: Any) -> str | None:
+    """The one row a repo-local store holds, else ``None``.
+
+    Same rule as the CLI's moved-repo lookup: identity is inferred only from
+    the served checkout's own store, and only when it holds one repository.
+    """
+    from sqlalchemy import select
+
+    from repowise.core.persistence.models import Repository
+
+    try:
+        async with factory() as session:
+            rows = (await session.scalars(select(Repository.id).limit(2))).all()
+    except OperationalError:
+        return None
+    return rows[0] if len(rows) == 1 else None
+
+
+async def _abort_startup(*tasks: asyncio.Task) -> None:
+    """Undo the startup a lifespan raised out of, before it reached its teardown.
+
+    The success paths cancel the background tasks and clear the warmup event on
+    the way out; a startup failure has to leave the same state behind, or the
+    next lifespan in this process inherits a set-but-never-signalled event bound
+    to a loop that is gone.
+    """
+    for task in tasks:
+        await _cancel_task(task)
+    _state._lancedb_ready = None
+
+
+async def _warm_lancedb() -> None:
+    """Import lancedb once, off the event loop, and signal when it is done.
+
+    The import pulls in numpy/pyarrow and their native extensions, which costs
+    seconds on a cold filesystem. Running it on a worker thread keeps the loop
+    answering, but a worker-thread import holds Python's import locks, and tool
+    bodies lazily import as they run. When the two overlap they block each
+    other and the event loop stops making progress entirely — at which point
+    the timeouts that would cap the call cannot fire either, because firing
+    them needs the loop.
+
+    Tool dispatch waits on this event before running any handler body (see
+    ``_failure_shield``), so the two never overlap.
+    """
+    try:
+        await asyncio.to_thread(__import__, "lancedb")
+    except ImportError:
+        pass  # optional dependency — the InMemory fallback covers it
+    except Exception:
+        _log.warning("lancedb import failed — vector search falls back to InMemory")
+    finally:
+        if _state._lancedb_ready is not None:
+            _state._lancedb_ready.set()
+
+
+def _mark_vector_store_unreadable(exc: BaseException, alias: str | None = None) -> None:
+    """Flag semantic search degraded: the index exists but cannot be opened.
+
+    Recorded in ``_state._vector_store_errors``, which ``build_meta`` reads
+    beside the embedder status, so ``embedder_degraded`` and
+    ``embedder_warning`` carry it and a later embedder resolve cannot erase it.
+    Without this a broken LanceDB install served an empty in-memory store with
+    ``embedder_degraded: false``.
+    """
+    from repowise.core.persistence.vector_store.lancedb_store import store_open_fix_hint
+
+    where = f" for '{alias}'" if alias else ""
+    reason = (
+        f"The semantic index{where} exists but could not be opened "
+        f"({type(exc).__name__}: {exc}). Semantic search (search_codebase, "
+        "get_answer) is off; full-text search still works. To fix: "
+        f"{store_open_fix_hint(exc)}, then restart the MCP server."
+    )
+    _log.error(reason)
+    _state._vector_store_errors[alias or ""] = reason
+
+
+async def _load_vector_stores(repo_path: str | None) -> None:
+    """Load embedder + vector stores in the background.
+
+    Runs as an asyncio.Task started from _lifespan so the MCP server
+    starts accepting connections immediately.  tool_search awaits
+    _state._vector_store_ready before performing a search.
+
+    We pre-warm the LanceDB connection here so the first search() call
+    never hits a cold import or connection.  Specifically:
+
+    1. `import lancedb` is deferred to asyncio.to_thread — the first-time
+       import loads Rust/Arrow DLLs which can block the event loop for
+       tens of seconds on Windows (AV scanning).  Running it in a thread
+       keeps the event loop responsive.
+    2. `_ensure_connected()` is called here so LanceDB opens the table
+       before the first search.  Subsequent search() calls see
+       self._db is not None and skip the blocking import entirely.
+    """
+    import asyncio as _asyncio
+
+    try:
+        embedder = _query_embedder()
+        vector_store: Any = InMemoryVectorStore(embedder=embedder)
+
+        from pathlib import Path
+
+        lance_dir = Path(repo_path) / ".repowise" / "lancedb" if repo_path else None
+        has_index = lance_dir is not None and lance_dir.exists()
+        # Overlaps the import and open below; awaited before ready is set.
+        warmup = _asyncio.ensure_future(warm_query_embedder(embedder if has_index else None))
+        try:
+            # Step 1 — import lancedb in a thread to keep event loop free.
+            await _asyncio.to_thread(__import__, "lancedb")
+
+            from repowise.core.persistence.vector_store import LanceDBVectorStore
+
+            if has_index:
+                vs = LanceDBVectorStore(str(lance_dir), embedder=embedder)
+                # Step 2: pre-connect so first search() is instant.
+                await vs._ensure_connected()
+                # Step 3: a warm embedder, so the first vector leg fits the grace.
+                await warmup
+                vector_store = vs
+                _state._vector_store_errors.pop("", None)
+        except Exception as exc:
+            # ImportError included: with an index on disk, a missing lancedb
+            # is as broken as an unreadable one. No index is a keyless repo.
+            if lance_dir is not None and lance_dir.exists():
+                _mark_vector_store_unreadable(exc)
+        finally:
+            warmup.cancel()  # a no-op once awaited; stops it on a failed open
+
+        # decision_store is repointed to the shared page store — decisions are
+        # now embedded under the "decision:" namespace within the same table.
+        _state._vector_store = vector_store
+        _state._decision_store = vector_store
+    except Exception:
+        _log.exception("Failed to load vector stores — falling back to MockEmbedder")
+        _fallback = InMemoryVectorStore(embedder=KeylessEmbedder())
+        _state._vector_store = _fallback
+        _state._decision_store = _fallback
+    finally:
+        if _state._vector_store_ready is not None:
+            _state._vector_store_ready.set()
+
+
+def _detect_workspace(repo_path: str | None):
+    """Check if ``repo_path`` is inside a workspace.
+
+    Returns ``(workspace_root, ws_config, repo_alias)`` or ``(None, None, None)``.
+    """
+    if not repo_path:
+        return None, None, None
+    try:
+        from pathlib import Path as _Path
+
+        from repowise.core.workspace import WorkspaceConfig, find_workspace_root
+
+        ws_root = find_workspace_root(_Path(repo_path))
+        if ws_root is None:
+            return None, None, None
+
+        ws_config = WorkspaceConfig.load(ws_root)
+        if not ws_config.repos:
+            return None, None, None
+
+        # Determine which repo the given path belongs to
+        resolved = _Path(repo_path).resolve()
+        repo_alias = None
+        best_match_depth = -1
+        best_match_abs = None
+        for entry in ws_config.repos:
+            entry_abs = (ws_root / entry.path).resolve()
+            try:
+                resolved.relative_to(entry_abs)
+            except ValueError:
+                continue
+
+            match_depth = len(entry_abs.parts)
+            if match_depth > best_match_depth:
+                repo_alias = entry.alias
+                best_match_depth = match_depth
+                best_match_abs = entry_abs
+
+        if repo_alias is None:
+            # Path is inside workspace but doesn't match a repo — use default
+            primary = ws_config.get_primary()
+            repo_alias = primary.alias if primary else ws_config.repos[0].alias
+        elif resolved != best_match_abs and (resolved / ".repowise" / "state.json").exists():
+            # resolved is its own indexed repo, nested inside a matched
+            # member/primary's directory but not itself a registered member.
+            # Containment made it match the enclosing entry above; that's
+            # wrong for an indexed, non-member repo — drop to single-repo
+            # mode instead of silently serving the enclosing repo.
+            return None, None, None
+
+        return ws_root, ws_config, repo_alias
+    except Exception:
+        _log.debug("Workspace detection failed", exc_info=True)
+        return None, None, None
+
+
+def _warm_savings_pricing(repo_path: str | None) -> None:
+    """Price the first calls' savings: starts a daemon thread, never awaited."""
+    from repowise.core.savings.pricing import warm_pricing_snapshot
+
+    warm_pricing_snapshot(repo_path)
+
+
+@asynccontextmanager
+async def _lifespan(server: FastMCP):
+    """Initialize DB engine, session factory, and FTS synchronously on startup.
+
+    Vector store / LanceDB loading is deferred to a background asyncio task so
+    the server starts accepting tool calls immediately.  search_codebase awaits
+    _state._vector_store_ready before querying the vector store.
+    """
+
+    # Start the lancedb import immediately and gate tool dispatch on it. Both
+    # modes load vector stores in the background, and in both the first tool
+    # call can otherwise land mid-import and wedge the loop.
+    _state._lancedb_ready = asyncio.Event()
+    _warm_task = asyncio.create_task(_warm_lancedb(), name="lancedb-warmup")
+    _release_task = asyncio.create_task(_watch_server_currency(), name="server-currency")
+
+    # --- Workspace detection ------------------------------------------------
+    if _state._force_single_repo:
+        ws_root, ws_config, ws_repo_alias = None, None, None
+    else:
+        ws_root, ws_config, ws_repo_alias = _detect_workspace(_state._repo_path)
+
+    if ws_root is not None and ws_config is not None:
+        # Workspace mode — use RepoRegistry for multi-repo serving
+
+        from repowise.core.workspace.registry import RepoRegistry
+
+        # Override default repo to the one the path points at
+        if ws_repo_alias and ws_config.get_repo(ws_repo_alias):
+            ws_config.default_repo = ws_repo_alias
+
+        registry = RepoRegistry(
+            workspace_root=ws_root,
+            ws_config=ws_config,
+            embedder_factory=_query_embedder,
+            on_vector_store_error=lambda alias, exc: _mark_vector_store_unreadable(exc, alias),
+        )
+
+        # Eagerly load the default repo so tools work immediately. A failure
+        # here leaves the lifespan before its teardown, so the background
+        # tasks are cancelled by hand or they outlive the loop.
+        try:
+            default_ctx = await registry.get_default()
+        except (OSError, OperationalError) as exc:
+            await _abort_startup(_release_task, _warm_task)
+            raise _store_unavailable(
+                str(ws_root), str(ws_root), exc, reason="workspace_default_failed"
+            ) from exc
+        except BaseException:
+            await _abort_startup(_release_task, _warm_task)
+            raise
+
+        _state._registry = registry
+        _state._workspace_root = str(ws_root)
+
+        # Alias default repo's resources into _state for backward compat
+        _state._session_factory = default_ctx.session_factory
+        _state._fts = default_ctx.fts
+        _state._vector_store = default_ctx.vector_store
+        _state._decision_store = default_ctx.decision_store
+        _state._vector_store_ready = default_ctx.vector_store_ready
+
+        # Load cross-repo enricher (Phase 3 + 4)
+        try:
+            from repowise.server.mcp_server._enrichment import CrossRepoEnricher
+
+            enricher = CrossRepoEnricher.for_workspace(ws_root)
+            if enricher.has_data or enricher.has_contract_data or enricher.has_system_graph:
+                _state._cross_repo_enricher = enricher
+                _log.info(
+                    "Cross-repo enricher loaded: %d co-change edges, %d package deps, %d contract links",
+                    len(enricher._co_changes),
+                    len(enricher._package_deps),
+                    len(enricher._contract_links),
+                )
+        except Exception:
+            _log.debug("Cross-repo enricher not available", exc_info=True)
+
+        _log.info(
+            "repowise MCP: workspace mode — %d repos, default='%s'",
+            len(ws_config.repos),
+            registry.get_default_alias(),
+        )
+
+        yield
+
+        await _cancel_task(_release_task)
+        await _cancel_task(_warm_task)
+        _state._lancedb_ready = None
+        _state._cross_repo_enricher = None
+        # The test-impact join holds its own session per consumer repo.
+        from repowise.server.mcp_server._test_impact import close_test_impact_indexes
+
+        await close_test_impact_indexes()
+        await registry.close()
+        await close_own_index_contexts()
+        _state._registry = None
+        _state._workspace_root = None
+        return
+
+    # --- Single-repo mode (existing behavior) --------------------------------
+    configured_db_url = get_configured_db_url()
+
+    # When repo path is set and no env override, prefer repo-local DB.
+    store_location: str | None = None
+    db_url: str | None = None
+    _state._serving_no_index = False
+    try:
+        if _state._repo_path and configured_db_url is None:
+            db_path = get_repo_db_path(_state._repo_path)
+            repowise_dir = db_path.parent
+            store_location = str(repowise_dir)
+            if not repowise_dir.exists():
+                # An unindexed directory, often just wherever a globally
+                # installed plugin was launched. Exiting here made the host
+                # respawn the server in a loop and the agent never saw why.
+                # Serve an empty in-memory store instead, so every tool returns
+                # the "no index, run repowise init" notice, without leaving a
+                # stray .repowise/ on disk (#3163).
+                _log.warning(
+                    "No %s in %s; run 'repowise init'", repowise_dir.name, repowise_dir.parent
+                )
+                db_url = _NO_INDEX_DB_URL
+                _state._serving_no_index = True
+            elif not db_path.exists():
+                _log.warning(
+                    "No wiki.db in %s — run 'repowise init' to generate the wiki",
+                    repowise_dir,
+                )
+
+        db_url = db_url or resolve_db_url(_state._repo_path)
+
+        _log.info("repowise MCP: initialising database…")
+        engine = create_engine(db_url, short_lived=False)
+        try:
+            await init_db(engine)
+        except (OSError, OperationalError):
+            await engine.dispose()
+            raise
+    except (OSError, OperationalError) as exc:
+        # A read-only or missing directory, or a .repowise that is a file.
+        await _abort_startup(_release_task, _warm_task)
+        raise _store_unavailable(store_location, _state._repo_path, exc) from exc
+
+    _state._session_factory = async_sessionmaker(
+        engine, expire_on_commit=False, class_=AsyncSession
+    )
+
+    if _state._repo_path and configured_db_url is None:
+        _state._served_repo_id = await _served_repository_id(_state._session_factory)
+
+    _state._fts = FullTextSearch(engine)
+    try:
+        await _state._fts.ensure_index()
+    except Exception:
+        # Every tool this server exposes was unreachable when this raised
+        # (issue #1309), including the ones that never touch the index. The
+        # instance is kept: its search still runs against whatever shape the
+        # index is in, and the vector arm answers alongside it.
+        _log.warning("repowise MCP: full-text index unavailable", exc_info=True)
+
+    # Seed InMemory placeholder so tools that don't need vector search
+    # can start immediately, before the background load completes.
+    # decision_store is repointed to the same store — no separate table.
+    _placeholder = InMemoryVectorStore(embedder=KeylessEmbedder())
+    _state._vector_store = _placeholder
+    _state._decision_store = _placeholder
+
+    # Defer embedder resolution + LanceDB open to a background task so
+    # the server starts accepting connections without blocking on disk I/O.
+    _state._vector_store_ready = asyncio.Event()
+    _bg_task = asyncio.create_task(_load_vector_stores(_state._repo_path))
+    _warm_savings_pricing(_state._repo_path)
+    _log.info("repowise MCP: ready (vector stores loading in background)")
+
+    yield
+
+    await _cancel_task(_release_task)
+    await _cancel_task(_bg_task)
+    await _cancel_task(_warm_task)
+    _state._lancedb_ready = None
+    _state._served_repo_id = None
+
+    await close_own_index_contexts()
+    await engine.dispose()
+    # _decision_store is an alias for _vector_store — close only once.
+    await _state._vector_store.close()
+
+
+# ---------------------------------------------------------------------------
+# Create the MCP server
+# ---------------------------------------------------------------------------
+
+
+class _RepowiseMCP(FastMCP):
+    """FastMCP plus the HTTP bearer gate and per-call principal scope.
+
+    Both are inert without an authenticated HTTP principal, so stdio and an
+    unconfigured HTTP server behave exactly like plain FastMCP.
+    """
+
+    def streamable_http_app(self):  # type: ignore[override]
+        from repowise.server.mcp_server._http_auth import gate
+
+        return gate(super().streamable_http_app(), self.settings.streamable_http_path)
+
+    def sse_app(self, mount_path: str | None = None):  # type: ignore[override]
+        from repowise.server.mcp_server._http_auth import gate
+
+        return gate(super().sse_app(mount_path), self.settings.sse_path)
+
+    def _request_principal(self) -> Any:
+        try:
+            request = self._mcp_server.request_context.request
+        except LookupError:
+            return None
+        state = getattr(request, "scope", {}).get("state") or {}
+        return state.get("principal")
+
+    async def list_tools(self):  # type: ignore[override]
+        tools = await super().list_tools()
+        principal = self._request_principal()
+        if principal is None:
+            return tools
+        from repowise.server.auth import get_authorizer
+        from repowise.server.mcp_server._http_auth import tool_allowed
+
+        authorizer = get_authorizer()
+        return [t for t in tools if tool_allowed(principal, t.name, authorizer)]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):  # type: ignore[override]
+        principal = self._request_principal()
+        if principal is not None:
+            from mcp.server.fastmcp.exceptions import ToolError
+
+            from repowise.server.mcp_server._http_auth import call_denial
+
+            denial = call_denial(principal, name, arguments)
+            if denial is not None:
+                raise ToolError(denial)
+        from repowise.server.auth import current_principal
+
+        reset = current_principal.set(principal)
+        try:
+            return await super().call_tool(name, arguments)
+        finally:
+            current_principal.reset(reset)
+
+
+# Hosts that defer tool schemas show the model only tool names and this
+# string, so it says when to call; tests pin the key lines and a length cap.
+_INSTRUCTIONS = (
+    "repowise indexes this repository's code graph, git history and "
+    "decisions. One call here often replaces several text searches and "
+    "file reads.\n"
+    "- Use search_codebase(query) to find an identifier or literal: `lines` "
+    "(path, line, kind, text) are read from live files; `complete: true` "
+    "means every match.\n"
+    '- Use get_context(targets=[symbol], include=["references"]) before a '
+    "rename: a `complete` list is the whole edit set. On a directory, "
+    'include=["files"] lists its files and tests.\n'
+    "- Use get_answer(question) for one how/where/why question per call.\n"
+    "- Use get_risk before editing a widely imported file, get_change_risk "
+    "before committing a multi-file change, get_why before changing an "
+    "established pattern. Skip them for one-line fixes.\n"
+    "- Targets with uncommitted edits are flagged: index facts for them "
+    "predate the edit.\n"
+    "No index: tell the user to run 'repowise init --yes --no-prose' (no "
+    "API key or model calls). Suggest it, do not run it yourself."
+)
+
+#: Opt-in workspace tools, named only once the selected surface has them.
+_WORKSPACE_TOOL_LINES = {
+    "get_architecture": "get_architecture for the workspace's coupling and architecture score",
+    "get_blast_radius": "get_blast_radius for the services a change reaches in other repos",
+}
+
+
+def _instructions(enabled: Iterable[str] = (), repo_line: str | None = None) -> str:
+    """The server instructions, naming a workspace tool only when it is served.
+
+    *repo_line* says what get_why holds for the served repository.
+    """
+    text = f"{_INSTRUCTIONS}\n{repo_line}" if repo_line else _INSTRUCTIONS
+    lines = [line for name, line in _WORKSPACE_TOOL_LINES.items() if name in enabled]
+    if not lines:
+        return text
+    return f"{text}\nIn this workspace, use {' and '.join(lines)}."
+
+
+mcp = _RepowiseMCP(
+    "repowise",
+    instructions=_instructions(),
+    lifespan=_lifespan,
+)
+_share_lifespan(mcp._mcp_server)
+# FastMCP takes no version argument, and without one the handshake's
+# serverInfo.version reports the installed ``mcp`` SDK's version.
+mcp._mcp_server.version = __version__
+
+
+# ---------------------------------------------------------------------------
+# Server entry points
+# ---------------------------------------------------------------------------
+
+
+def create_mcp_server(
+    repo_path: str | None = None,
+    tools: str | list[str] | None = None,
+    workspace_mode: bool = True,
+) -> FastMCP:
+    """Create and return the MCP server instance, optionally scoped to a repo.
+
+    ``tools`` is an optional surface override (an explicit allowlist, ``+``/``-``
+    deltas, or ``"all"``); when omitted the ``mcp.tools`` config block is used.
+    """
+    _state._repo_path = repo_path
+    _state._force_single_repo = not workspace_mode
+    from repowise.server.mcp_server import ensure_full_surface
+    from repowise.server.mcp_server._tool_selection import apply_tool_selection
+
+    # Tool modules import lazily now, so a server has to ask for the full
+    # surface before it can advertise (or trim) it.
+    ensure_full_surface()
+
+    enabled = apply_tool_selection(mcp, repo_path=repo_path, override=tools)
+    mcp._mcp_server.instructions = _instructions(enabled, decisions_line(repo_path))
+    return mcp
+
+
+#: Depth bound when unwrapping nested task-group failures. Groups nest one or
+#: two deep in practice; the cap only stops a pathological cycle from hanging.
+_MAX_GROUP_DEPTH = 10
+
+#: Host values FastMCP's own default construction already treats as local.
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+#: ``allowed_hosts``/``allowed_origins`` patterns for the loopback callers a
+#: non-loopback bind should still accept (e.g. an SSH tunnel or a client
+#: running on the same box as the server).
+_LOOPBACK_ALLOWLIST_PATTERNS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+
+
+def _bracket_if_ipv6(host: str) -> str:
+    """Bracket a bare IPv6 literal to match the ``Host``/``Origin`` header shape a client sends.
+
+    ``TransportSecurityMiddleware`` matches by ``host.startswith(base + ":")``
+    (see ``mcp/server/transport_security.py``), so an allowlist entry has to
+    be shaped exactly like the wire value. A client connecting to an IPv6
+    literal sends a bracketed Host header (``[2001:db8::1]:7338``), which
+    never starts with a bare ``2001:db8::1:`` — hostnames and IPv4 addresses
+    never contain a colon, so any colon in ``host`` here means IPv6.
+    """
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def _configure_transport_security(host: str) -> None:
+    """Widen the DNS-rebinding ``Host`` allowlist to match ``--host``.
+
+    ``FastMCP`` builds ``mcp.settings.transport_security`` at import time,
+    before any CLI ``--host`` is known, so it bakes in an allowlist scoped to
+    loopback only. ``run_mcp`` rebinds the socket via ``mcp.settings.host``
+    later, but nothing updated the allowlist to match — so every request to a
+    non-loopback ``--host`` failed ``Host`` header validation with
+    ``421 Misdirected Request`` no matter what host was actually given.
+
+    A loopback host needs no change (FastMCP's default already covers it).
+    Anything else — including a concrete IPv6 literal, bracketed to match the
+    header shape — gets an allowlist scoped to that host plus loopback.
+
+    A wildcard bind (``0.0.0.0``/``::``) can't be matched by any single
+    ``Host`` value, so the check is disabled rather than left permanently
+    failing. That trades DNS-rebinding protection for reachability on a
+    wildcard bind; the startup security warning logged elsewhere in
+    ``run_mcp`` for an unauthenticated wide bind is, until #1400 lands, the
+    only remaining gate on that surface — this fix is what makes it live
+    traffic instead of traffic that already 421'd.
+    """
+    if host in _LOOPBACK_HOSTS:
+        return
+    if host in ("0.0.0.0", "::"):
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        )
+        return
+    base = _bracket_if_ipv6(host)
+    # allowed_origins inherits the SDK's same startswith(base + ":") prefix
+    # match as allowed_hosts (see _validate_origin), so e.g.
+    # "http://172.21.12.48:*" also technically accepts an Origin like
+    # "http://172.21.12.48:8080.evil.com". Pre-existing SDK behavior — the
+    # loopback defaults FastMCP bakes in have the identical looseness — not
+    # something introduced or worsened here.
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[f"{base}:*", *_LOOPBACK_ALLOWLIST_PATTERNS],
+        allowed_origins=[
+            f"http://{base}:*",
+            *(f"http://{p}" for p in _LOOPBACK_ALLOWLIST_PATTERNS),
+        ],
+    )
+
+
+def group_leaves(exc: BaseException, *, _depth: int = 0) -> list[BaseException]:
+    """Every non-group exception inside *exc*, outermost group flattened.
+
+    ``mcp.run`` drives an anyio event loop, and anyio reports a child task's
+    failure as an ``ExceptionGroup`` wrapping the real exception. Anything that
+    reads the outermost class learns only that *a* task failed: a missing
+    dependency, a permission problem and a closed pipe are indistinguishable
+    after the fact.
+
+    Returns the whole leaf set rather than the first one. The caller still
+    *raises* the first, because an exception can only be one thing, but the
+    siblings are what say whether a crash is one fault or several — a question
+    the single-leaf unwrap could not be asked, since it discarded them before
+    anything could look. A group that is empty, or nested past
+    :data:`_MAX_GROUP_DEPTH`, yields itself: no leaf is a worse answer than an
+    honest wrapper.
+    """
+    if not isinstance(exc, BaseExceptionGroup) or _depth >= _MAX_GROUP_DEPTH:
+        return [exc]
+    if not exc.exceptions:
+        return [exc]
+    return [leaf for child in exc.exceptions for leaf in group_leaves(child, _depth=_depth + 1)]
+
+
+def _raise_group_leaf(
+    group: BaseExceptionGroup, transport: str, leaves: list[BaseException] | None = None
+) -> NoReturn:
+    """Log every leaf of a failed task group and re-raise the first.
+
+    The first carries the class names of all of them in
+    :data:`GROUP_LEAF_TYPES_ATTR`, which is what lets the layer recording the
+    outcome say whether one fault or several killed the server without
+    reaching back in here to re-derive it.
+    """
+    found = leaves if leaves is not None else group_leaves(group)
+    for leaf in found:
+        # A cancelled run is how a client-initiated shutdown looks, not a fault.
+        if isinstance(leaf, Exception):
+            _log.error("MCP server (%s) stopped: %r", transport, leaf, exc_info=leaf)
+    log_outcome(SERVER_FAULT, transport, type(found[0]).__name__)
+    first = found[0]
+    # Best effort: a leaf class with __slots__ refuses the attribute, and the
+    # sibling names are not worth losing the exception over.
+    with contextlib.suppress(AttributeError, TypeError):
+        setattr(
+            first,
+            GROUP_LEAF_TYPES_ATTR,
+            tuple(sorted({type(leaf).__name__ for leaf in found})),
+        )
+    raise first from group
+
+
+def _warn_on_open_bind(transport: str, host: str) -> None:
+    """One line when a network transport is reachable and unauthenticated."""
+    if host in ("0.0.0.0", "::") and not os.environ.get("REPOWISE_API_KEY"):
+        _log.warning(
+            "SECURITY WARNING: MCP server (%s) is binding to %s without "
+            "REPOWISE_API_KEY. All tools are unauthenticated and "
+            "network-accessible. Set REPOWISE_API_KEY or bind to 127.0.0.1.",
+            transport,
+            host,
+        )
+
+
+def _run_network_transport(transport: str, host: str, port: int) -> None:
+    mcp.settings.host = host
+    mcp.settings.port = port
+    _configure_transport_security(host)
+    _warn_on_open_bind(transport, host)
+    mcp.run(transport=transport)
+
+
+def _run_stdio_transport() -> int:
+    """Run the stdio transport; returns how many stray stdout writes it saw."""
+    # stdout is the JSON-RPC channel on stdio, so every log line written there
+    # arrives at the client as a malformed protocol frame. Move the log sinks
+    # to stderr before anything can log.
+    from repowise.server.mcp_server._stdio_logging import route_logging_to_stderr
+
+    route_logging_to_stderr()
+    # stdio servers are spawned per-session by the MCP client; when the client
+    # dies abnormally the stdio loop doesn't exit (and Windows never kills
+    # children), leaking servers that hold wiki.db handles. The watchdog exits
+    # this process once the client is gone.
+    from repowise.server.mcp_server._watchdog import start_parent_watchdog
+
+    start_parent_watchdog()
+    # The SDK writes frames through stdout's buffer, so anything arriving at
+    # the text layer is a stray print. The guard moves it to stderr, counts it,
+    # and the count is what names the session protocol_corrupted.
+    with guard_stdout() as guard:
+        mcp.run(transport="stdio")
+    return guard.writes
+
+
+def run_mcp(
+    transport: str = "stdio",
+    repo_path: str | None = None,
+    host: str = "127.0.0.1",
+    port: int = 7338,
+    tools: str | list[str] | None = None,
+    workspace_mode: bool = True,
+) -> str:
+    """Run the MCP server with the specified transport, and name how it ended.
+
+    ``tools`` overrides which tools are advertised (see
+    :func:`repowise.server.mcp_server._tool_selection.apply_tool_selection`);
+    when omitted, the ``mcp.tools`` config block is honoured.
+
+    Returns one of the outcomes in :mod:`._transport`. A client closing a
+    transport it owns is one of them and returns normally: it is how a stdio
+    session ends, and raising there made an ordinary hang-up look like the
+    crash a host should respawn on. Only a genuine fault still raises.
+
+    A task-group failure is unwrapped over the whole body, not around ``mcp.run``
+    alone: surface construction and transport security run outside that call, and
+    a group raised by either escaped with its wrapper class intact. See
+    :func:`_raise_group_leaf` for what travels out of one.
+    """
+    stray_writes = 0
+    # Startup and the transport run are caught separately. Both unwrap a task
+    # group, but only the run may end in a closure: a corrupt index artifact
+    # read during surface construction raises EOFError, which is a hang-up
+    # class, and classifying it as one would have reported a broken index as a
+    # clean session and exited 0.
+    try:
+        _state._repo_path = repo_path
+        _state._force_single_repo = not workspace_mode
+        from repowise.server.mcp_server import ensure_full_surface
+        from repowise.server.mcp_server._tool_selection import apply_tool_selection
+
+        ensure_full_surface()
+        enabled = apply_tool_selection(mcp, repo_path=repo_path, override=tools)
+        mcp._mcp_server.instructions = _instructions(enabled, decisions_line(repo_path))
+    except BaseExceptionGroup as group:
+        _raise_group_leaf(group, transport)
+
+    try:
+        if transport in ("sse", "streamable-http"):
+            _run_network_transport(transport, host, port)
+        else:
+            stray_writes = _run_stdio_transport()
+    except BaseExceptionGroup as group:
+        leaves = group_leaves(group)
+        if classify_termination(transport, group, leaves=group_leaves) == CLIENT_CLOSED:
+            log_outcome(CLIENT_CLOSED, transport, type(leaves[0]).__name__)
+            return CLIENT_CLOSED
+        _raise_group_leaf(group, transport, leaves=leaves)
+    except client_closure_types() as exc:
+        # An ungrouped hang-up: the pipe broke, or the run was cancelled under
+        # us. The clause names those classes rather than catching broadly, so
+        # an interrupt and a server fault are never swallowed here.
+        if transport != "stdio":
+            raise
+        log_outcome(CLIENT_CLOSED, transport, type(exc).__name__)
+        return CLIENT_CLOSED
+
+    outcome = classify_termination(transport, None, stray_writes=stray_writes)
+    log_outcome(outcome, transport)
+    return outcome
