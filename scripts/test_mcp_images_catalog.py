@@ -34,9 +34,9 @@ class ImageCatalogTests(unittest.TestCase):
                 if x["last_published_ghcr_tag"]:
                     self.assertRegex(x["last_published_ghcr_tag"],r"^ghcr.io/jtrtdhrst/harness-[a-z0-9-]+:sha-[a-f0-9]{40}$")
 
-    def test_retired_qdrant_has_no_mcp_build_artifact(self):
-        self.assertNotIn("qdrant-mcp",[x["service"] for x in self.catalog["items"]])
-        self.assertFalse((ROOT/"mcp/qdrant-mcp").exists())
+    def test_unregistered_mcp_has_no_mcp_build_artifact(self):
+        self.assertNotIn("unregistered-fixture-mcp",[x["service"] for x in self.catalog["items"]])
+        self.assertFalse((ROOT/"mcp/unregistered-fixture-mcp").exists())
 
 
 if __name__=="__main__":

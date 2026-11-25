@@ -3,12 +3,12 @@
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "branch": "main",
   "observed_at": "2026-11-23",
-  "description": "Source roots are only verified in-repo code. The separate live inventory classifies every Coolify UUID; external images are pinned for audit, never as production deployment authority.",
+  "description": "Source roots are only verified in-repo code. The managed inventory classifies in-scope Coolify UUIDs; external images are pinned for audit, never as production deployment authority.",
   "coolify_inventory": {
     "observed_at": "2026-11-23",
     "counts": {
       "applications": 13,
-      "services": 25
+      "services": 23
     },
     "image_pin_basis": "Public registry linux/amd64 manifests resolved anonymously on 2026-11-23, or immutable digest already present in Coolify config. Inventory only; not proof of running digest, source-to-image provenance, or release authorization.",
     "resources": [
@@ -476,17 +476,6 @@
         "release_eligible": false
       },
       {
-        "id": "qdrant-mcp",
-        "uuid": "a4zgmthjspz8hwvyu6llr8dh",
-        "name": "qdrant-mcp",
-        "type": "service",
-        "source": "retired-runtime",
-        "provenance_kind": "retired-runtime",
-        "source_build_ready": false,
-        "release_eligible": false,
-        "retirement_note": "Qdrant MCP retired by owner; Qdrant DB service is preserved; no source build or release."
-      },
-      {
         "id": "supabase-mcp",
         "uuid": "tjit4c8m0kjh8brkmdhyvkde",
         "name": "supabase-mcp",
@@ -496,26 +485,6 @@
         "source_root": "mcp/supabase-mcp",
         "build_dockerfile": "mcp/supabase-mcp/Dockerfile",
         "source_build_ready": true,
-        "release_eligible": false
-      },
-      {
-        "id": "qdrant",
-        "uuid": "eciprwgeyol4znmdd0dpu3xc",
-        "name": "qdrant",
-        "type": "service",
-        "source": "vendor-image",
-        "provenance_kind": "vendor-image",
-        "configured_images": [
-          "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2"
-        ],
-        "pinned_images": [
-          {
-            "configured_ref": "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
-            "pinned_ref": "qdrant/qdrant@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
-            "platform": "configured-immutable"
-          }
-        ],
-        "source_build_ready": false,
         "release_eligible": false
       },
       {

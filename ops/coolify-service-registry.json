@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repository": "jtrtdhrst/harness-zar-i-szlif",
   "inventory_date": "2026-11-23",
-  "purpose": "Live 38-resource source/provenance inventory; identifies build-ready sources, image consumers and upstream dependencies without falsely claiming verified production source or E2E.",
+  "purpose": "Managed 36-resource source/provenance inventory; identifies build-ready sources, image consumers and upstream dependencies without falsely claiming verified production source or E2E.",
   "resources": [
     {
       "name": "github-ops-mcp",
@@ -176,25 +176,12 @@
       "dockerfile": "mcp/coolify-mcp/Dockerfile"
     },
     {
-      "name": "qdrant-mcp",
-      "uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "type": "service",
-      "source": "retired-runtime",
-      "note": "Owner retired Qdrant MCP source/build and requested production service teardown; no further builds. Qdrant database UUID eciprwgeyol4znmdd0dpu3xc remains separate and must not be deleted."
-    },
-    {
       "name": "supabase-mcp",
       "uuid": "tjit4c8m0kjh8brkmdhyvkde",
       "type": "service",
       "source": "owned-code",
       "root": "mcp/supabase-mcp",
       "dockerfile": "mcp/supabase-mcp/Dockerfile"
-    },
-    {
-      "name": "qdrant",
-      "uuid": "eciprwgeyol4znmdd0dpu3xc",
-      "type": "service",
-      "source": "vendor-image"
     },
     {
       "name": "comfy-mcp",

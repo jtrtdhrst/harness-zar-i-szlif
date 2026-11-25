@@ -9,4 +9,4 @@ Jedno miejsce: **[catalog.json](catalog.json)**. Obejmuje 19 zasobów MCP/gatewa
 
 Nie usuwaj obrazów oznaczonych w katalogu jako działające — dopiero rzeczywisty roll-out i test rollbacku mogą pozwolić na ich bezpieczne wycofanie.
 
-**Image-only GitHub Ops canaries:** the 38-resource fleet registry also includes two `github-ops-mcp` canaries. They are excluded from this 19-resource *production MCP/gateway* image catalog; their source is `mcp/github-mcp`, but each consumes an already-built OCI artifact, so do not mistake the Coolify `dockerimage` record for a Git source build.
+**Image-only GitHub Ops canaries:** the 36-resource managed fleet registry also includes two `github-ops-mcp` canaries. They are excluded from this 19-resource *production MCP/gateway* image catalog; their source is `mcp/github-mcp`, but each consumes an already-built OCI artifact, so do not mistake the Coolify `dockerimage` record for a Git source build.

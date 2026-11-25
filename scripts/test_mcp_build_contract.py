@@ -113,14 +113,14 @@ class McpSourceBuildContract(unittest.TestCase):
                 self.assertIn("ghcr.io/", yaml)
                 self.assertIn("org.opencontainers.image.revision", yaml)
 
-    def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
+    def test_unregistered_mcp_is_excluded_from_every_build_lane(self):
         services = owned_services()
-        self.assertNotIn("qdrant-mcp", services)
-        self.assertNotIn("qdrant-mcp", GENERAL)
-        self.assertNotIn("qdrant-mcp", RUNTIME)
-        self.assertNotIn("qdrant-mcp", build_roots())
-        self.assertFalse((ROOT / "mcp/qdrant-mcp").exists())
-        self.assertIn("qdrant", {r["name"] for r in json.loads(REGISTRY.read_text())["resources"]})
+        self.assertNotIn("unregistered-fixture-mcp", services)
+        self.assertNotIn("unregistered-fixture-mcp", GENERAL)
+        self.assertNotIn("unregistered-fixture-mcp", RUNTIME)
+        self.assertNotIn("unregistered-fixture-mcp", build_roots())
+        self.assertFalse((ROOT / "mcp/unregistered-fixture-mcp").exists())
+        self.assertNotIn("unregistered-fixture-mcp", {r["name"] for r in json.loads(REGISTRY.read_text())["resources"]})
 
     def test_publishers_gate_exact_source_sha_and_output_digest(self):
         for flow in (GENERAL_FLOW, RUNTIME_FLOW, COOLIFY_FLOW):

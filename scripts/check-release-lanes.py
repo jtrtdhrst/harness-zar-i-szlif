@@ -14,7 +14,7 @@ def check(data):
     lanes, other, workers = data.get("lanes"), data.get("other_resources"), data.get("cloudflare_workers")
     snap = data.get("scope_snapshot", {})
     must(all(isinstance(x, list) and len(x) for x in (lanes, other, workers)), "incomplete inventory arrays")
-    must(snap.get("coolify_applications") == 5 and snap.get("coolify_services") == 26 and snap.get("coolify_total") == 31, "incomplete Coolify snapshot")
+    must(snap.get("coolify_applications") == 5 and snap.get("coolify_services") == 24 and snap.get("coolify_total") == 29, "incomplete Coolify snapshot")
     must(snap.get("cloudflare_workers") == 3 == len(workers), "incomplete Workers snapshot")
     allowed = {"git_promoted", "git_canary_manual", "git_canary_auto", "manual_pinned", "upstream_pinned"}
     ids, uuids, counts = set(), set(), {"application": 0, "service": 0}
