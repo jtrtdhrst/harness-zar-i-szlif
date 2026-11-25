@@ -11,7 +11,7 @@ Until a registered, online self-hosted runner and registry publication are verif
 
 ## Classification
 
-Source-only (no automatic image builds solely because they are in Git): `comfy/`, `plasmic/`, `qdrant/`, `supabase/`, `mautic/`, `opik/`, `paperclip/`, `cloudflare-ingress/`, `shared-ingress/`, `_archive/`, `kod-aplikacji/`, `kod-mcp/`, `docs/`.
+Source-only (no automatic image builds solely because they are in Git): `comfy/`, `plasmic/`, `supabase/`, `mautic/`, `opik/`, `paperclip/`, `cloudflare-ingress/`, `shared-ingress/`, `_archive/`, `kod-aplikacji/`, `kod-mcp/`, `docs/`.
 
 Standalone MCP sources (`*-mcp/`) are independently eligible for narrowly scoped CI builds **only after** deployed-resource source binding and release policy verification. `integrations/hermes-paperclip/gateway/`, `integrations/*-overlay/`, `opik-run-enricher/` and `mcp-edge/` are explicit non-MCP or infrastructure exceptions: build only for a specifically approved active runtime, not on every repository push. Never classify by string matching alone when a manifest declares a special case.
 

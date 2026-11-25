@@ -29,7 +29,7 @@
 | `zar-i-szlif-image-canary` / `cs847jiwtuq5rlm8ntjeohgf` | Coolify reports `coollabsio/coolify` | `main` | **Image-backed canary**; NOT proof of build from that repo branch |
 | `zar-i-szlif-mcp-host-image` / `z4ikllc2j5zvhjr2tyloovmg` | Coolify reports `coollabsio/coolify` | `main` | **Image-backed host**; NOT proof of build from that repo branch |
 
-**Compose services:** On this same readback Coolify returned **25 services**, for example `plasmic-mcp`, `ubuntu-mcp`, `comfy-mcp`, `qdrant-mcp`, `opik-mcp`, `repowise-mcp-runtime`. Their builds cannot be accurately attributed to GitHub `main` or any other branch using application metadata. Inspect each service's effective Compose `image:`, resolved image digest, container revision label and signed build attestation; missing = `UNVERIFIED`. A 200 / healthy is only a process-health observation.
+**Compose services:** On this same readback Coolify returned **25 services**, for example `plasmic-mcp`, `ubuntu-mcp`, `comfy-mcp`, `opik-mcp`, `repowise-mcp-runtime`. Their builds cannot be accurately attributed to GitHub `main` or any other branch using application metadata. Inspect each service's effective Compose `image:`, resolved image digest, container revision label and signed build attestation; missing = `UNVERIFIED`. A 200 / healthy is only a process-health observation.
 
 ## Practical source-of-truth decision flow
 
@@ -69,9 +69,7 @@ These are **configured Coolify service image references**, not an authenticated 
 | `emailens-mcp` | `16qnapdkj0qqqmeokepdechk` | `127.0.0.1:5000/harness-emailens-mcp:deb907a88591` |
 | `plasmic-mcp` | `a6ci2beifbinzckfnneiqnjd` | `127.0.0.1:5000/harness-plasmic-mcp:deb907a88591` |
 | `coolify-mcp` | `f7smgdueq8frlex9lfhp9iji` | `ghcr.io/stumason/coolify-mcp:3.9.0` |
-| `qdrant-mcp` | `a4zgmthjspz8hwvyu6llr8dh` | `127.0.0.1:5000/harness-qdrant-mcp:deb907a88591` |
 | `supabase-mcp` | `tjit4c8m0kjh8brkmdhyvkde` | `127.0.0.1:5000/harness-supabase-mcp:deb907a88591` |
-| `qdrant` | `eciprwgeyol4znmdd0dpu3xc` | `qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2` |
 | `comfy-mcp` | `kkhfw0napmeaqewgdirwhc1h` | `local/comfyui-mcp:0.52.206-chatfiles7` |
 | `opencode` | `26aqp0flyvdinjn6dklxnb1c` | `local/opencode-standalone:2.2.5-custom; alpine/socat` |
 | `ubuntu-mcp` | `lcnjb3vreec7saihkhan6akh` | `127.0.0.1:5000/harness-ubuntu-mcp:3c8da46902d2` |

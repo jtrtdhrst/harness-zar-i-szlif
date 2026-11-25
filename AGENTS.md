@@ -22,10 +22,6 @@ To repozytorium zawiera **kod własnych integracji MCP oraz konfigurację ich ur
 - `workers/opik-run-enricher/`: niezależny proces batch. **Wysyła** do istniejących trace w Opik dozwolone metryki/zliczenia z zakończonych przebiegów agentów oraz Hindsight, bez surowych logów, promptów i treści pamięci. Nie obsługuje `tools/list` ani `tools/call`. W odczytanej liście 38 zasobów Coolify (2026-11-23) nie ma osobnego zasobu o tej nazwie — nie zakładaj wdrożenia, sprawdź rzeczywistego operatora przed zmianą.
 - `ops/` to wspólna infrastruktura dla **wszystkich** integracji. Nie jest drugą implementacją Opik; `ops/mcp-images/catalog.json` przechowuje inwentaryzację obrazów, a nie skompilowany serwer.
 
-## Qdrant MCP retired — do not recreate
-
-The Qdrant **MCP** service has been retired and all owned source removed from `mcp/qdrant-mcp/` by merged PR #182. PR #234 removed its edge route and Worker source configuration. Do not recreate the deleted folder, build or publish a `qdrant-mcp` OCI image, restore `EDGE_SERVICE_ID=qdrant`, or restart the obsolete Coolify service `a4zgmthjspz8hwvyu6llr8dh`. The Coolify service is a retired record pending a confirmed, authorized deletion; its absence must be verified rather than assumed. Preserve the separate **Qdrant vector database** `eciprwgeyol4znmdd0dpu3xc`, its collections and data volumes. Historical notes may mention the old service but are not instructions to reactivate it.
-
 ## Procedura zmiany dla każdego agenta
 
 1. Otwórz przypisane istniejące zadanie Multica i powiązany PR; sprawdź, czy inny writer nie pracuje nad tym samym zakresem. Zakres zapisu określają realne uprawnienia, zadanie i aktywne HOLD — nigdy tylko ten dokument.

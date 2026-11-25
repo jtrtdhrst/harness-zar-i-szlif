@@ -1,6 +1,6 @@
 # Operations — wydania, mapy i konfiguracja środowiska
 
-**To nie jest kolejna usługa Opik ani drugi katalog kodu MCP.** Z `ops/` korzystają serwery i workery. Kod Opik MCP znajduje się w `mcp/opik-mcp/`, a kod eksportera trace w `workers/opik-run-enricher/`. Qdrant MCP został wycofany (PR #182, #234); nie ma już katalogu `mcp/qdrant-mcp/` ani aktywnego pipeline'u budowania. Osobna baza danych Qdrant i jej wolumeny pozostają.
+**To nie jest kolejna usługa Opik ani drugi katalog kodu MCP.** Z `ops/` korzystają serwery i workery. Kod Opik MCP znajduje się w `mcp/opik-mcp/`, a kod eksportera trace w `workers/opik-run-enricher/`.
 
 - `service-build-roots.json`: ścisła mapa UUID → jedyny root kodu → Dockerfile (kod gotowy ≠ produkcyjny).
 - `coolify-service-registry.json`: pełne zasoby Coolify (38 UUID), typ źródła i przypisanie folderu.

@@ -6,7 +6,6 @@ Jedno miejsce: **[catalog.json](catalog.json)**. Obejmuje 19 zasobów MCP/gatewa
 
 **Jak czytać dowody:** `last_published_ghcr_tag` pochodzi z zakończonego powodzeniem joba budowania i push na SHA `78e36297dd4df3cce5be91bd6fba21977ab01108`. Tag nie jest niezmiennym digestem. `engine_reported_repo_digests` i `image_id` to lokalny odczyt Dockera, nie potwierdzenie autoryzowanego wdrożenia. `verified_remote_oci_digest` oraz `verified_production_source_sha` są `null`, dopóki osobna kontrola ich nie zweryfikuje. `verified_production_e2e` pozostaje false, bez testów dodatnich i ujemnych.
 
-**Qdrant:** kod `server.py`, `requirements.txt` i `Dockerfile` jest odzyskany i ma taki sam SHA-256 jak pliki działającego kontenera; nie oznacza to jeszcze, że obecnie działający obraz powstał z obecnego commita.
 
 Nie usuwaj obrazów oznaczonych w katalogu jako działające — dopiero rzeczywisty roll-out i test rollbacku mogą pozwolić na ich bezpieczne wycofanie.
 
