@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "observed_date": "2026-11-22",
-  "source": "Coolify live read-only list_resources(include_full=true)",
+  "source": "Coolify live read-only list_resources(include_full=true); filtered historical scope, not a fresh live readback",
   "state": "FAIL_CLOSED_NOT_PRODUCTION_PARITY",
-  "expected_resources": 36,
-  "observed_resources": 36,
-  "harness_resources": 31,
+  "expected_resources": 34,
+  "observed_resources": 34,
+  "harness_resources": 29,
   "product_resources": 5,
   "uncontrolled_repository_root_builds": [
     "zar-i-szlif-mascot-worker",
@@ -13,10 +13,10 @@
     "repowise-deployment-publisher-staging",
     "repowise"
   ],
-  "service_components_count": 62,
-  "unpinned_runtime_components": 56,
+  "service_components_count": 60,
+  "unpinned_runtime_components": 55,
   "verified_production_rollback_count": 0,
-  "caveat": "Coolify running:healthy is not immutable OCI digest/SHA attestation. This observation cannot establish rollback or release approval.",
+  "caveat": "Coolify running:healthy is not immutable OCI digest/SHA attestation. This observation cannot establish rollback or release approval. Counts describe retained records only; excluded resources were not observed again or deleted by this change.",
   "resources": [
     {
       "name": "hermes-gateway",
@@ -652,31 +652,6 @@
       "rollback_restoration_verified": false
     },
     {
-      "name": "qdrant-mcp",
-      "uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "repo": "harness",
-      "type": "service",
-      "status": "running:healthy",
-      "build_pack": null,
-      "source_repository": null,
-      "observed_git_branch": null,
-      "observed_git_commit": null,
-      "current_base_directory": null,
-      "current_dockerfile": null,
-      "uncontrolled_repository_root_build": false,
-      "image_components": [
-        {
-          "component": "qdrant-mcp",
-          "observed_image": "127.0.0.1:5000/harness-qdrant-mcp:deb907a88591",
-          "immutable_digest_in_config": false,
-          "mutable_head_or_latest": false,
-          "local_image": true
-        }
-      ],
-      "production_digest_parity_verified": false,
-      "rollback_restoration_verified": false
-    },
-    {
       "name": "supabase-mcp",
       "uuid": "tjit4c8m0kjh8brkmdhyvkde",
       "repo": "harness",
@@ -696,31 +671,6 @@
           "immutable_digest_in_config": true,
           "mutable_head_or_latest": false,
           "local_image": true
-        }
-      ],
-      "production_digest_parity_verified": false,
-      "rollback_restoration_verified": false
-    },
-    {
-      "name": "qdrant",
-      "uuid": "eciprwgeyol4znmdd0dpu3xc",
-      "repo": "harness",
-      "type": "service",
-      "status": "running:healthy",
-      "build_pack": null,
-      "source_repository": null,
-      "observed_git_branch": null,
-      "observed_git_commit": null,
-      "current_base_directory": null,
-      "current_dockerfile": null,
-      "uncontrolled_repository_root_build": false,
-      "image_components": [
-        {
-          "component": "qdrant",
-          "observed_image": "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
-          "immutable_digest_in_config": true,
-          "mutable_head_or_latest": false,
-          "local_image": false
         }
       ],
       "production_digest_parity_verified": false,
