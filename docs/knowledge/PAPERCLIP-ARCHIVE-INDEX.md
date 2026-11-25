@@ -1,8 +1,8 @@
 # Harness Paperclip Wiki source archive
 
-**HISTORICAL ONLY. NOT ACTIVE POLICIES.** These are byte-identical migrated source pages, copied on 2026-11-09. Historical Paperclip roles, agent workflows, deployments, CI or review rules MUST NOT be applied to Multica or live services without independent current verification.
+**HISTORICAL ONLY. NOT ACTIVE POLICIES.** These are historical source pages copied on 2026-11-09; selected pages were filtered to the current repository scope. Historical Paperclip roles, agent workflows, deployments, CI or review rules MUST NOT be applied to Multica or live services without independent current verification.
 
-Original paths, sha256 and mapping: [migration-manifest.json](./migration-manifest.json).
+Source paths, retained archive SHA-256 and mapping: [migration-manifest.json](./migration-manifest.json).
 
 - [wiki/agents/ceo/AGENTS.md](./paperclip-archive/wiki/agents/ceo/AGENTS.md)
 - [wiki/agents/ceo/incident-2026-10-12-responsible-user-unavailable.md](./paperclip-archive/wiki/agents/ceo/incident-2026-10-12-responsible-user-unavailable.md)
@@ -73,7 +73,6 @@ Original paths, sha256 and mapping: [migration-manifest.json](./migration-manife
 - [wiki/e2e/mcp-132-20261014.md](./paperclip-archive/wiki/e2e/mcp-132-20261014.md)
 - [wiki/e2e/mcp-connectivity-test.md](./paperclip-archive/wiki/e2e/mcp-connectivity-test.md)
 - [wiki/e2e/p1-wiki-409.md](./paperclip-archive/wiki/e2e/p1-wiki-409.md)
-- [wiki/entities/mcp-qdrant-hybrid.md](./paperclip-archive/wiki/entities/mcp-qdrant-hybrid.md)
 - [wiki/entities/repo-map.md](./paperclip-archive/wiki/entities/repo-map.md)
 - [wiki/entities/responsible-user-guard-outage.md](./paperclip-archive/wiki/entities/responsible-user-guard-outage.md)
 - [wiki/index.md](./paperclip-archive/wiki/index.md)

@@ -65,7 +65,6 @@ flowchart TB
     CF -. osobna ścieżka .-> PMCP[Produktowy MCP / OAuth Worker]
     WEB --> APIs[API katalogów / zasoby Google]
     PMCP -. OAuth / Google OIDC .-> IDP[Google Identity]
-    PMCP -. retrieval .-> QD[(Qdrant: product knowledge — wymaga potwierdzenia)]
     APIs -. tylko potwierdzone ścieżki .-> SB[(Supabase / PostgreSQL)]
 
     ADM[Operator / agenci] --> MC[Multica: control plane]
@@ -88,9 +87,9 @@ Strzałki **ciągłe** oznaczają funkcję potwierdzoną kodem lub statusem uruc
 ### 2.1 Granice
 
 - **Produkt**: `app/web` (przeglądarka), `app/plugin` (lokalny serwer MCP/SDK), `app/cloudflare-worker` (starszy Worker panelu/OAuth), `app/mcp-worker` (wydzielony produktowy Worker wiedzy), `ops/coolify` (statyczny serwer Nginx), domena produktu, schematy i treści.
-- **Harness**: `paperclip-mcp`, `integrations/hermes-paperclip`, `multica-mcp`, `supabase-mcp`, `qdrant-mcp`, `mantic-mcp`, `emailens-mcp`, `ubuntu-mcp`, `plasmic-mcp`, `comfyui-mcp`, `opik-*`, integracje i runbooki infrastruktury.
+- **Harness**: `paperclip-mcp`, `integrations/hermes-paperclip`, `multica-mcp`, `supabase-mcp`, `mantic-mcp`, `emailens-mcp`, `ubuntu-mcp`, `plasmic-mcp`, `comfyui-mcp`, `opik-*`, integracje i runbooki infrastruktury.
 - **Kod a runtime**: część źródeł produktu korzysta ze starych identyfikatorów `Kompas Zbiórek`, `kompas-zbiorek`, `kompas-knowledge-v1`. Nie oznacza to automatycznie migracji schematu, danych ani hostname'ów na nową markę.
-- **Trwałość**: żaden agent nie powinien traktować lokalnego frontendu, Qdrant, Hindsight, RepoWise i PostgreSQL jako jednej wspólnej bazy danych. Każdy ma inną odpowiedzialność, wersję źródła i politykę retencji.
+- **Trwałość**: żaden agent nie powinien traktować lokalnego frontendu, Hindsight, RepoWise i PostgreSQL jako jednej wspólnej bazy danych. Każdy ma inną odpowiedzialność, wersję źródła i politykę retencji.
 - **Historia**: archiwum 108 stron Paperclip Wiki jest źródłem historycznym, nie aktywną polityką Multica/Hermes.
 
 ### 2.2 Brak założonej „jednej wersji platformy”
@@ -144,7 +143,6 @@ Repo i historia opisują: Zbiórka/Camp, Karta Zbiórki, Patrol/Namiot, Sprawno�
 | Szkic użytkownika | `localStorage` | kod zapisujący lokalnie | serwerowa synchronizacja, multi-device, recovery |
 | Cache katalogów | `indexedDB` | kod cache | trwała baza domenowa |
 | Autoryzacja Google/MCP | Workers/OAuthProvider/OIDC | kod | publiczny produkcyjny login i działające granty |
-| Dokumenty wiedzy | Qdrant / Workers AI | kod filtrów i narzędzi | gotowa kolekcja i poprawne połączenie live |
 | Wiedza o repo | RepoWise | działający indeks dwóch repo | semantyczna prawda runtime i pełna aktualność |
 | Agent memory | Hindsight | zdrowe kontenery | automatyczny, kompletny zapis każdej sesji |
 
@@ -181,7 +179,6 @@ Lokalny proces: `npm --prefix app run build`, `npm --prefix app run start`, host
 | `POST /mcp` | wywołania JSON-RPC MCP | bearer/grant + `knowledge.read` |
 | `/.well-known/*` | metadane OAuth/Protected Resource | OAuthProvider |
 
-**Dokładnie cztery narzędzia tego wydzielonego Workera:** `search_knowledge`, `get_knowledge_source`, `search`, `fetch`. Nie wystawia starszego narzędzia UI. Scopes: `knowledge.read` oraz `offline_access`. Odpowiedzi mają `structuredContent` i JSON w `content`; retrieval ma server-derived scope użytkownika i read-only annotations. Wymaga `QDRANT_URL` **oraz** bindingu Workers AI dla faktycznych zapytań. Przy braku wymaganego backendu wiedzy narzędzia odmawiają działania.
 
 **[SOURCE / RYZYKO]** Kod żąda `env.OAUTH_KV`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`. Odczytana konfiguracja `app/mcp-worker/wrangler.jsonc` deklaruje `AI`, `MCP_PUBLIC_ORIGIN`, allowlistę redirect URI, **ale nie zawiera deklaracji `OAUTH_KV`**. Nie znaczy to, że Worker nie może mieć osobno ustawionego bindingu, ale przy wdrożeniu wyłącznie na podstawie tej konfiguracji guard zwróci 503. Nie należy uzupełniać doraźnie bez kontroli istniejącej produkcji Cloudflare.
 
@@ -198,7 +195,6 @@ Lokalny proces: `npm --prefix app run build`, `npm --prefix app run start`, host
 | Usługa | Interfejs / charakter | Potwierdzenie | Uwaga |
 |---|---|---|---|
 | Supabase MCP | `GET /health`, `POST /mcp`; GET/DELETE `/mcp` mają odmowę w stateless | `harness/supabase-mcp/src/server/http-server.ts` | middleware JWT na `/mcp` |
-| Qdrant MCP | HTTP Streamable MCP `/mcp` i/lub transport zależny od launch | `harness/qdrant-mcp/server/server.py` | opcjonalny guard Bearer, nie zakładać anonimowości |
 | Paperclip MCP | MCP narzędzi kontrolnych przez SDK i gateway | `harness/paperclip-mcp/src/index.ts`, `execution-broker.ts` | prawo do wykonania zależy od roli, run i route; nie tylko nazwy narzędzia |
 | Hermes Gateway | profile, run-scoped narzędzia, walidacja grant envelope | `harness/integrations/hermes-paperclip/gateway/run_mcp.py` | fail-closed; token run nie powinien być logowany/persistowany |
 | Multica MCP | wrapper na przypiętą wersję CLI, HTTP/stdio | `harness/multica-mcp/server.mjs` | oddzielne od `multica-backend:v0.8.1` |
@@ -216,7 +212,6 @@ Dokumentacja nie rości sobie prawa do kompletnego OpenAPI serwisów zewnętrzny
 |---|---|---|---|
 | **RepoWise** v0.60.1 | kod, graf zależności, symbole, pliki, historia Git, decyzje ADR, dokumentacja repo | „co jest w kodzie / jak się zmieniało / co zależy od czego” | pełne rozmowy, osobistą pamięć agentów, aktualny stan runtime bez readbacku |
 | **Hindsight** | trwałe, odwoływalne doświadczenia i kontekst agentów, banki pamięci | „co agent odkrył, wykonał, jakie reguły robocze obowiązują” z datą i pochodzeniem | kopii modułów kodu, zrzutów całych PR, technicznych symboli już dostępnych w RepoWise |
-| **Qdrant** | wektory/chunki i wyszukiwanie semantyczne | produktowy RAG, kolekcje dokumentów albo pamięć wektorową według własności | logów wdrożeń, relacyjnego stanu uprawnień, surowych sekretów |
 | **Opik** | eksperymenty, ślady wykonania modeli/narzędzi, metryki | diagnostyka realnego przebiegu agent/run | autorytatywnych decyzji review i wydania, nieograniczonego magazynu rozmów |
 
 **Proponowany kontrakt minimalnej kanibalizacji pamięci** (wymaga wdrożenia w konfiguracji polityk agentów; nie stwierdzono produkcyjnego E2E):
@@ -236,20 +231,13 @@ Dokumentacja nie rości sobie prawa do kompletnego OpenAPI serwisów zewnętrzny
 - `denylist.ts` — blokowanie wyłączonych źródeł/treści przed indeksem i retrieval.
 - `pipeline.ts` — `source → normalize → chunk → embed → upsert`; stable ID i hash, usuwanie osieroconych chunków; allowlista źródeł z obiektem bez prototypu.
 - `embeddings.ts` — integracja Workers AI `@cf/baai/bge-m3`.
-- `qdrant.ts` — klient kolekcji, upsert/search/delete i auth-filter.
 - `retrieval.ts` — prefilter silnika i obronny postfilter wyników.
 - `mcp-tools.ts` — kontrakty `search_knowledge`, `get_knowledge_source`, `search`, `fetch`.
 - `memory.ts`, `smoke.ts` — lokalne/smoke implementacje pomocnicze.
 
 Zdefiniowane wartości: `COLLECTION_NAME=kompas-knowledge-v1`, `TENANT=kompas-zbiorek`, `EMBEDDING_MODEL=@cf/baai/bge-m3`, `VECTOR_SIZE=1024`, dystans `Cosine`. Chunking 1200 znaków z overlap 150; retrieval domyślnie `topK=8`, limit `20`, `minScore=0.35` (próg konfigurowalny). Indeksowanie dopuszcza między innymi `skills-catalog`, `marketing`, `onboarding-emails`, `help-page`, `legal`, `runtime-doc`; źródła prywatne podlegają filtrowi user/workspace i denyliście.
 
-**Autoryzacja retrievalu:** tenant musi się zgadzać, a wynik musi być `global` albo dotyczyć tożsamości użytkownika/jej workspace. `sourceIds` ogranicza wyszukiwanie do kodowej allowlisty; błędna wartość powinna fail-closed. Weryfikować zarówno prefilter Qdrant, jak i filtr obronny w kodzie. Nie uznawać samego promptu za zabezpieczenie izolacji danych.
-
-### 5.3 Krytyczna rozbieżność Qdrant
-
-**[LIVE]** `GET http://127.0.0.1:6333/collections` na hostowym Qdrant `qdrant/qdrant:1.20.0` zwrócił **wyłącznie** kolekcję `long_term_memory`. **Nie wykryto** tam `kompas-knowledge-v1` zadeklarowanej w kodzie produktu. To jest obserwacja konkretnej instancji pod hostowym portem 6333, nie dowód, że nie istnieje inna kolekcja w innym klastrze Qdrant. W razie podpięcia tego hostowego Qdrant do produktowego MCP wiedza produktowa nie będzie kompletna bez utworzenia, wypełnienia i smoke tej kolekcji. Nie wykonywano mutacji kolekcji.
-
-**[LIVE]** Qdrant hostowy słucha na `0.0.0.0:6333`; rzeczywistą dostępność z Internetu i kontrolę ACL/firewall należy niezależnie przetestować. Fakt nasłuchu nie dowodzi publicznej ekspozycji spoza sieci. Nie udostępniać bez potrzeby portów magazynu pamięci publicznie.
+**Autoryzacja retrievalu:** tenant musi się zgadzać, a wynik musi być `global` albo dotyczyć tożsamości użytkownika/jej workspace. `sourceIds` ogranicza wyszukiwanie do kodowej allowlisty; błędna wartość powinna fail-closed. Weryfikować zarówno prefilter jak i filtr obronny w kodzie. Nie uznawać samego promptu za zabezpieczenie izolacji danych.
 
 ### 5.4 RepoWise — aktualność i wiarygodność
 
@@ -314,8 +302,6 @@ Poniższy katalog jest **mapą funkcjonalną**, a nie listą samych „backendó
 | Execution | Hermes Gateway + kandydaty | model/profile run | kilka healthy obrazów, brak pełnego E2E |
 | Dev runtime | OpenCode `2.2.5-custom` | agent kodujący | healthy, brak zadania end-to-end w audycie |
 | Agent memory | Hindsight core/admin `ghcr.io/vectorize-io/hindsight:latest-slim` + pgvector 17 | długotrwała pamięć | healthy; mutable tag `latest-slim` wymaga digest pinning |
-| Vector DB | Qdrant `1.20.0` | kolekcje wektorowe | healthy; zaobserwowano `long_term_memory` |
-| Vector MCP | `qdrant-mcp` | kontrolowany dostęp do Qdrant | healthy; osobna autoryzacja |
 | Traces | Opik frontend/backend/python-backend `2.2.121` | telemetry dashboard + API | healthy |
 | Traces storage | ClickHouse `26.3.16.16-alpine`, MySQL `8.4.2`, Redis `7.2.4`, ZooKeeper `3.9.4`, MinIO | Opik state/storage | healthy; dependency-aware backup/rollback |
 | Trace bridge | `opik-mcp:3.0.7`, access-guard, run-enricher | MCP/opis trace | zdrowie kontenera ≠ powiązane agent traces |
@@ -338,7 +324,6 @@ Poniższy katalog jest **mapą funkcjonalną**, a nie listą samych „backendó
 | `coolify-mcp/` | instancje, projekty, wdrożenia | deploy/rollback; ścieżka wydawnicza i autoryzacja |
 | `paperclip-mcp/` | narzędzia legacy control plane | identity/run/review/board authority |
 | `supabase-mcp/` | admin/API i odczyt bazy | JWT na HTTP `/mcp`; uniknąć ekspozycji service role |
-| `qdrant-mcp/` | operacje kolekcji i punktów | izolacja kolekcji, filtrowanie tenantów |
 | `mantic-mcp/` | Mautic/CRM | dane kontaktowe i wysyłka marketingowa |
 | `emailens-mcp/` | API e-mail | wysyłka/retencja/wrażliwe dane wiadomości |
 | `opik-mcp/` | ślady i projekty Opik | tenant separation i redakcja trace |
@@ -359,8 +344,6 @@ Nie deduplikować różnych serwerów wyłącznie z powodu podobnych endpointów
 | Supabase PostgreSQL | projekt `supabase` | schemat, polityki, tabele domenowe, role, storage metadata; osobno pliki Storage | montować wolumenu w innym projekcie lub zmieniać bez migracji |
 | Multica PostgreSQL | projekt `multica-stack` | snapshot DB, workspace/role/task state, identyfikatory agentów | kopiować Paperclip DB „wprost” bez transformacji kontraktów |
 | Paperclip PostgreSQL | projekt `paperclip` | legacy zadania, wersjonowanie polityk, secret references | edytować jako część dokumentacji/migracji tylko odczytowej |
-| Hindsight pgvector | projekt Hindsight | banki pamięci i indeksy zgodnie z trybem backup backendu | zakładać, że stan jest w Qdrant |
-| Qdrant storage | projekt `qdrant` | snapshot każdej kolekcji i payload schema | przywracać snapshot wprost na żywo bez zgodności wymiarów/modelu |
 | Opik | ClickHouse + MySQL + MinIO + Redis/ZooKeeper | spójne odtworzenie komponentów i retention | backupować tylko backend Opik, ignorując storage |
 | Mautic | MariaDB + config/media | pełne dane aplikacji i zasoby | utożsamiać z CRM produktu RR bez powiązania |
 | Plasmic | PostgreSQL 15 + projektowe assety | repo dokumentacji/projekty UI | uznawać za deploy statycznego panelu |
@@ -391,7 +374,6 @@ Sama oddzielna nazwa projektu Coolify **nie gwarantuje izolacji**; sprawdzać ko
 
 **[LIVE]** Odczyt `ss -lntp` pokazał publiczny bind `0.0.0.0` m.in. na portach `22`, `80`, `443`, `3100`, `5173`, `6001`, `6002`, `6333`, `8000`, `8001`, `8080`, `18642`, `18680` oraz inne hostowe procesy. `127.0.0.1` było używane m.in. dla Multica frontend `18300`, backend `18380`, Mailpit UI `18325`, OpenCode `4096` i wewnętrznego registry `5000`. **To jest lista bindów, nie dowód, że firewall umożliwia dostęp z publicznego Internetu.** Kontrola bezpieczeństwa wymaga porównania Docker publish, `ss`, UFW/nftables, cloud firewall, Cloudflare Access i negatywnego testu spoza VPS.
 
-Najważniejsze kwestie do sprawdzenia: Qdrant 6333, Paperclip Core 3100, Supabase gateway 8000, Mautic 8080, Opik 5173 i Coolify 8001. Zasada: publiczne tylko zatwierdzone edge i usługi z ochroną; pozostałe przez prywatną sieć, auth/proxy albo loopback.
 
 ### 9.3 Trzy istniejące Workers i provenance
 
@@ -466,7 +448,6 @@ Dla zmiany cross-repo: RepoWise `get_context`/`get_risk`/`get_blast_radius` daje
 3. Próba wstrzyknięcia cudzego `workspace_id`/`user_id` w argumencie → zakres derived from token, nie z argumentu.
 4. Wygasły run-grant w Hermes lub tool spoza allowlisty → odmowa bez przepisania tokenu do logów.
 5. Malformed OAuth redirect/Host/Origin → fail-closed.
-6. RAG nieznana `source_id`, nieprawidłowe payload visibility, brak wymaganej kolekcji Qdrant → jawny błąd/odmowa bez nieautoryzowanych wyników.
 7. RepoWise bearer pusty/fałszywy → 401; test oddzielny dla różnych agentów, jeśli model dopuszcza im różne widoki.
 8. Nieudany deploy/kandydat → poprzedni obraz nadal serwuje ruch; negatyw nie może pisać do baz produkcyjnych.
 
@@ -513,10 +494,6 @@ docker exec -u postgres db-r2gnunvpkqwmuew1tupbf7lx \
 
 Nie odczytywać w raporcie zawartości tabel zawierających PII. Schema-only `pg_dump --schema-only` (w trybie izolowanym i po wykluczeniu sekretów) jest lepszą podstawą ERD niż zgadywanie na podstawie frontendu.
 
-### 12.4 Weryfikacja Qdrant
-
-```bash
-curl -fsS http://127.0.0.1:6333/collections
 # Następnie sprawdzić definicję collection, dims, payload indexes i wymagania auth:
 # GET /collections/<collection> tylko przy uprawnionym dostępie
 ```
@@ -548,7 +525,6 @@ Dla zmian cross-repo: get_architecture + get_blast_radius + realny contract smok
 **Awaria tylko panelu:** sprawdź Cloudflare/Caddy → Nginx health → `__release.json` → image digest → poprzednią wersję; nie restartuj całego Supabase czy Hermes.  
 **Awaria narzędzia MCP:** odróżnij DNS/TLS, OAuth, policy deny, transport JSON-RPC, runtime backend i token/upstream.  
 **Awaria agent task:** odnajdź issue/run, stan daemona, przypisany profil, trace i logi narzędzi; zweryfikuj, czy PR lub deployment rzeczywiście powstał.  
-**Awaria Qdrant:** najpierw stan kolekcji/snapshot/kompatybilność wektorów; nie naprawiać przez czyszczenie indeksu w produkcji.  
 **Awaria Opik/Hindsight:** ogranicz wpływ na execution; nie uznawaj braku telemetrii za dowód zakończenia run.  
 **Rollback:** tylko na identyfikowalny poprzedni digest, zgodny z DB schema; readback po cofnięciu. Nie przeprowadza się automatycznie rollbacku nieodwracalnej migracji SQL bez osobnej procedury.
 
@@ -569,7 +545,6 @@ Tabela odróżnia **sprawdzone w tej sesji** fakty od wcześniej spisanych obser
 | B-09 | RepoWise indeks | `list_repos` z `harness` i `product` | **PASS [LIVE] dla indeksu** | reindeks po każdym push, aktualny HEAD obu repo |
 | B-10 | RepoWise synteza | `get_answer` → `no-llm-provider` | **DEGRADED [LIVE]** | odpowiedź syntezowana przez model |
 | B-11 | RepoWise graf architektury | częściowy `get_architecture`, 14 usług, 4 edges | **PARTIAL [LIVE]** | runtime contract graph, reguły konformancji |
-| B-12 | Produktowy RAG Qdrant | kolekcje na hostowym :6333 | **GAP [LIVE]** | `kompas-knowledge-v1` brak na sprawdzonej instancji |
 | B-13 | Produktowy MCP HTTP | `https://mcp.zariszlif.pl/health` → `curl 000` | **OPEN [LIVE]** | DNS/TLS/route/Worker/bindingi i autoryzacja |
 | B-14 | Multica → Hermes | nie uruchamiano zadania w tej sesji | **OPEN** | uwierzytelnienie, zasięg narzędzi i recovery |
 | B-15 | Hermes → Hindsight | zdrowe serwisy | **OPEN** | retain/recall przez konkretny profil |
@@ -614,7 +589,6 @@ Ten format można utrzymać w dokumentacji/release ledger bez pisania nowego mik
 
 | Priorytet | Znalezisko | Dowód | Zalecane działanie bez customowego backendu |
 |---|---|---|---|
-| P0 | Produktowy RAG oczekuje `kompas-knowledge-v1`; lokalny Qdrant ma tylko `long_term_memory` | source + Qdrant `/collections` | sprawdzić rzeczywisty `QDRANT_URL` Workera (bez ujawnienia wartości sekretu), odpowiedni klaster i indeks, porównać 1024/Cosine; dopiero potem planować ingest |
 | P0 | Worker `app/mcp-worker` wymaga `OAUTH_KV`, a deklaracja w źródłowym Wranglerze go nie zawiera | `src/index.ts` vs `wrangler.jsonc` | sprawdzić aktywne bindings z Cloudflare; nie wdrażać blind; dopisać tylko jeśli potwierdzona nowa linia wydawnicza i potrzeba |
 | P0 | Niepotwierdzone publiczne MCP produktu | HTTPS `curl 000` | diagnoza DNS → TLS → Worker route → OAuth metadata → autoryzowany read-only MCP smoke |
 | P0 | Niektóre wrażliwe porty słuchają na `0.0.0.0` | `ss -lntp` | porównać host firewall, dostawcę VPS i Cloudflare; ograniczyć niepotrzebną ekspozycję po analizie zależności klientów |
@@ -646,7 +620,6 @@ Ten format można utrzymać w dokumentacji/release ledger bez pisania nowego mik
 
 1. Ujednolicić listę zasobów: `Coolify UUID ↔ domena ↔ kontener ↔ git SHA ↔ digest ↔ właściciel`, ze wskazaniem production/canary/test.
 2. Naprawić identyfikację dwóch repo w RepoWise, ustabilizować aktualizację indeksów po merge; potwierdzić dostęp z agenta.
-3. Potwierdzić aktywny produktowy Worker MCP i jego bindingi/route; zamknąć niezależne luki w Qdrant knowledge.
 4. Przeprowadzić negatywne testy praw agenta i użytkownika; osobno ograniczyć ekspozycję portów, po ocenie wpływu.
 5. Uruchomić pojedynczy, **izolowany**, autoryzowany przepływ Multica→Hermes→GitHub→CI→Coolify z Hindsight/Opik correlation; potem mnożyć przez 14 ról, bez zgadywania ekwiwalencji po nazwie.
 6. Zweryfikować rollback i restore na zasobach testowych; dopiero potem opisać realny plan awaryjny produkcji.
@@ -668,7 +641,6 @@ Ten format można utrzymać w dokumentacji/release ledger bez pisania nowego mik
 | `app/plugin/knowledge/schema.ts` | tenant, kolekcja, filtry auth, payload |
 | `app/plugin/knowledge/pipeline.ts` | source allowlist i ingest |
 | `app/plugin/knowledge/retrieval.ts` | pre/post filter i retrieval |
-| `app/plugin/knowledge/qdrant.ts` | Qdrant CRUD/search |
 | `app/plugin/knowledge/mcp-tools.ts` | narzędzia Company Knowledge |
 | `app/mcp-worker/src/index.ts` | wydzielony, knowledge-only produktowy Worker MCP |
 | `app/mcp-worker/wrangler.jsonc` | route, config i deklarowane bindings |
@@ -703,7 +675,6 @@ Ten format można utrzymać w dokumentacji/release ledger bez pisania nowego mik
 | `paperclip-mcp/src/workspace-native.ts` | workspace mutation/access |
 | `paperclip-mcp/src/client.ts` | klient upstream i enforce access |
 | `supabase-mcp/src/server/http-server.ts` | transport i JWT `/mcp` |
-| `qdrant-mcp/server/server.py` | Qdrant MCP, Bearer gate |
 | `multica-mcp/server.mjs` | adapter Multica CLI w nowszym indeksie |
 | `opik-run-enricher/worker.py` | korelacja i enrichment trace |
 | `.github/workflows/` | CI i release lanes infrastruktury |
@@ -720,7 +691,6 @@ Nie są to sekrety ani backupy. Pełnej listy portów/hostów nie należy publik
 
 ## 16. Granice audytu i zasady aktualizacji
 
-**Co sprawdzono:** obie instancje repo przez RepoWise (`list_repos`, `get_overview`, `get_health`, `get_architecture`, `get_conformance`, kontekst symboli), bezpośrednie pliki i HEAD checkoutów przez Ubuntu SSH; kilkadziesiąt kontenerów z `docker ps`/`inspect`; aktywny readback panelu HTTPS; metadane SQL tabeli `sprawnosci`, jej RLS i indeksów; Qdrant `/collections`; podstawowe porty Docker/hosta; źródłowy Worker MCP, Express MCP, Hermes bridge, release policy i archiwum Wiki.
 
 **Czego nie sprawdzono:** aktualnego panelu Cloudflare i jego bindings, pełnej bazy użytkowników/ACL w Supabase, dokładnych zasobów wszystkich projektów Coolify przez jego API, sekretów, autoryzowanego testu produktowego OAuth, testu per-role w Multica, prawdziwego PR/deploy wykonanych w tej sesji, trace korelacji wszystkich systemów, backup/restore i rollback, ruchu spoza hosta do portów opublikowanych na `0.0.0.0`. Nie wykonywano testów destrukcyjnych ani nie zmieniano stanu aplikacji.
 
