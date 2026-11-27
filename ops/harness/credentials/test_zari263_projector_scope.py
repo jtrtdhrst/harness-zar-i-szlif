@@ -202,6 +202,29 @@ class RuntimeVolumeProjection(unittest.TestCase):
             def trusted(fd):
                 st = real_fstat(fd)
                 return types.SimpleNamespace(st_mode=st.st_mode, st_uid=0,
-                    st_gid=project.NODE_GID, st_nlink=st.st
+                    st_gid=project.NODE_GID, st_nlink=st.st_nlink, st_size=st.st_size)
+            with patch.object(project, 'WRITER_TARGET', source), \
+                 patch.object(project, 'WRITER_RUNTIME', final), \
+                 patch.object(project.os, 'fstat', side_effect=trusted):
+                with self.assertRaisesRegex(RuntimeError, 'scope mismatch'):
+                    project.project_writer_runtime()
+            self.assertFalse(final.exists())
 
-... [1257 characters truncated]
+    def test_stale_runtime_volume_token_revoked_independently(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        project = load("github-ops-token-project.py", "bgh_projector_volume_revoke")
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'writer.json'
+            target.write_text('synthetic-no-secret')
+            target.chmod(0o640)
+            st = target.lstat()
+            trusted = SimpleNamespace(st_mode=st.st_mode, st_uid=0,
+                st_gid=project.NODE_GID, st_nlink=1)
+            with patch.object(project.os, 'lstat', return_value=trusted):
+                self.assertTrue(project.retire_writer_target(target))
+            self.assertFalse(target.exists())
+
+if __name__ == "__main__":
+    unittest.main()
