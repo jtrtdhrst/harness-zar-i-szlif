@@ -11,6 +11,7 @@ on:
       - 'scripts/harness_release_admission.py'
       - 'scripts/harness_release_parity.py'
       - 'scripts/test_harness_release_parity.py'
+      - 'scripts/test_non_mcp_build_guard.py'
   push:
     branches: [main]
     paths:
@@ -23,6 +24,7 @@ on:
       - 'scripts/harness_release_admission.py'
       - 'scripts/harness_release_parity.py'
       - 'scripts/test_harness_release_parity.py'
+      - 'scripts/test_non_mcp_build_guard.py'
   workflow_dispatch:
 
 permissions:
