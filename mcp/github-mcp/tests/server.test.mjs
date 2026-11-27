@@ -5,7 +5,7 @@ const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,classicProtectionMissing=false,
-  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false}={}){
+  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false,individualMergeShaNull=false}={}){
   const calls=[];
   const authorizations=[];
   let branchDeleted=false;
@@ -46,7 +46,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
       v={number:987,state:individualMerged?'closed':'open',merged:individualMerged,
         merged_at:individualMerged?'2026-11-20T12:00:00Z':null,
         head:{ref:'fix/old',sha:branchSHA,repo:{full_name:individualRepoChanged?'other/fork':REPO}},
-        base:{ref:'main'},merge_commit_sha:mergeSHA};
+        base:{ref:'main'},merge_commit_sha:individualMergeShaNull?null:mergeSHA};
     }
     else if(u.pathname.endsWith('/pulls')){
       if(u.searchParams.get('state')==='open')
@@ -176,6 +176,18 @@ test('squash-merged PR is eligible for preview only, never deletes',async()=>{
   assert.equal(out.body.result.structuredContent.merged_pr,987);
   assert.equal(f.calls.filter(([method])=>method==='DELETE').length,0);
  }finally{await f.close()}
+});
+test('real GitHub-style merged PR with null individual merge SHA keeps independently verified merge proof',async()=>{
+  const f=await fixture({individualMergeShaNull:true,ahead:7});
+  try{
+    const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(out.body.result.structuredContent.eligible,true);
+    assert.equal(out.body.result.structuredContent.merged_pr,987);
+    assert.equal(out.body.result.structuredContent.deletion_supported,false);
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/pulls/987')));
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.includes('/compare/')));
+    assert.equal(f.calls.some(([method])=>method!=='GET'),false);
+  }finally{await f.close()}
 });
 test('preview verifies an exact merged commit even when closed PR feed omits it',async()=>{
   const f=await fixture({closedFeedMissing:true});
