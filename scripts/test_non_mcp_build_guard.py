@@ -223,11 +223,11 @@ class NonMcpBuildGuardTests(unittest.TestCase):
 
     def test_coolify_mcp_pr_image_smoke_is_readonly_and_path_scoped(self):
         source = (WORKFLOWS / "coolify-mcp-ci.yml").read_text(encoding="utf8")
-        header = source.split("\\njobs:\\n", 1)[0]
+        header = source.split("\njobs:\n", 1)[0]
         jobs = dict(image_build_jobs(source))
         verify = jobs["verify"]
         self.assertTrue(compliant("coolify-mcp-ci.yml", verify))
-        self.assertIn("permissions:\\n  contents: read", header)
+        self.assertIn("permissions:\n  contents: read", header)
         self.assertNotIn("packages: write", header)
         for original, replacement in (
             ("if: github.event_name == 'pull_request'", "if: github.event_name == 'push'"),
