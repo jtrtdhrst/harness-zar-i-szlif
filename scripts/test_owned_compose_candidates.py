@@ -78,8 +78,8 @@ class HarnessComposeCandidatesTests(unittest.TestCase):
     def test_select_exact_source_dependency_and_negative_cases(self):
         import select_owned_compose
         cases = {
-            "qdrant/compose.candidate.yml": set(),
-            "qdrant-extra/Dockerfile": set(),
+            "unregistered-fixture/compose.candidate.yml": set(),
+            "unregistered-fixture-extra/Dockerfile": set(),
             "mautic/release-contract.json": set(),
             "mcp/comfy-mcp/Dockerfile": set(),
             "ops/repowise/README.md": set(),

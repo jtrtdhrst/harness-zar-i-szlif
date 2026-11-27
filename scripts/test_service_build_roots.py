@@ -113,7 +113,7 @@ class HarnessBuildRootsTests(unittest.TestCase):
         self.assertTrue(next(r for r in self.rows if r["id"] == "github-ops-mcp")["source_build_ready"])
         self.assertTrue(next(r for r in self.rows if r["id"] == "multica-mcp")["source_build_ready"])
 
-LIVE_COOLIFY_UUIDS = {
+MANAGED_COOLIFY_UUIDS = {
     "t09dqe2eppn2eiqmhzlf8xzp", "o968ndolpcfecgswerjjeg6j",
     "sf67p2qio3qf31dwvkp5gcfw", "2sganhxhhnioiqh4an9g2f4k",
     "g0xdkztpmjnhgwms7qelzxqd", "5o4edyfjo0wftfg08mtkknir",
@@ -125,14 +125,15 @@ LIVE_COOLIFY_UUIDS = {
     "s7a4rwqbij7w4fxlnauriblo", "8byf8qjxdixpwp7lsnr8zpto",
     "r2gnunvpkqwmuew1tupbf7lx", "egasedqaofxnzcqppuxi805h",
     "16qnapdkj0qqqmeokepdechk", "a6ci2beifbinzckfnneiqnjd",
-    "f7smgdueq8frlex9lfhp9iji", "a4zgmthjspz8hwvyu6llr8dh",
-    "tjit4c8m0kjh8brkmdhyvkde", "eciprwgeyol4znmdd0dpu3xc",
+    "f7smgdueq8frlex9lfhp9iji",
+    "tjit4c8m0kjh8brkmdhyvkde",
     "kkhfw0napmeaqewgdirwhc1h", "26aqp0flyvdinjn6dklxnb1c",
     "lcnjb3vreec7saihkhan6akh", "hdn0rl4wznbvaoizna61bbyy",
     "3byzyvjxsycixyzcpxbujzev", "ra0iy2xs7abgms1r0phx4iqg",
     "g16yynrbdpkab4hnmaoj7vxk", "bioufw4uxwuhmr51ueyahf0u",
     "9e4fzsodixl4qzzap4zg0ntp", "6ihjnudsifbcvklz5hqxdldc",
     "vwe5lv4bniosxug34uhyf0ag", "lecwi3emh9hjxir7gphmalie",
+    "eciprwgeyol4znmdd0dpu3xc",
 }
 PIN_RE = re.compile(r"^[^@\s]+@sha256:[a-f0-9]{64}$")
 COMMIT_RE = re.compile(r"^[a-f0-9]{40}$")
@@ -145,7 +146,7 @@ def inventory_errors(data, registry, root):
     ids = [row.get("uuid") for row in entries]
     expected = {row["uuid"]: row for row in registry["resources"]}
     source_roots = {row["uuid"]: row for row in data.get("resources", [])}
-    if len(entries) != 38 or len(set(ids)) != 38 or set(ids) != LIVE_COOLIFY_UUIDS:
+    if len(entries) != 37 or len(set(ids)) != 37 or set(ids) != MANAGED_COOLIFY_UUIDS:
         errors.append("live_uuid_coverage_mismatch")
     if set(ids) != set(expected):
         errors.append("registry_uuid_coverage_mismatch")
@@ -184,7 +185,7 @@ def inventory_errors(data, registry, root):
                     row.get("release_eligible") is not False or
                     row.get("source_root") or row.get("build_dockerfile")):
                 errors.append("retired_runtime_must_not_build_or_release:" + row["uuid"])
-            if (root / "mcp/qdrant-mcp").exists():
+            if (root / "mcp" / row["name"]).exists():
                 errors.append("retired_runtime_code_still_present:" + row["uuid"])
         elif kind == "vendor-image":
             pins = row.get("pinned_images", [])
@@ -233,14 +234,24 @@ class FullCoolifyInventoryTests(unittest.TestCase):
         cls.data = json.loads(MANIFEST.read_text(encoding="utf-8"))
         cls.registry = json.loads((ROOT / "ops" / "coolify-service-registry.json").read_text(encoding="utf-8"))
 
-    def test_all_38_live_application_and_service_uuids_are_classified(self):
+    def test_all_37_managed_application_and_service_uuids_are_classified(self):
         rows = self.data["coolify_inventory"]["resources"]
-        self.assertEqual(len(rows), 38)
-        self.assertEqual(len({row["uuid"] for row in rows}), 38)
-        self.assertEqual({row["uuid"] for row in rows}, LIVE_COOLIFY_UUIDS)
+        self.assertEqual(len(rows), 37)
+        self.assertEqual(len({row["uuid"] for row in rows}), 37)
+        self.assertEqual({row["uuid"] for row in rows}, MANAGED_COOLIFY_UUIDS)
         self.assertEqual(sum(row["type"] == "application" for row in rows), 13)
-        self.assertEqual(sum(row["type"] == "service" for row in rows), 25)
+        self.assertEqual(sum(row["type"] == "service" for row in rows), 24)
         self.assertEqual(inventory_errors(self.data, self.registry, ROOT), [])
+
+    def test_qdrant_database_is_inventory_only_and_retired_mcp_is_absent(self):
+        rows = self.data["coolify_inventory"]["resources"]
+        self.assertFalse(any(row["id"] == "qdrant-mcp" for row in rows))
+        db = next(row for row in rows if row["uuid"] == "eciprwgeyol4znmdd0dpu3xc")
+        self.assertEqual(db["id"], "qdrant")
+        self.assertEqual(db["source"], "vendor-image")
+        self.assertFalse(db["source_build_ready"])
+        self.assertFalse(db["release_eligible"])
+        self.assertTrue(db["pinned_images"])
 
     def test_missing_uuid_fails_closed(self):
         broken = json.loads(json.dumps(self.data))

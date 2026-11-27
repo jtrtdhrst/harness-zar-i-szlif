@@ -181,7 +181,7 @@ protection against accidental manual invocation; the shim must remain in place.
 
 When a reviewed main SHA changes several unrelated manifest resources, the
 unattended timer MUST continue to deny a global batch that contains an
-unimplemented transport (for example `apps/plasmic/` or `qdrant/`). Do not
+unimplemented transport (for example `apps/plasmic/`). Do not
 silently skip those resources, forge a wider approval or mark the whole SHA
 delivered.
 

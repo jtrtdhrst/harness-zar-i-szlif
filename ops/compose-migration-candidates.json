@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "jtrtdhrst/harness-zar-i-szlif",
   "source_pr": 223,
-  "scope": "Three source-pending in-repository candidates: Plasmic, Hindsight MCP and Opik MCP. Retired Qdrant MCP excluded; Qdrant DB remains independent.",
+  "scope": "Three source-pending in-repository candidates: Plasmic, Hindsight MCP and Opik MCP.",
   "release_status": "BLOCKED_CANDIDATES_ONLY",
   "resources": [
     {

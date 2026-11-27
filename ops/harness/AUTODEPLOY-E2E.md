@@ -26,7 +26,6 @@ Stan na 20.11.2026. Jedyna natywna ścieżka wdrażania obrazów Harness: istnie
 - Na VPS root-owned `/etc/paperclip-gitops/harness-ci-policy.json` zawiera aktualnie **tylko `ubuntu-mcp`**; testy innych usług trzeba niezależnie zdefiniować i sprawdzić przed aktywowaniem autoprepare.
 - Historyczny grant dla `ubuntu-mcp` jest wygasły. Zmiana kodu nie tworzy nowej zgody i nie usuwa obowiązku niezależnego przeglądu.
 - Część Compose (np. `cloudflared-mcp` i zewnętrzny `repowise-mcp-runtime`) korzysta z upstream obrazów, a nie z repozytoryjnego Dockerfile. Te obrazy wymagają osobnego zatwierdzonego, niezmiennego digestu.
-- `qdrant-mcp` ma aktywny obraz, ale nie ma obecnego katalogu źródłowego w Harness. Brak źródeł nie może być zgłoszony jako udany rebuild.
 - Testy kodu nowej ścieżki to **80/80 PASS**, pełne regresje **288 PASS (2 skipy środowiskowe)** w izolowanym środowisku Ubuntu; nie zastępuje to testu następnego automatycznego wdrożenia na produkcji.
 - Ta poprawka wymaga niezależnego exact-head review, zielonego CI po merge, instalacji sprawdzonych bajtów przez operatora i nowej zmiany źródłowej z pełnym produkcyjnym E2E. Do tej chwili nie oznaczać Compose autodeploy jako DONE.
 

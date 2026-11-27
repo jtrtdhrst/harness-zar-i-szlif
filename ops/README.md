@@ -1,9 +1,9 @@
 # Operations — wydania, mapy i konfiguracja środowiska
 
-**To nie jest kolejna usługa Opik ani drugi katalog kodu MCP.** Z `ops/` korzystają wszystkie serwery i workery. Kod Opik MCP jest w `mcp/opik-mcp/`, kod eksportera trace w `workers/opik-run-enricher/`, a Qdrant MCP w `mcp/qdrant-mcp/`.
+**To nie jest kolejna usługa Opik ani drugi katalog kodu MCP.** Z `ops/` korzystają serwery i workery. Kod Opik MCP znajduje się w `mcp/opik-mcp/`, a kod eksportera trace w `workers/opik-run-enricher/`.
 
 - `service-build-roots.json`: ścisła mapa UUID → jedyny root kodu → Dockerfile (kod gotowy ≠ produkcyjny).
-- `coolify-service-registry.json`: pełne zasoby Coolify (38 UUID), typ źródła i przypisanie folderu.
+- `coolify-service-registry.json`: rejestr zasobów Coolify (37 UUID; Qdrant DB zachowana, Qdrant MCP wycofany), typ źródła i przypisanie folderu.
 - `mcp-images/catalog.json`: faktyczne referencje uruchomionych obrazów, SHA/digest i status potwierdzenia E2E.
 - `compose-migration-candidates.json`: **niezatwierdzone** kandydaty do przepięcia Compose.
 - `harness/`: mechanizmy admission, credential projection, kontroler i procedury operatora.

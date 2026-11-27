@@ -23,8 +23,8 @@ test("all credentialed edge services need separate caller and upstream secrets",
 });
 test("reject unknown Host, spoofed Host suffixes, and stage bypasses", () => {
   assert.equal(resolveService("evil.com").error, "unknown_host");
-  assert.equal(resolveService("qdrant-mcp.zariszlif.pl", {MCP_AUTH_TOKEN_QDRANT:"x",UPSTREAM_TOKEN_QDRANT:"y"}).error, "unknown_host");
-  assert.equal(resolveService("anything.example", {EDGE_SERVICE_ID:"qdrant",MCP_AUTH_TOKEN_QDRANT:"x",UPSTREAM_TOKEN_QDRANT:"y"}).error, "unknown_host");
+  assert.equal(resolveService("unregistered-fixture-mcp.zariszlif.pl", {MCP_AUTH_TOKEN_UNREGISTERED_FIXTURE:"x",UPSTREAM_TOKEN_UNREGISTERED_FIXTURE:"y"}).error, "unknown_host");
+  assert.equal(resolveService("anything.example", {EDGE_SERVICE_ID:"unregistered-fixture",MCP_AUTH_TOKEN_UNREGISTERED_FIXTURE:"x",UPSTREAM_TOKEN_UNREGISTERED_FIXTURE:"y"}).error, "unknown_host");
   assert.equal(resolveService("paperclip-mcp.zariszlif.pl.evil.com").error, "unknown_host");
   assert.equal(resolveService("mcp-edge-stage.zariszlif.pl").error, "unknown_host");
   assert.equal(resolveService("mcp-edge-stage.zariszlif.pl", {EDGE_STAGE_SERVICE:"paperclip"}).id, "paperclip");

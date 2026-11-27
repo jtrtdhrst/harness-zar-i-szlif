@@ -7,12 +7,19 @@ class SourceLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rows=json.loads((ROOT/"ops/coolify-service-registry.json").read_text())["resources"]
-    def test_all_38_distinct_live_coolify_resources(self):
-        self.assertEqual(len(self.rows),38)
-        self.assertEqual(len({x["uuid"] for x in self.rows}),38)
-        self.assertEqual(len({x["name"] for x in self.rows}),38)
+    def test_all_37_distinct_managed_coolify_resources(self):
+        self.assertEqual(len(self.rows),37)
+        self.assertEqual(len({x["uuid"] for x in self.rows}),37)
+        self.assertEqual(len({x["name"] for x in self.rows}),37)
         self.assertEqual(sum(x["type"]=="application" for x in self.rows),13)
-        self.assertEqual(sum(x["type"]=="service" for x in self.rows),25)
+        self.assertEqual(sum(x["type"]=="service" for x in self.rows),24)
+    def test_qdrant_database_retained_but_mcp_retired(self):
+        self.assertNotIn("qdrant-mcp", {row["name"] for row in self.rows})
+        db = next(row for row in self.rows if row["uuid"] == "eciprwgeyol4znmdd0dpu3xc")
+        self.assertEqual(db["name"], "qdrant")
+        self.assertEqual(db["source"], "vendor-image")
+        self.assertNotIn("root", db)
+
     def test_source_owner_is_real_not_a_dummy_directory(self):
         no_root={"vendor-image","upstream-git","local-image-unknown-source","other-repository","owned-image","retired-runtime"}
         for x in self.rows:
@@ -39,13 +46,12 @@ class SourceLayoutTests(unittest.TestCase):
             self.assertEqual(entry["source_repository"], "jtrtdhrst/harness-zar-i-szlif")
             self.assertEqual(entry["build_pack"], "dockerimage")
             self.assertNotIn("root", entry)
-    def test_retired_qdrant_mcp_no_build_folder(self):
-        r=next(x for x in self.rows if x["name"]=="qdrant-mcp")
-        self.assertEqual(r["source"],"retired-runtime")
-        self.assertNotIn("root",r)
-        self.assertNotIn("dockerfile",r)
-        self.assertFalse((ROOT/"mcp/qdrant-mcp").exists())
-        self.assertIn("qdrant", {x["name"] for x in self.rows})
+    def test_retired_resources_have_no_owned_source(self):
+        for r in self.rows:
+            if r["source"] == "retired-runtime":
+                self.assertNotIn("root",r)
+                self.assertNotIn("dockerfile",r)
+                self.assertFalse((ROOT/"mcp"/r["name"]).exists())
 
     def test_service_folder_matches_owned_mcp_source(self):
         for name in ("playwright-mcp","mantic-mcp","comfy-mcp","multica-mcp",

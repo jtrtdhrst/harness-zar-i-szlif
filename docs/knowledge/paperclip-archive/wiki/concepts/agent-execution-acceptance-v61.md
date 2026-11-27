@@ -18,7 +18,6 @@ An issue has ONE accountable domain executor. Access/environment repair is a cau
 | CMO | Brand, marketing strategy, consent and email/lifecycle acceptance | COO | Independent COO/CEO when CMO authored candidate |
 | Harness Agent | Paperclip/OpenCode core-adjacent environment, gateway, host, tools/plugin projection, runtime, access; sanctioned source-overlay fixes | COO → CTO for release/architecture | Independent CTO/competent technical non-author |
 | Engineer | Application code, business logic, Supabase integration, APIs, code components | CTO | CTO (unless author); qualified independent technical fallback |
-| MCP Engineer | PRODUCT MCP contracts, Qdrant/vector database, embeddings, retrieval/RAG and external integration synchronization | CTO | CTO (unless author); qualified independent technical fallback |
 | Designer | Native editable Plasmic/UI composition and responsive design | CTO | UI QA + CTO technical as applicable |
 | UI QA | Independent visual/accessibility and staging behavior verification, no implementation | CTO | CTO for final closure where required |
 | Email Creative | Approved email creative, safe HTML, previews | CMO | CMO |

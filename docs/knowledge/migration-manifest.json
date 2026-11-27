@@ -1,5 +1,5 @@
 {
-  "source": "Paperclip Wiki read-only filesystem snapshot",
+  "source": "Paperclip Wiki historical snapshot, filtered to current repository scope; source hashes retained for modified pages.",
   "date": "2026-11-09",
   "owner": "harness",
   "pages": [
@@ -55,9 +55,11 @@
     {
       "source_path": "wiki/agents/cto/AGENTS.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/cto/AGENTS.md",
-      "sha256": "c2e1158560e5fdb907e0290fd5d2f831b360520ee4895655a1fc0765ae2274eb",
-      "bytes": 31036,
-      "status": "historical_only"
+      "sha256": "d2704e078e44444f972a112547e5ab910acebacc6ff63933923fe26cc750f7b4",
+      "bytes": 29330,
+      "status": "historical_filtered",
+      "source_sha256": "c2e1158560e5fdb907e0290fd5d2f831b360520ee4895655a1fc0765ae2274eb",
+      "source_bytes": 31036
     },
     {
       "source_path": "wiki/agents/cto/CAPABILITIES-2026-10-20-historical.md",
@@ -146,9 +148,11 @@
     {
       "source_path": "wiki/agents/engineer/AGENTS.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/engineer/AGENTS.md",
-      "sha256": "793269a4c745cd1fe69891362152f1f2ea5d2d45dacf737cff6f6cc1f8445dab",
-      "bytes": 22290,
-      "status": "historical_only"
+      "sha256": "48e378a29ca6c06b3d823a295c9b6e42a9bac73a447ea37542e9b6b9c28c48f3",
+      "bytes": 20945,
+      "status": "historical_filtered",
+      "source_sha256": "793269a4c745cd1fe69891362152f1f2ea5d2d45dacf737cff6f6cc1f8445dab",
+      "source_bytes": 22290
     },
     {
       "source_path": "wiki/agents/harness/AGENTS.md",
@@ -167,9 +171,11 @@
     {
       "source_path": "wiki/agents/mcp-engineer/AGENTS.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/agents/mcp-engineer/AGENTS.md",
-      "sha256": "c07a39c8cf9bcd4cd2ca12dbb9164f037293fe238df3ef12a186985fa0de7262",
-      "bytes": 27876,
-      "status": "historical_only"
+      "sha256": "6a531a705adca6e0ec8138d17caf4bca8f1049680d7dd8a133f6e309eab6794e",
+      "bytes": 23766,
+      "status": "historical_filtered",
+      "source_sha256": "c07a39c8cf9bcd4cd2ca12dbb9164f037293fe238df3ef12a186985fa0de7262",
+      "source_bytes": 27876
     },
     {
       "source_path": "wiki/agents/ui-qa/AGENTS.md",
@@ -202,16 +208,20 @@
     {
       "source_path": "wiki/concepts/agent-execution-acceptance-v61.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/agent-execution-acceptance-v61.md",
-      "sha256": "80afdb797eaa28bb40b012be35945e3d14ccbe9cf418f791b401cf75c29d55f9",
-      "bytes": 12477,
-      "status": "historical_only"
+      "sha256": "4ccb3d3104fd5ba31a43e55e6fd68538e4a61f656e9e79103ed432aaafd8907a",
+      "bytes": 12274,
+      "status": "historical_filtered",
+      "source_sha256": "80afdb797eaa28bb40b012be35945e3d14ccbe9cf418f791b401cf75c29d55f9",
+      "source_bytes": 12477
     },
     {
       "source_path": "wiki/concepts/agent-git-delivery-policy.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/agent-git-delivery-policy.md",
-      "sha256": "7a9e64c38af49e7ab99e821a951337f2984467678965a22905732e53e5b155f7",
-      "bytes": 13877,
-      "status": "historical_only"
+      "sha256": "c2a4b391f09bbff68d2858f3e66ba587ea1568185597e2cb9cdf395890d037a7",
+      "bytes": 13019,
+      "status": "historical_filtered",
+      "source_sha256": "7a9e64c38af49e7ab99e821a951337f2984467678965a22905732e53e5b155f7",
+      "source_bytes": 13877
     },
     {
       "source_path": "wiki/concepts/archetypy-zwierzat-i-dialogi.md",
@@ -286,9 +296,11 @@
     {
       "source_path": "wiki/concepts/mcp-github-branch-migration-20261022.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/concepts/mcp-github-branch-migration-20261022.md",
-      "sha256": "057ef8511adfc883ad1808def4197845be362c0847f54cfcac5d2bc644b481f2",
-      "bytes": 14747,
-      "status": "historical_only"
+      "sha256": "0e3435fb9b6d3539522bb336c549abb0b1a7a2761634321e956247edbbca8dee",
+      "bytes": 13371,
+      "status": "historical_filtered",
+      "source_sha256": "057ef8511adfc883ad1808def4197845be362c0847f54cfcac5d2bc644b481f2",
+      "source_bytes": 14747
     },
     {
       "source_path": "wiki/concepts/native-task-watchdog-policy-20261029.md",
@@ -370,16 +382,20 @@
     {
       "source_path": "wiki/context-archives/coo/AGENTS-2026-10-20.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/coo/AGENTS-2026-10-20.md",
-      "sha256": "5089dac77925363c16925000cb39b31c5f05deedd4380f9e7e6195ec363c194a",
-      "bytes": 25688,
-      "status": "historical_only"
+      "sha256": "016a9de60c274f2b0557bc494ab0e371a2159a8f1ad85d9f9547bdc9e367e128",
+      "bytes": 25244,
+      "status": "historical_filtered",
+      "source_sha256": "5089dac77925363c16925000cb39b31c5f05deedd4380f9e7e6195ec363c194a",
+      "source_bytes": 25688
     },
     {
       "source_path": "wiki/context-archives/cto/AGENTS-2026-10-20.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/cto/AGENTS-2026-10-20.md",
-      "sha256": "0673ba23df965afddf5570016886af63ed259d9519f322a89c8f4b2b3f9c4d47",
-      "bytes": 16453,
-      "status": "historical_only"
+      "sha256": "e748b783aa60284035dd02143ccc845cf18a3474d694ff5d32ef5568af56f3f9",
+      "bytes": 15466,
+      "status": "historical_filtered",
+      "source_sha256": "0673ba23df965afddf5570016886af63ed259d9519f322a89c8f4b2b3f9c4d47",
+      "source_bytes": 16453
     },
     {
       "source_path": "wiki/context-archives/designer/AGENTS-2026-10-20.md",
@@ -405,9 +421,11 @@
     {
       "source_path": "wiki/context-archives/engineer/AGENTS-2026-10-20.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/engineer/AGENTS-2026-10-20.md",
-      "sha256": "4250e51edd439adb396a8129b2beb6f6c4738dd35f5267daa8b3558ac8c53849",
-      "bytes": 12667,
-      "status": "historical_only"
+      "sha256": "be561d0f275ff6167ac8f105d924a926b9d77bb05ae270b90e8d033e20be371f",
+      "bytes": 12252,
+      "status": "historical_filtered",
+      "source_sha256": "4250e51edd439adb396a8129b2beb6f6c4738dd35f5267daa8b3558ac8c53849",
+      "source_bytes": 12667
     },
     {
       "source_path": "wiki/context-archives/engineer/CAPABILITIES-2026-10-20.md",
@@ -433,16 +451,20 @@
     {
       "source_path": "wiki/context-archives/mcp-engineer/AGENTS-2026-10-20.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/mcp-engineer/AGENTS-2026-10-20.md",
-      "sha256": "9a89290655cf2750a3faf152d1e202c8d1453eb96e70749e69c312ffccbf4d30",
-      "bytes": 16238,
-      "status": "historical_only"
+      "sha256": "c12d597c601f0c11818787e71e9a6d22572a8a422c0aac8a354a084d1087c7db",
+      "bytes": 12413,
+      "status": "historical_filtered",
+      "source_sha256": "9a89290655cf2750a3faf152d1e202c8d1453eb96e70749e69c312ffccbf4d30",
+      "source_bytes": 16238
     },
     {
       "source_path": "wiki/context-archives/mcp-engineer/CAPABILITIES-2026-10-20.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/context-archives/mcp-engineer/CAPABILITIES-2026-10-20.md",
-      "sha256": "d8f6f30c331ab30313cd172914d975adfca54397830e9d43ed9325f97692684d",
-      "bytes": 5048,
-      "status": "historical_only"
+      "sha256": "0edf3bc38a4b9a6ebce4722a82455e692366ba8118b0a85288714295852970c8",
+      "bytes": 3506,
+      "status": "historical_filtered",
+      "source_sha256": "d8f6f30c331ab30313cd172914d975adfca54397830e9d43ed9325f97692684d",
+      "source_bytes": 5048
     },
     {
       "source_path": "wiki/context-archives/ui-qa/AGENTS-2026-10-20.md",
@@ -487,13 +509,6 @@
       "status": "historical_only"
     },
     {
-      "source_path": "wiki/entities/mcp-qdrant-hybrid.md",
-      "archive_path": "docs/knowledge/paperclip-archive/wiki/entities/mcp-qdrant-hybrid.md",
-      "sha256": "5b3b28e6103a2bcfde160a0b2a3fb2f6df68e4caab642a4e5ee4afa2f8fb7cb2",
-      "bytes": 3584,
-      "status": "historical_only"
-    },
-    {
       "source_path": "wiki/entities/repo-map.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/entities/repo-map.md",
       "sha256": "c96f721c7e6417224ca6c978114e38d46d6574840034a82543bb05688aee2c25",
@@ -510,16 +525,20 @@
     {
       "source_path": "wiki/index.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/index.md",
-      "sha256": "97cad6dc816f69e1274ca1a55b26ef95f57b7f67814685f9529105ea0438e214",
-      "bytes": 4250,
-      "status": "historical_only"
+      "sha256": "76789d2c7f8f6bc5dab6d8d273d1e44ecae3d21ff06ad55f92d93725e2c27860",
+      "bytes": 4212,
+      "status": "historical_filtered",
+      "source_sha256": "97cad6dc816f69e1274ca1a55b26ef95f57b7f67814685f9529105ea0438e214",
+      "source_bytes": 4250
     },
     {
       "source_path": "wiki/log.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/log.md",
-      "sha256": "f385d60b123481ba4468795f8960751333c03e999b00324bb4c95bf9b0d43fb0",
-      "bytes": 9394,
-      "status": "historical_only"
+      "sha256": "621eb1a12795db2838665f610e647ab267452623bc102db269d0d3757ae365d2",
+      "bytes": 8063,
+      "status": "historical_filtered",
+      "source_sha256": "f385d60b123481ba4468795f8960751333c03e999b00324bb4c95bf9b0d43fb0",
+      "source_bytes": 9394
     },
     {
       "source_path": "wiki/operations/active-backlog-inventory-2026-11-04.md",
@@ -538,9 +557,11 @@
     {
       "source_path": "wiki/sources/wspolny-kontekst.md",
       "archive_path": "docs/knowledge/paperclip-archive/wiki/sources/wspolny-kontekst.md",
-      "sha256": "ad4e9da5b34a39edccc971b51bd317b08deb65752b88061da5ae55a350b33fb3",
-      "bytes": 1703,
-      "status": "historical_only"
+      "sha256": "bc2922217cd9b71c2e1d5705999dfbadf2e3e02c3e2d41b2ea9e8a39e849b8e9",
+      "bytes": 1599,
+      "status": "historical_filtered",
+      "source_sha256": "ad4e9da5b34a39edccc971b51bd317b08deb65752b88061da5ae55a350b33fb3",
+      "source_bytes": 1703
     },
     {
       "source_path": "wiki/sweep/sweep-mcp-test.md",

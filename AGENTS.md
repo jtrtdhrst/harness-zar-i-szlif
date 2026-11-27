@@ -19,12 +19,8 @@ To repozytorium zawiera **kod własnych integracji MCP oraz konfigurację ich ur
 ## Opik: dlaczego dwa katalogi
 
 - `mcp/opik-mcp/`: backend Opik MCP (`backend/`), kontrola dostępu JWT (`access-guard/`) i prywatny proxy (`proxy/`). **Przyjmuje** autoryzowane wywołania narzędzi Opik. Obecna produkcja jest usługą Coolify `egasedqaofxnzcqppuxi805h` z lokalnymi obrazami; kod odtworzony w repo nie oznacza automatycznego przestawienia obrazów.
-- `workers/opik-run-enricher/`: niezależny proces batch. **Wysyła** do istniejących trace w Opik dozwolone metryki/zliczenia z zakończonych przebiegów agentów oraz Hindsight, bez surowych logów, promptów i treści pamięci. Nie obsługuje `tools/list` ani `tools/call`. W odczytanej liście 36 zasobów Coolify (2026-11-23) nie ma osobnego zasobu o tej nazwie — nie zakładaj wdrożenia, sprawdź rzeczywistego operatora przed zmianą.
+- `workers/opik-run-enricher/`: niezależny proces batch. **Wysyła** do istniejących trace w Opik dozwolone metryki/zliczenia z zakończonych przebiegów agentów oraz Hindsight, bez surowych logów, promptów i treści pamięci. Nie obsługuje `tools/list` ani `tools/call`. W odczytanej liście 38 zasobów Coolify (2026-11-23) nie ma osobnego zasobu o tej nazwie — nie zakładaj wdrożenia, sprawdź rzeczywistego operatora przed zmianą.
 - `ops/` to wspólna infrastruktura dla **wszystkich** integracji. Nie jest drugą implementacją Opik; `ops/mcp-images/catalog.json` przechowuje inwentaryzację obrazów, a nie skompilowany serwer.
-
-## Qdrant: tylko jeden katalog źródeł
-
-`mcp/qdrant-mcp/` zawiera `server.py`, `requirements.txt`, `Dockerfile`, README i kontrakty. Dawny katalog główny `qdrant-mcp/` zawierał jedynie dokumentację i kandydackie kontrakty Compose. Po migracji nie wolno go odtwarzać. **Nie usuwać** usługi Coolify `a4zgmthjspz8hwvyu6llr8dh`, obrazu produkcyjnego, Qdrant DB ani wolumenów/zbiorów danych w ramach porządkowania repo.
 
 ## Procedura zmiany dla każdego agenta
 
@@ -37,8 +33,8 @@ To repozytorium zawiera **kod własnych integracji MCP oraz konfigurację ich ur
 ## Szybkie źródła prawdy
 
 - `README.md` oraz `docs/REPOSITORY-ARCHITECTURE.md`: mapa architektury.
-- `mcp/README.md`: lista i przeznaczenie 13 serwerów MCP.
-- `ops/coolify-service-registry.json`: mapa 36 zasobów Coolify z odczytu 2026-11-22; weryfikuj ponownie przed akcją.
+- `mcp/README.md`: lista i przeznaczenie 12 aktywnych serwerów MCP.
+- `ops/coolify-service-registry.json`: mapa 38 zasobów Coolify z inwentaryzacji 2026-11-23; weryfikuj ponownie przed akcją.
 - `ops/service-build-roots.json`: 16 katalogów własnego kodu i konfiguracja budowania.
 - `ops/mcp-images/catalog.json`: migawka obrazów, **nie atestacja** aktualnej produkcji.
 - `workers/opik-run-enricher/README.md` i `mcp/opik-mcp/README.md`: dwa niezależne procesy Opik.

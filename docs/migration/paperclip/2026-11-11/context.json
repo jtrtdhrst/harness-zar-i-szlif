@@ -1,10 +1,10 @@
 {
-  "source": "Paperclip READ-ONLY",
+  "source": "Paperclip historical metadata, filtered to the current repository scope",
   "snapshot_date": "2026-11-11",
-  "issue_count": 1260,
+  "issue_count": 1239,
   "issue_status_counts": {
-    "done": 808,
-    "cancelled": 437,
+    "cancelled": 422,
+    "done": 802,
     "blocked": 10,
     "in_review": 3,
     "in_progress": 2
@@ -22,28 +22,28 @@
       "name": "04 · Operations / Release & Reliability",
       "status": "in_progress",
       "codebase_repository": "zar-i-szlif",
-      "task_count": 115
+      "task_count": 114
     },
     {
       "id": "3d251932-c5e1-4ebe-bb4a-3d46628a1951",
       "name": "04 · Operations / Paperclip Ops",
       "status": "in_progress",
       "codebase_repository": "paperclip",
-      "task_count": 99
+      "task_count": 92
     },
     {
       "id": "291fecff-2f36-44bc-ba39-cae853f6e90c",
       "name": "01 · Produkt / Panel aplikacji",
       "status": "in_progress",
       "codebase_repository": "zar-i-szlif",
-      "task_count": 90
+      "task_count": 74
     },
     {
       "id": "911366a1-6347-4245-96ab-e7d0c6b64089",
       "name": "02 · MCP / Integracje i dane",
       "status": "in_progress",
       "codebase_repository": "zar-i-szlif",
-      "task_count": 120
+      "task_count": 101
     },
     {
       "id": "d8759fc7-850b-4500-8b07-076d46c5d4d7",
@@ -51,13 +51,6 @@
       "status": "planned",
       "codebase_repository": "zar-i-szlif",
       "task_count": 0
-    },
-    {
-      "id": "ca5ae4f0-04c8-4f7d-a034-4efce4fbd72c",
-      "name": "02 · MCP / Qdrant Hybrid",
-      "status": "in_progress",
-      "codebase_repository": null,
-      "task_count": 2
     },
     {
       "id": "ac9cf5b0-0b02-49f1-892d-942a3e0caade",
@@ -92,7 +85,7 @@
       "name": "03 · Growth / Lifecycle & Email",
       "status": "in_progress",
       "codebase_repository": "zar-i-szlif",
-      "task_count": 50
+      "task_count": 48
     },
     {
       "id": "586450b2-f8b2-4dbf-bf49-6d6f7ef4d00c",
@@ -113,7 +106,7 @@
       "name": "04 · Operations / Hermes-Paperclip E2E",
       "status": "in_progress",
       "codebase_repository": "harness-zar-i-szlif",
-      "task_count": 66
+      "task_count": 65
     }
   ],
   "source_agents": [
@@ -419,5 +412,5 @@
       "blocker_attention": "needs_attention"
     }
   ],
-  "limitations": "Metadata archive, not complete comments or descriptions or full historical first-class relations. Nonterminal blockers and structural parents are source-native reads. Nonterminal tasks are not automatically dispatched."
+  "limitations": "Metadata archive, not complete comments or descriptions or full historical first-class relations. Nonterminal blockers and structural parents are source-native reads. Nonterminal tasks are not automatically dispatched. Excluded records and parent links to excluded records were removed; original snapshot remains available in prior Git history."
 }

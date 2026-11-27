@@ -858,15 +858,15 @@ class MainWiringTests(unittest.TestCase):
         host = FakeHost()
         data = manifest()
         data["other_resources"].append({
-            "id": "qdrant", "promotion_state": "hold",
+            "id": "unregistered-fixture", "promotion_state": "hold",
             "auto_deploy_expected": False, "review_required": True})
         code, out = self.run_main("plan", host,
-            changed=("qdrant/README.md",), manifest_override=data)
+            changed=("unregistered-fixture/README.md",), manifest_override=data)
         payload = json.loads(out)
         self.assertEqual(code, 1, payload)
         self.assertEqual(payload["result"], "held_manual_pending")
         self.assertFalse(payload["release_complete"])
-        self.assertEqual(payload["pending_paths"], ["qdrant/README.md"])
+        self.assertEqual(payload["pending_paths"], ["unregistered-fixture/README.md"])
         self.assertEqual(host.mutations(), [])
 
     def test_unclassified_build_source_denied_before_any_promotion(self):
@@ -978,7 +978,7 @@ class MainWiringTests(unittest.TestCase):
         code, out = self.run_main(
             "plan", host,
             changed=("mcp/mantic-mcp/src/server.ts", "mcp/playwright-mcp/src/unreviewed.ts",
-                     "apps/plasmic/src/core.ts", "qdrant/data/index.ts"),
+                     "apps/plasmic/src/core.ts", "unregistered-fixture/data/index.ts"),
             extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
         report = json.loads(out)
         self.assertEqual(code, 0, report)
@@ -988,7 +988,7 @@ class MainWiringTests(unittest.TestCase):
         self.assertEqual(report["admitted"], ["mantic-mcp"])
         self.assertEqual(report["pending_paths"],
                          ["apps/plasmic/src/core.ts", "mcp/playwright-mcp/src/unreviewed.ts",
-                          "qdrant/data/index.ts"])
+                          "unregistered-fixture/data/index.ts"])
         self.assertEqual(host.calls, [])
 
     def test_scoped_plan_does_not_skip_service_approval_or_signed_ci(self):
@@ -1019,14 +1019,14 @@ class MainWiringTests(unittest.TestCase):
             code, out = self.run_main(
                 "deploy", host,
                 changed=("mcp/mantic-mcp/src/server.ts",
-                         "mcp/playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"),
+                         "mcp/playwright-mcp/src/unapproved.ts", "unregistered-fixture/data/index.ts"),
                 extra=["--service", "mantic-mcp", "--now", NOW.isoformat()])
         report = json.loads(out)
         self.assertEqual(code, 0, report)
         self.assertEqual(report["scope"], "mantic-mcp")
         self.assertEqual(report["result"], "ok_scoped")
         self.assertEqual(report["pending_paths"],
-                         ["mcp/playwright-mcp/src/unapproved.ts", "qdrant/data/index.ts"])
+                         ["mcp/playwright-mcp/src/unapproved.ts", "unregistered-fixture/data/index.ts"])
         decisions = report["deployed"]["decisions"]
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0]["service"], "mantic-mcp")
