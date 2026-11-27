@@ -97,6 +97,20 @@ def retire_writer_target(path=None):
     return True
 
 
+
+def retire_writer_source():
+    """Revoke the root-only writer grant when any projection stage fails."""
+    try:
+        st = os.lstat(WRITER_SOURCE)
+    except FileNotFoundError:
+        return False
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+            st.st_gid != 0 or st.st_nlink != 1 or
+            stat.S_IMODE(st.st_mode) != 0o600):
+        raise RuntimeError("Untrusted source writer grant")
+    os.unlink(WRITER_SOURCE)
+    return True
+
 def project_writer_runtime():
     """Atomically project validated scoped writer into the existing named volume."""
     check_dir(WRITER_RUNTIME.parent, NODE_GID, 0o750)
@@ -151,17 +165,18 @@ def main():
             writer_revoked = retire_writer_target()
             runtime_revoked = retire_writer_target(WRITER_RUNTIME)
     except Exception:
-        # A failed reader refresh or rejected writer projection must not
-        # leave a previously authorized writer alive in the runtime volume.
-        # Attempt both revocations even if one path is untrusted.
-        cleanup_error = None
-        for path in (WRITER_TARGET, WRITER_RUNTIME):
+        # Any failure in ExecStartPost must also revoke the root source;
+        # ExecStart will not run its catch block after it already succeeded.
+        cleanup_errors = []
+        for cleanup in (lambda: retire_writer_target(WRITER_TARGET),
+                        lambda: retire_writer_target(WRITER_RUNTIME),
+                        retire_writer_source):
             try:
-                retire_writer_target(path)
+                cleanup()
             except Exception as exc:
-                cleanup_error = exc
-        if cleanup_error is not None:
-            raise RuntimeError("Writer revocation failed") from cleanup_error
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            raise RuntimeError("Writer revocation incomplete") from cleanup_errors[0]
         raise
     print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry,
                       "writer_projected": writer_projected, "writer_revoked": writer_revoked,
