@@ -63,11 +63,12 @@ class FullRefreshFailClosed(unittest.TestCase):
              patch.object(refresh.os,"geteuid",return_value=0), \
              patch.object(refresh.os,"fstat",side_effect=root_fstat), \
              patch.object(refresh,"mint",side_effect=mint), \
+             patch.object(refresh,"revoke_existing_writer_at_github",return_value=True), \
              patch.object(refresh,"write_token",side_effect=write), \
              patch.object(runpy,"run_path",side_effect=loader), \
              patch.dict(os.environ,{refresh.WRITER_OPT_IN:"true"}):
-            with self.assertRaisesRegex(RuntimeError,
-                  "writer cleanup incomplete" if fail_projection else "synthetic role failure"):
+            with self.assertRaisesRegex(RuntimeError, 
+                  "Writer cleanup incomplete" if fail_projection else "synthetic role failure"):
                 refresh.main()
 
     def test_early_nonwriter_failure_revokes_existing_grants(self):
