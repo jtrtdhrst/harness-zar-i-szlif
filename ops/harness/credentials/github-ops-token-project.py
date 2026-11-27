@@ -6,6 +6,9 @@ grant is minted by the existing Multica refresh service and rotated atomically.
 No token is written to stdout or command-line arguments.
 """
 import datetime
+import fcntl
+import contextlib
+import runpy
 import json
 import os
 from pathlib import Path
@@ -149,7 +152,33 @@ def project_writer_runtime():
             os.unlink(tmp)
 
 
-def main():
+@contextlib.contextmanager
+def writer_lifecycle_lock():
+    """Share the exact root-owned lock with the role minter.
+
+    Prevent a projector from racing an opt-out, failed mint, or cleanup.
+    The lock itself and both ancestor directories are never symlinks.
+    """
+    if os.geteuid() != 0:
+        raise RuntimeError("Writer projection lock requires root")
+    check_dir(WRITER_SOURCE.parent.parent, 0, 0o700)
+    check_dir(WRITER_SOURCE.parent, 0, 0o700)
+    fd = os.open(WRITER_SOURCE.parent / ".refresh.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    st = os.fstat(fd)
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+        st.st_gid != 0 or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+        os.close(fd)
+        raise RuntimeError("Untrusted writer lifecycle lock")
+    with os.fdopen(fd, "r+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _project_once():
     writer_projected = False
     writer_revoked = False
     runtime_revoked = False
@@ -165,22 +194,22 @@ def main():
             writer_revoked = retire_writer_target()
             runtime_revoked = retire_writer_target(WRITER_RUNTIME)
     except Exception:
-        # Any failure in ExecStartPost must also revoke the root source;
-        # ExecStart will not run its catch block after it already succeeded.
-        cleanup_errors = []
-        for cleanup in (lambda: retire_writer_target(WRITER_TARGET),
-                        lambda: retire_writer_target(WRITER_RUNTIME),
-                        retire_writer_source):
-            try:
-                cleanup()
-            except Exception as exc:
-                cleanup_errors.append(exc)
-        if cleanup_errors:
-            raise RuntimeError("Writer revocation incomplete") from cleanup_errors[0]
+        # ExecStartPost runs after the minter returns, so it must revoke
+        # the remote GitHub token itself, not merely delete local copies.
+        # Reuse the minter's provider-first, all-locations fail-closed path.
+        refresher = runpy.run_path(str(Path(__file__).resolve().parent /
+                                       "multica-zar-github-app-refresh.py"))
+        refresher["cleanup_failed_writer"]()
         raise
     print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry,
                       "writer_projected": writer_projected, "writer_revoked": writer_revoked,
                       "runtime_writer_revoked": runtime_revoked}))
+
+
+def main():
+    with writer_lifecycle_lock():
+        return _project_once()
+
 
 if __name__ == "__main__":
     try:
