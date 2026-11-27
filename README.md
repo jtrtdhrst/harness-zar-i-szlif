@@ -26,7 +26,7 @@
 
 **Szczegóły każdej usługi:** [mcp/README.md](mcp/README.md).
 **Architektura i zakres zmian:** [docs/REPOSITORY-ARCHITECTURE.md](docs/REPOSITORY-ARCHITECTURE.md).
-**36 zarządzanych Coolify UUID:** [ops/coolify-service-registry.json](ops/coolify-service-registry.json).
+**37 zarządzanych Coolify UUID:** [ops/coolify-service-registry.json](ops/coolify-service-registry.json).
 **Katalog uruchomionych obrazów i ich pochodzenia:** [ops/mcp-images/](ops/mcp-images/).
 **Źródło prawdy dla kontekstów Docker:** [ops/service-build-roots.json](ops/service-build-roots.json).
 
