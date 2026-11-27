@@ -21,7 +21,7 @@ TARGET_DIR = Path("/etc/github-ops-mcp/reader")
 TARGET = TARGET_DIR / "token.json"
 ROLE = "github-ops-reader"
 REPOS = {"jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"}
-PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"}
+PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "pull_requests": "read", "metadata": "read"}
 WRITER_SOURCE = Path("/etc/multica-git-credential/roles/github-ops-writer.json")
 WRITER_TARGET = TARGET_DIR / "writer.json"
 # Existing Coolify named-volume directory mounted read-only at

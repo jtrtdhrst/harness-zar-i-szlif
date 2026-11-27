@@ -24,6 +24,32 @@ def load(filename, name):
 
 
 class ScheduledReaderIsolation(unittest.TestCase):
+
+    def test_zari315_github_ops_readers_have_minimum_pr_provenance_scope(self):
+        refresh = load("multica-zar-github-app-refresh.py", "zari315_refresh")
+        legacy = load("github-ops-token-project.py", "zari315_reader_project")
+        image = load("github-ops-image-reader-project.py", "zari315_image_project")
+        expected = {
+            "actions": "read",
+            "administration": "read",
+            "contents": "read",
+            "deployments": "read",
+            "pull_requests": "read",
+            "metadata": "read",
+        }
+        for grant in (
+            refresh.ROLE_PERMISSIONS["github-ops-reader"],
+            refresh.ROLE_PERMISSIONS["github-ops-reader-image"],
+            legacy.PERMISSIONS,
+            image.PERMISSIONS,
+        ):
+            with self.subTest(grant=grant):
+                self.assertEqual(grant, expected)
+                self.assertNotIn("write", grant.values())
+                self.assertNotIn("issues", grant)
+        self.assertEqual(refresh.ROLE_PERMISSIONS["github-ops-writer"]["pull_requests"], "write")
+        self.assertNotEqual(refresh.ROLE_PERMISSIONS["github-ops-reader"], refresh.ROLE_PERMISSIONS["github-ops-writer"])
+
     def test_timer_is_truly_reader_only(self):
         unit = SYSTEMD.read_text()
         self.assertIn("ExecStart=/usr/bin/python3 /usr/local/libexec/"

@@ -26,10 +26,10 @@ ROLE_PERMISSIONS = {
     "runner": {"actions": "write", "administration": "write", "contents": "read", "metadata": "read"},
     "harness-reader": {"contents": "read", "metadata": "read"},
     "cache-reader": {"contents": "read", "metadata": "read"},
-    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
+    "github-ops-reader": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "pull_requests": "read", "metadata": "read"},
     # Dedicated, non-brokered credential for a digest-pinned GitHub Ops MCP image.
     "github-ops-reader-harness": {"contents": "read", "metadata": "read"},
-    "github-ops-reader-image": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"},
+    "github-ops-reader-image": {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "pull_requests": "read", "metadata": "read"},
     "github-ops-writer": {"actions": "write", "contents": "write", "pull_requests": "write", "metadata": "read"},
 }
 ROLE_REPO_NAMES = {"harness-reader": ("harness-zar-i-szlif",), "github-ops-reader-harness": ("harness-zar-i-szlif",)}
