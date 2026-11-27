@@ -21,7 +21,7 @@ const REQUEST_TIMEOUT_MS = (() => {
 // Entry point of the real MCP server. Overridable only so the lifecycle
 // regression suite can drive a stub backend; the shipped default is unchanged.
 const BACKEND_ENTRY = process.env.BACKEND_ENTRY || "/app/cli.js";
-const BACKEND_ARGS = ["--headless", "--browser", "chromium", "--no-sandbox",
+const BACKEND_ARGS = ["--headless", "--browser", "chromium", "--no-sandbox", "--isolated",
   "--port", "0", "--host", "127.0.0.1", "--allowed-hosts", "*"];
 
 const log = (...a) => console.error("[proxy]", ...a);
@@ -147,7 +147,9 @@ async function handleMcp(clientReq, clientRes, chunks) {
     ensureBackend((err) => {
       if (err || !backend) { clientRes.writeHead(502).end('{"error":"backend unavailable"}'); return; }
       const be = backend;
-      const headers = { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "close" };
+      // Playwright streamable HTTP rejects alternating requests on upstream Connection: close.
+      // Keep the backend connection alive even if the external client closes its own socket.
+      const headers = { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "keep-alive" };
       delete headers["content-length"];
       inFlight++;
       let released = false;
@@ -231,7 +233,8 @@ function handler(clientReq, clientRes) {
         // POST deadline on it severed live event channels and dropped
         // `openStreams` to 0, which then let the idle watcher kill a backend
         // whose browser context was still in use.
-        headers: { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "close" } },
+        // Preserve an SSE stream through the same persistent upstream connection policy.
+        headers: { ...clientReq.headers, host: `127.0.0.1:${be.port}`, connection: "keep-alive" } },
         (bRes) => {
           const h = { ...bRes.headers }; delete h["connection"]; delete h["transfer-encoding"];
           clientRes.writeHead(bRes.statusCode, h);

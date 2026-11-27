@@ -36,7 +36,7 @@ async function freePort() {
   return port;
 }
 
-async function startProxy({ idleSeconds = 600, requestTimeoutMs, stubSilent = false } = {}) {
+async function startProxy({ idleSeconds = 600, requestTimeoutMs, stubSilent = false, requireKeepAlive = false } = {}) {
   const port = await freePort();
   const dir = mkdtempSync(join(tmpdir(), "pw-proxy-"));
   const startsFile = join(dir, "backend-starts.log");
@@ -49,6 +49,7 @@ async function startProxy({ idleSeconds = 600, requestTimeoutMs, stubSilent = fa
       STUB_STARTS_FILE: startsFile,
       ...(requestTimeoutMs ? { REQUEST_TIMEOUT_MS: String(requestTimeoutMs) } : {}),
       ...(stubSilent ? { STUB_SILENT: "1" } : {}),
+      ...(requireKeepAlive ? { STUB_REQUIRE_KEEPALIVE: "1" } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -308,6 +309,21 @@ test("negative control: a genuinely idle backend is still stopped", async () => 
     // Diagnostics are additive; assert them only when the proxy exposes them.
     if ("inFlight" in h.json) assert.equal(h.json.inFlight, 0);
     if ("openStreams" in h.json) assert.equal(h.json.openStreams, 0);
+  } finally {
+    await p.stop();
+  }
+});
+
+test("sessionful MCP calls preserve keep-alive upstream even when clients disconnect", async () => {
+  const p = await startProxy({ requireKeepAlive: true });
+  try {
+    const sid = await initialize(p.port);
+    for (let id = 1; id <= 10; id++) {
+      const r = await toolCall(p.port, sid, "state");
+      assert.equal(r.status, 200, "a transient upstream HTTP 400 interrupts MCP after call " + id);
+      assert.ok(payload(r, "state").pid, "backend state was not returned");
+    }
+    assert.equal(p.starts().length, 1, "the backend was unnecessarily restarted");
   } finally {
     await p.stop();
   }
