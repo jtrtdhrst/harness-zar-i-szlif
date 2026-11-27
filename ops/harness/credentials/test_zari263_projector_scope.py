@@ -76,9 +76,11 @@ class WriterRevocation(unittest.TestCase):
         from unittest.mock import call, patch
         project = load("github-ops-token-project.py", "bgh_reader_failure_revoke")
         with patch.object(project, "project", side_effect=RuntimeError("reader invalid")), \
-             patch.object(project, "retire_writer_target", return_value=True) as revoke:
+             patch.object(project, "retire_writer_target", return_value=True) as revoke, \
+             patch.object(project, "retire_writer_source", return_value=True) as source_revoke:
             with self.assertRaisesRegex(RuntimeError, "reader invalid"):
                 project.main()
+        source_revoke.assert_called_once_with()
         self.assertEqual(revoke.call_args_list, [
             call(project.WRITER_TARGET), call(project.WRITER_RUNTIME)
         ])
