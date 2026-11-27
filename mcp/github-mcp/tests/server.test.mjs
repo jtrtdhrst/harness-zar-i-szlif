@@ -59,7 +59,7 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
         v=merged&&!closedFeedMissing?[{number:987,merged_at:'2026-11-20T12:00:00Z',
           head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:associatedMergeShaNull?null:mergeSHA}]:[];
     }
-    else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable?0:1};
+    else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable&&u.pathname.includes('/compare/'+mergeSHA+'...main')?0:1};
     else if(u.pathname.endsWith('/actions/runs/321')){
       if(runReadsToMiss-- >0)return new Response(null,{status:404});
       v={id:321,head_sha:dispatchRunSHA,event:'workflow_dispatch',path:'.github/workflows/release-lanes-policy.yml',html_url:'https://github.com/example/actions/runs/321'};
@@ -202,21 +202,21 @@ test('both PR projections may omit merge SHA; verified merge event and main ance
     try{
       const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
       assert.equal(out.body.result.structuredContent?.eligible,true);
-      assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/issues/987/events?per_page=100')));
+      assert.equal(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/issues/987/events?per_page=100')),Boolean(opt.associatedMergeShaNull&&opt.individualMergeShaNull));
       assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.includes('/compare/')));
       assert.equal(f.calls.some(([method])=>method!=='GET'),false);
     }finally{await f.close()}
   }
 });
 test('missing or inconsistent merge event fails closed',async()=>{
- for(const opt of [
-   {associatedMergeShaNull:true,individualMergeShaNull:true,mergeEventMissing:true},
-   {associatedMergeShaNull:false,individualMergeShaNull:true,mergeEventMismatch:true}]){
+ for(const [opt,err] of [
+   [{associatedMergeShaNull:true,individualMergeShaNull:true,mergeEventMissing:true},'MERGE_NOT_VERIFIED'],
+   [{associatedMergeShaNull:true,individualMergeShaNull:true,mergeEventMismatch:true},'MERGE_NOT_REACHABLE']]){
    const f=await fixture(opt);
    try{
      const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
      assert.equal(out.body.result.isError,true);
-     assert.match(out.body.result.content[0].text,/MERGE_NOT_VERIFIED/);
+     assert.match(out.body.result.content[0].text,new RegExp(err));
      assert.equal(f.calls.some(([method])=>method!=='GET'),false);
    }finally{await f.close()}
  }
