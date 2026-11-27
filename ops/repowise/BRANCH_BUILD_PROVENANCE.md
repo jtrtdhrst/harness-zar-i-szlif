@@ -70,6 +70,7 @@ These are **configured Coolify service image references**, not an authenticated 
 | `plasmic-mcp` | `a6ci2beifbinzckfnneiqnjd` | `127.0.0.1:5000/harness-plasmic-mcp:deb907a88591` |
 | `coolify-mcp` | `f7smgdueq8frlex9lfhp9iji` | `ghcr.io/stumason/coolify-mcp:3.9.0` |
 | `supabase-mcp` | `tjit4c8m0kjh8brkmdhyvkde` | `127.0.0.1:5000/harness-supabase-mcp:deb907a88591` |
+| `qdrant` (retained vector DB; not retired MCP) | `eciprwgeyol4znmdd0dpu3xc` | `qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2` (historical source inventory) |
 | `comfy-mcp` | `kkhfw0napmeaqewgdirwhc1h` | `local/comfyui-mcp:0.52.206-chatfiles7` |
 | `opencode` | `26aqp0flyvdinjn6dklxnb1c` | `local/opencode-standalone:2.2.5-custom; alpine/socat` |
 | `ubuntu-mcp` | `lcnjb3vreec7saihkhan6akh` | `127.0.0.1:5000/harness-ubuntu-mcp:3c8da46902d2` |
