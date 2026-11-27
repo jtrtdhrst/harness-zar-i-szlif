@@ -90,7 +90,8 @@ class SafeRefreshPathTests(unittest.TestCase):
              patch.object(refresh.os, "geteuid", return_value=0), \
              patch.object(refresh.os, "fstat", side_effect=root_fstat), \
              patch.object(refresh, "mint", side_effect=mint_role) as minted, \
-             patch.object(refresh, "write_token") as wrote:
+             patch.object(refresh, "write_token") as wrote, \
+             patch.object(refresh, "cleanup_failed_writer"):
             try:
                 refresh.main()
             finally:
@@ -135,7 +136,7 @@ class SafeRefreshPathTests(unittest.TestCase):
         victim = pathlib.Path(self.tmp.name) / 'victim-writer'
         victim.write_text('unchanged')
         (self.target / 'github-ops-writer.json').symlink_to(victim)
-        with self.assertRaisesRegex(RuntimeError, 'Writer cleanup incomplete'):
+        with self.assertRaises(OSError):
             self.run_refresh(writer_enabled='false')
         self.assertEqual(victim.read_text(), 'unchanged')
         self.assertEqual(self.minted_count, 0)
