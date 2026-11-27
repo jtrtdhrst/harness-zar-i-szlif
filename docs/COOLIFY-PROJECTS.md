@@ -68,7 +68,7 @@ same project.
 
 - `mcp/comfy-mcp/` is **active canonical MCP source**, not an obsolete combined folder. The separate `comfy` service runs its existing local/upstream image and stores models and outputs in its own persistent volumes.
 - Bridges `emailens-mcp`, `mantic-mcp`, and `ubuntu-mcp` have independent code under `mcp/`; their providers or engine stacks are separate resources.
-- Mautic, Supabase, Opik Core and ComfyUI Engine are runtime resources; do not invent local owner-source folders for vendor or unknown-source images.
+- Mautic, Supabase, Opik Core, ComfyUI Engine and the retained Qdrant DB (Coolify UUID `eciprwgeyol4znmdd0dpu3xc`, vendor image) are runtime resources; do not invent local owner-source folders for vendor or unknown-source images.
 - `mcp/opik-mcp/` and `workers/opik-run-enricher/` are separate components, whereas `ops/` contains shared deployment metadata, not an Opik process.
 
 
