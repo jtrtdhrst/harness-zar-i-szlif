@@ -7,12 +7,19 @@ class SourceLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rows=json.loads((ROOT/"ops/coolify-service-registry.json").read_text())["resources"]
-    def test_all_36_distinct_managed_coolify_resources(self):
-        self.assertEqual(len(self.rows),36)
-        self.assertEqual(len({x["uuid"] for x in self.rows}),36)
-        self.assertEqual(len({x["name"] for x in self.rows}),36)
+    def test_all_37_distinct_managed_coolify_resources(self):
+        self.assertEqual(len(self.rows),37)
+        self.assertEqual(len({x["uuid"] for x in self.rows}),37)
+        self.assertEqual(len({x["name"] for x in self.rows}),37)
         self.assertEqual(sum(x["type"]=="application" for x in self.rows),13)
-        self.assertEqual(sum(x["type"]=="service" for x in self.rows),23)
+        self.assertEqual(sum(x["type"]=="service" for x in self.rows),24)
+    def test_qdrant_database_retained_but_mcp_retired(self):
+        self.assertNotIn("qdrant-mcp", {row["name"] for row in self.rows})
+        db = next(row for row in self.rows if row["uuid"] == "eciprwgeyol4znmdd0dpu3xc")
+        self.assertEqual(db["name"], "qdrant")
+        self.assertEqual(db["source"], "vendor-image")
+        self.assertNotIn("root", db)
+
     def test_source_owner_is_real_not_a_dummy_directory(self):
         no_root={"vendor-image","upstream-git","local-image-unknown-source","other-repository","owned-image","retired-runtime"}
         for x in self.rows:
