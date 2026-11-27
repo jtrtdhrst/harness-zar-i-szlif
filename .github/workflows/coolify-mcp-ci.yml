@@ -47,6 +47,42 @@ jobs:
       - name: Build owned runtime
         working-directory: mcp/coolify-mcp
         run: npm run build
+      - name: Build Coolify MCP container
+        run: docker build --tag coolify-mcp:ci ./mcp/coolify-mcp
+      - name: Verify OAuth state volume and HTTP startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          volume="coolify-mcp-data-smoke-${GITHUB_RUN_ID}"
+          container="coolify-mcp-http-smoke-${GITHUB_RUN_ID}"
+          docker image inspect --format '{{json .Config.Volumes}}' coolify-mcp:ci | grep -Fq '"/data"'
+          docker volume create "$volume" >/dev/null
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --rm --volume "$volume:/data" --entrypoint node coolify-mcp:ci \
+            -e "if (process.getuid() === 0) process.exit(1); require('node:fs').writeFileSync('/data/.volume-smoke', 'persisted')"
+          docker run --rm --volume "$volume:/data" --entrypoint node coolify-mcp:ci \
+            -e "if (process.getuid() === 0) process.exit(1); const fs = require('node:fs'); if (fs.readFileSync('/data/.volume-smoke', 'utf8') !== 'persisted') process.exit(1); fs.unlinkSync('/data/.volume-smoke')"
+          docker run --detach --name "$container" \
+            --publish 127.0.0.1:18080:8080 \
+            --volume "$volume:/data" \
+            --env COOLIFY_BASE_URL=https://coolify.example.com \
+            --env COOLIFY_ACCESS_TOKEN=ci-dummy-token \
+            --env MCP_PUBLIC_URL=https://mcp.example.com \
+            --env MCP_OAUTH_STATE_FILE=/data/oauth-state.json \
+            coolify-mcp:ci >/dev/null
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:18080/healthz >/dev/null; then
+              curl --fail --silent --show-error http://127.0.0.1:18080/healthz
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container"
+          exit 1
       - name: Coolify MCP E2E
         working-directory: mcp/coolify-mcp
         run: npm test -- --runInBand
