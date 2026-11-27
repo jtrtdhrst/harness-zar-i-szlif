@@ -71,6 +71,7 @@
   "dependencies": {
     "@modelcontextprotocol/core": "^2.2.0",
     "@modelcontextprotocol/server": "^2.2.0",
+    "jose": "^5.10.0",
     "minisearch": "^7.2.0",
     "zod": "^4.3.5"
   },

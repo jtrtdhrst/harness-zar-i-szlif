@@ -20,6 +20,7 @@ import {
   DEFAULT_OAUTH_STATE_FILE,
   ensureStateFileWritable,
 } from './lib/startup-check.js';
+import { cfAccessConfigFromEnv } from './lib/cf-access.js';
 import { registryFromEnv, type InstanceRegistry } from './lib/instances.js';
 import type { CoolifyConfig } from './types/coolify.js';
 
@@ -167,6 +168,7 @@ function main(): void {
     readonly,
     redirectHosts: (process.env.MCP_REDIRECT_HOSTS ?? '').split(','),
     clientIpHeader: process.env.MCP_CLIENT_IP_HEADER,
+    cfAccess: cfAccessConfigFromEnv(process.env),
   });
 
   const server = createServer((req, res) => {

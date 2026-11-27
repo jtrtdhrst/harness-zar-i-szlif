@@ -11,6 +11,7 @@ on:
       - 'scripts/harness_release_admission.py'
       - 'scripts/harness_release_parity.py'
       - 'scripts/test_harness_release_parity.py'
+      - 'scripts/test_non_mcp_build_guard.py'
   push:
     branches: [main]
     paths:
@@ -23,6 +24,7 @@ on:
       - 'scripts/harness_release_admission.py'
       - 'scripts/harness_release_parity.py'
       - 'scripts/test_harness_release_parity.py'
+      - 'scripts/test_non_mcp_build_guard.py'
   workflow_dispatch:
 
 permissions:
@@ -47,6 +49,42 @@ jobs:
       - name: Build owned runtime
         working-directory: mcp/coolify-mcp
         run: npm run build
+      - name: Build Coolify MCP container
+        if: github.event_name == 'pull_request'
+        run: docker build --tag coolify-mcp:ci ./mcp/coolify-mcp
+      - name: Verify OAuth state volume and HTTP startup
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          volume="coolify-mcp-data-smoke-${GITHUB_RUN_ID}"
+          container="coolify-mcp-http-smoke-${GITHUB_RUN_ID}"
+          docker image inspect --format '{{json .Config.Volumes}}' coolify-mcp:ci | grep -Fq '"/data"'
+          docker volume create "$volume" >/dev/null
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            docker volume rm "$volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --rm --network none --volume "$volume:/data" --entrypoint node coolify-mcp:ci \
+            -e "if (process.getuid() === 0) process.exit(1); require('node:fs').writeFileSync('/data/.volume-smoke', 'persisted')"
+          docker run --rm --network none --volume "$volume:/data" --entrypoint node coolify-mcp:ci \
+            -e "if (process.getuid() === 0) process.exit(1); const fs = require('node:fs'); if (fs.readFileSync('/data/.volume-smoke', 'utf8') !== 'persisted') process.exit(1); fs.unlinkSync('/data/.volume-smoke')"
+          docker run --detach --network none --name "$container" \
+            --volume "$volume:/data" \
+            --env COOLIFY_BASE_URL=https://coolify.example.com \
+            --env COOLIFY_ACCESS_TOKEN=ci-dummy-token \
+            --env MCP_PUBLIC_URL=https://mcp.example.com \
+            --env MCP_OAUTH_STATE_FILE=/data/oauth-state.json \
+            coolify-mcp:ci >/dev/null
+          for attempt in $(seq 1 30); do
+            if docker exec "$container" node -e "fetch('http://127.0.0.1:8080/healthz').then(async r => { const body = await r.json(); if (!r.ok || body.status !== 'ok') process.exit(1); }).catch(() => process.exit(1))"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container"
+          exit 1
       - name: Coolify MCP E2E
         working-directory: mcp/coolify-mcp
         run: npm test -- --runInBand

@@ -18,6 +18,7 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("opik-mcp-access-guard.yml", "jwt-regression"),
     ("paperclip-core-review-recovery.yml", "validate"),
     ("mcp-images-ghcr.yml", "build-and-push"),
+    ("coolify-mcp-ci.yml", "verify"),
     ("coolify-mcp-ci.yml", "publish"),
     ("owned-runtime-images-ghcr.yml", "source-regressions"),
     ("owned-runtime-images-ghcr.yml", "publish"),
@@ -108,8 +109,32 @@ def compliant(workflow_name, job):
                 and "      - uses: docker/login-action@v3" in job
                 and "password: ${{ secrets.GITHUB_TOKEN }}" in job)
     if workflow_name == "coolify-mcp-ci.yml":
-        # Hosted runner is ephemeral; publishing is SHA-bound to trusted main
-        # and mcp/coolify-mcp/ alone. This builds OCI; it never deploys to Coolify.
+        # PR Docker smoke is allowed only for this service, on a disposable
+        # hosted runner with pull-request-only steps and no release privileges.
+        # Publishing remains a separate exact-main SHA-bound job.
+        if "docker build --tag coolify-mcp:ci ./mcp/coolify-mcp" in job:
+            forbidden = (
+                "self-hosted", "/var/run/docker.sock", "/api/v1/deploy",
+                "curl -X PATCH", "curl -X POST", "coolify deploy",
+                "docker push ", "packages: write", "id-token: write",
+                "attestations: write", "docker/build-push-action@",
+            )
+            if any(item.lower() in job.lower() for item in forbidden):
+                return False
+            required = (
+                "    runs-on: ubuntu-latest",
+                "docker build --tag coolify-mcp:ci ./mcp/coolify-mcp",
+                "if: github.event_name == 'pull_request'",
+                "docker image inspect --format '{{json .Config.Volumes}}' coolify-mcp:ci",
+                "docker run --rm --network none --volume \"$volume:/data\"",
+                "--env MCP_OAUTH_STATE_FILE=/data/oauth-state.json",
+                "docker run --detach --network none --name \"$container\"",
+                "docker exec \"$container\" node -e",
+            )
+            return (all(value in job for value in required)
+                    and job.count("if: github.event_name == 'pull_request'") == 2
+                    and job.count("--network none") == 3)
+        # Trusted main publication is SHA-bound to mcp/coolify-mcp/ alone.
         required = (
             "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
             "    runs-on: ubuntu-latest",
@@ -196,6 +221,24 @@ class NonMcpBuildGuardTests(unittest.TestCase):
                                 f"{workflow.name}/{job_name} can build outside local manual release")
         self.assertEqual(observed, EXPECTED_DOCKER_BUILD_JOBS,
                          "Docker build workflow inventory changed without explicit review")
+
+    def test_coolify_mcp_pr_image_smoke_is_readonly_and_path_scoped(self):
+        source = (WORKFLOWS / "coolify-mcp-ci.yml").read_text(encoding="utf8")
+        header = source.split("\njobs:\n", 1)[0]
+        jobs = dict(image_build_jobs(source))
+        verify = jobs["verify"]
+        self.assertTrue(compliant("coolify-mcp-ci.yml", verify))
+        self.assertIn("permissions:\n  contents: read", header)
+        self.assertNotIn("packages: write", header)
+        for original, replacement in (
+            ("if: github.event_name == 'pull_request'", "if: github.event_name == 'push'"),
+            ("docker build --tag coolify-mcp:ci ./mcp/coolify-mcp", "docker build --tag other:ci ."),
+            ("--network none", ""),
+        ):
+            self.assertFalse(
+                compliant("coolify-mcp-ci.yml", verify.replace(original, replacement, 1)),
+                f"unsafe Coolify MCP PR smoke mutation accepted: {original}",
+            )
 
     def test_coolify_mcp_publisher_is_exact_main_only_and_source_scoped(self):
         source = (WORKFLOWS / "coolify-mcp-ci.yml").read_text(encoding="utf8")
