@@ -48,3 +48,11 @@ Native issue ZARI-306: https://multica.zariszlif.pl/zar-i-szlif/issues/01a20e4c-
 5. Index this reviewed document from main using RepoWise's supported repository indexing workflow and verify retrieval. This PR is documentation only and is not evidence of indexing or delivery.
 
 Current verdict: native runtime restored and tested; full production delivery and automatic learning acceptance remain incomplete. No custom upstream code modifications, no release-gate bypass.
+
+## Follow-up operational receipt — native role alignment
+
+- Native Multica instructions for CHO, COO, CTO and Harness Engineer now treat the retired custom delivery controller as historical evidence only; existing independent review, trusted CI, release authorization and rollback gates are unchanged. ZARI-242 now targets native Product GitHub Actions/Coolify source parity and release E2E rather than reinstalling the retired controller.
+- ZARI-306 current acceptance receipt supersedes the historical OpenCode/rate-limit root cause for tested roles. The exact synthetic UI QA skill was removed after a successful cross-session positive retrieval; no unrelated skills were changed.
+- CTO and MCP Engineer completed read-only Hindsight/RepoWise canaries (runs 01a21e54-1ebf-7cf7-922a-6e60470a4b30 and 01a21e54-34ed-7014-b8ae-b660f0c51b21). CTO's prior Harness scope contradicted its existing Product-only instructions. Native Multica bindings now enable RepoWise Product and disable Harness for CTO and MCP Engineer; Hindsight identities and other grants are unchanged. Post-correction runtime verification is required; binding readback alone is not proof of server-side enforcement.
+- CHO independently completed code-only review of PR #204 at c1ac1641306dd6ace1f1b4516fb978d68767b3b3 and the native handoff to COO ran. Separate formal approval and release admission remain absent. Native agent-side GitHub/Coolify discovery is blocked by authentication denials; operator-side temporary GitHub reads are not proof of agent readiness or renewable credentials.
+- The full delivery verdict remains incomplete. Do not restore retired wrappers, alter scope or bypass formal approval/HOLD to satisfy a green CI check.
