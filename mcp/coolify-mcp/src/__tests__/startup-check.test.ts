@@ -193,6 +193,60 @@ describe('checkStartupConfig', () => {
   });
 });
 
+describe('Cloudflare Access Managed OAuth config', () => {
+  const withManagedOAuth = (): NodeJS.ProcessEnv => {
+    const env = cleanEnv();
+    env.CF_ACCESS_ISSUER = 'https://team.cloudflareaccess.com';
+    env.CF_ACCESS_AUD = 'a'.repeat(64);
+    return env;
+  };
+
+  it('accepts the issuer and audience together, and neither', () => {
+    expect(checkStartupConfig(withManagedOAuth(), 'http').errors).toEqual([]);
+    expect(checkStartupConfig(cleanEnv(), 'http').errors).toEqual([]);
+  });
+
+  it('rejects half a pair and names the missing variable', () => {
+    const issuerOnly = cleanEnv();
+    issuerOnly.CF_ACCESS_ISSUER = 'https://team.cloudflareaccess.com';
+    expect(checkStartupConfig(issuerOnly, 'http').errors[0]).toContain('CF_ACCESS_AUD is not');
+
+    const audienceOnly = cleanEnv();
+    audienceOnly.CF_ACCESS_AUD = 'a'.repeat(64);
+    expect(checkStartupConfig(audienceOnly, 'http').errors[0]).toContain('CF_ACCESS_ISSUER is not');
+  });
+
+  it('rejects a non-https issuer', () => {
+    const env = withManagedOAuth();
+    env.CF_ACCESS_ISSUER = 'http://team.cloudflareaccess.com';
+    expect(
+      checkStartupConfig(env, 'http').errors.some((e) => e.includes('must be an https URL')),
+    ).toBe(true);
+  });
+
+  it('rejects an issuer with a path, query or fragment', () => {
+    for (const issuer of [
+      'https://team.cloudflareaccess.com/oauth',
+      'https://team.cloudflareaccess.com?x=1',
+      'https://team.cloudflareaccess.com#x',
+    ]) {
+      const env = withManagedOAuth();
+      env.CF_ACCESS_ISSUER = issuer;
+      expect(
+        checkStartupConfig(env, 'http').errors.some((e) => e.includes('team domain origin')),
+      ).toBe(true);
+    }
+  });
+
+  it('rejects whitespace in the audience', () => {
+    const env = withManagedOAuth();
+    env.CF_ACCESS_AUD = 'a'.repeat(32) + ' ' + 'b'.repeat(31);
+    expect(
+      checkStartupConfig(env, 'http').errors.some((e) => e.includes('must not contain whitespace')),
+    ).toBe(true);
+  });
+});
+
 describe('cfAccessHeaders', () => {
   it('returns both headers when both variables are set', () => {
     expect(

@@ -48,6 +48,8 @@ const CHECKED_VARS = {
     'MCP_REQUEST_STATE_KEY',
     'CF_ACCESS_CLIENT_ID',
     'CF_ACCESS_CLIENT_SECRET',
+    'CF_ACCESS_ISSUER',
+    'CF_ACCESS_AUD',
   ],
 } as const;
 
@@ -181,6 +183,39 @@ export function checkSingleInstanceConfig(
     errors.push(
       `${present} is set but ${missing} is not. Cloudflare Access service tokens need both, or neither.`,
     );
+  }
+
+  // Inbound Managed OAuth (#...). Distinct from the outbound service token
+  // pair above: this one tells the origin to trust `Cf-Access-Jwt-Assertion`.
+  // Half a pair would silently leave the legacy bearer gate open, so it is a
+  // boot error rather than a warning.
+  const cfIssuer = env.CF_ACCESS_ISSUER;
+  const cfAud = env.CF_ACCESS_AUD;
+  if (Boolean(cfIssuer) !== Boolean(cfAud)) {
+    const missing = cfIssuer ? 'CF_ACCESS_AUD' : 'CF_ACCESS_ISSUER';
+    const present = cfIssuer ? 'CF_ACCESS_ISSUER' : 'CF_ACCESS_AUD';
+    errors.push(
+      `${present} is set but ${missing} is not. Cloudflare Access Managed OAuth needs both, or neither.`,
+    );
+  }
+  if (cfIssuer && cfIssuer !== '' && !looksUnexpanded(cfIssuer)) {
+    try {
+      const url = new URL(cfIssuer);
+      if (url.protocol !== 'https:') {
+        errors.push(
+          'CF_ACCESS_ISSUER must be an https URL, e.g. https://team.cloudflareaccess.com',
+        );
+      } else if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+        errors.push(
+          'CF_ACCESS_ISSUER must be the Cloudflare team domain origin, without a path, query or fragment.',
+        );
+      }
+    } catch {
+      errors.push('CF_ACCESS_ISSUER is not a usable URL.');
+    }
+  }
+  if (cfAud && cfAud !== '' && !looksUnexpanded(cfAud) && /\s/.test(cfAud)) {
+    errors.push('CF_ACCESS_AUD must not contain whitespace.');
   }
 
   return { errors, warnings };

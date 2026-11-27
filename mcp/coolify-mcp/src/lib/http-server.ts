@@ -16,6 +16,7 @@ import {
 } from '@modelcontextprotocol/server';
 import { CoolifyMcpServer } from './mcp-server.js';
 import { OAuthProvider, OAuthErrorResponse, isClientIdUrl } from './oauth.js';
+import { createCfAccessVerifier, type CfAccessConfig } from './cf-access.js';
 import type { CoolifyConfig } from '../types/coolify.js';
 import type { InstanceRegistry } from './instances.js';
 
@@ -32,6 +33,11 @@ export interface HttpServerConfig {
   readonly: boolean;
   /** MCP_REDIRECT_HOSTS: non-loopback hosts a client may redirect to. Empty = any. */
   redirectHosts?: string[];
+  /**
+   * Cloudflare Access Managed OAuth. When set, /mcp requires a valid
+   * `Cf-Access-Jwt-Assertion` and the legacy local bearer tokens are refused.
+   */
+  cfAccess?: CfAccessConfig;
   /**
    * MCP_CLIENT_IP_HEADER: explicitly trusted proxy header (e.g. cf-connecting-ip).
    * Use only when ingress overwrites this header and blocks direct origin access.
@@ -183,6 +189,26 @@ function oauthError(error: OAuthErrorResponse): Response {
   return json({ error: error.code, error_description: error.description }, error.status);
 }
 
+/**
+ * The 401 a Cloudflare-protected MCP client expects. Access normally answers
+ * this at the edge; the origin sends the same challenge when it is reached
+ * directly, so discovery still points at Cloudflare rather than at the
+ * legacy local authorization server.
+ */
+function cfAccessChallenge(publicUrl: string, invalid = false): Response {
+  const prefix = invalid ? 'error="invalid_token", ' : '';
+  return json(
+    {
+      error: invalid ? 'invalid_token' : 'unauthorized',
+      error_description: 'Cloudflare Access authentication required',
+    },
+    401,
+    {
+      'www-authenticate': `Bearer ${prefix}resource_metadata="${publicUrl}/.well-known/cloudflare-access-protected-resource/mcp"`,
+    },
+  );
+}
+
 function html(body: string, status = 200): Response {
   return new Response(body, {
     status,
@@ -278,6 +304,7 @@ export function createHttpApp(config: HttpServerConfig): {
     verifier: { verifyAccessToken: (token) => provider.verifyAccessToken(token) },
     resourceMetadataUrl: `${publicUrl}/.well-known/oauth-protected-resource`,
   });
+  const verifyCfAccess = config.cfAccess ? createCfAccessVerifier(config.cfAccess) : undefined;
 
   const mcpHandler: McpHttpHandler = createMcpHandler(
     () =>
@@ -308,9 +335,8 @@ export function createHttpApp(config: HttpServerConfig): {
     // socketPeerIp comes from the Node HTTP socket, never from caller headers.
     // With no peer (direct fetch tests), rate limit everyone in one bucket.
     // Explicit proxy headers are trustworthy ONLY with overwrite + origin ACL.
-    const clientIp = (ipHeader
-      ? request.headers.get(ipHeader)?.trim()
-      : socketPeerIp?.trim()) || 'unidentified';
+    const clientIp =
+      (ipHeader ? request.headers.get(ipHeader)?.trim() : socketPeerIp?.trim()) || 'unidentified';
 
     if (path === '/healthz') {
       // Still "ok": the server is answering. But state that lives only in
@@ -439,6 +465,26 @@ export function createHttpApp(config: HttpServerConfig): {
     }
 
     if (path === '/mcp') {
+      if (verifyCfAccess) {
+        const assertion = request.headers.get('cf-access-jwt-assertion');
+        if (!assertion) return cfAccessChallenge(publicUrl);
+        let identity;
+        try {
+          identity = await verifyCfAccess(assertion);
+        } catch {
+          // Never echo the token or the verification error: both can carry
+          // claim data, and the client only needs to know it must re-auth.
+          return cfAccessChallenge(publicUrl, true);
+        }
+        return mcpHandler.fetch(request, {
+          authInfo: {
+            token: 'cloudflare-access',
+            clientId: identity.email ?? identity.subject,
+            scopes: ['coolify'],
+          },
+        });
+      }
+
       const authResult = await bearer(request);
       if (authResult instanceof Response) return authResult;
 
