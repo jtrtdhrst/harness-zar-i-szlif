@@ -67,7 +67,7 @@ class FullRefreshFailClosed(unittest.TestCase):
              patch.object(refresh,"write_token",side_effect=write), \
              patch.object(runpy,"run_path",side_effect=loader), \
              patch.dict(os.environ,{refresh.WRITER_OPT_IN:"true"}):
-            with self.assertRaisesRegex(RuntimeError, 
+            with self.assertRaisesRegex(RuntimeError,
                   "Writer cleanup incomplete" if fail_projection else "synthetic role failure"):
                 refresh.main()
 
