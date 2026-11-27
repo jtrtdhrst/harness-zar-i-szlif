@@ -19,7 +19,7 @@ import tempfile
 SOURCE = Path("/etc/multica-git-credential/roles/github-ops-reader-image.json")
 ROLE = "github-ops-reader-image"
 REPOS = ["jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"]
-PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"}
+PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "pull_requests": "read", "metadata": "read"}
 APP_ID = 5398752
 INSTALLATION_ID = 173456397
 NODE_GID = 1000
