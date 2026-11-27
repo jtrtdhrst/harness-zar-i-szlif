@@ -78,7 +78,7 @@ REGISTRY = "127.0.0.1:5000"
 GHCR = "ghcr.io/jtrtdhrst"
 GHCR_SOURCE_SERVICES = frozenset({
     "coolify-mcp", "emailens-mcp", "mantic-mcp", "plasmic-mcp",
-    "playwright-mcp", "supabase-mcp", "ubuntu-mcp",
+    "playwright-mcp", "supabase-mcp", "ubuntu-mcp", "github-ops-mcp",
 })
 COOLIFY = "http://127.0.0.1:8001/api/v1"
 COOLIFY_TOKEN = Path("/root/coolify-secrets/coolify_api_token")
@@ -114,6 +114,12 @@ SERVICES = {
                       "image_prefix": "paperclip-mcp", "health_url": None},
     "ubuntu-mcp": {"folder": "ubuntu-mcp", "dockerfile": "Dockerfile",
                    "image_prefix": "local/ubuntu-mcp-bridge", "health_url": None},
+    # Git-backed Coolify application, watch path mcp/github-mcp/**; the digest
+    # comes from the owned-runtime GHCR workflow. Publication is not release
+    # authorization: ops/release-lanes.json remains the only allowlist.
+    "github-ops-mcp": {"folder": "mcp/github-mcp", "dockerfile": "Dockerfile",
+                       "image_prefix": "harness-github-ops-mcp",
+                       "health_url": None},
 }
 
 

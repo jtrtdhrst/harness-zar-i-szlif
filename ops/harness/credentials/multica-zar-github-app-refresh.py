@@ -46,6 +46,20 @@ for _base in ("implementer", "reviewer", "release"):
         ROLE_REPOS[f"{_base}-{_suffix}"] = (_repo,)
         ROLE_REPO_NAMES[f"{_base}-{_suffix}"] = (_name,)
 RUNTIME_GID = 981
+# The writer role is not automatically activated by a source deployment.
+# Until independent release authorization is present, the root-owned systemd
+# environment must explicitly opt in. The reader and existing agent roles
+# continue refreshing without requesting new GitHub App write scopes.
+WRITER_ROLE = "github-ops-writer"
+WRITER_OPT_IN = "GITHUB_OPS_WRITER_MINT_ENABLED"
+
+
+def selected_roles():
+    enabled = os.environ.get(WRITER_OPT_IN, "false")
+    if enabled not in ("true", "false"):
+        raise RuntimeError("Invalid writer mint gate")
+    return [role for role in ROLE_PERMISSIONS if role != WRITER_ROLE or enabled == "true"]
+
 
 PHP_TEMPLATE = r'''
 $a=App\Models\GithubApp::findOrFail(1);
@@ -76,37 +90,113 @@ def php_map(values):
     return "[" + ",".join(json.dumps(key) + "=>" + json.dumps(value) for key, value in values.items()) + "]"
 
 
+class WriterGrantPostIssueError(RuntimeError):
+    """A provider may already have issued a writer token: never continue."""
+
+
+def revoke_new_writer_token(token):
+    """Revoke a just-issued grant directly, even if it never reached disk.
+
+    The token exists only in process memory and a request header, not argv,
+    stdout, log records, filesystem names or exception messages.
+    """
+    import urllib.request
+    if (not isinstance(token, str) or len(token) < 40 or
+            any(ch.isspace() for ch in token)):
+        raise RuntimeError("Writer token unavailable for provider revocation")
+    request = urllib.request.Request(
+        "https://api.github.com/installation/token",
+        headers={"Authorization": "Bearer " + token,
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28",
+                 "User-Agent": "zari-github-ops-fail-closed"},
+        method="DELETE",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        if response.status != 204:
+            raise RuntimeError("Writer provider revocation unconfirmed")
+    return True
+
+
 def mint(role):
     permissions = ROLE_PERMISSIONS[role]
     names = ROLE_REPO_NAMES.get(role, REPO_NAMES)
     expected_repos = ROLE_REPOS.get(role, REPOS)
     php = PHP_TEMPLATE.replace("{repos}", php_list(names)).replace("{perms}", php_map(permissions))
-    result = subprocess.run(
-        ["docker", "exec", "coolify", "php", "artisan", "tinker", "--execute=" + php],
-        capture_output=True, text=True, timeout=70, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "coolify", "php", "artisan", "tinker", "--execute=" + php],
+            capture_output=True, text=True, timeout=70, check=False,
+        )
+    except Exception as error:
+        if role == WRITER_ROLE:
+            raise WriterGrantPostIssueError(
+                "Writer grant command outcome unknown; provider issuance cannot be excluded") from error
+        raise
     if result.returncode != 0:
+        if role == WRITER_ROLE:
+            # A command may fail AFTER GitHub created an installation grant.
+            # Revoke any token included in the failed command's captured JSON;
+            # otherwise report an unverified issuance, never an optional deny.
+            try:
+                failed_response = json.loads(result.stdout.strip())
+            except (json.JSONDecodeError, ValueError):
+                failed_response = None
+            issued = (failed_response.get("token") if isinstance(failed_response, dict)
+                      else None)
+            if issued:
+                try:
+                    revoke_new_writer_token(issued)
+                except Exception as error:
+                    raise WriterGrantPostIssueError(
+                        "Writer grant command failed; returned token revocation unconfirmed") from error
+                raise WriterGrantPostIssueError(
+                    "Writer grant command failed; returned token revoked")
+            raise WriterGrantPostIssueError(
+                "Writer grant command failed; provider issuance cannot be excluded")
         raise RuntimeError(f"{role}: Coolify internal installation grant failed")
     try:
         grant = json.loads(result.stdout.strip())
     except (json.JSONDecodeError, ValueError) as error:
+        if role == WRITER_ROLE:
+            raise WriterGrantPostIssueError(
+                "Writer grant response unreadable; issuance status unknown") from error
         raise RuntimeError(f"{role}: grant returned no valid JSON") from error
-    if (grant.get("status") != 201 or grant.get("app_id") != APP_ID
-            or grant.get("installation_id") != INSTALLATION_ID):
-        raise RuntimeError(f"{role}: installation identity / token grant mismatch")
-    if set(grant.get("repositories", [])) != set(expected_repos):
-        raise RuntimeError(f"{role}: unexpected repository scope")
-    if grant.get("permissions") != permissions:
-        raise RuntimeError(f"{role}: unexpected permission scope")
-    token = grant.get("token")
-    if not isinstance(token, str) or len(token) < 40 or any(c.isspace() for c in token):
-        raise RuntimeError(f"{role}: token missing or malformed")
-    expires_at = grant.get("expires_at")
-    if not isinstance(expires_at, str):
-        raise RuntimeError(f"{role}: expiry missing")
-    expiry = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-    if expiry <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10):
-        raise RuntimeError(f"{role}: token expiry too short")
+    if not isinstance(grant, dict):
+        if role == WRITER_ROLE:
+            raise WriterGrantPostIssueError(
+                "Writer grant response not a mapping; issuance status unknown")
+        raise RuntimeError(f"{role}: grant returned no valid mapping")
+
+    issued_token = grant.get("token")
+    issuance_possible = grant.get("status") == 201 or isinstance(issued_token, str) and bool(issued_token)
+    try:
+        if (grant.get("status") != 201 or grant.get("app_id") != APP_ID
+                or grant.get("installation_id") != INSTALLATION_ID):
+            raise RuntimeError(f"{role}: installation identity / token grant mismatch")
+        if set(grant.get("repositories", [])) != set(expected_repos):
+            raise RuntimeError(f"{role}: unexpected repository scope")
+        if grant.get("permissions") != permissions:
+            raise RuntimeError(f"{role}: unexpected permission scope")
+        token = issued_token
+        if not isinstance(token, str) or len(token) < 40 or any(c.isspace() for c in token):
+            raise RuntimeError(f"{role}: token missing or malformed")
+        expires_at = grant.get("expires_at")
+        if not isinstance(expires_at, str):
+            raise RuntimeError(f"{role}: expiry missing")
+        expiry = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expiry <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10):
+            raise RuntimeError(f"{role}: token expiry too short")
+    except Exception as error:
+        if role == WRITER_ROLE and issuance_possible:
+            try:
+                revoke_new_writer_token(issued_token)
+            except Exception as revoke_error:
+                raise WriterGrantPostIssueError(
+                    "New writer grant rejected; provider revocation unconfirmed") from revoke_error
+            raise WriterGrantPostIssueError(
+                "New writer grant rejected and provider-revoked") from error
+        raise
     return {
         "token": token,
         "expires_at": expires_at,
@@ -137,11 +227,58 @@ def write_token(role, payload):
             os.unlink(tempname)
 
 
-def main():
+def retire_writer_grant():
+    """Fail closed on writer deactivation or a failed grant; never follow links."""
+    import stat
+    target = DEST / f"{WRITER_ROLE}.json"
+    try:
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+                info.st_gid != 0 or info.st_nlink != 1 or
+                stat.S_IMODE(info.st_mode) != 0o600):
+            raise RuntimeError("Untrusted writer grant file")
+    finally:
+        os.close(fd)
+    os.unlink(target)
+    return True
+
+
+def refresh_bgh_reader():
+    """Renew only the existing BGH read grant and its verified live volume.
+
+    Never mint an agent, runner, release or writer grant in this mode.
+    The caller holds the same root-owned refresh lock as the legacy entrypoint.
+    """
+    import runpy
+    here = Path(__file__).resolve().parent
+    volume = runpy.run_path(str(here / "github-ops-image-reader-project.py"))
+    projector = runpy.run_path(str(here / "github-ops-token-project.py"))
+    app_uuid = "t09dqe2eppn2eiqmhzlf8xzp"
+    name = app_uuid + "-bgh-github-app-reader"
+    directory = volume["validated_volume"](app_uuid, name)
+    projector["check_dir"](directory, projector["NODE_GID"], 0o750)
+    role = "github-ops-reader"
+    grant = mint(role)
+    if (grant["role"] != role or grant["permissions"] != projector["PERMISSIONS"]
+            or set(grant["repositories"]) != projector["REPOS"]):
+        raise RuntimeError("Reader grant scope mismatch")
+    write_token(role, grant)
+    projector["project"](projector["SOURCE"], projector["TARGET"], role,
+                         projector["PERMISSIONS"])
+    volume["project"](grant, directory)
+    print(json.dumps({"reader_refreshed": True, "role": role,
+                      "expires_at": grant["expires_at"]}))
+    return 0
+
+
+def _refresh_core(*, reader_only=False):
     if os.geteuid() != 0:
         raise RuntimeError("Root service account required")
-    # The root-only parent and token directory must be real, pinned directories.
-    # Never chmod a symlink target or follow attacker-controlled destinations.
+    # Reject any untrusted directory or lock file before touching credentials.
     import stat
     def checked_directory(path):
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
@@ -156,8 +293,8 @@ def main():
     checked_directory(DEST.parent)
     DEST.mkdir(mode=0o700, exist_ok=True)
     checked_directory(DEST)
-    lockpath = DEST / ".refresh.lock"
-    fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    fd = os.open(DEST / ".refresh.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     info = os.fstat(fd)
     if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
         info.st_gid != 0 or info.st_nlink != 1 or
@@ -166,32 +303,141 @@ def main():
         raise RuntimeError("Untrusted refresh lock file")
     with os.fdopen(fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        summary = {}
-        for role in ROLE_PERMISSIONS:
-            payload = mint(role)
-            write_token(role, payload)
-            summary[role] = payload["expires_at"]
-    # Reuse this native 15-minute role refresh as the rotation owner for an
-    # optional image-only application. The projector has no minting rights.
-    # The deployment owner must opt in with BOTH non-secret identifiers;
-    # legacy refreshes remain identical unless explicitly configured.
-    app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
-    volume = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
-    if bool(app_uuid) != bool(volume):
-        raise RuntimeError("Incomplete image-reader rotation configuration")
-    if app_uuid:
-        projection = subprocess.run(
-            [sys.executable, "/usr/local/libexec/github-ops-image-reader-project.py"],
-            capture_output=True, text=True, timeout=25, check=False)
-        if projection.returncode != 0:
-            raise RuntimeError("Dedicated GitHub Ops image-reader projection failed")
-    print(json.dumps({"refreshed": True, "roles": sorted(summary), "expiry": min(summary.values())}))
-    return 0
+        if reader_only:
+            return refresh_bgh_reader()
+        # The same refresh lock MUST cover mint, remote revoke, all local
+        # projections, image-reader projection and every failure cleanup.
+        # The independent writer projector obtains this same lock.
+        try:
+            roles = selected_roles()
+            summary = {}
+            writer_blocked = False
+            if WRITER_ROLE not in roles:
+                # A failed revocation blocks all subsequent mints even if
+                # the local copies were removed. Do not silently continue.
+                cleanup_failed_writer()
+            for role in roles:
+                try:
+                    payload = mint(role)
+                except Exception as error:
+                    # A provider-issued token whose identity or response could
+                    # not be verified is NEVER an optional grant refusal.
+                    if role != WRITER_ROLE or isinstance(error, WriterGrantPostIssueError):
+                        raise
+                    cleanup_failed_writer()
+                    writer_blocked = True
+                    continue
+                try:
+                    write_token(role, payload)
+                except Exception as write_error:
+                    if role == WRITER_ROLE:
+                        # The new token may exist only in memory; revoking
+                        # the prior on-disk role is not sufficient.
+                        try:
+                            revoke_new_writer_token(payload["token"])
+                        except Exception as revoke_error:
+                            raise WriterGrantPostIssueError(
+                                "Writer persistence failed; new token revocation unconfirmed") from revoke_error
+                        raise WriterGrantPostIssueError(
+                            "Writer persistence failed; new token revoked") from write_error
+                    raise
+                summary[role] = payload["expires_at"]
+            # Optional image-only application rotation shares this root lock.
+            app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
+            volume = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
+            if bool(app_uuid) != bool(volume):
+                raise RuntimeError("Incomplete image-reader rotation configuration")
+            if app_uuid:
+                projection = subprocess.run(
+                    [sys.executable, "/usr/local/libexec/github-ops-image-reader-project.py"],
+                    capture_output=True, text=True, timeout=25, check=False)
+                if projection.returncode != 0:
+                    raise RuntimeError("Dedicated GitHub Ops image-reader projection failed")
+            print(json.dumps({"refreshed": True, "roles": sorted(summary),
+                              "writer_mint_enabled": WRITER_ROLE in roles,
+                              "writer_ready": WRITER_ROLE in summary,
+                              "writer_grant_blocked": writer_blocked,
+                              "expiry": min(summary.values())}))
+            return 0
+        except Exception:
+            cleanup_failed_writer()
+            raise
+
+
+def revoke_existing_writer_at_github():
+    """Revoke the current installation writer grant before removing its files.
+
+    Use an O_NOFOLLOW root-only reader; never send the token to logs or argv.
+    """
+    import stat
+    import urllib.request
+    path = DEST / f"{WRITER_ROLE}.json"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    with os.fdopen(fd, "r", encoding="utf-8") as reader:
+        st = os.fstat(reader.fileno())
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_gid != 0
+                or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+            raise RuntimeError("Untrusted writer grant for provider revocation")
+        grant = json.load(reader)
+    if (grant.get("role") != WRITER_ROLE or grant.get("app_id") != APP_ID
+            or grant.get("installation_id") != INSTALLATION_ID
+            or set(grant.get("repositories", [])) != set(REPOS)
+            or grant.get("permissions") != ROLE_PERMISSIONS[WRITER_ROLE]):
+        raise RuntimeError("Writer grant scope mismatch for provider revocation")
+    token = grant.get("token")
+    if not isinstance(token, str) or len(token) < 40 or any(ch.isspace() for ch in token):
+        raise RuntimeError("Invalid writer grant token for provider revocation")
+    return revoke_new_writer_token(token)
+
+
+def cleanup_failed_writer():
+    """On ANY full refresh error, retire the root role and both live copies.
+
+    Each location is attempted even if provider revocation or another location fails.
+    Never follow symlinks or suppress a failed cleanup as a successful refresh.
+    """
+    import runpy
+    errors = []
+    try:
+        revoke_existing_writer_at_github()
+    except Exception:
+        errors.append("github")
+    try:
+        retire_writer_grant()
+    except Exception:
+        errors.append("role")
+    try:
+        projector = runpy.run_path(str(Path(__file__).resolve().parent /
+                                       "github-ops-token-project.py"))
+        for key in ("WRITER_TARGET", "WRITER_RUNTIME"):
+            try:
+                projector["retire_writer_target"](projector[key])
+            except Exception:
+                errors.append(key)
+    except Exception:
+        errors.append("projector")
+    if errors:
+        raise RuntimeError("Writer cleanup incomplete after failed refresh")
+
+
+def main(*, reader_only=False):
+    # The core owns the entire lifecycle lock, including error cleanup.
+    # Never clean up after it releases that lock.
+    return _refresh_core(reader_only=reader_only)
+
+
+def run_cli(args):
+    if args not in ([], ["--github-ops-reader-only"]):
+        raise RuntimeError("Unknown refresh mode")
+    return main(reader_only=bool(args))
 
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        sys.exit(run_cli(sys.argv[1:]))
     except Exception as error:
         print(json.dumps({"refreshed": False, "error": str(error)[:160]}), file=sys.stderr)
         sys.exit(1)

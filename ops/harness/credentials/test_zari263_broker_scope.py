@@ -3,6 +3,7 @@
 import datetime
 import importlib.util
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ PATH = pathlib.Path(__file__).with_name("multica-git-credential-broker.py")
 SPEC = importlib.util.spec_from_file_location("zari263_broker", PATH)
 broker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(broker)
+broker.TRUSTED_UID = os.getuid()  # test fixtures; production defaults to root
 
 H = "jtrtdhrst/harness-zar-i-szlif"
 P = "jtrtdhrst/zar-i-szlif"
@@ -44,6 +46,7 @@ class ScopedAgentGrants(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             path = pathlib.Path(root) / (role + ".json")
             path.write_text(json.dumps(data), encoding="utf-8")
+            path.chmod(0o600)
             return broker.read_role_token(pathlib.Path(root), role)
 
     def test_scoped_roles_are_explicit_and_restrict_foreign_repo(self):
@@ -103,9 +106,21 @@ class ScopedAgentGrants(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "permissions mismatch"):
             self.read(role, wrong_perms)
 
-    def test_base_roles_and_cache_reader_preserve_existing_scopes(self):
-        for role in ("implementer", "reviewer", "release", "cache-reader"):
-            self.assertEqual(set(self.read(role, token(role, [H, P]))["repositories"]), {H, P})
+    def test_broad_base_roles_stay_task_bound_and_deny_workflows_write(self):
+        # ZARI-213 baseline keeps base roles as broker actors behind the live
+        # task-token binding, but they must never gain workflows:write and must
+        # never be mapped into a single project scope.
+        for role in ("implementer", "reviewer", "release"):
+            self.assertIn(role, broker.AGENT_ROLES)
+            self.assertTrue(broker.role_repo_allowed(role, H))
+            self.assertTrue(broker.role_repo_allowed(role, P))
+            served = self.read(role, token(role, [H, P]))
+            self.assertEqual(served["role"], role)
+            self.assertNotIn("workflows", served["permissions"])
+
+    def test_daemon_cache_reader_remains_read_only(self):
+        self.assertNotIn("cache-reader", broker.AGENT_ROLES)
+        self.assertEqual(set(self.read("cache-reader", token("cache-reader", [H, P]))["repositories"]), {H, P})
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+[Unit]
+Description=Rotate scoped GitHub App grants for Multica and GitHub Ops MCP
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+TimeoutStartSec=240
+ExecStart=/usr/bin/python3 /usr/local/libexec/multica-zar-github-app-refresh.py --github-ops-reader-only

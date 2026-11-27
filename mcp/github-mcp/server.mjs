@@ -13,6 +13,9 @@ const WORKFLOW = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.ya?ml$/;
 const TOOLS = [
   ['github_repo_info', 'Read current GitHub repository metadata', ['repo']],
   ['github_get_rulesets', 'Read rulesets; report GitHub plan/permission denials', ['repo']],
+  ['github_get_effective_main_rules', 'Read effective GitHub rules for main; no policy changes', ['repo']],
+  ['github_list_environments', 'Read deployment environment names and protection policies, never secrets', ['repo']],
+  ['github_get_pr_reviews', 'Read formal review submissions for the exact PR head; not an approval decision', ['repo', 'pr_number', 'expected_sha']],
   ['github_get_actions_permissions', 'Read Actions permissions; report missing app permission', ['repo']],
   ['github_get_branch_protection', 'Read main branch protection; report missing administration permission', ['repo']],
   ['github_get_deployments', 'Read deployments for one exact source commit', ['repo', 'sha']],
@@ -350,10 +353,32 @@ export function makeServer(config={}) {
     if(current.commit?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','Branch moved');
     if(current.protected)throw error('PROTECTED','GitHub reports branch protection');
     if(openHasRef(await listPulls(root,'open'),branch,repo))throw error('OPEN_PR','An open pull request uses this branch');
-    const merged=(await listPulls(root,'closed')).find(pr=>pr.merged_at&&pr.base?.ref==='main'
-      &&pr.head?.ref===branch&&pr.head?.sha?.toLowerCase()===sha
-      &&pr.head?.repo?.full_name===repo&&SHA.test(pr.merge_commit_sha||''));
-    if(!merged)throw error('MERGE_NOT_VERIFIED','No matching merged PR with this exact branch SHA');
+    // Match the immutable branch commit to its associated PR, rather than
+    // relying solely on the repository-wide closed PR listing. A GitHub App
+    // may see an incomplete closed feed; individual PR GET is authoritative.
+    const associated=await api('GET',`${root}/commits/${sha}/pulls?per_page=100`);
+    if(!Array.isArray(associated)||associated.length===100)
+      throw error('PR_ASSOCIATIONS_UNVERIFIED','Commit-to-PR proof unavailable or truncated');
+    const matches=pr=>Number.isSafeInteger(pr?.number)&&pr.number>0&&
+      Boolean(pr.merged_at)&&pr.base?.ref==='main'&&pr.head?.ref===branch&&
+      pr.head?.sha?.toLowerCase()===sha&&pr.head?.repo?.full_name===repo&&
+      SHA.test(pr.merge_commit_sha||'');
+    // A second discovery route is allowed, but not a weaker verification:
+    // every candidate must still pass individual PR readback below.
+    const candidates=associated.filter(matches);
+    if(candidates.length===0){
+      for(const pr of (await listPulls(root,'closed')).filter(matches))candidates.push(pr);
+    }
+    let merged=null;
+    for(const candidate of candidates){
+      const verified=await api('GET',`${root}/pulls/${candidate.number}`);
+      if(matches(verified)&&verified.merged===true&&verified.state==='closed'&&
+         verified.merge_commit_sha.toLowerCase()===candidate.merge_commit_sha.toLowerCase()){
+        merged=verified;
+        break;
+      }
+    }
+    if(!merged)throw error('MERGE_NOT_VERIFIED','No individually verified merged PR for this exact branch SHA');
     const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
     if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
     return {current,merged};
@@ -388,6 +413,35 @@ export function makeServer(config={}) {
       const list=await api('GET',`${root}/rulesets`);
       if(!Array.isArray(list))throw error('RULESETS_INVALID','GitHub ruleset listing returned invalid data');
       return {repo,rulesets:list,count:list.length};
+    }
+    if(name==='github_get_effective_main_rules'){
+      const rules=await api('GET',`${root}/rules/branches/main`);
+      if(!Array.isArray(rules))throw error('RULES_INVALID','GitHub effective rules response is invalid');
+      return {repo,branch:'main',count:rules.length,rules};
+    }
+    if(name==='github_list_environments'){
+      const result=await api('GET',`${root}/environments?per_page=100`);
+      if(!Array.isArray(result?.environments)||!Number.isSafeInteger(result.total_count)||result.total_count<result.environments.length)
+        throw error('ENVIRONMENTS_INVALID','GitHub deployment environment listing is invalid');
+      return {repo,count:result.total_count,truncated:result.total_count>result.environments.length,
+        environments:result.environments.map(e=>({name:e.name,
+          protection_rules:Array.isArray(e.protection_rules)?e.protection_rules.map(r=>({
+            type:r.type,prevent_self_review:r.prevent_self_review,wait_timer:r.wait_timer,
+            reviewers:Array.isArray(r.reviewers)?r.reviewers.map(x=>({type:x.type,id:x.reviewer?.id,login:x.reviewer?.login,slug:x.reviewer?.slug})):undefined
+          })):null,deployment_branch_policy:e.deployment_branch_policy??null}))};
+    }
+    if(name==='github_get_pr_reviews'){
+      const number=assertPRNumber(p.pr_number),sha=assertSHA(p.expected_sha).toLowerCase();
+      const pr=await api('GET',`${root}/pulls/${number}`);
+      if(pr.head?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','PR head changed');
+      const reviews=await api('GET',`${root}/pulls/${number}/reviews?per_page=100`);
+      if(!Array.isArray(reviews))throw error('REVIEWS_INVALID','GitHub PR review list invalid');
+      const current=await api('GET',`${root}/pulls/${number}`);
+      if(current.head?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','PR head changed during review read');
+      return {repo,number,head_sha:sha,author:pr.user?.login??null,count:reviews.length,truncated:reviews.length===100,
+        reviews:reviews.map(r=>({id:r.id,reviewer:r.user?.login??null,state:r.state,commit_id:r.commit_id,submitted_at:r.submitted_at,
+          matches_head:typeof r.commit_id==='string'&&r.commit_id.toLowerCase()===sha})),
+        note:'Review evidence only; GitHub rules and authorized merge remain authoritative.'};
     }
     if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
     if(name==='github_get_branch_protection'){
@@ -572,23 +626,30 @@ export function makeServer(config={}) {
       return {merged:true,repo,number,head_sha:sha,merge_sha:result.sha,method};
     }
     if(name==='github_preview_branch_delete'){
-      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      // Preview and mutation share the exact pinned-branch guard. A preview
+      // must never invite an operator to delete a deployment-pinned ref.
+      const branch=ensureBranchWritable(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       const rules=await assertNoRules(repo,root,branch);
+      // A configured but absent/expired writer file is not an available
+      // deletion capability. A preview is read-only and must not disclose it.
+      let writerReady=false;
+      if(writesEnabled&&(writerTokenFile||injectedPushToken)&&deletionAllowlist.has(`${repo}:${branch}@${sha}`)){
+        writerReady=await readWriterToken().then(()=>true,()=>false);
+      }
       return {eligible:true,repo,branch,sha,merged_pr:merged.number,rules:rules.rules,
-        deletion_supported:Boolean(writesEnabled&&(writerTokenFile||injectedPushToken)&&deletionAllowlist.has(`${repo}:${branch}@${sha}`)),
+        deletion_supported:writerReady,
         note:'Deletion is available only through github_delete_merged_branch, which deletes with a git --force-with-lease=<ref>:<expected> lease: a concurrent push is rejected (stale lease), never overwritten'};
     }
     if(name==='github_delete_merged_branch'){
-      const branch=assertBranch(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
+      const branch=ensureBranchWritable(p.branch),sha=assertSHA(p.expected_sha).toLowerCase();
       // Fail closed before any provider or git traffic.
       if(!writesEnabled)throw error('WRITE_DISABLED','GitHub writes disabled by default');
       if(!writerTokenFile&&!injectedPushToken)throw error('PUSH_CREDENTIAL_MISSING','A repo-scoped writer credential is required for CAS deletion');
-      if(pinnedBranches.has(branch))throw error('BRANCH_PINNED','A live deployment tracks this branch; deletion refused');
       if(!deletionAllowlist.has(`${repo}:${branch}@${sha}`))throw error('DELETE_NOT_APPROVED','Exact repo:branch@sha operator grant required');
+      const pushToken=await readWriterToken();
       const {merged}=await branchDeleteEvidence(repo,root,branch,sha);
       const rules=await assertNoRules(repo,root,branch);
-      const pushToken=await readWriterToken();
       const lease=await deleteRefWithLease({remote:pushRemoteFor(repo),branch,expectedSha:sha,pushToken,gitBin});
       if(!lease.accepted)throw error(lease.code,`CAS delete refused (${lease.code}); the ref was not removed`);
       let stillThere=true;
@@ -621,7 +682,7 @@ export function makeServer(config={}) {
     if(req.method==='GET'&&req.url==='/health'){
       const configured=tokenFile?await scopedTokenFromFile(tokenFile,tokenFileRole).then(()=>true,()=>false):Boolean(githubToken);
       const writerConfigured=writerTokenFile?await scopedTokenFromFile(writerTokenFile,'github-ops-writer').then(()=>true,()=>false):false;
-      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured,writer_configured:writerConfigured});
+      return json(200,{alive:true,ready:Boolean(callerToken&&configured),writes_enabled:Boolean(writesEnabled),github_configured:configured,writer_configured:writerConfigured,write_ready:Boolean(writesEnabled&&writerConfigured),write_gate:!writesEnabled?'WRITE_DISABLED':!writerConfigured?'WRITER_CREDENTIAL_UNAVAILABLE':'EXACT_OPERATOR_GRANT_REQUIRED'});
     }
     if(req.url==='/mcp'&&req.method==='GET'){res.writeHead(405,{'allow':'POST','cache-control':'no-store'});return res.end();}
     if(req.url!=='/mcp'||req.method!=='POST')return json(404,{error:'not_found'});

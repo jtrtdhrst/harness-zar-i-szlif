@@ -1577,6 +1577,18 @@ class AutoMainCycleTests(unittest.TestCase):
 class OwnedCoolifyMcpRoutingTests(unittest.TestCase):
     """Source routing is owner-scoped; the running legacy image is matchable."""
 
+    def test_github_ops_mcp_transport_is_modeled_without_release_authorization(self):
+        """Transport knowledge must never become release authorization."""
+        self.assertIn("github-ops-mcp", delivery.SERVICES)
+        self.assertIn("github-ops-mcp", delivery.GHCR_SOURCE_SERVICES)
+        spec = delivery.SERVICES["github-ops-mcp"]
+        self.assertEqual((spec["folder"], spec["dockerfile"]),
+                         ("mcp/github-mcp", "Dockerfile"))
+        self.assertIsNone(spec["health_url"])
+        self.assertEqual(
+            delivery.image_reference("github-ops-mcp", DIGEST, delivery.GHCR),
+            f"ghcr.io/jtrtdhrst/harness-github-ops-mcp@{DIGEST}")
+
     def test_canonical_owner_and_owned_digest(self):
         self.assertEqual(delivery.REPO, "jtrtdhrst/harness-zar-i-szlif")
         self.assertEqual(delivery.GHCR, "ghcr.io/jtrtdhrst")

@@ -74,12 +74,13 @@ async function harness(config={}){
   const close=()=>new Promise(r=>server.close(r));
   return {call,requests,close,uri};
 }
-test('twenty live MCP tools have expected schemas and no legacy workflow dispatch',async()=>{
+test('twenty-three live MCP tools have expected schemas and no legacy workflow dispatch',async()=>{
   const h=await harness();
   try{
     const r=await fetch(h.uri,{method:'POST',headers:{authorization:'Bearer test-auth','content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
     const tools=(await r.json()).result.tools;
-    assert.equal(tools.length,20);
+    assert.equal(tools.length,23);
+    for(const name of ['github_get_effective_main_rules','github_list_environments','github_get_pr_reviews'])assert.ok(tools.some(t=>t.name===name),name);
     assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false);
     const f=tools.find(t=>t.name==='github_commit_file');
     assert.deepEqual(f.inputSchema.required,['repo','branch','path','content','commit_message','expected_sha']);
