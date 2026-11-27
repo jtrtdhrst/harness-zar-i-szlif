@@ -219,6 +219,105 @@ def _refresh_core(*, reader_only=False):
     DEST.mkdir(mode=0o700, exist_ok=True)
     checked_directory(DEST)
     lockpath = DEST / ".refresh.lock"
-    fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | 
+    fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    info = os.fstat(fd)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+        info.st_gid != 0 or info.st_nlink != 1 or
+        stat.S_IMODE(info.st_mode) != 0o600):
+        os.close(fd)
+        raise RuntimeError("Untrusted refresh lock file")
+    with os.fdopen(fd, "r+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if reader_only:
+            return refresh_bgh_reader()
+        summary = {}
+        roles = selected_roles()
+        writer_blocked = False
+        if WRITER_ROLE not in roles:
+            retire_writer_grant()
+        for role in roles:
+            try:
+                payload = mint(role)
+            except Exception:
+                if role != WRITER_ROLE:
+                    raise
+                # A missing App permission must never starve the existing
+                # reader rotation. Remove any stale writer grant instead.
+                retire_writer_grant()
+                writer_blocked = True
+                continue
+            write_token(role, payload)
+            summary[role] = payload["expires_at"]
+    # Reuse this native 15-minute role refresh as the rotation owner for an
+    # optional image-only application. The projector has no minting rights.
+    # The deployment owner must opt in with BOTH non-secret identifiers;
+    # legacy refreshes remain identical unless explicitly configured.
+    app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
+    volume = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
+    if bool(app_uuid) != bool(volume):
+        raise RuntimeError("Incomplete image-reader rotation configuration")
+    if app_uuid:
+        projection = subprocess.run(
+            [sys.executable, "/usr/local/libexec/github-ops-image-reader-project.py"],
+            capture_output=True, text=True, timeout=25, check=False)
+        if projection.returncode != 0:
+            raise RuntimeError("Dedicated GitHub Ops image-reader projection failed")
+    print(json.dumps({"refreshed": True, "roles": sorted(summary),
+                      "writer_mint_enabled": WRITER_ROLE in roles,
+                      "writer_ready": WRITER_ROLE in summary,
+                      "writer_grant_blocked": writer_blocked,
+                      "expiry": min(summary.values())}))
+    return 0
 
-... [4024 characters truncated]
+
+def revoke_writer_on_full_refresh_failure():
+    """Fail closed across every refresh stage, including an ExecStart failure.
+
+    ExecStartPost is skipped by systemd if minting fails. Remove the source
+    grant, the system projection and the named-volume projection independently.
+    Never follow an untrusted file; preserve a hard failure if cleanup fails.
+    """
+    import runpy
+
+    errors = []
+    try:
+        retire_writer_grant()
+    except Exception as exc:
+        errors.append(exc)
+
+    try:
+        projector = runpy.run_path(str(Path(__file__).resolve().parent /
+                                       "github-ops-token-project.py"))
+    except Exception as exc:
+        errors.append(exc)
+    else:
+        for path in (projector["WRITER_TARGET"], projector["WRITER_RUNTIME"]):
+            try:
+                projector["retire_writer_target"](path)
+            except Exception as exc:
+                errors.append(exc)
+    if errors:
+        raise RuntimeError("GitHub Ops writer cleanup incomplete") from errors[0]
+
+
+def main(*, reader_only=False):
+    # BGH reader-only refresh does not create or manage a writer grant.
+    if reader_only:
+        return _refresh_core(reader_only=True)
+    try:
+        return _refresh_core(reader_only=False)
+    except Exception:
+        revoke_writer_on_full_refresh_failure()
+        raise
+
+
+if __name__ == "__main__":
+    try:
+        args = sys.argv[1:]
+        if args not in ([], ["--github-ops-reader-only"]):
+            raise RuntimeError("Unknown refresh mode")
+        sys.exit(main(reader_only=bool(args)))
+    except Exception as error:
+        print(json.dumps({"refreshed": False, "error": str(error)[:160]}), file=sys.stderr)
+        sys.exit(1)
+
