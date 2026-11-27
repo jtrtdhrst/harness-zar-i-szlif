@@ -5,7 +5,7 @@ const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,classicProtectionMissing=false,
-  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false}={}){
+  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false,individualMergeShaNull=false,associatedMergeShaNull=false,mergeEventMissing=false,mergeEventMismatch=false}={}){
   const calls=[];
   const authorizations=[];
   let branchDeleted=false;
@@ -40,22 +40,26 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     }
     else if(/\/commits\/[a-f0-9]{40}\/pulls$/.test(u.pathname)){
       v=merged&&!commitFeedMissing?[{number:987,merged_at:'2026-11-20T12:00:00Z',
-        head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
+        head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:associatedMergeShaNull?null:mergeSHA}]:[];
+    }
+    else if(u.pathname.endsWith('/issues/987/events')){
+      v=mergeEventMissing?[]:[{event:'merged',created_at:'2026-11-20T12:00:00Z',
+        commit_id:mergeEventMismatch?'d'.repeat(40):mergeSHA}];
     }
     else if(u.pathname.endsWith('/pulls/987')){
       v={number:987,state:individualMerged?'closed':'open',merged:individualMerged,
         merged_at:individualMerged?'2026-11-20T12:00:00Z':null,
         head:{ref:'fix/old',sha:branchSHA,repo:{full_name:individualRepoChanged?'other/fork':REPO}},
-        base:{ref:'main'},merge_commit_sha:mergeSHA};
+        base:{ref:'main'},merge_commit_sha:individualMergeShaNull?null:mergeSHA};
     }
     else if(u.pathname.endsWith('/pulls')){
       if(u.searchParams.get('state')==='open')
         v=openPR?[{base:{ref:'fix/old'},head:{ref:'fix/old',repo:{full_name:REPO}}}]:[];
       else
         v=merged&&!closedFeedMissing?[{number:987,merged_at:'2026-11-20T12:00:00Z',
-          head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
+          head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:associatedMergeShaNull?null:mergeSHA}]:[];
     }
-    else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable?0:1};
+    else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable&&u.pathname.includes('/compare/'+mergeSHA+'...main')?0:1};
     else if(u.pathname.endsWith('/actions/runs/321')){
       if(runReadsToMiss-- >0)return new Response(null,{status:404});
       v={id:321,head_sha:dispatchRunSHA,event:'workflow_dispatch',path:'.github/workflows/release-lanes-policy.yml',html_url:'https://github.com/example/actions/runs/321'};
@@ -176,6 +180,46 @@ test('squash-merged PR is eligible for preview only, never deletes',async()=>{
   assert.equal(out.body.result.structuredContent.merged_pr,987);
   assert.equal(f.calls.filter(([method])=>method==='DELETE').length,0);
  }finally{await f.close()}
+});
+test('real GitHub-style merged PR with null individual merge SHA keeps independently verified merge proof',async()=>{
+  const f=await fixture({individualMergeShaNull:true,ahead:7});
+  try{
+    const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(out.body.result.structuredContent.eligible,true);
+    assert.equal(out.body.result.structuredContent.merged_pr,987);
+    assert.equal(out.body.result.structuredContent.deletion_supported,false);
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/pulls/987')));
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.includes('/compare/')));
+    assert.equal(f.calls.some(([method])=>method!=='GET'),false);
+  }finally{await f.close()}
+});
+test('both PR projections may omit merge SHA; verified merge event and main ancestry still required',async()=>{
+  for(const opt of [
+    {associatedMergeShaNull:true,individualMergeShaNull:true},
+    {associatedMergeShaNull:true,individualMergeShaNull:false},
+    {associatedMergeShaNull:false,individualMergeShaNull:true}]){
+    const f=await fixture(opt);
+    try{
+      const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+      assert.equal(out.body.result.structuredContent?.eligible,true);
+      assert.equal(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/issues/987/events?per_page=100')),Boolean(opt.associatedMergeShaNull&&opt.individualMergeShaNull));
+      assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.includes('/compare/')));
+      assert.equal(f.calls.some(([method])=>method!=='GET'),false);
+    }finally{await f.close()}
+  }
+});
+test('missing or inconsistent merge event fails closed',async()=>{
+ for(const [opt,err] of [
+   [{associatedMergeShaNull:true,individualMergeShaNull:true,mergeEventMissing:true},'MERGE_NOT_VERIFIED'],
+   [{associatedMergeShaNull:true,individualMergeShaNull:true,mergeEventMismatch:true},'MERGE_NOT_REACHABLE']]){
+   const f=await fixture(opt);
+   try{
+     const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+     assert.equal(out.body.result.isError,true);
+     assert.match(out.body.result.content[0].text,new RegExp(err));
+     assert.equal(f.calls.some(([method])=>method!=='GET'),false);
+   }finally{await f.close()}
+ }
 });
 test('preview verifies an exact merged commit even when closed PR feed omits it',async()=>{
   const f=await fixture({closedFeedMissing:true});
