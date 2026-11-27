@@ -5,7 +5,7 @@
 ## Service domains (separate lifecycles)
 
 - **Agent control:** Multica and Hermes Gateway; Paperclip remains a legacy runtime and historical Wiki source. Do NOT assume migrated Paperclip role or review configuration is active in Multica.
-- **Memory and telemetry:** Hindsight, Qdrant and Opik, with separately deployed components and MCP services. Container `running:healthy` is not proof of agent connectivity.
+- **Memory and telemetry:** Hindsight, retained Qdrant vector database and Opik have separate lifecycles. The retired `qdrant-mcp` service is NOT to be recreated; historical provider status is not current agent connectivity evidence.
 - **Source and release:** GitHub private repositories; Coolify deployments; Cloudflare edge/proxy and Workers. Repo HEAD != deployed image without digest/readback evidence.
 - **Knowledge graph:** one Repowise workspace covering `product` + `harness`, with a private Streamable HTTP MCP server. It indexes code, Git history and historical documents separately. Cross-repo inferred links are candidate evidence, not runtime truth.
 - **Product:** see [product repository](https://github.com/miloszspyrka-code/zar-i-szlif) and its current-runtime document for customer-facing app ownership.
@@ -59,8 +59,7 @@ Connector returned 34 projects, 32 service resources and 12 standalone applicati
 | plasmic | mzmlcorgkfgdy44hqfmmtxgw | running:healthy |
 | plasmic-mcp | a6ci2beifbinzckfnneiqnjd | running:healthy |
 | playwright-mcp | 9e4fzsodixl4qzzap4zg0ntp | running:healthy |
-| qdrant | eciprwgeyol4znmdd0dpu3xc | running:healthy |
-| qdrant-mcp | a4zgmthjspz8hwvyu6llr8dh | running:healthy |
+| qdrant (vector DB; retained, separate from retired qdrant-mcp) | eciprwgeyol4znmdd0dpu3xc | running:healthy (historical 2026-11-09 snapshot) |
 | repowise-mcp-runtime | lecwi3emh9hjxir7gphmalie | running:healthy |
 | supabase | r2gnunvpkqwmuew1tupbf7lx | running:healthy |
 | supabase-mcp | tjit4c8m0kjh8brkmdhyvkde | running:healthy |

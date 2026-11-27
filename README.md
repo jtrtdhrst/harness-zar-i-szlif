@@ -20,14 +20,13 @@
 
 **Zacznij od [AGENTS.md](AGENTS.md).** Znajdziesz tam kanoniczne katalogi, zakres odpowiedzialności, sposób weryfikacji produkcji i regułę: kod w repo ≠ wdrożona wersja.
 
-- **Qdrant:** jedyny kod MCP znajduje się w `mcp/qdrant-mcp/`. Dawny główny katalog `qdrant-mcp/` został wycofany — usługa Qdrant MCP, baza i wolumeny produkcyjne pozostają.
 - **Opik MCP** (`mcp/opik-mcp/`) przyjmuje autoryzowane żądania narzędzi Opik. **Opik run enricher** (`workers/opik-run-enricher/`) dopisuje bezpieczne metryki do zakończonych trace; to osobny worker, nie drugi serwer MCP.
 - **`ops/`** przechowuje mapowanie Coolify, kontrakty wydań i infrastrukturę; nie jest usługą ani katalogiem implementacji MCP. Pliki README i `project.yml` bez kodu nie świadczą o źródłach działającego kontenera.
 - **Ścieżki Coolify:** samo przeniesienie kodu do `mcp/` nie zmienia `base_directory` ani `watch_paths` produkcyjnej aplikacji. Agent ma sprawdzić je przed deploymentem, zwłaszcza dla `github-ops-mcp` i `multica-mcp`.
 
 **Szczegóły każdej usługi:** [mcp/README.md](mcp/README.md).
 **Architektura i zakres zmian:** [docs/REPOSITORY-ARCHITECTURE.md](docs/REPOSITORY-ARCHITECTURE.md).
-**38 Coolify UUID:** [ops/coolify-service-registry.json](ops/coolify-service-registry.json).
+**37 zarządzanych Coolify UUID:** [ops/coolify-service-registry.json](ops/coolify-service-registry.json).
 **Katalog uruchomionych obrazów i ich pochodzenia:** [ops/mcp-images/](ops/mcp-images/).
 **Źródło prawdy dla kontekstów Docker:** [ops/service-build-roots.json](ops/service-build-roots.json).
 

@@ -1,5 +1,8 @@
 # Żar i Szlif — kompletna dokumentacja backendu i zaplecza technicznego
 
+> **Historical architecture snapshot (2026-11-09).** The separate Harness `qdrant-mcp` server and Coolify service were retired by 2026-11-27; do not recreate or start them. The Qdrant vector database and product RAG/retrieval configuration are separate retained resources. Older MCP paths/statuses below are historical observations, not active deployment instructions.
+
+
 **Wersja dokumentu:** 1.0 — 2026-11-09 21:39 UTC / 22:39 Europe/Warsaw  
 **Metoda:** odczyt kodu na VPS przez Ubuntu SSH; analiza RepoWise MCP; inspekcja Docker/Coolify runtime; bezpośrednie, tylko odczytowe próby HTTPS; odczyt metadanych PostgreSQL bez danych użytkowników.  
 **Zakres:** backend produktu, API, MCP, baza danych, platforma agentów, bramki, pamięć, obserwowalność, CI/CD, infrastruktura i operacje.  
@@ -88,7 +91,7 @@ Strzałki **ciągłe** oznaczają funkcję potwierdzoną kodem lub statusem uruc
 ### 2.1 Granice
 
 - **Produkt**: `app/web` (przeglądarka), `app/plugin` (lokalny serwer MCP/SDK), `app/cloudflare-worker` (starszy Worker panelu/OAuth), `app/mcp-worker` (wydzielony produktowy Worker wiedzy), `ops/coolify` (statyczny serwer Nginx), domena produktu, schematy i treści.
-- **Harness**: `paperclip-mcp`, `integrations/hermes-paperclip`, `multica-mcp`, `supabase-mcp`, `qdrant-mcp`, `mantic-mcp`, `emailens-mcp`, `ubuntu-mcp`, `plasmic-mcp`, `comfyui-mcp`, `opik-*`, integracje i runbooki infrastruktury.
+- **Harness**: `paperclip-mcp`, `integrations/hermes-paperclip`, `multica-mcp`, `supabase-mcp`, `mantic-mcp`, `emailens-mcp`, `ubuntu-mcp`, `plasmic-mcp`, `comfyui-mcp`, `opik-*`, integracje i runbooki infrastruktury.
 - **Kod a runtime**: część źródeł produktu korzysta ze starych identyfikatorów `Kompas Zbiórek`, `kompas-zbiorek`, `kompas-knowledge-v1`. Nie oznacza to automatycznie migracji schematu, danych ani hostname'ów na nową markę.
 - **Trwałość**: żaden agent nie powinien traktować lokalnego frontendu, Qdrant, Hindsight, RepoWise i PostgreSQL jako jednej wspólnej bazy danych. Każdy ma inną odpowiedzialność, wersję źródła i politykę retencji.
 - **Historia**: archiwum 108 stron Paperclip Wiki jest źródłem historycznym, nie aktywną polityką Multica/Hermes.
@@ -315,7 +318,7 @@ Poniższy katalog jest **mapą funkcjonalną**, a nie listą samych „backendó
 | Dev runtime | OpenCode `2.2.5-custom` | agent kodujący | healthy, brak zadania end-to-end w audycie |
 | Agent memory | Hindsight core/admin `ghcr.io/vectorize-io/hindsight:latest-slim` + pgvector 17 | długotrwała pamięć | healthy; mutable tag `latest-slim` wymaga digest pinning |
 | Vector DB | Qdrant `1.20.0` | kolekcje wektorowe | healthy; zaobserwowano `long_term_memory` |
-| Vector MCP | `qdrant-mcp` | kontrolowany dostęp do Qdrant | healthy; osobna autoryzacja |
+| Vector MCP (retired) | `qdrant-mcp` | historyczny dostęp do Qdrant | wycofany, usługa usunięta 2026-11-27 |
 | Traces | Opik frontend/backend/python-backend `2.2.121` | telemetry dashboard + API | healthy |
 | Traces storage | ClickHouse `26.3.16.16-alpine`, MySQL `8.4.2`, Redis `7.2.4`, ZooKeeper `3.9.4`, MinIO | Opik state/storage | healthy; dependency-aware backup/rollback |
 | Trace bridge | `opik-mcp:3.0.7`, access-guard, run-enricher | MCP/opis trace | zdrowie kontenera ≠ powiązane agent traces |

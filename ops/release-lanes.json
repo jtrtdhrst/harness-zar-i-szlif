@@ -338,24 +338,6 @@
       "reviewer_role": "CHO"
     },
     {
-      "id": "qdrant-mcp",
-      "platform": "coolify",
-      "coolify_kind": "service",
-      "coolify_uuid": "a4zgmthjspz8hwvyu6llr8dh",
-      "observed_status": "running:healthy (legacy, pending teardown)",
-      "observed_image_ref": "127.0.0.1:5000/mcp-qdrant-staging:src-672965c2ad82",
-      "release_route": "inactive_no_promotion",
-      "promotion_state": "hold",
-      "auto_deploy_expected": false,
-      "review_required": true,
-      "exact_image_digest_required": true,
-      "source_commit_required_when_source_built": true,
-      "evidence_state": "open",
-      "observed_at": "2026-11-04",
-      "release_contract": "Retired Qdrant MCP only: NO build/deploy; pending controlled Coolify service removal. Separate Qdrant database remains untouched.",
-      "reviewer_role": "CHO"
-    },
-    {
       "id": "supabase-mcp",
       "platform": "coolify",
       "coolify_kind": "service",
@@ -555,12 +537,12 @@
     }
   ],
   "scope_snapshot": {
-    "observed_at": "2026-11-04T17:02:30Z",
+    "observed_at": "2026-11-27",
     "coolify_applications": 5,
-    "coolify_services": 26,
-    "coolify_total": 31,
+    "coolify_services": 25,
+    "coolify_total": 30,
     "cloudflare_workers": 3,
-    "source": "Coolify authenticated readback including newly created Hermes git-release candidate; Cloudflare three Worker version IDs from native readback; dated not continuous"
+    "source": "Declared GitHub source-manifest scope reconciled on 2026-11-27 after Qdrant MCP retirement: retained Qdrant database, no new live Coolify readback. Prior 2026-11-04 provider snapshot is historical; these counts are source-only, not release admission."
   },
   "cloudflare_workers": [
     {
