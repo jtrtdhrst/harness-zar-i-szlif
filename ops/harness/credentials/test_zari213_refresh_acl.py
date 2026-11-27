@@ -12,7 +12,7 @@ import stat
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 SOURCE = pathlib.Path(__file__).with_name("multica-zar-github-app-refresh.py")
 spec = importlib.util.spec_from_file_location("refresh_acl_under_test", SOURCE)
@@ -201,25 +201,42 @@ class BghReaderOnlyTests(unittest.TestCase):
         from unittest.mock import Mock
         import runpy
         role = "github-ops-reader"
+        image_role = refresh.IMAGE_READER_ROLE
         permissions = refresh.ROLE_PERMISSIONS[role]
         repos = set(refresh.REPOS)
-        directory = pathlib.Path("/fixture/bgh-volume")
-        grant = {"role": role, "permissions": permissions,
-                 "repositories": sorted(repos),
-                 "expires_at": "2099-01-01T00:00:00Z"}
-        volume = {"validated_volume": Mock(return_value=directory),
-                  "project": Mock()}
+        legacy_directory = pathlib.Path("/fixture/bgh-volume")
+        image_directory = pathlib.Path("/fixture/image-volume")
+        volume = {
+            "validated_volume": Mock(side_effect=[image_directory, legacy_directory]),
+            "project": Mock(),
+            "PERMISSIONS": refresh.ROLE_PERMISSIONS[image_role],
+            "REPOS": list(refresh.REPOS),
+        }
         projector = {"check_dir": Mock(), "NODE_GID": 1000,
                      "PERMISSIONS": permissions, "REPOS": repos,
                      "SOURCE": "fixture-source", "TARGET": "fixture-target",
                      "project": Mock()}
+        grants = {
+            name: {"role": name, "permissions": refresh.ROLE_PERMISSIONS[name],
+                   "repositories": sorted(refresh.ROLE_REPOS.get(name, refresh.REPOS)),
+                   "expires_at": "2099-01-01T00:00:00Z"}
+            for name in (role, image_role)
+        }
         with patch.object(runpy, "run_path", side_effect=[volume, projector]), \
-             patch.object(refresh, "mint", return_value=grant) as mint, \
-             patch.object(refresh, "write_token") as write:
+             patch.object(refresh, "mint", side_effect=lambda name: grants[name]) as mint, \
+             patch.object(refresh, "write_token") as write, \
+             patch.dict(os.environ, {
+                 "GITHUB_OPS_IMAGE_APP_UUID": refresh.IMAGE_READER_APP_UUID,
+                 "GITHUB_OPS_IMAGE_READER_VOLUME": refresh.IMAGE_READER_VOLUME,
+             }):
             self.assertEqual(refresh.refresh_bgh_reader(), 0)
-        mint.assert_called_once_with(role)
-        write.assert_called_once_with(role, grant)
-        volume["project"].assert_called_once_with(grant, directory)
+        self.assertEqual([call.args[0] for call in mint.call_args_list],
+                         [role, image_role])
+        self.assertEqual([call.args[0] for call in write.call_args_list],
+                         [role, image_role])
+        self.assertEqual(volume["project"].call_args_list,
+                         [call(grants[role], legacy_directory),
+                          call(grants[image_role], image_directory)])
         projector["project"].assert_called_once_with(
             "fixture-source", "fixture-target", role, permissions)
 
@@ -228,10 +245,53 @@ class BghReaderOnlyTests(unittest.TestCase):
         import runpy
         volume = {"validated_volume": Mock(side_effect=RuntimeError("denied"))}
         with patch.object(runpy, "run_path", side_effect=[volume, {}]), \
-             patch.object(refresh, "mint") as mint:
+             patch.object(refresh, "mint") as mint, \
+             patch.dict(os.environ, {
+                 "GITHUB_OPS_IMAGE_APP_UUID": refresh.IMAGE_READER_APP_UUID,
+                 "GITHUB_OPS_IMAGE_READER_VOLUME": refresh.IMAGE_READER_VOLUME,
+             }):
             with self.assertRaisesRegex(RuntimeError, "denied"):
                 refresh.refresh_bgh_reader()
         mint.assert_not_called()
+
+    def test_image_reader_scope_mismatch_is_not_persisted_or_projected(self):
+        from unittest.mock import Mock
+        import runpy
+        legacy_role = "github-ops-reader"
+        image_role = refresh.IMAGE_READER_ROLE
+        legacy_directory = pathlib.Path("/fixture/bgh-volume")
+        image_directory = pathlib.Path("/fixture/image-volume")
+        volume = {"validated_volume": Mock(side_effect=[image_directory, legacy_directory]),
+                  "project": Mock(),
+                  "PERMISSIONS": refresh.ROLE_PERMISSIONS[image_role],
+                  "REPOS": list(refresh.REPOS)}
+        projector = {"check_dir": Mock(), "NODE_GID": 1000,
+                     "PERMISSIONS": refresh.ROLE_PERMISSIONS[legacy_role],
+                     "REPOS": set(refresh.REPOS), "SOURCE": "source",
+                     "TARGET": "target", "project": Mock()}
+        legacy_grant = {"role": legacy_role,
+                        "permissions": refresh.ROLE_PERMISSIONS[legacy_role],
+                        "repositories": list(refresh.REPOS),
+                        "expires_at": "2099-01-01T00:00:00Z"}
+        invalid_image_grant = {"role": image_role,
+                               "permissions": {"contents": "write"},
+                               "repositories": list(refresh.REPOS),
+                               "expires_at": "2099-01-01T00:00:00Z"}
+        with patch.object(runpy, "run_path", side_effect=[volume, projector]), \
+             patch.object(refresh, "mint",
+                          side_effect=[legacy_grant, invalid_image_grant]) as mint, \
+             patch.object(refresh, "write_token") as write, \
+             patch.dict(os.environ, {
+                 "GITHUB_OPS_IMAGE_APP_UUID": refresh.IMAGE_READER_APP_UUID,
+                 "GITHUB_OPS_IMAGE_READER_VOLUME": refresh.IMAGE_READER_VOLUME,
+             }):
+            with self.assertRaisesRegex(RuntimeError, "Image-reader grant scope mismatch"):
+                refresh.refresh_bgh_reader()
+        self.assertEqual([call.args[0] for call in mint.call_args_list],
+                         [legacy_role, image_role])
+        write.assert_called_once_with(legacy_role, legacy_grant)
+        self.assertEqual(volume["project"].call_args_list,
+                         [call(legacy_grant, legacy_directory)])
 
     def test_reader_mode_never_enters_legacy_role_loop(self):
         with tempfile.TemporaryDirectory() as temp:
