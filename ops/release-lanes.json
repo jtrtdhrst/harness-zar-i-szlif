@@ -356,6 +356,24 @@
       "reviewer_role": "CHO"
     },
     {
+      "id": "qdrant",
+      "platform": "coolify",
+      "coolify_kind": "service",
+      "coolify_uuid": "eciprwgeyol4znmdd0dpu3xc",
+      "observed_status": "running:healthy",
+      "observed_image_ref": "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
+      "release_route": "coolify_reviewed_digest_manual",
+      "promotion_state": "hold",
+      "auto_deploy_expected": false,
+      "review_required": true,
+      "exact_image_digest_required": true,
+      "source_commit_required_when_source_built": true,
+      "evidence_state": "open",
+      "observed_at": "2026-11-04",
+      "release_contract": "CHO-reviewed immutable digest, source provenance, canary/smoke, rollback identity, explicit per-UUID Coolify deploy, live runtime digest readback",
+      "reviewer_role": "CHO"
+    },
+    {
       "id": "opencode",
       "platform": "coolify",
       "coolify_kind": "service",
