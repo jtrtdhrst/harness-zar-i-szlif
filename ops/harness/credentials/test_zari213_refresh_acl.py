@@ -91,7 +91,7 @@ class SafeRefreshPathTests(unittest.TestCase):
              patch.object(refresh.os, "fstat", side_effect=root_fstat), \
              patch.object(refresh, "mint", side_effect=mint_role) as minted, \
              patch.object(refresh, "write_token") as wrote, \
-             patch.object(refresh, "cleanup_failed_writer"):
+             patch.object(refresh, "cleanup_failed_writer", side_effect=refresh.retire_writer_grant):
             try:
                 refresh.main()
             finally:
@@ -260,12 +260,14 @@ if __name__ == "__main__":
 
 
 class FailClosedRefreshIntegration(unittest.TestCase):
-    def test_failed_full_refresh_always_runs_cleanup(self):
+    def test_main_does_not_cleanup_after_core_releases_lock(self):
+        # Lifecycle cleanup is performed inside _refresh_core while flock is
+        # held. An outer catch would reintroduce a cross-refresh race.
         with patch.object(refresh, "_refresh_core", side_effect=RuntimeError("nonwriter mint failed")), \
              patch.object(refresh, "cleanup_failed_writer") as cleanup:
             with self.assertRaisesRegex(RuntimeError, "nonwriter mint failed"):
                 refresh.main()
-            cleanup.assert_called_once_with()
+            cleanup.assert_not_called()
 
     def test_failed_reader_only_does_not_create_writer_cleanup(self):
         with patch.object(refresh, "_refresh_core", side_effect=RuntimeError("reader unavailable")), \
