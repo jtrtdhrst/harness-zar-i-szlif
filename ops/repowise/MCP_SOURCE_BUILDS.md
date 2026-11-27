@@ -38,6 +38,13 @@ Additional owned non-MCP runtime image roots (Hermes Gateway and RepoWise deploy
 - `repowise-mcp-runtime`: recorded as `local-image-unknown-source`, **not compliant yet**. Do not pretend an image-only service is source-owned or create an empty placeholder folder. Resolve source provenance via its existing RepoWise source/release work and independent review before declaring it part of the owned-build set.
 - `zar-i-szlif-mcp-host` and `zar-i-szlif-mcp-host-image`: **other repository** `jtrtdhrst/zar-i-szlif`. Validate/build them under their owning repo's own CI; do not copy product code into Harness.
 
+## Observed build and release status — 2026-11-27
+
+- GitHub main was `e44952c97397f78fc47e8062793b4f8fc9ece1bc` at inspection. All 12 primary MCP image builds published exact-source release artifacts at `2c69fb89ed9b94068e729d5bc94fc278325d81db`: [nine general images](https://github.com/jtrtdhrst/harness-zar-i-szlif/actions/runs/45209712853), [GitHub Ops and Multica](https://github.com/jtrtdhrst/harness-zar-i-szlif/actions/runs/45209712269), [Coolify](https://github.com/jtrtdhrst/harness-zar-i-szlif/actions/runs/45209712644).
+- The Opik service has an additional owned component in `mcp/opik-mcp/access-guard/`. [PR #241](https://github.com/jtrtdhrst/harness-zar-i-szlif/pull/241) proposes publishing it as `ghcr.io/jtrtdhrst/harness-opik-access-guard:sha-<SHA>` alongside the backend. Exact-head CI at `39c9d960225d1db3248265b078057a07827c7a67` passed; do not report this publisher as present on main until the merge and main build are independently verified.
+- Live Docker readback on 2026-11-27 still showed local/older images for Comfy, Opik, Hindsight, Playwright and other MCPs. Successful GitHub builds do not establish current production deployment. Do not recreate the retired Qdrant MCP; the separate vector database remains intact.
+- Branch cleanup must verify merged PR head SHA and preserve any unique unmerged work. At inspection GitHub listed 41 branches including main and 25 open PRs. These counts are observations, not permanent architecture facts.
+
 ## Verification commands and ownership boundaries
 
 ```sh
