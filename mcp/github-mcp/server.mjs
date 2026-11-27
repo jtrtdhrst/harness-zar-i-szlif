@@ -365,24 +365,39 @@ export function makeServer(config={}) {
     // GitHub can return merge_commit_sha=null for a merged PR's individual
     // GET while commit-associated PR evidence still carries its merge SHA.
     // Treat them as separate proofs, never as permission to skip ancestry.
-    const matches=pr=>matchesIdentity(pr)&&SHA.test(pr.merge_commit_sha||'');
-    // A second discovery route is allowed, but not a weaker verification:
-    // every candidate must still pass individual PR readback below.
-    const candidates=associated.filter(matches);
+    // Candidate identity is independent of merge SHA, which GitHub may omit.
+    // Discovery is never deletion authorization; verify every candidate.
+    const candidates=associated.filter(matchesIdentity);
     if(candidates.length===0){
-      for(const pr of (await listPulls(root,'closed')).filter(matches))candidates.push(pr);
+      for(const pr of (await listPulls(root,'closed')).filter(matchesIdentity))candidates.push(pr);
     }
     let merged=null;
     for(const candidate of candidates){
       const verified=await api('GET',`${root}/pulls/${candidate.number}`);
-      if(matchesIdentity(verified)&&verified.merged===true&&verified.state==='closed'&&
-         (verified.merge_commit_sha===null ||
-           verified.merge_commit_sha?.toLowerCase()===candidate.merge_commit_sha.toLowerCase())){
-        merged={...verified,merge_commit_sha:candidate.merge_commit_sha};
-        break;
+      if(!matchesIdentity(verified)||verified.merged!==true||verified.state!=='closed')continue;
+      const values=[candidate.merge_commit_sha,verified.merge_commit_sha];
+      if(values.some(v=>v!=null&&!SHA.test(v)))continue;
+      const known=values.filter(v=>v!=null).map(v=>v.toLowerCase());
+      if(new Set(known).size>1)continue;
+      let mergeSha=known[0]??null;
+      if(values.some(v=>v==null)){
+        // The merged issue event carries GitHub's resulting commit ID even
+        // if both PR projections omit it. Check its exact merge timestamp.
+        const events=await api('GET',`${root}/issues/${candidate.number}/events?per_page=100`);
+        if(!Array.isArray(events)||events.length===100)
+          throw error('MERGE_EVENTS_UNVERIFIED','Merge event evidence missing or truncated');
+        const proofs=events.filter(e=>e.event==='merged'&&
+          e.created_at===verified.merged_at&&SHA.test(e.commit_id||''));
+        if(proofs.length!==1)continue;
+        const eventSha=proofs[0].commit_id.toLowerCase();
+        if(mergeSha&&mergeSha!==eventSha)continue;
+        mergeSha=eventSha;
       }
+      if(!mergeSha)continue;
+      merged={...verified,merge_commit_sha:mergeSha};
+      break;
     }
-    if(!merged)throw error('MERGE_NOT_VERIFIED','No individually verified merged PR for this exact branch SHA');
+        if(!merged)throw error('MERGE_NOT_VERIFIED','No individually verified merged PR for this exact branch SHA');
     const cmp=await api('GET',`${root}/compare/${merged.merge_commit_sha}...main`);
     if(cmp.behind_by!==0)throw error('MERGE_NOT_REACHABLE','Merged PR commit not on current main');
     return {current,merged};
