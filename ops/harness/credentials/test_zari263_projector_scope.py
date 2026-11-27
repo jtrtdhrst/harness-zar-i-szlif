@@ -72,35 +72,53 @@ class WriterRevocation(unittest.TestCase):
             self.assertEqual(target.read_text(), 'unchanged')
 
 
-    def test_reader_failure_revokes_existing_writer_in_both_mounts(self):
-        from unittest.mock import call, patch
+    def test_reader_failure_uses_shared_provider_first_revocation(self):
+        import contextlib
+        from unittest.mock import patch, Mock
         project = load("github-ops-token-project.py", "bgh_reader_failure_revoke")
-        with patch.object(project, "project", side_effect=RuntimeError("reader invalid")), \
-             patch.object(project, "retire_writer_target", return_value=True) as revoke, \
-             patch.object(project, "retire_writer_source", return_value=True) as source_revoke:
+        cleanup = Mock()
+        with patch.object(project, "writer_lifecycle_lock", return_value=contextlib.nullcontext()), \
+             patch.object(project, "project", side_effect=RuntimeError("reader invalid")), \
+             patch.object(project.runpy, "run_path", return_value={"cleanup_failed_writer": cleanup}):
             with self.assertRaisesRegex(RuntimeError, "reader invalid"):
                 project.main()
-        source_revoke.assert_called_once_with()
-        self.assertEqual(revoke.call_args_list, [
-            call(project.WRITER_TARGET), call(project.WRITER_RUNTIME)
-        ])
+        cleanup.assert_called_once_with()
 
-    def test_writer_projection_failure_revokes_both_previous_grants(self):
+    def test_writer_projection_failure_reports_provider_revoke_failure(self):
+        import contextlib
         import tempfile
-        from unittest.mock import call, patch
+        from unittest.mock import patch, Mock
         project = load("github-ops-token-project.py", "bgh_writer_failure_revoke")
+        cleanup = Mock(side_effect=RuntimeError("Writer cleanup incomplete"))
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "writer.json"
             source.write_text("synthetic-only")
             with patch.object(project, "WRITER_SOURCE", source), \
+                 patch.object(project, "writer_lifecycle_lock", return_value=contextlib.nullcontext()), \
                  patch.object(project, "project", side_effect=["2099-01-01T00:00:00Z",
                                                             RuntimeError("writer invalid")]), \
-                 patch.object(project, "retire_writer_target", return_value=True) as revoke:
-                with self.assertRaisesRegex(RuntimeError, "Writer revocation incomplete"):
+                 patch.object(project.runpy, "run_path", return_value={"cleanup_failed_writer": cleanup}):
+                with self.assertRaisesRegex(RuntimeError, "Writer cleanup incomplete"):
                     project.main()
-            self.assertEqual(revoke.call_args_list, [
-                call(project.WRITER_TARGET), call(project.WRITER_RUNTIME)
-            ])
+        cleanup.assert_called_once_with()
+
+    def test_writer_projection_failure_attempts_remote_revocation(self):
+        import contextlib
+        import tempfile
+        from unittest.mock import patch, Mock
+        project = load("github-ops-token-project.py", "bgh_writer_failure_revokes")
+        cleanup = Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "writer.json"
+            source.write_text("synthetic-only")
+            with patch.object(project, "WRITER_SOURCE", source), \
+                 patch.object(project, "writer_lifecycle_lock", return_value=contextlib.nullcontext()), \
+                 patch.object(project, "project", side_effect=["2099-01-01T00:00:00Z",
+                                                            RuntimeError("writer invalid")]), \
+                 patch.object(project.runpy, "run_path", return_value={"cleanup_failed_writer": cleanup}):
+                with self.assertRaisesRegex(RuntimeError, "writer invalid"):
+                    project.main()
+        cleanup.assert_called_once_with()
 
 
 class RuntimeVolumeProjection(unittest.TestCase):
