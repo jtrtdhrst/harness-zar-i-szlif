@@ -14,7 +14,7 @@ def check(data):
     lanes, other, workers = data.get("lanes"), data.get("other_resources"), data.get("cloudflare_workers")
     snap = data.get("scope_snapshot", {})
     must(all(isinstance(x, list) and len(x) for x in (lanes, other, workers)), "incomplete inventory arrays")
-    must(snap.get("coolify_applications") == 5 and snap.get("coolify_services") == 24 and snap.get("coolify_total") == 29, "incomplete Coolify snapshot")
+    must(snap.get("coolify_applications") == 5 and snap.get("coolify_services") == 25 and snap.get("coolify_total") == 30, "incomplete Coolify snapshot")
     must(snap.get("cloudflare_workers") == 3 == len(workers), "incomplete Workers snapshot")
     allowed = {"git_promoted", "git_canary_manual", "git_canary_auto", "manual_pinned", "upstream_pinned"}
     ids, uuids, counts = set(), set(), {"application": 0, "service": 0}
@@ -74,6 +74,9 @@ def check(data):
         must(all(r.get(k) for k in ("observed_status", "observed_image_ref", "release_contract")), f"{name}: missing evidence/contract")
         uuids.add(uuid)
         counts[kind] += 1
+    qdrant = next((x for x in other if x.get("id") == "qdrant"), None)
+    must(qdrant is not None and qdrant.get("coolify_uuid") == "eciprwgeyol4znmdd0dpu3xc" and qdrant.get("promotion_state") == "hold" and qdrant.get("auto_deploy_expected") is False, "retained Qdrant DB missing or improperly promoted")
+    must(not any(x.get("id") == "qdrant-mcp" for x in other), "retired Qdrant MCP must remain absent")
     must(counts == {"application": snap["coolify_applications"], "service": snap["coolify_services"]}, f"Coolify coverage: {counts}")
     must(len(uuids) == snap["coolify_total"], "Coolify UUID coverage")
     names = set()
@@ -106,6 +109,8 @@ def negative_cases(manifest):
             return
         raise RuntimeError(f"FAIL OPEN: {label} incorrectly accepted")
     reject("missing-Coolify-service", lambda x: x["other_resources"].pop())
+    reject("missing-retained-qdrant-db", lambda x: x["other_resources"].remove(next(r for r in x["other_resources"] if r["id"] == "qdrant")))
+    reject("retired-qdrant-mcp-reintroduced", lambda x: next(r for r in x["other_resources"] if r["id"] == "opik-mcp").update(id="qdrant-mcp"))
     reject("duplicate-UUID", lambda x: x["other_resources"][0].update(coolify_uuid=x["lanes"][0]["coolify_uuid"]))
     reject("unreviewed-image-release", lambda x: x["other_resources"][0].update(review_required=False))
     reject("automatic-unproved-image-release", lambda x: x["other_resources"][0].update(auto_deploy_expected=True))
@@ -121,7 +126,7 @@ def negative_cases(manifest):
     reject("wrong-product-reviewer", lambda x: next(a for a in x["lanes"] if a["id"] == "product-panel").update(reviewer_role="CHO"))
     reject("wrong-harness-reviewer", lambda x: next(a for a in x["lanes"] if a["id"] == "paperclip-mcp").update(reviewer_role="CTO"))
     reject("duplicate-reviewers-for-manual-MCP", lambda x: next(a for a in x["other_resources"] if a["id"] == "opik-mcp").update(release_contract="CHO + CTO approved digest"))
-    print("PASS: 16 fail-closed structural regressions (not live deploy/rollback tests)")
+    print("PASS: 18 fail-closed structural regressions (not live deploy/rollback tests)")
 
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
