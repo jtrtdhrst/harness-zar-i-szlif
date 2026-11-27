@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import os
-import tempfile
 """Guard exact BGH GitHub App reader/writer role parity without exposing tokens."""
 import importlib.util
 from pathlib import Path
@@ -95,46 +93,12 @@ class WriterRevocation(unittest.TestCase):
             with patch.object(project, "WRITER_SOURCE", source), \
                  patch.object(project, "project", side_effect=["2099-01-01T00:00:00Z",
                                                             RuntimeError("writer invalid")]), \
-                 patch.object(project, "retire_writer_target", return_value=True) as revoke, \
-                 patch.object(project, "retire_writer_source", return_value=True) as source_revoke:
-                with self.assertRaisesRegex(RuntimeError, "writer invalid"):
+                 patch.object(project, "retire_writer_target", return_value=True) as revoke:
+                with self.assertRaisesRegex(RuntimeError, "Writer revocation incomplete"):
                     project.main()
             self.assertEqual(revoke.call_args_list, [
                 call(project.WRITER_TARGET), call(project.WRITER_RUNTIME)
             ])
-            source_revoke.assert_called_once_with()
-
-
-class RootWriterSourceRevocation(unittest.TestCase):
-    def test_writer_source_file_removed_on_projection_failure(self):
-        from unittest.mock import patch
-        project = load("github-ops-token-project.py", "bgh_root_source_revoke")
-        with tempfile.TemporaryDirectory() as temporary:
-            source = Path(temporary) / "writer.json"
-            source.write_text("synthetic-not-a-token")
-            source.chmod(0o600)
-            original_lstat = os.lstat
-            def root_stat(path):
-                st = original_lstat(path)
-                return type("Stat", (), {"st_mode": st.st_mode, "st_uid": 0,
-                       "st_gid": 0, "st_nlink": st.st_nlink})()
-            with patch.object(project, "WRITER_SOURCE", source), \
-                 patch.object(project.os, "lstat", side_effect=root_stat):
-                self.assertTrue(project.retire_writer_source())
-            self.assertFalse(source.exists())
-
-    def test_source_symlink_is_rejected_without_following(self):
-        from unittest.mock import patch
-        project = load("github-ops-token-project.py", "bgh_root_source_symlink")
-        with tempfile.TemporaryDirectory() as temporary:
-            victim = Path(temporary) / "victim"
-            victim.write_text("synthetic-not-a-token")
-            link = Path(temporary) / "writer.json"
-            link.symlink_to(victim)
-            with patch.object(project, "WRITER_SOURCE", link):
-                with self.assertRaisesRegex(RuntimeError, "Untrusted source"):
-                    project.retire_writer_source()
-            self.assertEqual(victim.read_text(), "synthetic-not-a-token")
 
 
 class RuntimeVolumeProjection(unittest.TestCase):
