@@ -90,37 +90,113 @@ def php_map(values):
     return "[" + ",".join(json.dumps(key) + "=>" + json.dumps(value) for key, value in values.items()) + "]"
 
 
+class WriterGrantPostIssueError(RuntimeError):
+    """A provider may already have issued a writer token: never continue."""
+
+
+def revoke_new_writer_token(token):
+    """Revoke a just-issued grant directly, even if it never reached disk.
+
+    The token exists only in process memory and a request header, not argv,
+    stdout, log records, filesystem names or exception messages.
+    """
+    import urllib.request
+    if (not isinstance(token, str) or len(token) < 40 or
+            any(ch.isspace() for ch in token)):
+        raise RuntimeError("Writer token unavailable for provider revocation")
+    request = urllib.request.Request(
+        "https://api.github.com/installation/token",
+        headers={"Authorization": "Bearer " + token,
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28",
+                 "User-Agent": "zari-github-ops-fail-closed"},
+        method="DELETE",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        if response.status != 204:
+            raise RuntimeError("Writer provider revocation unconfirmed")
+    return True
+
+
 def mint(role):
     permissions = ROLE_PERMISSIONS[role]
     names = ROLE_REPO_NAMES.get(role, REPO_NAMES)
     expected_repos = ROLE_REPOS.get(role, REPOS)
     php = PHP_TEMPLATE.replace("{repos}", php_list(names)).replace("{perms}", php_map(permissions))
-    result = subprocess.run(
-        ["docker", "exec", "coolify", "php", "artisan", "tinker", "--execute=" + php],
-        capture_output=True, text=True, timeout=70, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "coolify", "php", "artisan", "tinker", "--execute=" + php],
+            capture_output=True, text=True, timeout=70, check=False,
+        )
+    except Exception as error:
+        if role == WRITER_ROLE:
+            raise WriterGrantPostIssueError(
+                "Writer grant command outcome unknown; provider issuance cannot be excluded") from error
+        raise
     if result.returncode != 0:
+        if role == WRITER_ROLE:
+            # A command may fail AFTER GitHub created an installation grant.
+            # Revoke any token included in the failed command's captured JSON;
+            # otherwise report an unverified issuance, never an optional deny.
+            try:
+                failed_response = json.loads(result.stdout.strip())
+            except (json.JSONDecodeError, ValueError):
+                failed_response = None
+            issued = (failed_response.get("token") if isinstance(failed_response, dict)
+                      else None)
+            if issued:
+                try:
+                    revoke_new_writer_token(issued)
+                except Exception as error:
+                    raise WriterGrantPostIssueError(
+                        "Writer grant command failed; returned token revocation unconfirmed") from error
+                raise WriterGrantPostIssueError(
+                    "Writer grant command failed; returned token revoked")
+            raise WriterGrantPostIssueError(
+                "Writer grant command failed; provider issuance cannot be excluded")
         raise RuntimeError(f"{role}: Coolify internal installation grant failed")
     try:
         grant = json.loads(result.stdout.strip())
     except (json.JSONDecodeError, ValueError) as error:
+        if role == WRITER_ROLE:
+            raise WriterGrantPostIssueError(
+                "Writer grant response unreadable; issuance status unknown") from error
         raise RuntimeError(f"{role}: grant returned no valid JSON") from error
-    if (grant.get("status") != 201 or grant.get("app_id") != APP_ID
-            or grant.get("installation_id") != INSTALLATION_ID):
-        raise RuntimeError(f"{role}: installation identity / token grant mismatch")
-    if set(grant.get("repositories", [])) != set(expected_repos):
-        raise RuntimeError(f"{role}: unexpected repository scope")
-    if grant.get("permissions") != permissions:
-        raise RuntimeError(f"{role}: unexpected permission scope")
-    token = grant.get("token")
-    if not isinstance(token, str) or len(token) < 40 or any(c.isspace() for c in token):
-        raise RuntimeError(f"{role}: token missing or malformed")
-    expires_at = grant.get("expires_at")
-    if not isinstance(expires_at, str):
-        raise RuntimeError(f"{role}: expiry missing")
-    expiry = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-    if expiry <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10):
-        raise RuntimeError(f"{role}: token expiry too short")
+    if not isinstance(grant, dict):
+        if role == WRITER_ROLE:
+            raise WriterGrantPostIssueError(
+                "Writer grant response not a mapping; issuance status unknown")
+        raise RuntimeError(f"{role}: grant returned no valid mapping")
+
+    issued_token = grant.get("token")
+    issuance_possible = grant.get("status") == 201 or isinstance(issued_token, str) and bool(issued_token)
+    try:
+        if (grant.get("status") != 201 or grant.get("app_id") != APP_ID
+                or grant.get("installation_id") != INSTALLATION_ID):
+            raise RuntimeError(f"{role}: installation identity / token grant mismatch")
+        if set(grant.get("repositories", [])) != set(expected_repos):
+            raise RuntimeError(f"{role}: unexpected repository scope")
+        if grant.get("permissions") != permissions:
+            raise RuntimeError(f"{role}: unexpected permission scope")
+        token = issued_token
+        if not isinstance(token, str) or len(token) < 40 or any(c.isspace() for c in token):
+            raise RuntimeError(f"{role}: token missing or malformed")
+        expires_at = grant.get("expires_at")
+        if not isinstance(expires_at, str):
+            raise RuntimeError(f"{role}: expiry missing")
+        expiry = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expiry <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10):
+            raise RuntimeError(f"{role}: token expiry too short")
+    except Exception as error:
+        if role == WRITER_ROLE and issuance_possible:
+            try:
+                revoke_new_writer_token(issued_token)
+            except Exception as revoke_error:
+                raise WriterGrantPostIssueError(
+                    "New writer grant rejected; provider revocation unconfirmed") from revoke_error
+            raise WriterGrantPostIssueError(
+                "New writer grant rejected and provider-revoked") from error
+        raise
     return {
         "token": token,
         "expires_at": expires_at,
@@ -243,15 +319,28 @@ def _refresh_core(*, reader_only=False):
             for role in roles:
                 try:
                     payload = mint(role)
-                except Exception:
-                    if role != WRITER_ROLE:
+                except Exception as error:
+                    # A provider-issued token whose identity or response could
+                    # not be verified is NEVER an optional grant refusal.
+                    if role != WRITER_ROLE or isinstance(error, WriterGrantPostIssueError):
                         raise
-                    # Optional writer refusal must not starve reader mints,
-                    # but provider revocation failures remain hard failures.
                     cleanup_failed_writer()
                     writer_blocked = True
                     continue
-                write_token(role, payload)
+                try:
+                    write_token(role, payload)
+                except Exception as write_error:
+                    if role == WRITER_ROLE:
+                        # The new token may exist only in memory; revoking
+                        # the prior on-disk role is not sufficient.
+                        try:
+                            revoke_new_writer_token(payload["token"])
+                        except Exception as revoke_error:
+                            raise WriterGrantPostIssueError(
+                                "Writer persistence failed; new token revocation unconfirmed") from revoke_error
+                        raise WriterGrantPostIssueError(
+                            "Writer persistence failed; new token revoked") from write_error
+                    raise
                 summary[role] = payload["expires_at"]
             # Optional image-only application rotation shares this root lock.
             app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
@@ -301,18 +390,7 @@ def revoke_existing_writer_at_github():
     token = grant.get("token")
     if not isinstance(token, str) or len(token) < 40 or any(ch.isspace() for ch in token):
         raise RuntimeError("Invalid writer grant token for provider revocation")
-    request = urllib.request.Request(
-        "https://api.github.com/installation/token",
-        headers={"Authorization": "Bearer " + token,
-                 "Accept": "application/vnd.github+json",
-                 "X-GitHub-Api-Version": "2022-11-28",
-                 "User-Agent": "zari-github-ops-fail-closed"},
-        method="DELETE",
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        if response.status != 204:
-            raise RuntimeError("GitHub writer revocation unconfirmed")
-    return True
+    return revoke_new_writer_token(token)
 
 
 def cleanup_failed_writer():
