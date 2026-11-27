@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh existing scoped GitHub Ops MCP reader grant
+Description=Rotate scoped GitHub App grants for Multica and GitHub Ops MCP
 After=docker.service
 Requires=docker.service
 
@@ -10,5 +10,7 @@ Group=root
 UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
-TimeoutStartSec=100
-ExecStart=/usr/bin/python3 /usr/local/libexec/multica-zar-github-app-refresh.py --github-ops-reader-only
+TimeoutStartSec=240
+Environment=GITHUB_OPS_WRITER_MINT_ENABLED=true
+ExecStart=/usr/bin/python3 /usr/local/libexec/multica-zar-github-app-refresh.py
+ExecStartPost=/usr/bin/python3 /usr/local/libexec/github-ops-token-project.py
