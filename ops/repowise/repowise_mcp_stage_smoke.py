@@ -114,9 +114,38 @@ def main():
     print("PASS negative cross-repo ownership check")
 
     blast, blast_text = tool("get_blast_radius", {"targets": ["product::app"], "max_depth": 2, "include_behavioral": False})
-    if "harness::paperclip-mcp" not in blast_text:
-        fail("cross-repo blast radius missing harness::paperclip-mcp")
-    print("PASS cross-repo blast radius")
+    # Source layout is mutable: Paperclip MCP was retired from harness on 2026-11-18.
+    # Assert a surviving, structural cross-repo HTTP edge, not deleted code.
+    if not isinstance(blast, dict):
+        fail("cross-repo blast radius is not structured JSON")
+    if blast.get("unresolved_targets") or blast.get("undetermined_targets"):
+        fail("cross-repo blast radius has unresolved targets")
+    impacted = blast.get("impacted", [])
+    if not isinstance(impacted, list):
+        fail("cross-repo blast radius has invalid impacted list")
+    # Canonical service identity changes when source roots are migrated.
+    # Resolve the expected ID from the indexed, Git-owned release registry.
+    try:
+        with open("/workspace/harness/ops/service-build-roots.json", encoding="utf-8") as source:
+            resources = json.load(source)["resources"]
+    except (OSError, ValueError, KeyError, TypeError):
+        fail("canonical service build roots registry unavailable")
+    roots = [item.get("source_root") for item in resources
+             if isinstance(item, dict) and item.get("id") == "ubuntu-mcp"]
+    if len(roots) != 1 or not isinstance(roots[0], str) or not roots[0].startswith("mcp/"):
+        fail("invalid canonical ubuntu-mcp source root")
+    expected_service_id = f"harness::{roots[0]}"
+    ubuntu_edges = [
+        item for item in impacted
+        if isinstance(item, dict)
+        and item.get("id") == expected_service_id
+        and item.get("repo") == "harness"
+        and item.get("structural") is True
+        and "http" in item.get("edge_kinds", [])
+    ]
+    if not ubuntu_edges:
+        fail(f"cross-repo blast radius missing structural HTTP edge to {expected_service_id}")
+    print("PASS cross-repo blast radius (ubuntu-mcp structural HTTP)")
     print("ALL PASS")
 
 

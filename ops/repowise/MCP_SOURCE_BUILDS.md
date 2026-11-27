@@ -4,13 +4,13 @@
 
 ## Mandatory rule for every source-owned MCP
 
-1. Source code, lockfiles, Dockerfile and tests live in one canonical `mcp/<service>/` directory. All Docker `COPY` inputs must be inside that service's own build context; no repo-root fallback, ghost source folders or unreviewed vendor binaries.
+1. MCP-specific source, Dockerfile and tests live under the canonical `mcp/<service>/` root. **RepoWise MCP** uses a reviewed, SHA-bound BuildKit/Buildah named context `repowise-source=apps/repowise` for its immutable upstream application package and applies owned MCP overrides from `mcp/repowise-mcp/`, with no second upstream fork or PyPI Repowise wheel. Every source is checked out from the same exact GitHub commit. All other Docker `COPY` inputs stay inside the service root; no repo-root Docker context, ghost folders or unreviewed binaries.
 2. An exact, reviewed GitHub `main` SHA builds through its assigned workflow (table below). PR validation uses the exact PR SHA and must not run untrusted PR workflow code on a production-adjacent self-hosted runner.
 3. OCI image must include `org.opencontainers.image.source` and `org.opencontainers.image.revision`, be published to GHCR with an exact `sha-<40-char-commit>` tag, and its **registry manifest digest** must be recorded. An image ID or floating tag is not a release digest.
 4. Publishing is not deployment. Production Coolify uses only the authorized immutable `image@sha256:...`; do not auto-promote on push or alter persistent volumes/OAuth state. Preserve CTO exact-SHA review, COO release authorization, CI verification, approved per-service UUID, production digest readback, positive/negative MCP E2E and rollback.
 5. RepoWise indexes Git source facts and reviewed docs; running image SHA/digest, deployment state and ChatGPT MCP behavior require independent runtime evidence. Answer **UNKNOWN / NOT VERIFIED** when missing.
 
-## Current 12 source-owned MCPs
+## Current 13 source-owned MCPs
 
 Every row below is derived from `ops/coolify-service-registry.json` and `ops/service-build-roots.json` and enforced by `scripts/test_mcp_build_contract.py`. All paths are relative to this repository. `mcp-images-ghcr` publishes `ghcr.io/jtrtdhrst/harness-<service>:sha-<SHA>`; `owned-runtime-images-ghcr` uses that naming rule for GitHub Ops and Multica; `coolify-mcp-ci` publishes `ghcr.io/jtrtdhrst/coolify-mcp:sha-<SHA>`.
 
@@ -29,6 +29,8 @@ Every row below is derived from `ops/coolify-service-registry.json` and `ops/ser
 | supabase-mcp | `tjit4c8m0kjh8brkmdhyvkde` | `mcp/supabase-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 | ubuntu-mcp | `lcnjb3vreec7saihkhan6akh` | `mcp/ubuntu-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
 
+| repowise-mcp-runtime | `lecwi3emh9hjxir7gphmalie` | `mcp/repowise-mcp` | `Dockerfile` | `mcp-images-ghcr.yml` |
+
 Additional owned non-MCP runtime image roots (Hermes Gateway and RepoWise deployment publisher staging) use `owned-runtime-images-ghcr.yml`; this table excludes them because their service identifiers are not MCPs.
 
 Qdrant MCP was retired in Harness PR #182, source removed from `main` at commit `2c69fb89ed9b94068e729d5bc94fc278325d81db`. Its old Coolify service UUID `a4zgmthjspz8hwvyu6llr8dh` must remain explicitly non-buildable/retired in the resource inventory until Coolify deletion is independently verified. This does not remove the separate Qdrant vector database or its data.
@@ -36,7 +38,7 @@ Qdrant MCP was retired in Harness PR #182, source removed from `main` at commit 
 ## Exceptions, not evidence of source ownership
 
 - `cloudflared-mcp` and `mcp-activation`: vendor-image network/activation services, **not** a compiled MCP source checkout. If custom implementation is introduced, it must first be committed in an owned root and added to the source catalog and guarded publisher.
-- `repowise-mcp-runtime`: recorded as `local-image-unknown-source`, **not compliant yet**. Do not pretend an image-only service is source-owned or create an empty placeholder folder. Resolve source provenance via its existing RepoWise source/release work and independent review before declaring it part of the owned-build set.
+- `repowise-mcp-runtime`: reviewed candidate uses **two explicitly mapped, same-SHA GitHub contexts**: MCP patch code in `mcp/repowise-mcp/` and the byte-pinned, immutable vendored upstream RepoWise 0.60.1 source in `apps/repowise/`. The Dockerfile installs that owned source using `pip install .` and applies the reviewed patch; no network PyPI wheel or duplicate fork. The production Coolify service **still runs local** `fciqzgceop7mqtqickkfomd7:HEAD`, UNKNOWN SHA/digest, **NOT DEPLOYED / NOT E2E VERIFIED**. Final GHCR and Coolify authentication/rollback gates remain.
 - `zar-i-szlif-mcp-host` and `zar-i-szlif-mcp-host-image`: **other repository** `jtrtdhrst/zar-i-szlif`. Validate/build them under their owning repo's own CI; do not copy product code into Harness.
 
 ## Verification commands and ownership boundaries

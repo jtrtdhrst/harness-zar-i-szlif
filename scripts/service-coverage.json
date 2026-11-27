@@ -118,6 +118,12 @@
       "workflows": [
         ".github/workflows/opik-run-enricher.yml"
       ]
+    },
+    "mcp/repowise-mcp": {
+      "mode": "workflow",
+      "workflows": [
+        ".github/workflows/repowise-mcp-ci.yml"
+      ]
     }
   }
 }

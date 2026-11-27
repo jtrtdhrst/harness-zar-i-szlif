@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'ops/service-build-roots.json'
+      - 'mcp/repowise-mcp/**'
       - 'scripts/test_service_build_roots.py'
       - 'scripts/test_mcp_build_contract.py'
       - 'ops/repowise/MCP_SOURCE_BUILDS.md'
@@ -24,7 +25,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Verify exactly 14 source-ready roots and staged Coolify root
+      - name: Verify exactly 15 source-ready roots and staged Coolify root
         run: python3 -m unittest discover -s scripts -p 'test_service_build_roots.py' -v
       - name: Fail closed if any owned MCP loses its main SHA-bound publisher
         run: python3 -m unittest discover -s scripts -p 'test_mcp_build_contract.py' -v
@@ -46,7 +47,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Derive exact 14-source matrix from canonical versioned mapping
+      - name: Derive exact 15-source matrix from canonical versioned mapping
         id: map
         shell: bash
         run: |
@@ -59,12 +60,13 @@ jobs:
           expected = {
               "github-ops-mcp", "hermes-gateway", "multica-mcp",
               "repowise-deployment-publisher-staging", "emailens-mcp",
+              "repowise-mcp-runtime",
               "plasmic-mcp", "supabase-mcp", "ubuntu-mcp",
               "mantic-mcp", "playwright-mcp", "comfy-mcp",
               "coolify-mcp", "hindsight-mcp", "opik-mcp",
           }
           ready = [r for r in data["resources"] if r["source_build_ready"]]
-          if len(ready) != 14 or {r["id"] for r in ready} != expected:
+          if len(ready) != 15 or {r["id"] for r in ready} != expected:
               raise SystemExit("source_ready_set_changed_without_review")
           matrix = []
           for r in ready:
@@ -80,7 +82,7 @@ jobs:
           print("Source root matrix:", [x["service"] for x in matrix])
           PY
 
-  build-all-15-owned-sources:
+  build-all-16-owned-sources:
     needs: [verify-owned-source, detect-ready-roots]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -109,7 +111,11 @@ jobs:
           test "$ROOT" != "."
           test "$ROOT" != "/"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          docker build --pull \
+          extra_context=()
+          if test "$SERVICE" = "repowise-mcp-runtime"; then
+            extra_context=(--build-context "repowise-source=$GITHUB_WORKSPACE/apps/repowise")
+          fi
+          docker build --pull "${extra_context[@]}" \
             --label "org.opencontainers.image.revision=$SOURCE_SHA" \
             -t "owned-harness-${SERVICE}:pr" \
             -f "$ROOT/$DOCKERFILE" "$ROOT"

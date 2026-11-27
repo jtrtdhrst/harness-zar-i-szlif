@@ -744,14 +744,16 @@
         "uuid": "lecwi3emh9hjxir7gphmalie",
         "name": "repowise-mcp-runtime",
         "type": "service",
-        "source": "local-image-unknown-source",
-        "provenance_kind": "unknown-local-image",
+        "source": "owned-code",
+        "provenance_kind": "owned-source",
         "configured_images": [
           "fciqzgceop7mqtqickkfomd7:HEAD"
         ],
-        "source_build_ready": false,
+        "source_build_ready": true,
         "release_eligible": false,
-        "provenance_note": "Coolify describes upstream Repowise v0.60.1, but this local image has no verified source-to-image provenance."
+        "provenance_note": "GitHub source ownership candidate in mcp/repowise-mcp. Production STILL uses locally built :HEAD image; no verified source SHA/digest, no approved release, no production E2E. Source presence is not runtime attestation.",
+        "source_root": "mcp/repowise-mcp",
+        "build_dockerfile": "mcp/repowise-mcp/Dockerfile"
       }
     ]
   },
@@ -787,6 +789,14 @@
       "build_dockerfile": "ops/repowise/Dockerfile.publisher",
       "source_build_ready": true,
       "reason": "Owned Dockerfile is in ops/repowise, but Coolify app currently points to / with Compose; migrate only after independent E2E."
+    },
+    {
+      "id": "repowise-mcp-runtime",
+      "uuid": "lecwi3emh9hjxir7gphmalie",
+      "source_root": "mcp/repowise-mcp",
+      "build_dockerfile": "mcp/repowise-mcp/Dockerfile",
+      "source_build_ready": true,
+      "reason": "Source-controlled RepoWise MCP wrapper and reviewed overrides candidate; Coolify production still uses unverified local :HEAD image; GHCR publication and live release require independent attestation and security HOLD clearance."
     },
     {
       "id": "plasmic",

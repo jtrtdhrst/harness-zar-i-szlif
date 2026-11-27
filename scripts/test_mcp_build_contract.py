@@ -79,7 +79,7 @@ class McpSourceBuildContract(unittest.TestCase):
     def test_every_owned_mcp_has_exactly_one_owned_source_and_publisher(self):
         services = owned_services()
         roots = build_roots()
-        self.assertEqual(len(services), 12, "Review the fleet change and update this known baseline")
+        self.assertEqual(len(services), 13, "Review the fleet change and update this known baseline")
         self.assertEqual(set(services), set(GENERAL) |
                          (set(RUNTIME) & set(services)) | {"coolify-mcp"})
         for name, row in services.items():
@@ -181,6 +181,17 @@ class McpSourceBuildContract(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     self.assert_repowise_doc_parity(doc.replace(original, replacement, 1))
 
+    def test_repowise_mcp_uses_only_pinned_git_vendor_named_context(self):
+        dockerfile = (ROOT / "mcp/repowise-mcp/Dockerfile").read_text()
+        self.assertIn("COPY --from=repowise-source", dockerfile)
+        self.assertIn("pip install --no-cache-dir .", dockerfile)
+        self.assertNotIn("repowise==", dockerfile)
+        for flow in (GENERAL_FLOW, "source-build-roots-pr.yml"):
+            source = (WORKFLOWS / flow).read_text()
+            self.assertIn('--build-context "repowise-source=', source)
+            self.assertIn('test "$SERVICE" = "repowise-mcp-runtime"', source)
+        assert (ROOT / "apps/repowise/pyproject.toml").is_file()
+
     def test_retired_qdrant_mcp_is_excluded_from_every_build_lane(self):
         services = owned_services()
         self.assertNotIn("qdrant-mcp", services)
@@ -278,7 +289,6 @@ class McpSourceBuildContract(unittest.TestCase):
         expected = {
             "cloudflared-mcp": "vendor-image",
             "mcp-activation": "vendor-image",
-            "repowise-mcp-runtime": "local-image-unknown-source",
             "zar-i-szlif-mcp-host": "other-repository",
             "zar-i-szlif-mcp-host-image": "other-repository",
         }

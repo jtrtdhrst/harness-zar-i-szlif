@@ -20,6 +20,7 @@ MCP_BUILD_CONTEXTS = {
     "playwright-mcp": "mcp/playwright-mcp",
     "hindsight-mcp": "mcp/hindsight-mcp",
     "opik-mcp": "mcp/opik-mcp",
+    "repowise-mcp-runtime": "mcp/repowise-mcp",
     "supabase-mcp": "mcp/supabase-mcp",
     "ubuntu-mcp": "mcp/ubuntu-mcp",
 }

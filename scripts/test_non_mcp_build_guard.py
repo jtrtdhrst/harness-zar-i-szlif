@@ -23,7 +23,7 @@ EXPECTED_DOCKER_BUILD_JOBS = {
     ("owned-runtime-images-ghcr.yml", "source-regressions"),
     ("owned-runtime-images-ghcr.yml", "publish"),
     ("source-build-roots-pr.yml", "verify-owned-source"),
-    ("source-build-roots-pr.yml", "build-all-15-owned-sources"),
+    ("source-build-roots-pr.yml", "build-all-16-owned-sources"),
     ("vendor-repowise-source.yml", "verify-immutable-source-and-build"),
     ("vendor-repowise-source.yml", "publish-reviewed-main-image"),
 }
@@ -292,7 +292,7 @@ class NonMcpBuildGuardTests(unittest.TestCase):
     def test_premerge_owned_root_builds_are_hosted_and_bounded(self):
         workflow = (WORKFLOWS / "source-build-roots-pr.yml").read_text(encoding="utf8")
         jobs = dict(image_build_jobs(workflow))
-        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-15-owned-sources"})
+        self.assertEqual(set(jobs), {"verify-owned-source", "build-all-16-owned-sources"})
         for job in jobs.values():
             self.assertTrue(compliant("source-build-roots-pr.yml", job))
             self.assertFalse(compliant("source-build-roots-pr.yml", job.replace(

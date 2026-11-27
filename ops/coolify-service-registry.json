@@ -276,8 +276,10 @@
       "name": "repowise-mcp-runtime",
       "uuid": "lecwi3emh9hjxir7gphmalie",
       "type": "service",
-      "source": "local-image-unknown-source",
-      "note": "Runs local tagged HEAD image; source-to-image provenance is unverified, no fake source folder."
+      "source": "owned-code",
+      "note": "Owned GitHub candidate is source only. Current Coolify production still uses fciqzgceop7mqtqickkfomd7:HEAD without proven digest/SHA and remains on ZARI-213 security HOLD.",
+      "root": "mcp/repowise-mcp",
+      "dockerfile": "mcp/repowise-mcp/Dockerfile"
     }
   ]
 }
