@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repository": "jtrtdhrst/harness-zar-i-szlif",
   "inventory_date": "2026-11-23",
-  "purpose": "Managed 36-resource source/provenance inventory; identifies build-ready sources, image consumers and upstream dependencies without falsely claiming verified production source or E2E.",
+  "purpose": "Managed 37-resource source/provenance inventory; identifies build-ready sources, image consumers and upstream dependencies without falsely claiming verified production source or E2E.",
   "resources": [
     {
       "name": "github-ops-mcp",
@@ -182,6 +182,12 @@
       "source": "owned-code",
       "root": "mcp/supabase-mcp",
       "dockerfile": "mcp/supabase-mcp/Dockerfile"
+    },
+    {
+      "name": "qdrant",
+      "uuid": "eciprwgeyol4znmdd0dpu3xc",
+      "type": "service",
+      "source": "vendor-image"
     },
     {
       "name": "comfy-mcp",
