@@ -313,7 +313,13 @@ class FailClosedRefreshIntegration(unittest.TestCase):
             answer.status = 204
             response = MagicMock()
             response.__enter__.return_value = answer
+            trusted_stat = os.fstat
+            def root_owned_stat(fd):
+                original = trusted_stat(fd)
+                return type("RootStat", (), dict(st_mode=original.st_mode, st_uid=0,
+                                                 st_gid=0, st_nlink=original.st_nlink))()
             with patch.object(refresh, "DEST", root), \
+                 patch.object(refresh.os, "fstat", side_effect=root_owned_stat), \
                  patch("urllib.request.urlopen", return_value=response) as send:
                 self.assertTrue(refresh.revoke_existing_writer_at_github())
                 request = send.call_args.args[0]
