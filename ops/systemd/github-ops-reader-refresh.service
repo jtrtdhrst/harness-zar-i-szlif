@@ -11,4 +11,6 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 TimeoutStartSec=240
+Environment=GITHUB_OPS_IMAGE_APP_UUID=sf67p2qio3qf31dwvkp5gcfw
+Environment=GITHUB_OPS_IMAGE_READER_VOLUME=sf67p2qio3qf31dwvkp5gcfw-sf67p2qio3qf31dwvkp5gcfw-github-ops-image-reader
 ExecStart=/usr/bin/python3 /usr/local/libexec/multica-zar-github-app-refresh.py --github-ops-reader-only

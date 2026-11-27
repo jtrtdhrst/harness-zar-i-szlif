@@ -52,6 +52,12 @@ RUNTIME_GID = 981
 # continue refreshing without requesting new GitHub App write scopes.
 WRITER_ROLE = "github-ops-writer"
 WRITER_OPT_IN = "GITHUB_OPS_WRITER_MINT_ENABLED"
+IMAGE_READER_APP_UUID = "sf67p2qio3qf31dwvkp5gcfw"
+IMAGE_READER_VOLUME = (
+    "sf67p2qio3qf31dwvkp5gcfw-"
+    "sf67p2qio3qf31dwvkp5gcfw-github-ops-image-reader"
+)
+IMAGE_READER_ROLE = "github-ops-reader-image"
 
 
 def selected_roles():
@@ -248,7 +254,7 @@ def retire_writer_grant():
 
 
 def refresh_bgh_reader():
-    """Renew only the existing BGH read grant and its verified live volume.
+    """Renew both read-only GitHub Ops readers and their verified volumes.
 
     Never mint an agent, runner, release or writer grant in this mode.
     The caller holds the same root-owned refresh lock as the legacy entrypoint.
@@ -257,6 +263,13 @@ def refresh_bgh_reader():
     here = Path(__file__).resolve().parent
     volume = runpy.run_path(str(here / "github-ops-image-reader-project.py"))
     projector = runpy.run_path(str(here / "github-ops-token-project.py"))
+    image_app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
+    image_volume_name = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
+    if (image_app_uuid != IMAGE_READER_APP_UUID or
+            image_volume_name != IMAGE_READER_VOLUME):
+        raise RuntimeError("Dedicated image-reader mapping mismatch")
+    image_directory = volume["validated_volume"](image_app_uuid, image_volume_name)
+
     app_uuid = "t09dqe2eppn2eiqmhzlf8xzp"
     name = app_uuid + "-bgh-github-app-reader"
     directory = volume["validated_volume"](app_uuid, name)
@@ -270,8 +283,19 @@ def refresh_bgh_reader():
     projector["project"](projector["SOURCE"], projector["TARGET"], role,
                          projector["PERMISSIONS"])
     volume["project"](grant, directory)
-    print(json.dumps({"reader_refreshed": True, "role": role,
-                      "expires_at": grant["expires_at"]}))
+
+    image_role = IMAGE_READER_ROLE
+    image_grant = mint(image_role)
+    if (image_grant["role"] != image_role or
+            image_grant["permissions"] != volume["PERMISSIONS"] or
+            set(image_grant["repositories"]) != set(volume["REPOS"])):
+        raise RuntimeError("Image-reader grant scope mismatch")
+    write_token(image_role, image_grant)
+    volume["project"](image_grant, image_directory)
+    print(json.dumps({"reader_refreshed": True,
+                      "roles": [role, image_role],
+                      "expires_at": {role: grant["expires_at"],
+                                     image_role: image_grant["expires_at"]}}))
     return 0
 
 

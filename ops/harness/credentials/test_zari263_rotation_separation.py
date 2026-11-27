@@ -28,9 +28,109 @@ class ScheduledReaderIsolation(unittest.TestCase):
         unit = SYSTEMD.read_text()
         self.assertIn("ExecStart=/usr/bin/python3 /usr/local/libexec/"
                       "multica-zar-github-app-refresh.py --github-ops-reader-only", unit)
+        self.assertIn("Environment=GITHUB_OPS_IMAGE_APP_UUID="
+                      "sf67p2qio3qf31dwvkp5gcfw", unit)
+        self.assertIn("Environment=GITHUB_OPS_IMAGE_READER_VOLUME="
+                      "sf67p2qio3qf31dwvkp5gcfw-sf67p2qio3qf31dwvkp5gcfw-"
+                      "github-ops-image-reader", unit)
         self.assertNotIn("GITHUB_OPS_WRITER_MINT_ENABLED=true", unit)
         self.assertNotIn("ExecStartPost=", unit)
         self.assertNotIn("github-ops-token-project.py", unit)
+
+    def test_reader_only_rotates_both_scoped_readers_under_refresh_lock(self):
+        import runpy
+
+        refresh = load("multica-zar-github-app-refresh.py", "zari263_dual_reader")
+        image_project = Mock()
+        legacy_project = Mock()
+        legacy = {
+            "check_dir": Mock(), "NODE_GID": 1000,
+            "SOURCE": Path("/root/roles/github-ops-reader.json"),
+            "TARGET": Path("/runtime/reader/token.json"),
+            "PERMISSIONS": refresh.ROLE_PERMISSIONS["github-ops-reader"],
+            "REPOS": set(refresh.REPOS), "project": legacy_project,
+        }
+        image = {
+            "PERMISSIONS": refresh.ROLE_PERMISSIONS[refresh.IMAGE_READER_ROLE],
+            "REPOS": list(refresh.REPOS),
+            "validated_volume": Mock(
+                side_effect=lambda app, name: Path("/volume") / app / name),
+        }
+        lock_state = {"held": False}
+        original_flock = fcntl.flock
+
+        def tracked_flock(fd, operation):
+            if operation == fcntl.LOCK_EX:
+                lock_state["held"] = True
+            return original_flock(fd, operation)
+
+        expiry = "2099-01-01T00:00:00Z"
+
+        def grant(role):
+            self.assertTrue(lock_state["held"], "reader grant minted outside refresh lock")
+            return {"role": role,
+                    "permissions": refresh.ROLE_PERMISSIONS[role],
+                    "repositories": sorted(refresh.ROLE_REPOS.get(role, refresh.REPOS)),
+                    "expires_at": expiry,
+                    "token": "t" * 50}
+
+        def project_image(grant_data, directory):
+            self.assertTrue(lock_state["held"], "reader token projected outside refresh lock")
+            image_project(grant_data, directory)
+
+        image["project"] = project_image
+
+        with tempfile.TemporaryDirectory() as folder:
+            roles = Path(folder) / "roles"
+            original_fstat = os.fstat
+
+            def trusted(fd):
+                info = original_fstat(fd)
+                return types.SimpleNamespace(st_mode=info.st_mode, st_uid=0,
+                                             st_gid=0, st_nlink=info.st_nlink)
+
+            with patch.object(refresh, "DEST", roles), \
+                 patch.object(refresh.os, "geteuid", return_value=0), \
+                 patch.object(refresh.os, "fstat", side_effect=trusted), \
+                 patch.object(refresh.fcntl, "flock", side_effect=tracked_flock), \
+                 patch.object(runpy, "run_path", side_effect=[image, legacy]), \
+                 patch.object(refresh, "mint", side_effect=grant) as mint, \
+                 patch.object(refresh, "write_token") as write_token, \
+                 patch.dict(os.environ, {
+                     "GITHUB_OPS_IMAGE_APP_UUID": refresh.IMAGE_READER_APP_UUID,
+                     "GITHUB_OPS_IMAGE_READER_VOLUME": refresh.IMAGE_READER_VOLUME,
+                     refresh.WRITER_OPT_IN: "false",
+                 }):
+                self.assertEqual(refresh.main(reader_only=True), 0)
+
+        self.assertEqual([call.args[0] for call in mint.call_args_list],
+                         ["github-ops-reader", refresh.IMAGE_READER_ROLE])
+        self.assertEqual([call.args[0] for call in write_token.call_args_list],
+                         ["github-ops-reader", refresh.IMAGE_READER_ROLE])
+        image["validated_volume"].assert_any_call(
+            refresh.IMAGE_READER_APP_UUID, refresh.IMAGE_READER_VOLUME)
+        self.assertEqual(
+            [call.args[0]["role"] for call in image_project.call_args_list],
+            ["github-ops-reader", refresh.IMAGE_READER_ROLE])
+        legacy_project.assert_called_once()
+
+    def test_reader_only_rejects_bad_image_mapping_before_any_mint(self):
+        refresh = load("multica-zar-github-app-refresh.py", "zari263_bad_image_mapping")
+        mappings = (
+            ("", ""),
+            ("a" * 24, refresh.IMAGE_READER_VOLUME),
+            (refresh.IMAGE_READER_APP_UUID, "wrong-volume"),
+        )
+        for app_uuid, volume in mappings:
+            with self.subTest(app_uuid=app_uuid, volume=volume), \
+                 patch.object(refresh, "mint") as mint, \
+                 patch.dict(os.environ, {
+                     "GITHUB_OPS_IMAGE_APP_UUID": app_uuid,
+                     "GITHUB_OPS_IMAGE_READER_VOLUME": volume,
+                 }):
+                with self.assertRaisesRegex(RuntimeError, "mapping mismatch"):
+                    refresh.refresh_bgh_reader()
+                mint.assert_not_called()
 
     def test_refresh_disable_invokes_provider_first_cleanup_under_lock(self):
         refresh = load("multica-zar-github-app-refresh.py", "zari263_disable_lock")
