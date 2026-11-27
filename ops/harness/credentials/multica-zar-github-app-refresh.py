@@ -202,8 +202,7 @@ def refresh_bgh_reader():
 def _refresh_core(*, reader_only=False):
     if os.geteuid() != 0:
         raise RuntimeError("Root service account required")
-    # The root-only parent and token directory must be real, pinned directories.
-    # Never chmod a symlink target or follow attacker-controlled destinations.
+    # Reject any untrusted directory or lock file before touching credentials.
     import stat
     def checked_directory(path):
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
@@ -218,8 +217,8 @@ def _refresh_core(*, reader_only=False):
     checked_directory(DEST.parent)
     DEST.mkdir(mode=0o700, exist_ok=True)
     checked_directory(DEST)
-    lockpath = DEST / ".refresh.lock"
-    fd = os.open(lockpath, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    fd = os.open(DEST / ".refresh.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     info = os.fstat(fd)
     if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
         info.st_gid != 0 or info.st_nlink != 1 or
@@ -230,45 +229,50 @@ def _refresh_core(*, reader_only=False):
         fcntl.flock(lock, fcntl.LOCK_EX)
         if reader_only:
             return refresh_bgh_reader()
-        summary = {}
-        roles = selected_roles()
-        writer_blocked = False
-        if WRITER_ROLE not in roles:
-            retire_writer_grant()
-        for role in roles:
-            try:
-                payload = mint(role)
-            except Exception:
-                if role != WRITER_ROLE:
-                    raise
-                # A missing App permission must never starve the existing
-                # reader rotation. Remove any stale writer grant instead.
-                retire_writer_grant()
-                writer_blocked = True
-                continue
-            write_token(role, payload)
-            summary[role] = payload["expires_at"]
-    # Reuse this native 15-minute role refresh as the rotation owner for an
-    # optional image-only application. The projector has no minting rights.
-    # The deployment owner must opt in with BOTH non-secret identifiers;
-    # legacy refreshes remain identical unless explicitly configured.
-    app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
-    volume = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
-    if bool(app_uuid) != bool(volume):
-        raise RuntimeError("Incomplete image-reader rotation configuration")
-    if app_uuid:
-        projection = subprocess.run(
-            [sys.executable, "/usr/local/libexec/github-ops-image-reader-project.py"],
-            capture_output=True, text=True, timeout=25, check=False)
-        if projection.returncode != 0:
-            raise RuntimeError("Dedicated GitHub Ops image-reader projection failed")
-    print(json.dumps({"refreshed": True, "roles": sorted(summary),
-                      "writer_mint_enabled": WRITER_ROLE in roles,
-                      "writer_ready": WRITER_ROLE in summary,
-                      "writer_grant_blocked": writer_blocked,
-                      "expiry": min(summary.values())}))
-    return 0
-
+        # The same refresh lock MUST cover mint, remote revoke, all local
+        # projections, image-reader projection and every failure cleanup.
+        # The independent writer projector obtains this same lock.
+        try:
+            roles = selected_roles()
+            summary = {}
+            writer_blocked = False
+            if WRITER_ROLE not in roles:
+                # A failed revocation blocks all subsequent mints even if
+                # the local copies were removed. Do not silently continue.
+                cleanup_failed_writer()
+            for role in roles:
+                try:
+                    payload = mint(role)
+                except Exception:
+                    if role != WRITER_ROLE:
+                        raise
+                    # Optional writer refusal must not starve reader mints,
+                    # but provider revocation failures remain hard failures.
+                    cleanup_failed_writer()
+                    writer_blocked = True
+                    continue
+                write_token(role, payload)
+                summary[role] = payload["expires_at"]
+            # Optional image-only application rotation shares this root lock.
+            app_uuid = os.environ.get("GITHUB_OPS_IMAGE_APP_UUID", "")
+            volume = os.environ.get("GITHUB_OPS_IMAGE_READER_VOLUME", "")
+            if bool(app_uuid) != bool(volume):
+                raise RuntimeError("Incomplete image-reader rotation configuration")
+            if app_uuid:
+                projection = subprocess.run(
+                    [sys.executable, "/usr/local/libexec/github-ops-image-reader-project.py"],
+                    capture_output=True, text=True, timeout=25, check=False)
+                if projection.returncode != 0:
+                    raise RuntimeError("Dedicated GitHub Ops image-reader projection failed")
+            print(json.dumps({"refreshed": True, "roles": sorted(summary),
+                              "writer_mint_enabled": WRITER_ROLE in roles,
+                              "writer_ready": WRITER_ROLE in summary,
+                              "writer_grant_blocked": writer_blocked,
+                              "expiry": min(summary.values())}))
+            return 0
+        except Exception:
+            cleanup_failed_writer()
+            raise
 
 
 def revoke_existing_writer_at_github():
@@ -342,12 +346,9 @@ def cleanup_failed_writer():
 
 
 def main(*, reader_only=False):
-    try:
-        return _refresh_core(reader_only=reader_only)
-    except Exception:
-        if not reader_only:
-            cleanup_failed_writer()
-        raise
+    # The core owns the entire lifecycle lock, including error cleanup.
+    # Never clean up after it releases that lock.
+    return _refresh_core(reader_only=reader_only)
 
 
 def run_cli(args):
