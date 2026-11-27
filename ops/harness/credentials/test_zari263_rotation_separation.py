@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Deny unattended writer token rotation and cross-refresh credential races."""
 import contextlib
+import fcntl
 import importlib.util
 import os
 from pathlib import Path
 import stat
 import tempfile
 import threading
-import time
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -107,52 +107,90 @@ class ScheduledReaderIsolation(unittest.TestCase):
 
 
 class WriterLifecycleSerialization(unittest.TestCase):
-    def test_projector_waits_for_refresh_lock_before_any_grant_read(self):
-        project = load("github-ops-token-project.py", "zari263_flock")
+    def test_actual_minter_and_projector_share_lock_without_sleep(self):
+        # This test deliberately invokes refresh._refresh_core(), not
+        # projector.writer_lifecycle_lock() twice. Projector readiness is
+        # signalled just BEFORE its LOCK_EX syscall; no scheduler sleep.
+        refresh = load("multica-zar-github-app-refresh.py", "zari263_real_minter_lock")
+        project = load("github-ops-token-project.py", "zari263_projector_real_lock")
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder) / "credential-root"
             base.mkdir(mode=0o700)
             role_dir = base / "roles"
             role_dir.mkdir(mode=0o700)
-            original = os.fstat
+            original_fstat = os.fstat
+            original_flock = fcntl.flock
             def root_stat(fd):
-                x = original(fd)
-                return types.SimpleNamespace(st_mode=x.st_mode, st_uid=0, st_gid=0,
-                                             st_nlink=x.st_nlink)
-            entered = threading.Event()
-            release = threading.Event()
-            arrived = threading.Event()
-            order = []
-            def owner():
-                with project.writer_lifecycle_lock():
-                    order.append("refresh_locked")
-                    entered.set()
-                    release.wait(3)
-                    order.append("refresh_released")
-            def projection():
-                entered.wait(3)
-                arrived.set()
-                with project.writer_lifecycle_lock():
-                    order.append("projection_locked")
-            with patch.object(project, "WRITER_SOURCE", role_dir / "writer.json"), \
-                 patch.object(project.os, "geteuid", return_value=0), \
-                 patch.object(project.os, "fstat", side_effect=root_stat):
-                a = threading.Thread(target=owner)
-                b = threading.Thread(target=projection)
-                a.start()
-                self.assertTrue(entered.wait(3))
-                b.start()
-                self.assertTrue(arrived.wait(3))
-                time.sleep(0.08)
-                self.assertEqual(order, ["refresh_locked"],
-                                 "projector must not read/rotate while refresh holds lock")
-                release.set()
-                a.join(3)
-                b.join(3)
-                self.assertFalse(a.is_alive())
-                self.assertFalse(b.is_alive())
-            self.assertEqual(order, ["refresh_locked", "refresh_released",
-                                     "projection_locked"])
+                st = original_fstat(fd)
+                return types.SimpleNamespace(st_mode=st.st_mode, st_uid=0,
+                                             st_gid=0, st_nlink=st.st_nlink)
+            mint_held = threading.Event()
+            release_minter = threading.Event()
+            projector_attempted = threading.Event()
+            projector_executed = threading.Event()
+            order, errors = [], []
+
+            def mint_under_real_refresh_lock(role):
+                order.append("mint_enter")
+                mint_held.set()
+                if not release_minter.wait(5):
+                    raise RuntimeError("test timed out waiting to unlock minter")
+                order.append("mint_release")
+                return {"expires_at":"2099-01-01T00:00:00Z"}
+
+            def spy_lock(fd, operation):
+                if (threading.current_thread().name == "zari263-projector"
+                        and operation == fcntl.LOCK_EX):
+                    projector_attempted.set()
+                return original_flock(fd, operation)
+
+            def projection_entry():
+                order.append("projection_enter")
+                projector_executed.set()
+
+            def run_minter():
+                try:
+                    refresh._refresh_core(reader_only=False)
+                except Exception as exc:
+                    errors.append(("minter", type(exc).__name__))
+
+            def run_projector():
+                try:
+                    project.main()
+                except Exception as exc:
+                    errors.append(("projector", type(exc).__name__))
+
+            with patch.object(refresh, "DEST", role_dir), \
+                 patch.object(project, "WRITER_SOURCE", role_dir / "writer.json"), \
+                 patch.object(refresh.os, "geteuid", return_value=0), \
+                 patch.object(refresh.os, "fstat", side_effect=root_stat), \
+                 patch.object(project.fcntl, "flock", side_effect=spy_lock), \
+                 patch.object(refresh, "selected_roles", return_value=["github-ops-reader"]), \
+                 patch.object(refresh, "mint", side_effect=mint_under_real_refresh_lock), \
+                 patch.object(refresh, "write_token"), \
+                 patch.object(refresh, "cleanup_failed_writer"), \
+                 patch.object(project, "_project_once", side_effect=projection_entry), \
+                 patch.dict(os.environ, {"GITHUB_OPS_IMAGE_APP_UUID": "",
+                                        "GITHUB_OPS_IMAGE_READER_VOLUME": ""}):
+                minter = threading.Thread(target=run_minter, name="zari263-minter")
+                projector = threading.Thread(target=run_projector, name="zari263-projector")
+                try:
+                    minter.start()
+                    self.assertTrue(mint_held.wait(3), "minter never acquired lock")
+                    projector.start()
+                    self.assertTrue(projector_attempted.wait(3),
+                                    "projector did not attempt real flock")
+                    self.assertFalse(projector_executed.is_set(),
+                                     "projector escaped minter lock")
+                finally:
+                    release_minter.set()
+                    minter.join(5)
+                    if projector.ident is not None:
+                        projector.join(5)
+                self.assertFalse(minter.is_alive())
+                self.assertFalse(projector.is_alive())
+            self.assertFalse(errors, errors)
+            self.assertEqual(order, ["mint_enter", "mint_release", "projection_enter"])
 
 
 if __name__ == "__main__":
