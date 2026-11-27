@@ -27,9 +27,11 @@ mode. There are no command overrides and no compose file to write.
    - Ports Exposes: **`8080`**
 2. **Domain:** set one, **with the https scheme**: `https://mcp.example.com`.
    Saved as `http://`, the proxy never gets a TLS router and the site 503s.
-   Do **not** put Cloudflare Access or another login wall in front of it.
-   MCP clients cannot log in through one, and the server carries its own
-   auth.
+   For Cloudflare Access Managed OAuth, see
+   [Cloudflare Access Managed OAuth](#cloudflare-access-managed-oauth); the
+   origin verifies the Access assertion, so the login wall is supported.
+   Any other login wall in front of the server will break MCP clients: they
+   cannot complete its browser redirect, and the server carries its own auth.
 3. **Environment tab**, four variables:
 
    | Variable               | Value                                         |
@@ -111,6 +113,52 @@ them, and with Livewire down the UI's env-var Save can silently store
 nothing. If you "saved" a variable and the container disagrees, set it via
 the Coolify API instead.
 
+### Cloudflare Access Managed OAuth
+
+The service token above is **outbound**: it lets this container call a Coolify
+API that sits behind Access. Managed OAuth is the **inbound** half: Access
+authenticates the person connecting to this MCP server, and the origin accepts
+the signed assertion Access forwards.
+
+Do not confuse the two pairs:
+
+| Pair                                              | Direction | Purpose                                            |
+| ------------------------------------------------- | --------- | -------------------------------------------------- |
+| `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` | outbound  | This container → Coolify API behind Access         |
+| `CF_ACCESS_ISSUER` + `CF_ACCESS_AUD`              | inbound   | MCP client → this server, via Access Managed OAuth |
+
+Setup:
+
+1. In Zero Trust → Access → Applications, add a **self-hosted** application
+   for the MCP hostname (the whole host, e.g.
+   `coolify-mcp.example.com`, not only `/mcp`).
+2. Enable **Managed OAuth** on that application. Add an allow policy for the
+   people who may use the server. For ChatGPT, allow the
+   `https://chatgpt.com/connector_platform_oauth_redirect` and
+   `https://chatgpt.com/connector/oauth/*` redirect URIs; for local CLI
+   clients, allow loopback redirects or use a Client ID Metadata Document.
+3. Copy the application's **AUD tag** and the team domain
+   (`https://<team>.cloudflareaccess.com`).
+4. Set both on the container:
+
+   ```text
+   CF_ACCESS_ISSUER=https://<team>.cloudflareaccess.com
+   CF_ACCESS_AUD=<the application AUD tag>
+   ```
+
+5. Deploy. With the pair set, `/mcp` requires a valid
+   `Cf-Access-Jwt-Assertion`; a request without one gets `401` with
+   `resource_metadata` pointing at
+   `/.well-known/cloudflare-access-protected-resource/mcp`. The legacy local
+   bearer tokens are refused, so the Access edge cannot be bypassed by
+   reaching the origin directly.
+
+Both variables or neither: a half-set pair is a startup error. The origin
+verifies the assertion's RS256 signature against
+`<issuer>/cdn-cgi/access/certs`, plus issuer, audience, expiry and subject.
+It never logs the assertion. Leave the pair unset to keep the original local
+OAuth flow.
+
 ## Or: have your assistant install it
 
 Already running coolify-mcp over stdio? It can deploy its own HTTP mode.
@@ -191,27 +239,29 @@ internet-facing service.
 
 ## Configuration reference
 
-| Variable                  | Default                  | Purpose                                                                             |
-| ------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
-| `MCP_TRANSPORT`           | stdio                    | `http` selects HTTP mode                                                            |
-| `COOLIFY_BASE_URL`        | required                 | The Coolify instance to manage                                                      |
-| `COOLIFY_ACCESS_TOKEN`    | required                 | The token the container acts with                                                   |
-| `COOLIFY_UI_URL`          | `COOLIFY_BASE_URL`       | Dashboard address for `coolify_url` links, when the API URL is internal             |
-| `MCP_PUBLIC_URL`          | required                 | Public https URL of this container                                                  |
-| `MCP_PORT` (or `PORT`)    | `8080`                   | Listen port                                                                         |
-| `MCP_HOST`                | all interfaces           | Listen address; `127.0.0.1` keeps it on loopback                                    |
-| `MCP_READONLY`            | `false`                  | Register only read-only tools                                                       |
-| `MCP_ACCESS_TOKEN_TTL`    | `3600`                   | Access token lifetime, seconds                                                      |
-| `MCP_REFRESH_TOKEN_TTL`   | `28800`                  | Refresh token lifetime, seconds                                                     |
-| `MCP_OAUTH_STATE_FILE`    | `/data/oauth-state.json` | OAuth state persistence; set it [outside a container](#running-outside-a-container) |
-| `MCP_REQUEST_STATE_KEY`   | generated at startup     | HMAC key for confirmation state (>=32 bytes)                                        |
-| `MCP_ALLOW_INSECURE_HTTP` | unset                    | Local development only: allow a non-https public URL                                |
-| `MCP_REDIRECT_HOSTS`      | unset (any host)         | Comma-separated hosts clients may redirect to; [hardening](#hardening-registration) |
+| Variable                  | Default                  | Purpose                                                                                   |
+| ------------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
+| `MCP_TRANSPORT`           | stdio                    | `http` selects HTTP mode                                                                  |
+| `COOLIFY_BASE_URL`        | required                 | The Coolify instance to manage                                                            |
+| `COOLIFY_ACCESS_TOKEN`    | required                 | The token the container acts with                                                         |
+| `COOLIFY_UI_URL`          | `COOLIFY_BASE_URL`       | Dashboard address for `coolify_url` links, when the API URL is internal                   |
+| `MCP_PUBLIC_URL`          | required                 | Public https URL of this container                                                        |
+| `MCP_PORT` (or `PORT`)    | `8080`                   | Listen port                                                                               |
+| `MCP_HOST`                | all interfaces           | Listen address; `127.0.0.1` keeps it on loopback                                          |
+| `MCP_READONLY`            | `false`                  | Register only read-only tools                                                             |
+| `MCP_ACCESS_TOKEN_TTL`    | `3600`                   | Access token lifetime, seconds                                                            |
+| `MCP_REFRESH_TOKEN_TTL`   | `28800`                  | Refresh token lifetime, seconds                                                           |
+| `MCP_OAUTH_STATE_FILE`    | `/data/oauth-state.json` | OAuth state persistence; set it [outside a container](#running-outside-a-container)       |
+| `MCP_REQUEST_STATE_KEY`   | generated at startup     | HMAC key for confirmation state (>=32 bytes)                                              |
+| `MCP_ALLOW_INSECURE_HTTP` | unset                    | Local development only: allow a non-https public URL                                      |
+| `MCP_REDIRECT_HOSTS`      | unset (any host)         | Comma-separated hosts clients may redirect to; [hardening](#hardening-registration)       |
 | `MCP_CLIENT_IP_HEADER`    | unset (socket peer IP)   | Optional proxy header, ONLY if ingress overwrites it and direct origin access is blocked. |
-| `CF_ACCESS_CLIENT_ID`     | unset                    | Cloudflare Access service token id (pair required)                                  |
-| `CF_ACCESS_CLIENT_SECRET` | unset                    | Cloudflare Access service token secret (pair req.)                                  |
-| `COOLIFY_INSTANCES`       | unset                    | JSON array of extra instances ([fleet mode](fleet.md))                              |
-| `COOLIFY_MCP_AUDIT`       | `on` in HTTP mode        | `off` disables the [audit log](#audit-log)                                          |
+| `CF_ACCESS_CLIENT_ID`     | unset                    | Cloudflare Access service token id, **outbound** (pair required)                          |
+| `CF_ACCESS_CLIENT_SECRET` | unset                    | Cloudflare Access service token secret, **outbound** (pair req.)                          |
+| `CF_ACCESS_ISSUER`        | unset                    | Cloudflare team domain for **inbound** Managed OAuth (pair required)                      |
+| `CF_ACCESS_AUD`           | unset                    | Access application AUD tag for **inbound** Managed OAuth (pair req.)                      |
+| `COOLIFY_INSTANCES`       | unset                    | JSON array of extra instances ([fleet mode](fleet.md))                                    |
+| `COOLIFY_MCP_AUDIT`       | `on` in HTTP mode        | `off` disables the [audit log](#audit-log)                                                |
 
 ### Hardening registration
 
