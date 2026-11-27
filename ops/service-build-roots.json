@@ -8,7 +8,7 @@
     "observed_at": "2026-11-23",
     "counts": {
       "applications": 13,
-      "services": 23
+      "services": 24
     },
     "image_pin_basis": "Public registry linux/amd64 manifests resolved anonymously on 2026-11-23, or immutable digest already present in Coolify config. Inventory only; not proof of running digest, source-to-image provenance, or release authorization.",
     "resources": [
@@ -485,6 +485,26 @@
         "source_root": "mcp/supabase-mcp",
         "build_dockerfile": "mcp/supabase-mcp/Dockerfile",
         "source_build_ready": true,
+        "release_eligible": false
+      },
+      {
+        "id": "qdrant",
+        "uuid": "eciprwgeyol4znmdd0dpu3xc",
+        "name": "qdrant",
+        "type": "service",
+        "source": "vendor-image",
+        "provenance_kind": "vendor-image",
+        "configured_images": [
+          "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2"
+        ],
+        "pinned_images": [
+          {
+            "configured_ref": "qdrant/qdrant:1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
+            "pinned_ref": "qdrant/qdrant@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2",
+            "platform": "configured-immutable"
+          }
+        ],
+        "source_build_ready": false,
         "release_eligible": false
       },
       {
