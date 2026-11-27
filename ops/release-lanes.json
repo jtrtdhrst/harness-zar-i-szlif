@@ -537,12 +537,12 @@
     }
   ],
   "scope_snapshot": {
-    "observed_at": "2026-11-04T17:02:30Z",
+    "observed_at": "2026-11-27",
     "coolify_applications": 5,
-    "coolify_services": 24,
-    "coolify_total": 29,
+    "coolify_services": 25,
+    "coolify_total": 30,
     "cloudflare_workers": 3,
-    "source": "Coolify authenticated readback including newly created Hermes git-release candidate; Cloudflare three Worker version IDs from native readback; dated not continuous; filtered to managed release scope, not a new live readback"
+    "source": "Declared GitHub source-manifest scope reconciled on 2026-11-27 after Qdrant MCP retirement: retained Qdrant database, no new live Coolify readback. Prior 2026-11-04 provider snapshot is historical; these counts are source-only, not release admission."
   },
   "cloudflare_workers": [
     {
