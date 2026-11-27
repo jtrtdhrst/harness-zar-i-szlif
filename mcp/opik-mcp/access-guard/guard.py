@@ -2,6 +2,7 @@
 """Fail-closed Cloudflare Access assertion verifier for the private Opik MCP origin."""
 import os
 import sys
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import jwt
@@ -10,7 +11,7 @@ from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
 MAX_ASSERTION_LENGTH = 16_384
 
 
-def verify_assertion(value, key_provider, issuer, audience):
+def verify_assertion(value, key_provider, issuer, audience, allowed_service_client_id=""):
     if not isinstance(value, str) or not 32 <= len(value) <= MAX_ASSERTION_LENGTH:
         return False
     if value.count(".") != 2:
@@ -21,7 +22,22 @@ def verify_assertion(value, key_provider, issuer, audience):
             value, key, algorithms=["RS256"], issuer=issuer, audience=audience,
             leeway=15, options={"require": ["exp", "iss", "aud", "sub", "iat"]},
         )
-        # The Cloudflare policy permits only one approved human identity.
+        # A signed Cloudflare service-token JWT is not a human identity.
+        # Admit only one explicitly configured client ID; default is deny.
+        if "service_token_id" in claims or "common_name" in claims:
+            service_id = claims.get("service_token_id")
+            common_name = claims.get("common_name")
+            return bool(
+                isinstance(allowed_service_client_id, str)
+                and 8 <= len(allowed_service_client_id) <= 256
+                and isinstance(service_id, str)
+                and isinstance(common_name, str)
+                and hmac.compare_digest(service_id, allowed_service_client_id)
+                and hmac.compare_digest(common_name, allowed_service_client_id)
+                and claims.get("sub") == ""
+                and claims.get("email") in (None, "")
+            )
+        # Preserve the existing signed, interactive human identity path.
         return bool(isinstance(claims.get("email"), str) and "@" in claims["email"])
     except (InvalidTokenError, PyJWKClientError, ValueError, KeyError, TypeError):
         return False
@@ -45,7 +61,8 @@ class GuardHandler(BaseHTTPRequestHandler):
             return self.reply(404)
         token = self.headers.get("Cf-Access-Jwt-Assertion", "")
         status = 204 if verify_assertion(
-            token, self.server.jwk_client, self.server.issuer, self.server.audience
+            token, self.server.jwk_client, self.server.issuer, self.server.audience,
+            self.server.service_token_client_id,
         ) else 403
         return self.reply(status)
 
@@ -65,6 +82,7 @@ def main():
     server = ThreadingHTTPServer(("0.0.0.0", 8088), GuardHandler)
     server.issuer = issuer
     server.audience = audience
+    server.service_token_client_id = os.environ.get("CF_ACCESS_SERVICE_TOKEN_CLIENT_ID", "").strip()
     server.jwk_client = PyJWKClient(jwks_url, cache_jwk_set=True, lifespan=300, timeout=4)
     print("opik_access_guard_ready", flush=True)
     server.serve_forever(poll_interval=0.5)
