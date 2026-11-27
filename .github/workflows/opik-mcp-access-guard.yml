@@ -22,9 +22,54 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Validate owned MCP image selection and Opik component coverage
+        run: python3 -m unittest discover -s scripts -p 'test_select_mcp_builds.py' -v
       - name: Install pinned dependencies
         run: python -m pip install PyJWT==2.10.1 cryptography==46.0.5
       - name: Test verified, forged, expired and wrong-audience JWTs
         run: python -m unittest discover -s mcp/opik-mcp/access-guard -p 'test_guard.py' -v
       - name: Build non-root auth guard image
         run: docker build --pull --tag opik-access-guard:test mcp/opik-mcp/access-guard
+
+  backend-health-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build real backend from its owned Harness source root
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            -f mcp/opik-mcp/backend/Dockerfile \
+            -t opik-mcp-health:pr mcp/opik-mcp
+      - name: Verify nonroot image and Coolify HTTP healthcheck E2E
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect opik-mcp-health:pr --format '{{.Config.User}}')" = "10001"
+          # The backend defaults to stdio. Coolify explicitly enables HTTP.
+          # This isolated probe has no credentials, persistent mounts or published port.
+          cid="$(docker run -d --network none --read-only \
+            --tmpfs /tmp:rw,nosuid,size=64m \
+            -e OPIK_MCP_TRANSPORT=http \
+            -e OPIK_MCP_HOST=127.0.0.1 \
+            -e OPIK_MCP_PORT=8080 \
+            -e OPIK_URL=http://127.0.0.1:9999 \
+            opik-mcp-health:pr)"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if docker exec "$cid" curl --fail --silent --show-error --max-time 2 \
+              http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              echo "PASS: real nonroot container serves HTTP /health via its own curl"
+              exit 0
+            fi
+            test "$(docker inspect "$cid" --format '{{.State.Running}}')" = "true" || {
+              echo "FAIL: backend exited before HTTP health became ready"
+              docker logs --tail 25 "$cid" || true
+              exit 1;
+            }
+            sleep 1
+          done
+          echo "FAIL: /health did not return HTTP 2xx in 30 seconds"
+          exit 1

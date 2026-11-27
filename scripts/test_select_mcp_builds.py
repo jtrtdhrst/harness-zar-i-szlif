@@ -25,7 +25,8 @@ class McpBuildSelectionTests(unittest.TestCase):
         for name in ("hindsight-mcp", "opik-mcp"):
             with self.subTest(service=name):
                 selected = images.select(["mcp/" + name + "/README.md"], event_name="push")
-                self.assertEqual([item["service"] for item in selected], [name])
+                self.assertEqual([item["service"] for item in selected],
+                                 [name, "opik-access-guard"] if name == "opik-mcp" else [name])
 
     def test_retired_qdrant_mcp_cannot_rebuild(self):
         self.assertNotIn("qdrant-mcp",images.MCP_BUILD_CONTEXTS)
@@ -52,17 +53,32 @@ class McpBuildSelectionTests(unittest.TestCase):
             [".github/workflows/mcp-images-ghcr.yml"],
             event_name="push")
         self.assertEqual({x["service"] for x in selected},
-                         set(images.MCP_BUILD_CONTEXTS))
+                         set(images.MCP_BUILD_CONTEXTS) | {"opik-access-guard"})
 
     def test_manual_dispatch_accepts_exact_allowlist(self):
         for service in images.MCP_BUILD_CONTEXTS:
             self.assertEqual(images.select([], event_name="workflow_dispatch",
-                manual_service=service),
+                manual_service=service)[:1],
                 [{"service": service, "directory": images.MCP_BUILD_CONTEXTS[service],
                   "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
                                  "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}])
         self.assertEqual(len(images.select([], event_name="workflow_dispatch",
-                                           manual_service="all")), 9)
+                                           manual_service="all")), 10)
+
+    def test_opik_guard_has_separate_real_build_context(self):
+        from pathlib import Path
+        expected = {"service": "opik-access-guard",
+                    "directory": "mcp/opik-mcp/access-guard",
+                    "dockerfile": "Dockerfile"}
+        for selected in (
+            images.select(["mcp/opik-mcp/access-guard/guard.py"], event_name="push"),
+            images.select([], event_name="workflow_dispatch", manual_service="opik-mcp"),
+            images.select([], event_name="workflow_dispatch", manual_service="all"),
+        ):
+            self.assertEqual([x for x in selected if x["service"] == "opik-access-guard"], [expected])
+        self.assertTrue((Path(__file__).resolve().parent.parent /
+                         expected["directory"] / expected["dockerfile"]).is_file())
+        self.assertNotIn(expected, images.select(["mcp/comfy-mcp/Dockerfile"], event_name="push"))
 
     def test_rejects_injected_service_and_untrusted_events(self):
         for candidate in ("../../etc", "ops", "mcp-all; touch /tmp/unsafe",

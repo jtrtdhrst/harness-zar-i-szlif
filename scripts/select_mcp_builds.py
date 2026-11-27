@@ -49,10 +49,16 @@ def select(changed_paths, *, event_name, manual_service="all"):
             }
     else:
         raise ValueError("untrusted_event")
-    return [{"service": service, "directory": MCP_BUILD_CONTEXTS[service],
-             "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
-                            "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}
-            for service in sorted(selected)]
+    builds = [{"service": service, "directory": MCP_BUILD_CONTEXTS[service],
+               "dockerfile": ("Dockerfile.http" if service == "mantic-mcp" else
+                              "backend/Dockerfile" if service == "opik-mcp" else "Dockerfile")}
+              for service in sorted(selected)]
+    # A second owned image within the canonical Opik service folder.
+    if "opik-mcp" in selected:
+        builds.append({"service": "opik-access-guard",
+                       "directory": "mcp/opik-mcp/access-guard",
+                       "dockerfile": "Dockerfile"})
+    return builds
 
 
 def main():
