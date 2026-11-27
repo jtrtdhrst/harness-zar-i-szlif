@@ -2,6 +2,7 @@
 """Offline ancestry tests. Never contacts the credential socket or reads tokens."""
 import importlib.util
 import pathlib
+import os
 import unittest
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ SOURCE = pathlib.Path(__file__).with_name("multica-git-credential-broker.py")
 spec = importlib.util.spec_from_file_location("zari213_broker_under_test", SOURCE)
 broker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(broker)
+broker.TRUSTED_UID = os.getuid()  # isolated synthetic fixture owner
 
 
 class TaskCredentialAncestryTests(unittest.TestCase):
@@ -405,12 +407,14 @@ class ScopedRoleTests(unittest.TestCase):
             }
             path = pathlib.Path(directory) / "implementer-harness.json"
             path.write_text(json.dumps(payload))
+            path.chmod(0o600)
             self.assertEqual(
                 broker.read_role_token(pathlib.Path(directory), "implementer-harness")["role"],
                 "implementer-harness",
             )
             payload["repositories"] = sorted(broker.ALLOWED_REPOS)
             path.write_text(json.dumps(payload))
+            path.chmod(0o600)
             with self.assertRaisesRegex(ValueError, "repository scope mismatch"):
                 broker.read_role_token(pathlib.Path(directory), "implementer-harness")
 
@@ -428,6 +432,7 @@ class TaskScopeHandlerTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         roles = pathlib.Path(directory.name) / "agent-roles.json"
         roles.write_text(json.dumps({"agent-1": "implementer"}))
+        roles.chmod(0o600)
         h = object.__new__(broker.Handler)
         h.request = Mock()
         h.request.getsockopt.return_value = struct.pack("3i", 900, 997, 981)
@@ -511,6 +516,7 @@ class CacheTokenScopeTests(unittest.TestCase):
                 "permissions": {"contents": "read", "metadata": "read"},
             }
             (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
+            (pathlib.Path(directory) / "cache-reader.json").chmod(0o600)
             read = broker.read_role_token(pathlib.Path(directory), "cache-reader")
             self.assertEqual(read["permissions"], payload["permissions"])
 
@@ -528,11 +534,13 @@ class CacheTokenScopeTests(unittest.TestCase):
             }
             path = pathlib.Path(directory) / "cache-reader.json"
             path.write_text(json.dumps(payload))
+            path.chmod(0o600)
             with self.assertRaisesRegex(ValueError, "permissions mismatch"):
                 broker.read_role_token(pathlib.Path(directory), "cache-reader")
             del payload["permissions"]["pull_requests"]
             payload["role"] = "reviewer"
             path.write_text(json.dumps(payload))
+            path.chmod(0o600)
             with self.assertRaisesRegex(ValueError, "permissions mismatch"):
                 broker.read_role_token(pathlib.Path(directory), "cache-reader")
 
@@ -548,6 +556,7 @@ class CacheTokenScopeTests(unittest.TestCase):
                 "permissions": {"contents": "read", "metadata": "read"},
             }
             (pathlib.Path(directory) / "cache-reader.json").write_text(json.dumps(payload))
+            (pathlib.Path(directory) / "cache-reader.json").chmod(0o600)
             with self.assertRaisesRegex(ValueError, "repository scope mismatch"):
                 broker.read_role_token(pathlib.Path(directory), "cache-reader")
 

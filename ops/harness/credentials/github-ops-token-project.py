@@ -6,6 +6,9 @@ grant is minted by the existing Multica refresh service and rotated atomically.
 No token is written to stdout or command-line arguments.
 """
 import datetime
+import fcntl
+import contextlib
+import runpy
 import json
 import os
 from pathlib import Path
@@ -21,6 +24,9 @@ REPOS = {"jtrtdhrst/harness-zar-i-szlif", "jtrtdhrst/zar-i-szlif"}
 PERMISSIONS = {"actions": "read", "administration": "read", "contents": "read", "deployments": "read", "metadata": "read"}
 WRITER_SOURCE = Path("/etc/multica-git-credential/roles/github-ops-writer.json")
 WRITER_TARGET = TARGET_DIR / "writer.json"
+# Existing Coolify named-volume directory mounted read-only at
+# /run/secrets/github-ops; preserve the one existing token controller.
+WRITER_RUNTIME = Path("/var/lib/docker/volumes/t09dqe2eppn2eiqmhzlf8xzp-bgh-github-app-reader/_data/writer.json")
 WRITER_ROLE = "github-ops-writer"
 WRITER_PERMISSIONS = {"actions": "write", "contents": "write", "pull_requests": "write", "metadata": "read"}
 NODE_GID = 1000
@@ -78,13 +84,131 @@ def project(source, target, role, permissions):
     return expires
 
 
-def main():
-    reader_expiry = project(SOURCE, TARGET, ROLE, PERMISSIONS)
+def retire_writer_target(path=None):
+    """Revoke an existing projected writer file (system or mounted runtime)."""
+    target = path if path is not None else WRITER_TARGET
+    try:
+        st = os.lstat(target)
+    except FileNotFoundError:
+        return False
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+            st.st_gid != NODE_GID or st.st_nlink != 1 or
+            stat.S_IMODE(st.st_mode) != 0o640):
+        raise RuntimeError("Untrusted projected writer file")
+    # Both target directories must be root-owned and not group-writable.
+    os.unlink(target)
+    return True
+
+
+
+def retire_writer_source():
+    """Revoke the root-only writer grant when any projection stage fails."""
+    try:
+        st = os.lstat(WRITER_SOURCE)
+    except FileNotFoundError:
+        return False
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+            st.st_gid != 0 or st.st_nlink != 1 or
+            stat.S_IMODE(st.st_mode) != 0o600):
+        raise RuntimeError("Untrusted source writer grant")
+    os.unlink(WRITER_SOURCE)
+    return True
+
+def project_writer_runtime():
+    """Atomically project validated scoped writer into the existing named volume."""
+    check_dir(WRITER_RUNTIME.parent, NODE_GID, 0o750)
+    fd = os.open(WRITER_TARGET, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+                st.st_gid != NODE_GID or st.st_nlink != 1 or
+                stat.S_IMODE(st.st_mode) != 0o640 or st.st_size > 16384):
+            raise RuntimeError("Untrusted system writer grant")
+        with os.fdopen(fd, "rb", closefd=False) as source:
+            payload = source.read(16385)
+        if len(payload) > 16384:
+            raise RuntimeError("Writer grant too large")
+        grant = json.loads(payload)
+        if (grant.get("role") != WRITER_ROLE or grant.get("app_id") != 5398752 or
+                grant.get("installation_id") != 173456397 or
+                grant.get("permissions") != WRITER_PERMISSIONS or
+                set(grant.get("repositories", ())) != REPOS):
+            raise RuntimeError("Runtime writer grant scope mismatch")
+    finally:
+        os.close(fd)
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".writer-", dir=WRITER_RUNTIME.parent)
+        os.fchown(fd, 0, NODE_GID)
+        os.fchmod(fd, 0o640)
+        with os.fdopen(fd, "wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(tmp, WRITER_RUNTIME)
+        tmp = None
+    finally:
+        if tmp is not None:
+            os.unlink(tmp)
+
+
+@contextlib.contextmanager
+def writer_lifecycle_lock():
+    """Share the exact root-owned lock with the role minter.
+
+    Prevent a projector from racing an opt-out, failed mint, or cleanup.
+    The lock itself and both ancestor directories are never symlinks.
+    """
+    if os.geteuid() != 0:
+        raise RuntimeError("Writer projection lock requires root")
+    check_dir(WRITER_SOURCE.parent.parent, 0, 0o700)
+    check_dir(WRITER_SOURCE.parent, 0, 0o700)
+    fd = os.open(WRITER_SOURCE.parent / ".refresh.lock",
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    st = os.fstat(fd)
+    if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or
+        st.st_gid != 0 or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+        os.close(fd)
+        raise RuntimeError("Untrusted writer lifecycle lock")
+    with os.fdopen(fd, "r+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _project_once():
     writer_projected = False
-    if WRITER_SOURCE.exists():
-        project(WRITER_SOURCE, WRITER_TARGET, WRITER_ROLE, WRITER_PERMISSIONS)
-        writer_projected = True
-    print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry, "writer_projected": writer_projected}))
+    writer_revoked = False
+    runtime_revoked = False
+    try:
+        reader_expiry = project(SOURCE, TARGET, ROLE, PERMISSIONS)
+        if WRITER_SOURCE.is_symlink():
+            raise RuntimeError("Untrusted writer grant symlink")
+        if WRITER_SOURCE.exists():
+            project(WRITER_SOURCE, WRITER_TARGET, WRITER_ROLE, WRITER_PERMISSIONS)
+            project_writer_runtime()
+            writer_projected = True
+        else:
+            writer_revoked = retire_writer_target()
+            runtime_revoked = retire_writer_target(WRITER_RUNTIME)
+    except Exception:
+        # ExecStartPost runs after the minter returns, so it must revoke
+        # the remote GitHub token itself, not merely delete local copies.
+        # Reuse the minter's provider-first, all-locations fail-closed path.
+        refresher = runpy.run_path(str(Path(__file__).resolve().parent /
+                                       "multica-zar-github-app-refresh.py"))
+        refresher["cleanup_failed_writer"]()
+        raise
+    print(json.dumps({"projected": True, "role": ROLE, "expires_at": reader_expiry,
+                      "writer_projected": writer_projected, "writer_revoked": writer_revoked,
+                      "runtime_writer_revoked": runtime_revoked}))
+
+
+def main():
+    with writer_lifecycle_lock():
+        return _project_once()
 
 
 if __name__ == "__main__":

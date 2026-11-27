@@ -75,17 +75,23 @@ class SafeRefreshPathTests(unittest.TestCase):
         self.target = self.parent / "roles"
         self.original_fstat = os.fstat
 
-    def run_refresh(self, *, uid=0, gid=0, lock_uid=0):
+    def run_refresh(self, *, uid=0, gid=0, lock_uid=0, writer_enabled='false', writer_denied=False):
         def root_fstat(fd):
             info = self.original_fstat(fd)
             owner = lock_uid if stat.S_ISREG(info.st_mode) else uid
             return types.SimpleNamespace(st_mode=info.st_mode, st_uid=owner,
                                          st_gid=gid, st_nlink=info.st_nlink)
-        with patch.object(refresh, "DEST", self.target), \
+        def mint_role(role):
+            if writer_denied and role == refresh.WRITER_ROLE:
+                raise RuntimeError("GitHub App writer permission not granted")
+            return {"expires_at": "2099-01-01T00:00:00Z"}
+        with patch.dict(refresh.os.environ, {refresh.WRITER_OPT_IN: writer_enabled}), \
+             patch.object(refresh, "DEST", self.target), \
              patch.object(refresh.os, "geteuid", return_value=0), \
              patch.object(refresh.os, "fstat", side_effect=root_fstat), \
-             patch.object(refresh, "mint", return_value={"expires_at": "2099-01-01T00:00:00Z"}) as minted, \
-             patch.object(refresh, "write_token") as wrote:
+             patch.object(refresh, "mint", side_effect=mint_role) as minted, \
+             patch.object(refresh, "write_token") as wrote, \
+             patch.object(refresh, "cleanup_failed_writer", side_effect=refresh.retire_writer_grant):
             try:
                 refresh.main()
             finally:
@@ -94,11 +100,46 @@ class SafeRefreshPathTests(unittest.TestCase):
 
     def test_good_0700_real_directory_and_0600_lock(self):
         self.run_refresh()
-        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS))
-        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS))
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS) - 1)
+        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS) - 1)
         lock = self.target / ".refresh.lock"
         self.assertTrue(lock.is_file())
         self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+    def test_writer_mint_requires_explicit_root_service_opt_in(self):
+        self.run_refresh(writer_enabled='true')
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS))
+        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS))
+
+    def test_invalid_writer_gate_denied_before_any_token_issuance(self):
+        with self.assertRaisesRegex(RuntimeError, "Invalid writer mint gate"):
+            self.run_refresh(writer_enabled='yes')
+        self.assertEqual(self.minted_count, 0)
+        self.assertEqual(self.wrote_count, 0)
+
+    def test_refused_optional_writer_grant_does_not_break_reader_rotation(self):
+        self.run_refresh(writer_enabled='true', writer_denied=True)
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS))
+        self.assertEqual(self.wrote_count, len(refresh.ROLE_PERMISSIONS) - 1)
+
+    def test_disabled_writer_revokes_stale_role_file(self):
+        self.target.mkdir(mode=0o700)
+        stale = self.target / 'github-ops-writer.json'
+        stale.write_text('nonsecret-test-marker')
+        stale.chmod(0o600)
+        self.run_refresh(writer_enabled='false')
+        self.assertFalse(stale.exists(), "opt-out must revoke the stale role file")
+        self.assertEqual(self.minted_count, len(refresh.ROLE_PERMISSIONS) - 1)
+
+    def test_disabled_writer_refuses_symlink_without_touching_target(self):
+        self.target.mkdir(mode=0o700)
+        victim = pathlib.Path(self.tmp.name) / 'victim-writer'
+        victim.write_text('unchanged')
+        (self.target / 'github-ops-writer.json').symlink_to(victim)
+        with self.assertRaises(OSError):
+            self.run_refresh(writer_enabled='false')
+        self.assertEqual(victim.read_text(), 'unchanged')
+        self.assertEqual(self.minted_count, 0)
 
     def test_symlinked_token_dir_refused_without_chmod_target(self):
         victim = pathlib.Path(self.tmp.name) / "victim"
@@ -155,5 +196,135 @@ class SafeRefreshPathTests(unittest.TestCase):
         self.assertEqual(self.minted_count, 0)
 
 
+class BghReaderOnlyTests(unittest.TestCase):
+    def test_reader_only_projects_exact_grant_without_other_roles(self):
+        from unittest.mock import Mock
+        import runpy
+        role = "github-ops-reader"
+        permissions = refresh.ROLE_PERMISSIONS[role]
+        repos = set(refresh.REPOS)
+        directory = pathlib.Path("/fixture/bgh-volume")
+        grant = {"role": role, "permissions": permissions,
+                 "repositories": sorted(repos),
+                 "expires_at": "2099-01-01T00:00:00Z"}
+        volume = {"validated_volume": Mock(return_value=directory),
+                  "project": Mock()}
+        projector = {"check_dir": Mock(), "NODE_GID": 1000,
+                     "PERMISSIONS": permissions, "REPOS": repos,
+                     "SOURCE": "fixture-source", "TARGET": "fixture-target",
+                     "project": Mock()}
+        with patch.object(runpy, "run_path", side_effect=[volume, projector]), \
+             patch.object(refresh, "mint", return_value=grant) as mint, \
+             patch.object(refresh, "write_token") as write:
+            self.assertEqual(refresh.refresh_bgh_reader(), 0)
+        mint.assert_called_once_with(role)
+        write.assert_called_once_with(role, grant)
+        volume["project"].assert_called_once_with(grant, directory)
+        projector["project"].assert_called_once_with(
+            "fixture-source", "fixture-target", role, permissions)
+
+    def test_invalid_volume_fails_before_issuing_any_grant(self):
+        from unittest.mock import Mock
+        import runpy
+        volume = {"validated_volume": Mock(side_effect=RuntimeError("denied"))}
+        with patch.object(runpy, "run_path", side_effect=[volume, {}]), \
+             patch.object(refresh, "mint") as mint:
+            with self.assertRaisesRegex(RuntimeError, "denied"):
+                refresh.refresh_bgh_reader()
+        mint.assert_not_called()
+
+    def test_reader_mode_never_enters_legacy_role_loop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = pathlib.Path(temp) / "root"
+            parent.mkdir(mode=0o700)
+            original = os.fstat
+            def root_owned(fd):
+                st = original(fd)
+                return types.SimpleNamespace(st_mode=st.st_mode,
+                    st_uid=0, st_gid=0, st_nlink=st.st_nlink)
+            with patch.object(refresh, "DEST", parent / "roles"), \
+                 patch.object(refresh.os, "geteuid", return_value=0), \
+                 patch.object(refresh.os, "fstat", side_effect=root_owned), \
+                 patch.object(refresh, "refresh_bgh_reader", return_value=0) as reader, \
+                 patch.object(refresh, "selected_roles") as legacy, \
+                 patch.object(refresh, "retire_writer_grant") as retire:
+                self.assertEqual(refresh.main(reader_only=True), 0)
+            reader.assert_called_once_with()
+            legacy.assert_not_called()
+            retire.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class FailClosedRefreshIntegration(unittest.TestCase):
+    def test_main_does_not_cleanup_after_core_releases_lock(self):
+        # Lifecycle cleanup is performed inside _refresh_core while flock is
+        # held. An outer catch would reintroduce a cross-refresh race.
+        with patch.object(refresh, "_refresh_core", side_effect=RuntimeError("nonwriter mint failed")), \
+             patch.object(refresh, "cleanup_failed_writer") as cleanup:
+            with self.assertRaisesRegex(RuntimeError, "nonwriter mint failed"):
+                refresh.main()
+            cleanup.assert_not_called()
+
+    def test_failed_reader_only_does_not_create_writer_cleanup(self):
+        with patch.object(refresh, "_refresh_core", side_effect=RuntimeError("reader unavailable")), \
+             patch.object(refresh, "cleanup_failed_writer") as cleanup:
+            with self.assertRaisesRegex(RuntimeError, "reader unavailable"):
+                refresh.main(reader_only=True)
+            cleanup.assert_not_called()
+
+    def test_provider_failure_still_retire_all_writer_locations(self):
+        from unittest.mock import call
+        fake = {
+            "WRITER_TARGET": pathlib.Path("/test/projection/writer.json"),
+            "WRITER_RUNTIME": pathlib.Path("/test/runtime/writer.json"),
+        }
+        retire = unittest.mock.Mock(return_value=True)
+        fake["retire_writer_target"] = retire
+        with patch.object(refresh, "revoke_existing_writer_at_github",
+                          side_effect=RuntimeError("provider unavailable")), \
+             patch.object(refresh, "retire_writer_grant") as source_retire, \
+             patch("runpy.run_path", return_value=fake):
+            with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+                refresh.cleanup_failed_writer()
+            source_retire.assert_called_once_with()
+            self.assertEqual(retire.call_args_list,
+                             [call(fake["WRITER_TARGET"]), call(fake["WRITER_RUNTIME"])])
+
+    def test_provider_revoke_uses_scoped_root_file_and_delete_method(self):
+        import stat
+        import json
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            path = root / "github-ops-writer.json"
+            payload = {
+                "role": refresh.WRITER_ROLE,
+                "app_id": refresh.APP_ID,
+                "installation_id": refresh.INSTALLATION_ID,
+                "repositories": list(refresh.REPOS),
+                "permissions": refresh.ROLE_PERMISSIONS[refresh.WRITER_ROLE],
+                "token": "ghs_" + "x" * 55,
+            }
+            path.write_text(json.dumps(payload))
+            path.chmod(0o600)
+            answer = MagicMock()
+            answer.status = 204
+            response = MagicMock()
+            response.__enter__.return_value = answer
+            trusted_stat = os.fstat
+            def root_owned_stat(fd):
+                original = trusted_stat(fd)
+                return type("RootStat", (), dict(st_mode=original.st_mode, st_uid=0,
+                                                 st_gid=0, st_nlink=original.st_nlink))()
+            with patch.object(refresh, "DEST", root), \
+                 patch.object(refresh.os, "fstat", side_effect=root_owned_stat), \
+                 patch("urllib.request.urlopen", return_value=response) as send:
+                self.assertTrue(refresh.revoke_existing_writer_at_github())
+                request = send.call_args.args[0]
+                self.assertEqual(request.get_method(), "DELETE")
+                self.assertEqual(request.full_url, "https://api.github.com/installation/token")
+            self.assertTrue(path.exists())

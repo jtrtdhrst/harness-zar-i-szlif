@@ -21,7 +21,13 @@ on:
       - 'ops/harness/release/test_zari213_release_gate.py'
       - 'ops/harness/credentials/README-zari213-daemon-cache-reader.md'
       - 'ops/harness/credentials/test_zari263_broker_scope.py'
+      - 'ops/harness/credentials/multica-zar-git-credential'
+      - 'ops/harness/credentials/install-multica-zar-git-credential.sh'
+      - 'ops/harness/credentials/test_zari263_helper_install.py'
+      - 'ops/harness/credentials/test_zari263_broker_provenance.py'
       - 'ops/harness/credentials/test_zari263_projector_scope.py'
+      - 'ops/harness/credentials/test_zari263_rotation_separation.py'
+      - 'ops/harness/credentials/test_zari263_postissue_revocation.py'
       - 'scripts/service-coverage.json'
       - 'scripts/check_service_coverage.py'
       - 'ops/multica/patches/zari213e-fresh-checkout-scope.patch'
@@ -44,7 +50,13 @@ on:
       - 'ops/harness/release/test_zari213_release_gate.py'
       - 'ops/harness/credentials/README-zari213-daemon-cache-reader.md'
       - 'ops/harness/credentials/test_zari263_broker_scope.py'
+      - 'ops/harness/credentials/multica-zar-git-credential'
+      - 'ops/harness/credentials/install-multica-zar-git-credential.sh'
+      - 'ops/harness/credentials/test_zari263_helper_install.py'
+      - 'ops/harness/credentials/test_zari263_broker_provenance.py'
       - 'ops/harness/credentials/test_zari263_projector_scope.py'
+      - 'ops/harness/credentials/test_zari263_rotation_separation.py'
+      - 'ops/harness/credentials/test_zari263_postissue_revocation.py'
       - 'scripts/service-coverage.json'
       - 'scripts/check_service_coverage.py'
       - 'ops/multica/patches/zari213e-fresh-checkout-scope.patch'
@@ -90,10 +102,18 @@ jobs:
         run: python3 -m unittest discover -s ops/harness/release -p 'test_zari213_*.py' -v
       - name: Scoped repository grants and credential broker negatives
         run: python3 ops/harness/credentials/test_zari263_broker_scope.py -q
+      - name: Verify root-owned credential provenance and pinned native Git helper
+        run: |
+          python3 ops/harness/credentials/test_zari263_broker_provenance.py -q
+          python3 ops/harness/credentials/test_zari263_helper_install.py -q
+          bash -n ops/harness/credentials/install-multica-zar-git-credential.sh
       - name: Verify MCP root coverage and separate writer grant projection
         run: |
           python3 scripts/check_service_coverage.py
           python3 ops/harness/credentials/test_zari263_projector_scope.py -q
+          python3 ops/harness/credentials/test_zari263_rotation_separation.py -q
+          python3 ops/harness/credentials/test_zari263_postissue_revocation.py -q
+          python3 ops/harness/credentials/test_zari263_runtime_preflight.py -q
       # The token-file tests intentionally require root-owned 0640 files.
       # Run inside the unprivileged BuildKit sandbox (root in the build stage),
       # not as host root or by relaxing production credential checks.

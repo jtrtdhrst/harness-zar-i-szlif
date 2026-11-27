@@ -27,11 +27,11 @@ An owner-authenticated GitHub operator MCP for the two current repositories. The
 
 ## Run and check
 
-`npm test` — HTTP-level and local-git positive/negative regressions (45 tests at this revision). These include disabled workflow dispatch, missing authentication, fail-closed branch deletion (writes disabled, missing push credential, pinned branch, stale SHA, protection, repository rules, unknown rule state, no merged PR), and a schema-invariant regression that every advertised tool returns object `structuredContent` for empty and non-empty GitHub lists. The lease tests run against a throwaway local bare repository: a stale expected SHA is rejected and the ref survives; the exact SHA deletes it; a push that lands between verification and delete is refused by the lease. A rules endpoint that answers 403 "Upgrade to GitHub Pro" (private repo, no rulesets possible) is accepted only together with `protected: false`; any other 403 stays fail-closed. They make no real GitHub provider writes.
+`npm test` — HTTP-level and local-git positive/negative regressions (46 tests at this revision). These include disabled workflow dispatch, missing authentication, fail-closed branch deletion (writes disabled, missing push credential, pinned branch, stale SHA, protection, repository rules, unknown rule state, no merged PR), and a schema-invariant regression that every advertised tool returns object `structuredContent` for empty and non-empty GitHub lists. The lease tests run against a throwaway local bare repository: a stale expected SHA is rejected and the ref survives; the exact SHA deletes it; a push that lands between verification and delete is refused by the lease. A rules endpoint that answers 403 "Upgrade to GitHub Pro" (private repo, no rulesets possible) is accepted only together with `protected: false`; any other 403 stays fail-closed. They make no real GitHub provider writes.
 
 `PORT=3000 GITHUB_OPS_CALLER_TOKEN=<secure-secret> GITHUB_OPS_TOKEN_FILE=/run/secrets/github-ops/token.json node server.mjs`
 
-The host's existing `multica-zar-github-app-refresh.service` reads its existing Coolify GitHub App and mints `github-ops-reader` with five read-only permissions (actions, administration, contents, deployments, metadata), plus a separate `github-ops-writer` grant scoped to Actions write, Contents write, Pull Requests write and Metadata read. These grants must be approved on the GitHub App before replacing the current runtime. `ops/harness/credentials/github-ops-token-project.py` projects the reader JSON under `/etc/github-ops-mcp/reader/token.json` and, when the writer grant exists, the writer JSON under `/etc/github-ops-mcp/reader/writer.json` (root:1000, 0640) after refresh. Mount the whole `/etc/github-ops-mcp/reader/` directory read-only at `/run/secrets/github-ops` in the BGH container; mounting just the token file is incorrect because atomic rotation changes the inode. The private key remains in Coolify; the runtime reads the renewed token per provider request, verifies identity, repositories, permissions, expiry and file ownership. Keep all writes disabled.
+The host's existing `multica-zar-github-app-refresh.service` reads its existing Coolify GitHub App and mints `github-ops-reader` with five read-only permissions (actions, administration, contents, deployments, metadata), plus an **explicitly opt-in** `github-ops-writer` grant scoped to Actions write, Contents write, Pull Requests write and Metadata read (`GITHUB_OPS_WRITER_MINT_ENABLED=true` in root-owned systemd configuration, disabled by default). Absent App approval cannot prevent existing reader refresh; disabling or rejecting the writer grant revokes stale source and projected credential files. These grants must be approved on the GitHub App before replacing the current runtime. `ops/harness/credentials/github-ops-token-project.py` projects the reader JSON under `/etc/github-ops-mcp/reader/token.json` and, when the writer grant exists, the writer JSON under `/etc/github-ops-mcp/reader/writer.json` (root:1000, 0640) after refresh. Mount the whole `/etc/github-ops-mcp/reader/` directory read-only at `/run/secrets/github-ops` in the BGH container; mounting just the token file is incorrect because atomic rotation changes the inode. The private key remains in Coolify; the runtime reads the renewed token per provider request, verifies identity, repositories, permissions, expiry and file ownership. Keep all writes disabled.
 
 Deletion additionally needs the `git` binary in the image (the Dockerfile installs it) and the separate, rotating `GITHUB_OPS_WRITER_TOKEN_FILE` grant. Global Git configuration is suppressed and the credential helper restricts protocol, host and exact repository path. The deprecated `GITHUB_OPS_PUSH_TOKEN` environment variable is not accepted in production.
 
@@ -48,6 +48,40 @@ Use `GITHUB_OPS_TOKEN_FILE=/run/secrets/github-ops/token.json`, `GITHUB_OPS_TOKE
 **Rotation owner:** existing native `multica-zar-github-app-refresh.service` and its 15-minute timer. Add the distinct `github-ops-reader-image` mint to the installed native source, then opt in the existing refresh service by setting BOTH non-secret `GITHUB_OPS_IMAGE_APP_UUID` and `GITHUB_OPS_IMAGE_READER_VOLUME`. After minting, it calls `ops/harness/credentials/github-ops-image-reader-project.py` (installed separately at `/usr/local/libexec/github-ops-image-reader-project.py`) to verify and project that role into the uniquely attached Coolify volume. This is not a second authority or extra timer. Do not enable opt-in until the exact UUID/volume have been reviewed and approved; failed projection fails the refresh unit, and a missing or near-expired file makes `/health.ready=false`. Confirm **two successful scheduled rotations without restart** before calling production credential delivery durable.
 
 Post-cutover E2E must verify Cloudflare Access denials outside the origin, bearer denials at the MCP, both-repo real `github_repo_info`, 20-tool list, `writes_enabled=false`, the approved GHCR digest and SHA revision, and an executable old-app alias rollback. `ZARI-213` HOLD stays independent.
+
+## Host-source drift and writer readiness preflight
+
+After an approved merge, the root-owned systemd service must run the **reviewed**
+`multica-zar-github-app-refresh.py` and `github-ops-token-project.py` versions
+from this repository. Merely merging the source or obtaining a green GitHub
+workflow does not update `/usr/local/libexec/` on the VPS. The existing systemd
+`ExecStartPost` copies the reader `token.json` to the Coolify named volume;
+the reviewed `github-ops-token-project.py` separately projects an opted-in,
+validated short-lived writer into `writer.json` in that same **existing** volume,
+atomically, and removes it on revocation. This path must first be installed on
+the host after review; until then the live volume has no writer. Keep the
+existing refresher timer; do not add a second token controller.
+
+Run the source-controlled read-only preflight on the target host using the
+exact checked-out approved SHA:
+
+```sh
+python3 ops/harness/credentials/github-ops-runtime-preflight.py --installed-dir /usr/local/libexec
+```
+
+The preflight compares both installed script digests, checks the presence and
+filesystem metadata of three writer grant files, prints no secret content,
+and returns code **2** for source drift. The optional `--require-writer`
+returns code **3** when writer credentials are not provisioned. Neither a
+matching preflight nor an enabled flag is permission to mutate GitHub:
+separate GitHub App writer approval, `GITHUB_OPS_WRITES_ENABLED=true`,
+the exact operator branch/PR allowlists, independent review and the existing
+ZARI-213 / native release HOLD all remain binding.
+
+`github_preview_branch_delete` uses commit-associated PR evidence with
+individual merged-PR readback, validates merge ancestry, blocks protected/
+pinned branches, and reports `deletion_supported=false` if the scoped writer
+file is absent or invalid. No preview issues a provider write.
 
 ## MCP verification
 

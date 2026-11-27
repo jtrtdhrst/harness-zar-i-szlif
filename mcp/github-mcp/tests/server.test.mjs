@@ -5,7 +5,7 @@ const REPO='jtrtdhrst/harness-zar-i-szlif', SHA='a'.repeat(40);
 async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x',writerToken='',callerToken='my-private-token',
   branchSHA=SHA,ahead=0,protectedBranch=false,approved=true,merged=true,openPR=false,mergeReachable=true,dispatchRunSHA=SHA,dispatchRunId=true,run404Count=0,
   deployments=[],rulesets=[],deploymentsInvalid=false,rulesetsInvalid=false,classicProtectionMissing=false,
-  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old'}={}){
+  rulesStatus=200,rulesList=[],rulesMessage='Forbidden',pushToken='',writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,liveRef=null,liveBranch='fix/old',commitFeedMissing=false,closedFeedMissing=false,individualMerged=true,individualRepoChanged=false}={}){
   const calls=[];
   const authorizations=[];
   let branchDeleted=false;
@@ -38,11 +38,21 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
       }else if(branchDeleted)return new Response(null,{status:404});
       else v={commit:{sha:branchSHA},protected:protectedBranch};
     }
+    else if(/\/commits\/[a-f0-9]{40}\/pulls$/.test(u.pathname)){
+      v=merged&&!commitFeedMissing?[{number:987,merged_at:'2026-11-20T12:00:00Z',
+        head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
+    }
+    else if(u.pathname.endsWith('/pulls/987')){
+      v={number:987,state:individualMerged?'closed':'open',merged:individualMerged,
+        merged_at:individualMerged?'2026-11-20T12:00:00Z':null,
+        head:{ref:'fix/old',sha:branchSHA,repo:{full_name:individualRepoChanged?'other/fork':REPO}},
+        base:{ref:'main'},merge_commit_sha:mergeSHA};
+    }
     else if(u.pathname.endsWith('/pulls')){
       if(u.searchParams.get('state')==='open')
         v=openPR?[{base:{ref:'fix/old'},head:{ref:'fix/old',repo:{full_name:REPO}}}]:[];
       else
-        v=merged?[{number:987,merged_at:'2026-11-20T12:00:00Z',
+        v=merged&&!closedFeedMissing?[{number:987,merged_at:'2026-11-20T12:00:00Z',
           head:{ref:'fix/old',sha:branchSHA,repo:{full_name:REPO}},base:{ref:'main'},merge_commit_sha:mergeSHA}]:[];
     }
     else if(u.pathname.includes('/compare/'))v={ahead_by:ahead,behind_by:mergeReachable?0:1};
@@ -58,10 +68,12 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     if(u.pathname.endsWith('/deployments'))v=deploymentsInvalid?{}:deployments;
     else if(u.pathname.endsWith('/rulesets'))v=rulesetsInvalid?{}:rulesets;
     else if(u.pathname.endsWith('/actions/permissions'))v={enabled:true,allowed_actions:'all'};
+    else if(u.pathname.endsWith('/environments'))v={total_count:1,environments:[{name:'production',protection_rules:[{type:'required_reviewers',prevent_self_review:true}],deployment_branch_policy:{protected_branches:true,custom_branch_policies:false}}]};
+    else if(u.pathname.endsWith('/pulls/987/reviews'))v=[{id:10,user:{login:'reviewer'},state:'APPROVED',commit_id:branchSHA,submitted_at:'2026-11-27T10:00:00Z'}];
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
   const s=makeServer({fetchImpl:fake,githubToken,writerToken,callerToken,writesEnabled,allowDeletion,
-    pushToken,pinnedBranches,pushRemoteFor,gitBin,
+    pushToken,writerTokenFile,pinnedBranches,pushRemoteFor,gitBin,
     deletionAllowlist:approved?[`${REPO}:fix/old@${SHA}`,`${REPO}:fix/old@${branchSHA}`]:[],workflows:['release-lanes-policy.yml'],dispatchPollDelayMs:1});
   await new Promise(resolve=>s.listen(0,'127.0.0.1',resolve));
   const root=`http://127.0.0.1:${s.address().port}`;
@@ -75,14 +87,14 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,20);
+    assert.equal((await y.json()).result.tools.length,23);
   }finally{await f.close()}
 });
-test('tool metadata requires OAuth for all twenty tools',async()=>{
+test('tool metadata requires OAuth for all twenty-three tools',async()=>{
  const f=await fixture();try{
   const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   const tools=(await response.json()).result.tools;
-  assert.equal(tools.length,20);
+  assert.equal(tools.length,23);
   for(const tool of tools){
     assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
     assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
@@ -165,6 +177,52 @@ test('squash-merged PR is eligible for preview only, never deletes',async()=>{
   assert.equal(f.calls.filter(([method])=>method==='DELETE').length,0);
  }finally{await f.close()}
 });
+test('preview verifies an exact merged commit even when closed PR feed omits it',async()=>{
+  const f=await fixture({closedFeedMissing:true});
+  try{
+    const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(out.body.result.structuredContent.eligible,true);
+    assert.equal(out.body.result.structuredContent.merged_pr,987);
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/commits/'+SHA+'/pulls?per_page=100')));
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/pulls/987')));
+    assert.equal(f.calls.some(([method])=>method!=='GET'),false);
+  }finally{await f.close()}
+});
+test('commit association unavailable falls back to paginated PR list but always verifies individual PR',async()=>{
+  const f=await fixture({commitFeedMissing:true});
+  try{
+    const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(out.body.result.structuredContent.merged_pr,987);
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.includes('/pulls?state=closed&')));
+    assert.ok(f.calls.some(([method,path])=>method==='GET'&&path.endsWith('/pulls/987')));
+  }finally{await f.close()}
+});
+test('commit associations cannot forge a merged PR or cross-repository head',async()=>{
+  for(const opt of [{individualMerged:false},{individualRepoChanged:true},{commitFeedMissing:true,closedFeedMissing:true}]){
+    const f=await fixture(opt);
+    try{
+      const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+      assert.equal(out.body.result.isError,true);
+      assert.match(out.body.result.content[0].text,/MERGE_NOT_VERIFIED/);
+      assert.equal(f.calls.some(([method])=>method!=='GET'),false);
+    }finally{await f.close()}
+  }
+});
+test('health distinguishes liveness from authorization of writes',async()=>{
+  for(const [writesEnabled,gate] of [[false,'WRITE_DISABLED'],[true,'WRITER_CREDENTIAL_UNAVAILABLE']]){
+    const f=await fixture({writesEnabled});
+    try{
+      const r=await fetch(f.root+'/health');
+      assert.equal(r.status,200);
+      const body=await r.json();
+      assert.equal(body.alive,true);
+      assert.equal(body.writes_enabled,writesEnabled);
+      assert.equal(body.write_ready,false);
+      assert.equal(body.write_gate,gate);
+    }finally{await f.close()}
+  }
+});
+
 test('staging and known live Coolify branch are never eligible',async()=>{
  const f=await fixture();
  try{
@@ -291,7 +349,7 @@ test('every advertised tool returns object structuredContent, never a bare array
     liveRef:b.bare,liveBranch:'fix/old',pushToken:'test-push-token',pushRemoteFor:()=>b.url});
   try{
     const tools=await toolsListed(f.root);
-    assert.equal(tools.length,20);
+    assert.equal(tools.length,23);
     assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false,'removed dispatch must stay unadvertised');
     const args={github_repo_info:{repo:REPO},github_get_rulesets:{repo:REPO},
       github_get_actions_permissions:{repo:REPO},github_get_branch_protection:{repo:REPO},
@@ -429,6 +487,8 @@ test('a Coolify-pinned branch is refused even when every other gate would pass',
   const f = await fixture({ writesEnabled: true, pushToken: 'test-push-token', branchSHA: b.sha,
     liveRef: b.bare, liveBranch: b.branch, pushRemoteFor: () => b.url });
   try {
+    const preview = await f.request('github_preview_branch_delete', { repo: REPO, branch: b.branch, expected_sha: b.sha });
+    assert.match(preview.body.result.content[0].text, /BRANCH_PINNED/);
     const x = await f.request('github_delete_merged_branch', { repo: REPO, branch: b.branch, expected_sha: b.sha });
     assert.match(x.body.result.content[0].text, /BRANCH_PINNED/);
     assert.equal(b.ref(), b.sha, 'the pinned ref survives');
@@ -465,7 +525,7 @@ test('a push that lands between verification and delete is rejected by the lease
 });
 
 
-test('GitHub App role token file is validated, rotated and fail-closed', async()=>{
+test('GitHub App role token file is validated, rotated and fail-closed', {skip:process.getuid?.()!==0?'root-owned file fixture only':false}, async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-role-')),file=join(dir,'reader.json');
@@ -539,7 +599,7 @@ test('GitHub Ops reader role requires deployments read and refuses legacy four-s
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
-test('live MCP tools/list contains exact twenty names; removed dispatch is never advertised',async()=>{
+test('live MCP tools/list contains exact twenty-three names; removed dispatch is never advertised',async()=>{
  const f=await fixture();
  try {
    const tools=await toolsListed(f.root);
@@ -547,13 +607,14 @@ test('live MCP tools/list contains exact twenty names; removed dispatch is never
    assert.deepEqual(names,[
     'github_cancel_workflow_run','github_delete_merged_branch','github_get_actions_permissions',
     'github_get_branch_protection','github_get_deployments','github_get_rulesets',
+    'github_get_effective_main_rules','github_list_environments','github_get_pr_reviews',
     'github_preview_branch_delete','github_repo_info',
     'github_get_file','github_get_branch','github_list_branches','github_list_pull_requests',
     'github_get_pull_request','github_get_pr_files','github_get_check_runs','github_get_workflow_runs',
     'github_create_branch','github_commit_file','github_create_pull_request','github_merge_pull_request'].sort());
  }finally{await f.close()}
 });
-test('rotating GitHub App writer file governs only verified POST and fails closed',async()=>{
+test('rotating GitHub App writer file governs only verified POST and fails closed',{skip:process.getuid?.()!==0?'root-owned file fixture only':false},async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os'),{join}=await import('node:path');
  const dir=mkdtempSync(join(tmpdir(),'github-ops-writer-')),file=join(dir,'writer.json');
@@ -593,6 +654,30 @@ test('rotating GitHub App writer file governs only verified POST and fails close
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
+test('preview and deletion deny missing writer grant even when a flag and allowlist are set',async()=>{
+  const {join}=await import('node:path');
+  const {tmpdir}=await import('node:os');
+  const missing=join(tmpdir(),'bgh-intentionally-absent-writer-'+process.pid+'.json');
+  const f=await fixture({writesEnabled:true,writerTokenFile:missing});
+  try{
+    const preview=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(preview.body.result.structuredContent.eligible,true);
+    assert.equal(preview.body.result.structuredContent.deletion_supported,false);
+    const prior=f.calls.length;
+    const result=await f.request('github_delete_merged_branch',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.match(result.body.result.content[0].text,/AUTH_NOT_CONFIGURED/);
+    assert.equal(f.calls.length,prior,'unavailable writer credential is rejected before provider access');
+  }finally{await f.close()}
+});
+test('scoped ready writer permits preview but no GitHub mutation',async()=>{
+  const f=await fixture({writesEnabled:true,pushToken:'unit-test-scoped-credential'});
+  try{
+    const out=await f.request('github_preview_branch_delete',{repo:REPO,branch:'fix/old',expected_sha:SHA});
+    assert.equal(out.body.result.structuredContent.eligible,true);
+    assert.equal(out.body.result.structuredContent.deletion_supported,true);
+    assert.equal(f.calls.every(([method])=>method==='GET'),true);
+  }finally{await f.close()}
+});
 test('single-repo rotating Harness reader enforces exact GitHub App scope and fail-closed rotation',async()=>{
  const {mkdtempSync,writeFileSync,chmodSync,rmSync}=await import('node:fs');
  const {tmpdir}=await import('node:os'),{join}=await import('node:path');
@@ -692,7 +777,7 @@ test('parity image reader serves both legacy repositories, rejects third and all
    };
    const tools=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
      body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list'})});
-   assert.equal((await tools.json()).result.tools.length,20);
+   assert.equal((await tools.json()).result.tools.length,23);
    assert.equal((await call('github_repo_info',REPO)).structuredContent.full_name,REPO);
    assert.equal((await call('github_repo_info','jtrtdhrst/zar-i-szlif')).structuredContent.full_name,'jtrtdhrst/zar-i-szlif');
    assert.match((await call('github_repo_info','another/repo')).content[0].text,/REPO_DENIED/);
@@ -886,4 +971,20 @@ test('non-root GitHub App credential fixture is rejected without provider traffi
   if(s)await new Promise(r=>s.close(r));
   rmSync(dir,{recursive:true,force:true});
  }
+});
+
+test('release diagnostics are read-only and bind review evidence to exact head',async()=>{
+  const f=await fixture({rulesList:[{type:'pull_request'}]});
+  try{
+    const rules=await f.request('github_get_effective_main_rules',{repo:REPO});
+    assert.equal(rules.body.result.structuredContent.rules[0].type,'pull_request');
+    const envs=await f.request('github_list_environments',{repo:REPO});
+    assert.equal(envs.body.result.structuredContent.environments[0].protection_rules[0].prevent_self_review,true);
+    const reviews=await f.request('github_get_pr_reviews',{repo:REPO,pr_number:987,expected_sha:SHA});
+    assert.equal(reviews.body.result.structuredContent.reviews[0].matches_head,true);
+    assert.equal(reviews.body.result.structuredContent.reviews[0].state,'APPROVED');
+    const stale=await f.request('github_get_pr_reviews',{repo:REPO,pr_number:987,expected_sha:'b'.repeat(40)});
+    assert.match(stale.body.result.content[0].text,/STALE_SHA/);
+    assert.ok(f.calls.every(([method])=>method==='GET'));
+  }finally{await f.close()}
 });
