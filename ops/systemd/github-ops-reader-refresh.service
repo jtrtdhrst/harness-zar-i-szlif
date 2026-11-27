@@ -11,6 +11,4 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 TimeoutStartSec=240
-Environment=GITHUB_OPS_WRITER_MINT_ENABLED=true
-ExecStart=/usr/bin/python3 /usr/local/libexec/multica-zar-github-app-refresh.py
-ExecStartPost=/usr/bin/python3 /usr/local/libexec/github-ops-token-project.py
+ExecStart=/usr/bin/python3 /usr/local/libexec/multica-zar-github-app-refresh.py --github-ops-reader-only
