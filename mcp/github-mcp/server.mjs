@@ -359,10 +359,13 @@ export function makeServer(config={}) {
     const associated=await api('GET',`${root}/commits/${sha}/pulls?per_page=100`);
     if(!Array.isArray(associated)||associated.length===100)
       throw error('PR_ASSOCIATIONS_UNVERIFIED','Commit-to-PR proof unavailable or truncated');
-    const matches=pr=>Number.isSafeInteger(pr?.number)&&pr.number>0&&
+    const matchesIdentity=pr=>Number.isSafeInteger(pr?.number)&&pr.number>0&&
       Boolean(pr.merged_at)&&pr.base?.ref==='main'&&pr.head?.ref===branch&&
-      pr.head?.sha?.toLowerCase()===sha&&pr.head?.repo?.full_name===repo&&
-      SHA.test(pr.merge_commit_sha||'');
+      pr.head?.sha?.toLowerCase()===sha&&pr.head?.repo?.full_name===repo;
+    // GitHub can return merge_commit_sha=null for a merged PR's individual
+    // GET while commit-associated PR evidence still carries its merge SHA.
+    // Treat them as separate proofs, never as permission to skip ancestry.
+    const matches=pr=>matchesIdentity(pr)&&SHA.test(pr.merge_commit_sha||'');
     // A second discovery route is allowed, but not a weaker verification:
     // every candidate must still pass individual PR readback below.
     const candidates=associated.filter(matches);
@@ -372,9 +375,10 @@ export function makeServer(config={}) {
     let merged=null;
     for(const candidate of candidates){
       const verified=await api('GET',`${root}/pulls/${candidate.number}`);
-      if(matches(verified)&&verified.merged===true&&verified.state==='closed'&&
-         verified.merge_commit_sha.toLowerCase()===candidate.merge_commit_sha.toLowerCase()){
-        merged=verified;
+      if(matchesIdentity(verified)&&verified.merged===true&&verified.state==='closed'&&
+         (verified.merge_commit_sha===null ||
+           verified.merge_commit_sha?.toLowerCase()===candidate.merge_commit_sha.toLowerCase())){
+        merged={...verified,merge_commit_sha:candidate.merge_commit_sha};
         break;
       }
     }
