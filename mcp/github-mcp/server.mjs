@@ -13,6 +13,9 @@ const WORKFLOW = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.ya?ml$/;
 const TOOLS = [
   ['github_repo_info', 'Read current GitHub repository metadata', ['repo']],
   ['github_get_rulesets', 'Read rulesets; report GitHub plan/permission denials', ['repo']],
+  ['github_get_effective_main_rules', 'Read effective GitHub rules for main; no policy changes', ['repo']],
+  ['github_list_environments', 'Read deployment environment names and protection policies, never secrets', ['repo']],
+  ['github_get_pr_reviews', 'Read formal review submissions for the exact PR head; not an approval decision', ['repo', 'pr_number', 'expected_sha']],
   ['github_get_actions_permissions', 'Read Actions permissions; report missing app permission', ['repo']],
   ['github_get_branch_protection', 'Read main branch protection; report missing administration permission', ['repo']],
   ['github_get_deployments', 'Read deployments for one exact source commit', ['repo', 'sha']],
@@ -410,6 +413,35 @@ export function makeServer(config={}) {
       const list=await api('GET',`${root}/rulesets`);
       if(!Array.isArray(list))throw error('RULESETS_INVALID','GitHub ruleset listing returned invalid data');
       return {repo,rulesets:list,count:list.length};
+    }
+    if(name==='github_get_effective_main_rules'){
+      const rules=await api('GET',`${root}/rules/branches/main`);
+      if(!Array.isArray(rules))throw error('RULES_INVALID','GitHub effective rules response is invalid');
+      return {repo,branch:'main',count:rules.length,rules};
+    }
+    if(name==='github_list_environments'){
+      const result=await api('GET',`${root}/environments?per_page=100`);
+      if(!Array.isArray(result?.environments)||!Number.isSafeInteger(result.total_count)||result.total_count<result.environments.length)
+        throw error('ENVIRONMENTS_INVALID','GitHub deployment environment listing is invalid');
+      return {repo,count:result.total_count,truncated:result.total_count>result.environments.length,
+        environments:result.environments.map(e=>({name:e.name,
+          protection_rules:Array.isArray(e.protection_rules)?e.protection_rules.map(r=>({
+            type:r.type,prevent_self_review:r.prevent_self_review,wait_timer:r.wait_timer,
+            reviewers:Array.isArray(r.reviewers)?r.reviewers.map(x=>({type:x.type,id:x.reviewer?.id,login:x.reviewer?.login,slug:x.reviewer?.slug})):undefined
+          })):null,deployment_branch_policy:e.deployment_branch_policy??null}))};
+    }
+    if(name==='github_get_pr_reviews'){
+      const number=assertPRNumber(p.pr_number),sha=assertSHA(p.expected_sha).toLowerCase();
+      const pr=await api('GET',`${root}/pulls/${number}`);
+      if(pr.head?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','PR head changed');
+      const reviews=await api('GET',`${root}/pulls/${number}/reviews?per_page=100`);
+      if(!Array.isArray(reviews))throw error('REVIEWS_INVALID','GitHub PR review list invalid');
+      const current=await api('GET',`${root}/pulls/${number}`);
+      if(current.head?.sha?.toLowerCase()!==sha)throw error('STALE_SHA','PR head changed during review read');
+      return {repo,number,head_sha:sha,author:pr.user?.login??null,count:reviews.length,truncated:reviews.length===100,
+        reviews:reviews.map(r=>({id:r.id,reviewer:r.user?.login??null,state:r.state,commit_id:r.commit_id,submitted_at:r.submitted_at,
+          matches_head:typeof r.commit_id==='string'&&r.commit_id.toLowerCase()===sha})),
+        note:'Review evidence only; GitHub rules and authorized merge remain authoritative.'};
     }
     if(name==='github_get_actions_permissions')return api('GET',`${root}/actions/permissions`);
     if(name==='github_get_branch_protection'){

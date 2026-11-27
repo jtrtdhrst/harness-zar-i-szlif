@@ -68,6 +68,8 @@ async function fixture({writesEnabled=false,allowDeletion=false, githubToken='x'
     if(u.pathname.endsWith('/deployments'))v=deploymentsInvalid?{}:deployments;
     else if(u.pathname.endsWith('/rulesets'))v=rulesetsInvalid?{}:rulesets;
     else if(u.pathname.endsWith('/actions/permissions'))v={enabled:true,allowed_actions:'all'};
+    else if(u.pathname.endsWith('/environments'))v={total_count:1,environments:[{name:'production',protection_rules:[{type:'required_reviewers',prevent_self_review:true}],deployment_branch_policy:{protected_branches:true,custom_branch_policies:false}}]};
+    else if(u.pathname.endsWith('/pulls/987/reviews'))v=[{id:10,user:{login:'reviewer'},state:'APPROVED',commit_id:branchSHA,submitted_at:'2026-11-27T10:00:00Z'}];
     return new Response(opts.method==='POST'?null:JSON.stringify(v),{status:opts.method==='POST'?204:200,headers:{'content-type':'application/json'}});
   };
   const s=makeServer({fetchImpl:fake,githubToken,writerToken,callerToken,writesEnabled,allowDeletion,
@@ -85,14 +87,14 @@ test('real HTTP MCP initialize/list + no token denied',async()=>{
   const f=await fixture();try{
     const x=await f.request('github_repo_info',{repo:REPO},false);assert.equal(x.http,401);
     const y=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
-    assert.equal((await y.json()).result.tools.length,20);
+    assert.equal((await y.json()).result.tools.length,23);
   }finally{await f.close()}
 });
-test('tool metadata requires OAuth for all twenty tools',async()=>{
+test('tool metadata requires OAuth for all twenty-three tools',async()=>{
  const f=await fixture();try{
   const response=await fetch(f.root+'/mcp',{method:'POST',headers:{authorization:'Bearer my-private-token'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});
   const tools=(await response.json()).result.tools;
-  assert.equal(tools.length,20);
+  assert.equal(tools.length,23);
   for(const tool of tools){
     assert.deepEqual(tool.securitySchemes,[{type:'oauth2',scopes:[]}]);
     assert.deepEqual(tool._meta.securitySchemes,[{type:'oauth2',scopes:[]}]);
@@ -347,7 +349,7 @@ test('every advertised tool returns object structuredContent, never a bare array
     liveRef:b.bare,liveBranch:'fix/old',pushToken:'test-push-token',pushRemoteFor:()=>b.url});
   try{
     const tools=await toolsListed(f.root);
-    assert.equal(tools.length,20);
+    assert.equal(tools.length,23);
     assert.equal(tools.some(t=>t.name==='github_dispatch_workflow'),false,'removed dispatch must stay unadvertised');
     const args={github_repo_info:{repo:REPO},github_get_rulesets:{repo:REPO},
       github_get_actions_permissions:{repo:REPO},github_get_branch_protection:{repo:REPO},
@@ -597,7 +599,7 @@ test('GitHub Ops reader role requires deployments read and refuses legacy four-s
  }finally{if(s)await new Promise(r=>s.close(r));rmSync(dir,{recursive:true,force:true})}
 });
 
-test('live MCP tools/list contains exact twenty names; removed dispatch is never advertised',async()=>{
+test('live MCP tools/list contains exact twenty-three names; removed dispatch is never advertised',async()=>{
  const f=await fixture();
  try {
    const tools=await toolsListed(f.root);
@@ -605,6 +607,7 @@ test('live MCP tools/list contains exact twenty names; removed dispatch is never
    assert.deepEqual(names,[
     'github_cancel_workflow_run','github_delete_merged_branch','github_get_actions_permissions',
     'github_get_branch_protection','github_get_deployments','github_get_rulesets',
+    'github_get_effective_main_rules','github_list_environments','github_get_pr_reviews',
     'github_preview_branch_delete','github_repo_info',
     'github_get_file','github_get_branch','github_list_branches','github_list_pull_requests',
     'github_get_pull_request','github_get_pr_files','github_get_check_runs','github_get_workflow_runs',
@@ -774,7 +777,7 @@ test('parity image reader serves both legacy repositories, rejects third and all
    };
    const tools=await fetch(base+'/mcp',{method:'POST',headers:{authorization:'Bearer parity-owner'},
      body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/list'})});
-   assert.equal((await tools.json()).result.tools.length,20);
+   assert.equal((await tools.json()).result.tools.length,23);
    assert.equal((await call('github_repo_info',REPO)).structuredContent.full_name,REPO);
    assert.equal((await call('github_repo_info','jtrtdhrst/zar-i-szlif')).structuredContent.full_name,'jtrtdhrst/zar-i-szlif');
    assert.match((await call('github_repo_info','another/repo')).content[0].text,/REPO_DENIED/);
@@ -968,4 +971,20 @@ test('non-root GitHub App credential fixture is rejected without provider traffi
   if(s)await new Promise(r=>s.close(r));
   rmSync(dir,{recursive:true,force:true});
  }
+});
+
+test('release diagnostics are read-only and bind review evidence to exact head',async()=>{
+  const f=await fixture({rulesList:[{type:'pull_request'}]});
+  try{
+    const rules=await f.request('github_get_effective_main_rules',{repo:REPO});
+    assert.equal(rules.body.result.structuredContent.rules[0].type,'pull_request');
+    const envs=await f.request('github_list_environments',{repo:REPO});
+    assert.equal(envs.body.result.structuredContent.environments[0].protection_rules[0].prevent_self_review,true);
+    const reviews=await f.request('github_get_pr_reviews',{repo:REPO,pr_number:987,expected_sha:SHA});
+    assert.equal(reviews.body.result.structuredContent.reviews[0].matches_head,true);
+    assert.equal(reviews.body.result.structuredContent.reviews[0].state,'APPROVED');
+    const stale=await f.request('github_get_pr_reviews',{repo:REPO,pr_number:987,expected_sha:'b'.repeat(40)});
+    assert.match(stale.body.result.content[0].text,/STALE_SHA/);
+    assert.ok(f.calls.every(([method])=>method==='GET'));
+  }finally{await f.close()}
 });
