@@ -270,53 +270,95 @@ def _refresh_core(*, reader_only=False):
     return 0
 
 
-def revoke_writer_on_full_refresh_failure():
-    """Fail closed across every refresh stage, including an ExecStart failure.
 
-    ExecStartPost is skipped by systemd if minting fails. Remove the source
-    grant, the system projection and the named-volume projection independently.
-    Never follow an untrusted file; preserve a hard failure if cleanup fails.
+def revoke_existing_writer_at_github():
+    """Revoke the current installation writer grant before removing its files.
+
+    Use an O_NOFOLLOW root-only reader; never send the token to logs or argv.
+    """
+    import stat
+    import urllib.request
+    path = DEST / f"{WRITER_ROLE}.json"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    with os.fdopen(fd, "r", encoding="utf-8") as reader:
+        st = os.fstat(reader.fileno())
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_gid != 0
+                or st.st_nlink != 1 or stat.S_IMODE(st.st_mode) != 0o600):
+            raise RuntimeError("Untrusted writer grant for provider revocation")
+        grant = json.load(reader)
+    if (grant.get("role") != WRITER_ROLE or grant.get("app_id") != APP_ID
+            or grant.get("installation_id") != INSTALLATION_ID
+            or set(grant.get("repositories", [])) != set(REPOS)
+            or grant.get("permissions") != ROLE_PERMISSIONS[WRITER_ROLE]):
+        raise RuntimeError("Writer grant scope mismatch for provider revocation")
+    token = grant.get("token")
+    if not isinstance(token, str) or len(token) < 40 or any(ch.isspace() for ch in token):
+        raise RuntimeError("Invalid writer grant token for provider revocation")
+    request = urllib.request.Request(
+        "https://api.github.com/installation/token",
+        headers={"Authorization": "Bearer " + token,
+                 "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28",
+                 "User-Agent": "zari-github-ops-fail-closed"},
+        method="DELETE",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        if response.status != 204:
+            raise RuntimeError("GitHub writer revocation unconfirmed")
+    return True
+
+
+def cleanup_failed_writer():
+    """On ANY full refresh error, retire the root role and both live copies.
+
+    Each location is attempted even if provider revocation or another location fails.
+    Never follow symlinks or suppress a failed cleanup as a successful refresh.
     """
     import runpy
-
     errors = []
     try:
+        revoke_existing_writer_at_github()
+    except Exception:
+        errors.append("github")
+    try:
         retire_writer_grant()
-    except Exception as exc:
-        errors.append(exc)
-
+    except Exception:
+        errors.append("role")
     try:
         projector = runpy.run_path(str(Path(__file__).resolve().parent /
                                        "github-ops-token-project.py"))
-    except Exception as exc:
-        errors.append(exc)
-    else:
-        for path in (projector["WRITER_TARGET"], projector["WRITER_RUNTIME"]):
+        for key in ("WRITER_TARGET", "WRITER_RUNTIME"):
             try:
-                projector["retire_writer_target"](path)
-            except Exception as exc:
-                errors.append(exc)
+                projector["retire_writer_target"](projector[key])
+            except Exception:
+                errors.append(key)
+    except Exception:
+        errors.append("projector")
     if errors:
-        raise RuntimeError("GitHub Ops writer cleanup incomplete") from errors[0]
+        raise RuntimeError("Writer cleanup incomplete after failed refresh")
 
 
 def main(*, reader_only=False):
-    # BGH reader-only refresh does not create or manage a writer grant.
-    if reader_only:
-        return _refresh_core(reader_only=True)
     try:
-        return _refresh_core(reader_only=False)
+        return _refresh_core(reader_only=reader_only)
     except Exception:
-        revoke_writer_on_full_refresh_failure()
+        if not reader_only:
+            cleanup_failed_writer()
         raise
+
+
+def run_cli(args):
+    if args not in ([], ["--github-ops-reader-only"]):
+        raise RuntimeError("Unknown refresh mode")
+    return main(reader_only=bool(args))
 
 
 if __name__ == "__main__":
     try:
-        args = sys.argv[1:]
-        if args not in ([], ["--github-ops-reader-only"]):
-            raise RuntimeError("Unknown refresh mode")
-        sys.exit(main(reader_only=bool(args)))
+        sys.exit(run_cli(sys.argv[1:]))
     except Exception as error:
         print(json.dumps({"refreshed": False, "error": str(error)[:160]}), file=sys.stderr)
         sys.exit(1)
