@@ -195,5 +195,63 @@ class SafeRefreshPathTests(unittest.TestCase):
         self.assertEqual(self.minted_count, 0)
 
 
+class BghReaderOnlyTests(unittest.TestCase):
+    def test_reader_only_projects_exact_grant_without_other_roles(self):
+        from unittest.mock import Mock
+        import runpy
+        role = "github-ops-reader"
+        permissions = refresh.ROLE_PERMISSIONS[role]
+        repos = set(refresh.REPOS)
+        directory = pathlib.Path("/fixture/bgh-volume")
+        grant = {"role": role, "permissions": permissions,
+                 "repositories": sorted(repos),
+                 "expires_at": "2099-01-01T00:00:00Z"}
+        volume = {"validated_volume": Mock(return_value=directory),
+                  "project": Mock()}
+        projector = {"check_dir": Mock(), "NODE_GID": 1000,
+                     "PERMISSIONS": permissions, "REPOS": repos,
+                     "SOURCE": "fixture-source", "TARGET": "fixture-target",
+                     "project": Mock()}
+        with patch.object(runpy, "run_path", side_effect=[volume, projector]), \
+             patch.object(refresh, "mint", return_value=grant) as mint, \
+             patch.object(refresh, "write_token") as write:
+            self.assertEqual(refresh.refresh_bgh_reader(), 0)
+        mint.assert_called_once_with(role)
+        write.assert_called_once_with(role, grant)
+        volume["project"].assert_called_once_with(grant, directory)
+        projector["project"].assert_called_once_with(
+            "fixture-source", "fixture-target", role, permissions)
+
+    def test_invalid_volume_fails_before_issuing_any_grant(self):
+        from unittest.mock import Mock
+        import runpy
+        volume = {"validated_volume": Mock(side_effect=RuntimeError("denied"))}
+        with patch.object(runpy, "run_path", side_effect=[volume, {}]), \
+             patch.object(refresh, "mint") as mint:
+            with self.assertRaisesRegex(RuntimeError, "denied"):
+                refresh.refresh_bgh_reader()
+        mint.assert_not_called()
+
+    def test_reader_mode_never_enters_legacy_role_loop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = pathlib.Path(temp) / "root"
+            parent.mkdir(mode=0o700)
+            original = os.fstat
+            def root_owned(fd):
+                st = original(fd)
+                return types.SimpleNamespace(st_mode=st.st_mode,
+                    st_uid=0, st_gid=0, st_nlink=st.st_nlink)
+            with patch.object(refresh, "DEST", parent / "roles"), \
+                 patch.object(refresh.os, "geteuid", return_value=0), \
+                 patch.object(refresh.os, "fstat", side_effect=root_owned), \
+                 patch.object(refresh, "refresh_bgh_reader", return_value=0) as reader, \
+                 patch.object(refresh, "selected_roles") as legacy, \
+                 patch.object(refresh, "retire_writer_grant") as retire:
+                self.assertEqual(refresh.main(reader_only=True), 0)
+            reader.assert_called_once_with()
+            legacy.assert_not_called()
+            retire.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

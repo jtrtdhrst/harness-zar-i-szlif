@@ -171,7 +171,35 @@ def retire_writer_grant():
     return True
 
 
-def main():
+def refresh_bgh_reader():
+    """Renew only the existing BGH read grant and its verified live volume.
+
+    Never mint an agent, runner, release or writer grant in this mode.
+    The caller holds the same root-owned refresh lock as the legacy entrypoint.
+    """
+    import runpy
+    here = Path(__file__).resolve().parent
+    volume = runpy.run_path(str(here / "github-ops-image-reader-project.py"))
+    projector = runpy.run_path(str(here / "github-ops-token-project.py"))
+    app_uuid = "t09dqe2eppn2eiqmhzlf8xzp"
+    name = app_uuid + "-bgh-github-app-reader"
+    directory = volume["validated_volume"](app_uuid, name)
+    projector["check_dir"](directory, projector["NODE_GID"], 0o750)
+    role = "github-ops-reader"
+    grant = mint(role)
+    if (grant["role"] != role or grant["permissions"] != projector["PERMISSIONS"]
+            or set(grant["repositories"]) != projector["REPOS"]):
+        raise RuntimeError("Reader grant scope mismatch")
+    write_token(role, grant)
+    projector["project"](projector["SOURCE"], projector["TARGET"], role,
+                         projector["PERMISSIONS"])
+    volume["project"](grant, directory)
+    print(json.dumps({"reader_refreshed": True, "role": role,
+                      "expires_at": grant["expires_at"]}))
+    return 0
+
+
+def main(*, reader_only=False):
     if os.geteuid() != 0:
         raise RuntimeError("Root service account required")
     # The root-only parent and token directory must be real, pinned directories.
@@ -200,6 +228,8 @@ def main():
         raise RuntimeError("Untrusted refresh lock file")
     with os.fdopen(fd, "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if reader_only:
+            return refresh_bgh_reader()
         summary = {}
         roles = selected_roles()
         writer_blocked = False
@@ -242,7 +272,10 @@ def main():
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        args = sys.argv[1:]
+        if args not in ([], ["--github-ops-reader-only"]):
+            raise RuntimeError("Unknown refresh mode")
+        sys.exit(main(reader_only=bool(args)))
     except Exception as error:
         print(json.dumps({"refreshed": False, "error": str(error)[:160]}), file=sys.stderr)
         sys.exit(1)
