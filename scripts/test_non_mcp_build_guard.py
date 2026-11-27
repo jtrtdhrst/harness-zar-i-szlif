@@ -132,7 +132,8 @@ def compliant(workflow_name, job):
                 "docker exec \"$container\" node -e",
             )
             return (all(value in job for value in required)
-                    and job.count("if: github.event_name == 'pull_request'") == 2)
+                    and job.count("if: github.event_name == 'pull_request'") == 2
+                    and job.count("--network none") == 3)
         # Trusted main publication is SHA-bound to mcp/coolify-mcp/ alone.
         required = (
             "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
