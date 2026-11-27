@@ -135,7 +135,7 @@ class SafeRefreshPathTests(unittest.TestCase):
         victim = pathlib.Path(self.tmp.name) / 'victim-writer'
         victim.write_text('unchanged')
         (self.target / 'github-ops-writer.json').symlink_to(victim)
-        with self.assertRaisesRegex(RuntimeError, "writer cleanup incomplete"):
+        with self.assertRaisesRegex(RuntimeError, 'Writer cleanup incomplete'):
             self.run_refresh(writer_enabled='false')
         self.assertEqual(victim.read_text(), 'unchanged')
         self.assertEqual(self.minted_count, 0)
@@ -255,3 +255,67 @@ class BghReaderOnlyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class FailClosedRefreshIntegration(unittest.TestCase):
+    def test_failed_full_refresh_always_runs_cleanup(self):
+        with patch.object(refresh, "_refresh_core", side_effect=RuntimeError("nonwriter mint failed")), \
+             patch.object(refresh, "cleanup_failed_writer") as cleanup:
+            with self.assertRaisesRegex(RuntimeError, "nonwriter mint failed"):
+                refresh.main()
+            cleanup.assert_called_once_with()
+
+    def test_failed_reader_only_does_not_create_writer_cleanup(self):
+        with patch.object(refresh, "_refresh_core", side_effect=RuntimeError("reader unavailable")), \
+             patch.object(refresh, "cleanup_failed_writer") as cleanup:
+            with self.assertRaisesRegex(RuntimeError, "reader unavailable"):
+                refresh.main(reader_only=True)
+            cleanup.assert_not_called()
+
+    def test_provider_failure_still_retire_all_writer_locations(self):
+        from unittest.mock import call
+        fake = {
+            "WRITER_TARGET": pathlib.Path("/test/projection/writer.json"),
+            "WRITER_RUNTIME": pathlib.Path("/test/runtime/writer.json"),
+        }
+        retire = unittest.mock.Mock(return_value=True)
+        fake["retire_writer_target"] = retire
+        with patch.object(refresh, "revoke_existing_writer_at_github",
+                          side_effect=RuntimeError("provider unavailable")), \
+             patch.object(refresh, "retire_writer_grant") as source_retire, \
+             patch("runpy.run_path", return_value=fake):
+            with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+                refresh.cleanup_failed_writer()
+            source_retire.assert_called_once_with()
+            self.assertEqual(retire.call_args_list,
+                             [call(fake["WRITER_TARGET"]), call(fake["WRITER_RUNTIME"])])
+
+    def test_provider_revoke_uses_scoped_root_file_and_delete_method(self):
+        import stat
+        import json
+        from unittest.mock import MagicMock
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            path = root / "github-ops-writer.json"
+            payload = {
+                "role": refresh.WRITER_ROLE,
+                "app_id": refresh.APP_ID,
+                "installation_id": refresh.INSTALLATION_ID,
+                "repositories": list(refresh.REPOS),
+                "permissions": refresh.ROLE_PERMISSIONS[refresh.WRITER_ROLE],
+                "token": "ghs_" + "x" * 55,
+            }
+            path.write_text(json.dumps(payload))
+            path.chmod(0o600)
+            answer = MagicMock()
+            answer.status = 204
+            response = MagicMock()
+            response.__enter__.return_value = answer
+            with patch.object(refresh, "DEST", root), \
+                 patch("urllib.request.urlopen", return_value=response) as send:
+                self.assertTrue(refresh.revoke_existing_writer_at_github())
+                request = send.call_args.args[0]
+                self.assertEqual(request.get_method(), "DELETE")
+                self.assertEqual(request.full_url, "https://api.github.com/installation/token")
+            self.assertTrue(path.exists())
