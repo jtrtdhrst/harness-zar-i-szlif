@@ -16,6 +16,95 @@ MID="c"*40
 SOURCE="d"*40
 
 class ProductPromotionTests(unittest.TestCase):
+    def test_release_source_is_canonical_for_new_sha_and_legacy_is_exactly_pinned(self):
+        self.assertEqual(p.PRODUCT_RELEASE_SOURCE, "jtrtdhrst/zar-i-szlif")
+        self.assertEqual(p.LEGACY_PRODUCT_RELEASE_SOURCE, "zar-i-szlif/main")
+        self.assertEqual(p.validated_product_release_sha({
+            "commit": NEW, "source": p.PRODUCT_RELEASE_SOURCE}), NEW)
+        # Current and previous approved panel image labels can be read while
+        # migrating and rolling back; neither permits fresh old-source images.
+        self.assertEqual(len(p.LEGACY_PRODUCT_RELEASE_SHAS), 2)
+        for sha in p.LEGACY_PRODUCT_RELEASE_SHAS:
+            with self.subTest(legacy_sha=sha):
+                self.assertEqual(p.validated_product_release_sha({
+                    "commit": sha, "source": p.LEGACY_PRODUCT_RELEASE_SOURCE}), sha)
+        bad = [
+            {"commit": NEW, "source": p.LEGACY_PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW, "source": "miloszspyrka-code/zar-i-szlif"},
+            {"commit": NEW, "source": "zar-i-szlif/main"},
+            {"commit": NEW, "source": ""},
+            {"commit": "not-sha", "source": p.PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW[:39], "source": p.PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW, "source": None},
+            {"source": p.PRODUCT_RELEASE_SOURCE},
+            {"commit": NEW},
+            None,
+            [],
+        ]
+        for value in bad:
+            with self.subTest(invalid_provenance=value):
+                with self.assertRaisesRegex(p.Denied, "production_provenance_invalid"):
+                    p.validated_product_release_sha(value)
+
+    def test_live_http_readback_requires_canonical_or_pinned_source(self):
+        class HTTPResponse:
+            status = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def read(self, limit=None):
+                return json.dumps(self.body).encode("utf-8")
+
+        def probe(payload):
+            with patch("urllib.request.urlopen", side_effect=[
+                HTTPResponse(payload), HTTPResponse({"ok": True})
+            ]) as urlopen:
+                result = p.live_release()
+            self.assertEqual(urlopen.call_count, 2)
+            return result
+
+        self.assertEqual(probe({
+            "commit": NEW, "source": p.PRODUCT_RELEASE_SOURCE
+        }), NEW)
+        for historical_sha in p.LEGACY_PRODUCT_RELEASE_SHAS:
+            with self.subTest(legacy=historical_sha):
+                self.assertEqual(probe({
+                    "commit": historical_sha,
+                    "source": p.LEGACY_PRODUCT_RELEASE_SOURCE
+                }), historical_sha)
+        with patch("urllib.request.urlopen", side_effect=[
+            HTTPResponse({"commit": NEW, "source": p.LEGACY_PRODUCT_RELEASE_SOURCE}),
+            HTTPResponse({"ok": True})
+        ]):
+            with self.assertRaisesRegex(p.Denied, "production_provenance_invalid"):
+                p.live_release()
+
+    def test_canonical_github_owner_is_current_and_old_owner_is_denied(self):
+        self.assertEqual(p.REPO, "jtrtdhrst/zar-i-szlif")
+        current = "/repos/jtrtdhrst/zar-i-szlif"
+        legacy = "/repos/miloszspyrka-code/zar-i-szlif"
+        self.assertTrue(p.GITHUB_PATH.fullmatch(current + "/commits/" + OLD))
+        self.assertFalse(p.GITHUB_PATH.fullmatch(legacy + "/commits/" + OLD))
+        self.assertTrue(p.GITHUB_ANNOTATIONS_PATH.fullmatch(
+            current + "/check-runs/123/annotations?per_page=100&page=2"
+        ))
+        self.assertFalse(p.GITHUB_ANNOTATIONS_PATH.fullmatch(
+            legacy + "/check-runs/123/annotations"
+        ))
+        self.assertTrue(p.PRODUCT_JOB_URL.fullmatch(
+            "https://github.com/jtrtdhrst/zar-i-szlif/actions/runs/123/job/456"
+        ))
+        self.assertFalse(p.PRODUCT_JOB_URL.fullmatch(
+            "https://github.com/miloszspyrka-code/zar-i-szlif/actions/runs/123/job/456"
+        ))
+
     def test_noop_when_main_already_deployed(self):
         with patch.object(p,"ref",side_effect=[OLD,OLD,OLD,OLD]),patch.object(p,"live_release",return_value=OLD),\
              patch.object(p,"candidate_history",side_effect=AssertionError("must not probe release")):
@@ -895,6 +984,147 @@ class ProductPromotionTests(unittest.TestCase):
              patch.object(p, "local_ci_attestation", side_effect=AssertionError("must not be reached")):
             with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
                 p.candidate_history(OLD, NEW)
+
+
+    def test_docs_only_squash_does_not_require_unrelated_head_tree(self):
+        node = {"sha": NEW, "parents": [{"sha": OLD}],
+                "files": [{"filename": "docs/RELEASE-POLICY.md", "status": "modified"}]}
+        with patch.object(p, "commit", return_value=node), \
+             patch.object(p, "provenance", return_value=(178, SOURCE)), \
+             patch.object(p, "checks", return_value={"billing_blocked": False}) as checks, \
+             patch.object(p, "premerge_head_checks", side_effect=AssertionError("docs-only must not check PR tree")), \
+             patch.object(p, "native_approval", side_effect=AssertionError("docs-only must not release")):
+            self.assertEqual(p.candidate_history(OLD, NEW), [])
+        checks.assert_called_once_with(NEW)
+
+    def test_docs_mixed_with_runtime_or_workflow_never_skips_head_gate(self):
+        for paths in (["docs/README.md", "app/web/index.html"],
+                      ["docs/README.md", ".github/workflows/product-ci.yml"]):
+            node = {"sha": NEW, "parents": [{"sha": OLD}],
+                    "files": [{"filename": path, "status": "modified"} for path in paths]}
+            with self.subTest(paths=paths), \
+                 patch.object(p, "commit", return_value=node), \
+                 patch.object(p, "provenance", return_value=(178, SOURCE)), \
+                 patch.object(p, "premerge_head_checks",
+                              side_effect=p.Denied("product_ci_not_green")) as head_gate, \
+                 patch.object(p, "checks", side_effect=AssertionError("no premature main-only skip")):
+                with self.assertRaisesRegex(p.Denied, "product_ci_not_green"):
+                    p.candidate_history(OLD, NEW)
+                head_gate.assert_called_once()
+
+    def test_pending_readback_recovers_only_exact_ref_without_redeploy(self):
+        state = {"status": "readback_failed_rollback_required",
+                 "pending_sha": NEW, "previous_sha": OLD, "release_prs": [42]}
+        with patch.object(p, "read_state", return_value=state), \
+             patch.object(p, "ref", side_effect=[NEW, NEW, NEW, NEW, NEW, NEW]), \
+             patch.object(p, "live_release", side_effect=[OLD, OLD, NEW]), \
+             patch.object(p, "candidate_history", side_effect=AssertionError("no re-admit")), \
+             patch.object(p, "github_api", side_effect=AssertionError("no GitHub write")), \
+             patch.object(p, "save") as save, \
+             patch.object(p, "READBACK_INTERVAL", 0), \
+             patch.object(p.time, "sleep") as sleep:
+            result = p.process()
+        self.assertEqual(result["result"], "deployed_after_retry")
+        self.assertEqual(result["sha"], NEW)
+        self.assertEqual(save.call_args[0][0]["release_prs"], [42])
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_pending_plan_is_read_only_and_never_waits(self):
+        state = {"status": "readback_failed_rollback_required", "pending_sha": NEW}
+        with patch.object(p, "read_state", return_value=state), \
+             patch.object(p, "ref", side_effect=[NEW, NEW, NEW, NEW]), \
+             patch.object(p, "live_release", return_value=OLD), \
+             patch.object(p, "github_api", side_effect=AssertionError("no writes")), \
+             patch.object(p, "save", side_effect=AssertionError("no state write")), \
+             patch.object(p.time, "sleep", side_effect=AssertionError("no waiting")):
+            self.assertEqual(p.process(plan=True)["result"], "pending_readback")
+
+    def test_pending_timeout_denies_without_rewind_or_state_mutation(self):
+        state = {"status": "readback_failed_rollback_required", "pending_sha": NEW}
+        with patch.object(p, "read_state", return_value=state), \
+             patch.object(p, "ref", side_effect=[NEW, NEW, NEW, NEW]), \
+             patch.object(p, "live_release", return_value=OLD), \
+             patch.object(p, "READBACK_ATTEMPTS", 2), \
+             patch.object(p.time, "sleep"), \
+             patch.object(p, "github_api", side_effect=AssertionError("no writes")), \
+             patch.object(p, "save", side_effect=AssertionError("no state mutation")):
+            with self.assertRaisesRegex(p.Denied, "deployment_readback_failed_rollback_required"):
+                p.process()
+
+    def test_stale_pending_cannot_recover_another_sha(self):
+        state = {"status": "readback_failed_rollback_required", "pending_sha": MID}
+        with patch.object(p, "read_state", return_value=state), \
+             patch.object(p, "ref", side_effect=[NEW, NEW]), \
+             patch.object(p, "live_release", return_value=OLD), \
+             patch.object(p, "github_api", side_effect=AssertionError("no writes")):
+            with self.assertRaisesRegex(p.Denied, "production_not_at_current_release_ref"):
+                p.process()
+
+    def test_pending_race_after_success_never_records_deployment(self):
+        state = {"status": "readback_failed_rollback_required", "pending_sha": NEW}
+        with patch.object(p, "read_state", return_value=state), \
+             patch.object(p, "ref", side_effect=[NEW, NEW, NEW, NEW, NEW, MID]), \
+             patch.object(p, "live_release", side_effect=[OLD, NEW]), \
+             patch.object(p, "save", side_effect=AssertionError("no state write")):
+            with self.assertRaisesRegex(p.Denied, "git_ref_race"):
+                p.process()
+
+    def test_missing_pending_receipt_denies_stale_live(self):
+        with patch.object(p, "read_state", return_value={}), \
+             patch.object(p, "ref", side_effect=[NEW, NEW]), \
+             patch.object(p, "live_release", return_value=OLD), \
+             patch.object(p, "github_api", side_effect=AssertionError("no writes")):
+            with self.assertRaisesRegex(p.Denied, "production_not_at_current_release_ref"):
+                p.process()
+
+    def test_untrusted_pending_receipt_is_rejected(self):
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "target.json"
+            target.write_text('{"status":"readback_failed_rollback_required"}')
+            link = Path(root) / "receipt"
+            link.symlink_to(target)
+            with patch.object(p, "STATE", link):
+                with self.assertRaisesRegex(p.Denied, "release_state_untrusted"):
+                    p.read_state()
+            with patch.object(p, "STATE", target):
+                with self.assertRaisesRegex(p.Denied, "release_state_untrusted"):
+                    p.read_state()
+
+    def test_slow_http_cannot_extend_wall_clock_readback_deadline(self):
+        with patch.object(p.time, "monotonic", side_effect=[100.0, 1001.0]), \
+             patch.object(p, "live_release", return_value=OLD) as probe, \
+             patch.object(p.time, "sleep", side_effect=AssertionError("no retry after deadline")):
+            self.assertFalse(p.wait_for_live(NEW))
+        probe.assert_called_once()
+
+    def test_readback_window_bounded_by_systemd_timeout(self):
+        self.assertEqual(p.READBACK_ATTEMPTS, 90)
+        self.assertEqual(p.READBACK_INTERVAL, 10)
+        self.assertLess(p.READBACK_DEADLINE_SECONDS + 24, 20 * 60)
+
+    def test_shipped_controller_and_unit_carry_no_obsolete_owner(self):
+        """The repository owner renamed: an old-owner literal would fail closed.
+
+        The installed unit and this controller are the only shipped artifacts
+        that resolve the Product repository, so an obsolete owner here means
+        the live service reports missing_or_ambiguous_main_pr forever.
+        """
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        obsolete = "milosz" + "spyrka-code"
+        for name in ("scripts/product_native_promotion.py",
+                     "ops/systemd/product-native-promotion.service",
+                     "ops/systemd/product-native-promotion.timer"):
+            text = (root / name).read_text(encoding="utf-8")
+            with self.subTest(path=name):
+                self.assertNotIn(obsolete, text)
+        unit = (root / "ops/systemd/product-native-promotion.service").read_text(
+            encoding="utf-8")
+        self.assertIn("Documentation=https://github.com/jtrtdhrst/harness-zar-i-szlif", unit)
+        self.assertIn("ExecStart=/usr/bin/python3 /usr/local/libexec/product_native_promotion.py", unit)
+        self.assertIn("Environment=PRODUCT_NATIVE_GATE=/usr/local/libexec/"
+                      "multica_native_release_gate.py", unit)
 
 if __name__=="__main__":
     unittest.main()

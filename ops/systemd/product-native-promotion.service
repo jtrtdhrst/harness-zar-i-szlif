@@ -1,6 +1,6 @@
 [Unit]
 Description=Multica native-reviewed product source -> Coolify release
-Documentation=https://github.com/miloszspyrka-code/harness-zar-i-szlif
+Documentation=https://github.com/jtrtdhrst/harness-zar-i-szlif
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service

@@ -26,10 +26,20 @@ import subprocess
 import sys
 import time
 
-REPO = "miloszspyrka-code/zar-i-szlif"
+REPO = "jtrtdhrst/zar-i-szlif"
 APP_ID = 5398752
 INSTALL_ID = 173456397
 RELEASE_REF = "ci-approved"
+# Source identity of newly built Product images. The previous deployed panel
+# used an inaccurate branch claim. Permit that label ONLY on these audited,
+# immutable pre-migration revisions so the existing ci-approved baseline and
+# a controlled rollback remain observable during migration.
+PRODUCT_RELEASE_SOURCE = "jtrtdhrst/zar-i-szlif"
+LEGACY_PRODUCT_RELEASE_SOURCE = "zar-i-szlif/main"
+LEGACY_PRODUCT_RELEASE_SHAS = frozenset({
+    "11a3ebbb8a0a034316eeb31deb7367b38571f0f8",
+    "4feef6903dc21be5da0433a77b10549bf0009661",
+})
 ROOT = Path("/var/lib/paperclip-gitops")
 STATE = ROOT / "zar-i-szlif.json"
 LOCK = ROOT / "zar-i-szlif.lock"
@@ -38,6 +48,12 @@ NATIVE_GATE = Path("/usr/local/libexec/multica_native_release_gate.py")
 PUBLIC_RELEASE = "https://panel.zariszlif.pl/__release.json"
 PUBLIC_HEALTH = "https://panel.zariszlif.pl/healthz"
 SHA = re.compile(r"^[a-f0-9]{40}$")
+# Coolify can require more than the previous 4-minute HTTP readback window.
+# 90 * 10 seconds remains inside the live systemd TimeoutStartSec=20min.
+READBACK_ATTEMPTS = 90
+READBACK_INTERVAL = 10
+READBACK_DEADLINE_SECONDS = 900
+MAX_RELEASE_STATE_BYTES = 8192
 # GitHub refuses to start a job for an account billing block. That is not a
 # test failure and not a pass: it is "CI never executed". Only this exact
 # annotation text, on a job that ran for seconds, may be treated that way.
@@ -147,10 +163,10 @@ def run(argv, timeout=30, allow_fail=False):
 
 
 GITHUB_PATH = re.compile(
-    r"^/repos/miloszspyrka-code/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
+    r"^/repos/jtrtdhrst/zar-i-szlif/[A-Za-z0-9/_+.-]+$")
 # Pagination query is allowed only on the check-run annotations resource.
 GITHUB_ANNOTATIONS_PATH = re.compile(
-    r"^/repos/miloszspyrka-code/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
+    r"^/repos/jtrtdhrst/zar-i-szlif/check-runs/[0-9]{1,20}/annotations"
     r"(\?per_page=[0-9]{1,3}(&page=[0-9]{1,5})?)?$")
 ANNOTATIONS_PAGE_SIZE = 100
 ANNOTATIONS_MAX_PAGES = 20
@@ -327,7 +343,7 @@ def historical_foreign_check(sha, row):
 TRUSTED_PRODUCT_WORKFLOW_ID = 405924339
 TRUSTED_PRODUCT_WORKFLOW = ".github/workflows/product-ci.yml"
 PRODUCT_JOB_URL = re.compile(
-    r"^https://github\.com/miloszspyrka-code/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
+    r"^https://github\.com/jtrtdhrst/zar-i-szlif/actions/runs/([1-9][0-9]{0,19})/job/([1-9][0-9]{0,19})$"
 )
 
 
@@ -765,6 +781,17 @@ def candidate_history(release_sha, main_sha):
                 raise Denied("maintenance_current_main_ci_not_green")
             current = first
             continue
+        # A strictly classified docs-only squash cannot change Product runtime.
+        # Require trusted CI for the current main tree, but not an unrelated
+        # PR-head tree equality/attestation (which blocks safe docs after squash).
+        # Unknown files, workflows and mixed runtime changes still go through
+        # the original exact-head, rootless-CI and native approval gates.
+        if len(parents) == 1 and non_runtime_files_only(pr, current, node):
+            main_ci = checks(main_sha)
+            if main_ci["billing_blocked"]:
+                raise Denied("product_ci_not_green")
+            current = first
+            continue
         head_ci = premerge_head_checks(head, node)
         merge_ci = checks(current)
         # Exact reviewed CI-only PR183 must never cause an unnecessary
@@ -776,16 +803,6 @@ def candidate_history(release_sha, main_sha):
                     or head_ci.get("billing_blocked")
                     or merge_ci.get("billing_blocked")):
                 raise Denied("ci_only_rootless_proof_or_main_ci_missing")
-            current = first
-            continue
-        # Docs-only squash PRs are NOT releases and do not require a Multica
-        # runtime work product. Everything else, including runtime squashes,
-        # still requires the original independent native approval gate.
-        if len(parents) == 1 and non_runtime_files_only(pr, current, node):
-            # Nothing here can reach a runtime artifact, but a job that never
-            # ran is still not evidence: keep the strict rule for this path.
-            if head_ci["billing_blocked"] or merge_ci["billing_blocked"] or head_ci.get("rootless_premerge"):
-                raise Denied("product_ci_not_green")
             current = first
             continue
         evidence = "github_checks"
@@ -821,10 +838,27 @@ def live_release():
                 raise Denied("health_http_unhealthy")
     except (OSError, ValueError, TimeoutError):
         raise Denied("production_readback_unavailable") from None
-    sha = data.get("commit")
-    if not isinstance(sha, str) or not SHA.fullmatch(sha) or data.get("source") != "zar-i-szlif/main":
+    return validated_product_release_sha(data)
+
+
+def validated_product_release_sha(data):
+    """Require canonical source on NEW releases; permit only exact legacy SHAs.
+
+    A legacy branch claim was embedded in the previous approved nginx image.
+    This narrowly bounded transition does NOT accept that label for any new
+    source SHA, even when the HTTP response and healthcheck are successful.
+    """
+    if not isinstance(data, dict):
         raise Denied("production_provenance_invalid")
-    return sha
+    sha = data.get("commit")
+    source = data.get("source")
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise Denied("production_provenance_invalid")
+    if source == PRODUCT_RELEASE_SOURCE:
+        return sha
+    if source == LEGACY_PRODUCT_RELEASE_SOURCE and sha in LEGACY_PRODUCT_RELEASE_SHAS:
+        return sha
+    raise Denied("production_provenance_invalid")
 
 
 def save(data):
@@ -836,6 +870,49 @@ def save(data):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, STATE)
+
+
+def read_state():
+    """Read only the root-owned controller receipt; reject symlinks and tampering."""
+    try:
+        fd = os.open(STATE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        raise Denied("release_state_untrusted") from None
+    try:
+        identity = os.fstat(fd)
+        if (not stat.S_ISREG(identity.st_mode) or identity.st_uid != 0
+                or identity.st_gid != 0 or identity.st_nlink != 1
+                or identity.st_mode & 0o077 or identity.st_size > MAX_RELEASE_STATE_BYTES):
+            raise Denied("release_state_untrusted")
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            record = json.load(stream)
+        if not isinstance(record, dict):
+            raise Denied("release_state_untrusted")
+        return record
+    except (ValueError, UnicodeError, OSError, TypeError):
+        raise Denied("release_state_untrusted") from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def wait_for_live(target):
+    """Observe exact SHA under a wall-clock budget, including HTTP latency."""
+    deadline = time.monotonic() + READBACK_DEADLINE_SECONDS
+    for attempt in range(READBACK_ATTEMPTS):
+        try:
+            if live_release() == target:
+                return True
+        except Denied:
+            pass
+        remaining = deadline - time.monotonic()
+        if attempt + 1 == READBACK_ATTEMPTS or remaining <= 0:
+            return False
+        time.sleep(min(READBACK_INTERVAL, remaining))
+    return False
 
 
 def require_verified_local_image_delivery():
@@ -863,7 +940,31 @@ def process(plan=False):
     release = ref(RELEASE_REF)
     live = live_release()
     if live != release:
-        raise Denied("production_not_at_current_release_ref")
+        # A newer source ref is not a pending deployment. Reject it before
+        # touching the receipt, so a stale or inaccessible state file cannot
+        # alter this mandatory source/live divergence denial.
+        if current != release:
+            raise Denied("production_not_at_current_release_ref")
+        pending = read_state()
+        # Resume *only* an exact previously advanced ref, never a new release
+        # and never a deployment outside the root-issued pending receipt.
+        if (pending.get("status") != "readback_failed_rollback_required"
+                or pending.get("pending_sha") != release):
+            raise Denied("production_not_at_current_release_ref")
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
+        if plan:
+            return {"result": "pending_readback", "sha": release, "live": live}
+        if not wait_for_live(release):
+            raise Denied("deployment_readback_failed_rollback_required")
+        if ref("main") != current or ref(RELEASE_REF) != release:
+            raise Denied("git_ref_race")
+        save({"last_deployed_sha": release,
+              "previous_sha": pending.get("previous_sha"),
+              "release_prs": pending.get("release_prs", []),
+              "status": "healthy"})
+        return {"result": "deployed_after_retry", "sha": release,
+                "prior": pending.get("previous_sha"), "healthy": True}
     if current == release:
         # Recheck the refs after the live HTTP read: main may have advanced
         # while that read was in flight, invalidating the no-change result.
@@ -892,15 +993,10 @@ def process(plan=False):
     # Coolify already autodeploys only from ci-approved. Await exact artifact,
     # but never force-rewind a Git ref on failure; preserve evidence for safe
     # image rollback through Coolify's managed rollback facility.
-    for _ in range(24):
-        try:
-            if live_release() == current:
-                save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
-                return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
-        except Denied:
-            pass
-        time.sleep(10)
-    save({"pending_sha":current,"previous_sha":release,"status":"readback_failed_rollback_required"})
+    if wait_for_live(current):
+        save({"last_deployed_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"healthy"})
+        return {"result":"deployed","sha":current,"prior":release,"verified_prs":summary["reviewed_prs"],"healthy":True}
+    save({"pending_sha":current,"previous_sha":release,"release_prs":summary["reviewed_prs"],"status":"readback_failed_rollback_required"})
     raise Denied("deployment_readback_failed_rollback_required")
 
 
