@@ -38,12 +38,20 @@
 - konflikt starego hasha mapowany na HTTP 409 CONFLICT zamiast 502 WORKER_ERROR (obie trasy akcji).
 - kontrakt create/read/move/update/delete ponownie prawdziwy i przetestowany end-to-end.
 
+## [2026-09-29] mcp-qdrant — root cause narzedzi read/delete (KOMAA-407)
+- `wiki/entities/mcp-qdrant-hybrid.md` += sekcja "Znane defekty narzedi" i "Zakres odpowiedzialnosci za kod vs runtime".
 - zdiagnozowano, ze `get_document`/`delete_document` padaja dla kazdego argumentu (istniejacy, losowy UUID, smieci) przy stalym koszcie ~20 ms; `query` dziala.
 - ustalono, ze pusta tresc bledu = `str(e) == ""` (format FastMCP ma `: {e}`, co potwierdza verbatimowy blad walidacji pydantic), a nie celowe sanowanie.
+- fix wymaga wlasciciela hosta (obraz `mcp-qdrant-hybrid:latest`, klaster Qdrant Cloud poza `paperclip-net`) — egzekwowane przez child issue KOMAA-411; owner kontraktu/diagnostyki zostaje MCP Engineer.
 
+## [2026-09-29] mcp-qdrant — root cause udowodnione + skorygowany wniosek o dostepie (KOMAA-411)
+- `wiki/entities/mcp-qdrant-hybrid.md` += korekta sekcji "Zakres odpowiedzialnosci" i doprecyzowanie "Znanych defektow".
+- **Sprostowany wniosek o dostepie:** serwer MCP jest osiagalny z runu agenta (`mcp-qdrant` -> `172.20.0.4`, `http://mcp-qdrant:8000/mcp`, streamable-http stateless). Wczesniejszy skan `172.17`-`172.20`/16 na `6333`/`6334` = 0 listenerow dotyczyl natywnego portu Qdrantu, nie MCP. Zablokowane bylo wdrrozenie, nie diagnoza.
 - **`str(e) == ""` uzupelnione do dowodu:** FastMCP waliduje argumenty w tym samym `try` co handler i formatuje oba przypadki jedna linia `ToolError(f"Error executing tool {name}: {e}")`. Pusty komunikat przy obecnym `: {e}` w bledzie pydantic => wyjatek ma pusty `str()`. Zostaja dwie hipotezy (klasa bez instancji vs `StopIteration` z `next()`), rozroznialne wylacznie tracebackem w logu kontenera.
+- nowe dane: awaria pada takze dla poprawnego `node_id` (dashed UUID) i pustego stringa; stalne ~20 ms ponad walidacja => jedno polaczenie do Qdrant zachodzi przed awaria; selekcja idzie filtrem po polu payload, nie przez `retrieve(point_ids=...)`.
 - `unblockDescriptor.owner` nie pozwala agentowi wskazac board (403 "Agents may only name themselves as an unblock owner") — board trzeba wskazac przez interakcje z `resolverPolicy: human_only`.
 - child issue dla wlasciciela hosta zostaje **unassigned**: Harness Agent tego nie odblokuje, bo zaden agent w firmie nie dosiega hosta.
+- harness weryfikacyjny na kryteria 1-4 dodany do repo: `scripts/mcp-qdrant-verify.mjs` (commit `c9d1977`, `feature/rag-chatgpt-plugin`).
 
 ## [2026-10-05] control plane — responsible-user guard blokuje agentow (KOMAA-737)
 - `wiki/entities/responsible-user-guard-outage.md` (nowa strona) — evidence + tabela zweryfikowanych 403.

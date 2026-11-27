@@ -34,6 +34,7 @@ Do not read the whole Wiki or full PRD by default.
 - [[wiki/sources/integracje-mcp]]
 - [[wiki/concepts/product-mcp-cloudflare-worker]] — current dedicated product MCP Worker, Cloudflare config, security and self-repair runbook (on demand).
 - [[wiki/entities/integracje-api]]
+- [[wiki/entities/mcp-qdrant-hybrid]]
 - [[wiki/concepts/plugin-boundaries]]
 - [[wiki/concepts/paperclip-wiki-mcp]]
 

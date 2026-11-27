@@ -24,6 +24,8 @@ TARGET ≠ CURRENT. No current evidence = unconfirmed current state.
 - Publiczna nazwa produktu: **Żar i Szlif**; „Kompas Zbiórek” jest wyłącznie aliasem historycznym/technicznym, nie drugą aktywną marką. Nazwy repo, domen, API i slugów bez zmian automatycznych.
 - Supabase/Postgres = application source of truth.
 - Cloudflare Worker = API/integration/auth edge, not a second domain database.
+- Qdrant/RAG = knowledge/retrieval, not application state.
+- MCP/Qdrant/RAG execution → MCP Engineer.
 - General scoped product implementation → Engineer.
 - Architecture/root-cause/review → CTO.
 - Execution-harness/runtime/environment defects → Harness/Environment.

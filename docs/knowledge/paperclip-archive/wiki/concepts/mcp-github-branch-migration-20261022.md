@@ -24,6 +24,7 @@ zar-i-szlif/
 │   └── plugin/               istniejący współdzielony kod produktu
 ├── mcp/
 │   ├── mantic/               własny Mantic / Mautic MCP
+│   ├── qdrant/               własny serwer Qdrant MCP
 │   ├── penpot/               własny Penpot MCP
 │   ├── plasmic/              własny Plasmic MCP
 │   ├── supabase/             hostowy konektor Supabase MCP
@@ -46,6 +47,7 @@ Wszystkie wybierają **TO SAMO** repo GitHub i **TYLKO zatwierdzone main**. `Bas
 | Strona WWW produktu | `app/website/` | `/` | `app/website/Dockerfile` / root `/` | 80 | build istnieje w PR #74; niezweryfikowany produkcyjnie |
 | MCP produktu | `app/mcp-worker/` | brak gotowego Coolify | brak gotowego Dockerfile | — | **Cloudflare Worker obecnie; nie przenosić pozornie do Coolify** |
 | Mantic MCP | `mcp/mantic/` | `/mcp/mantic` (planowane) | `mcp/mantic/Dockerfile` / `/mcp/mantic` | brak HTTP | Dockerfile stdio, wymagany wrapper HTTP i test |
+| Qdrant MCP | `mcp/qdrant/` | `/mcp/qdrant` (docelowo) | brak gotowego Dockerfile | — | źródła serwera niepełne |
 | Penpot MCP | `mcp/penpot/` | `/mcp/penpot` (docelowo) | brak gotowego Dockerfile | — | źródła serwera niepełne |
 | Plasmic MCP | `mcp/plasmic/` | `/mcp/plasmic` | `mcp/plasmic/Dockerfile.mcp` / `/mcp/plasmic` | 8091 | testy i obraz niezależny od wycofanego OpenDesign, wymagane live WAB E2E |
 | Supabase MCP | `mcp/supabase/` | `/mcp/supabase` (docelowo) | brak gotowego Dockerfile | — | źródła konektora niepełne |
@@ -60,6 +62,7 @@ Wszystkie wybierają **TO SAMO** repo GitHub i **TYLKO zatwierdzone main**. `Bas
 
 - **Mantic:** `KOMAA-1102` → aktywna kandydacka kopia `mcp/mantic/` (34 pliki). Nie mylić stdio z gotowym HTTP MCP.
 - **Plasmic:** baseline `ops/design-stack` → `mcp/plasmic/`, wersje `KOMAA-1084` i `KOMAA-1174` w `_branches/`. Reconcile do aktywnego Plasmic po sprawdzeniu zmiany WAB 412, kontraktów, bezpieczeństwa i testów; nie scalać całej mieszanej gałęzi. OpenDesign usunięty z aktywnego obrazu i komponowania.
+- **Qdrant:** `KOMAA-411` wniósł skrypt testowy; nie stanowi serwera. Produktowe Qdrant/RAG `app/mcp-worker/` ma pozostać w produkcie. Ustalić właściwe źródło z VPS/Paperclip workspace.
 - **Penpot / Supabase MCP / Ubuntu MCP:** brak zweryfikowanego pełnego serwera w zaimportowanych gałęziach; importować jedynie z autoryzowanego źródła, ze sprawdzonym testem i bez sekretów.
 - **Paperclip MCP:** częściowy bridge z `dev/integrations/paperclip-mcp/`; nie jest jeszcze pełną odtworzoną produkcją gateway/supervisor.
 - **OpenDesign MCP / OpenCode MCP:** **wycofane**, oryginalne branże pozostają jedynie w historii. Kategorycznie nie dodawać do manifestu Coolify. Sam runtime OpenCode nie jest wycofany.
@@ -91,11 +94,13 @@ There is **one production/integration branch, main**, not a separate permanent "
 |---|---|---|---|
 | Engineer | `01 · Produkt / Panel aplikacji` | `app/web/**`, product `app/cloudflare-worker/**`, `supabase/**`; website scope `app/website/**` in product website project | CTO independent reviewer |
 | MCP Engineer | `02 · MCP / Product MCP` | `app/mcp-worker/**`; optional `app/plugin/knowledge/**` only with authorized task tools | CTO independent reviewer; NO infrastructure `mcp/**` |
+| Harness Agent | `04 · Operations / Release & Reliability` | `mcp/mantic/**`, `mcp/qdrant/**`, `mcp/penpot/**`, `mcp/plasmic/**`, `mcp/supabase/**`, `mcp/ubuntu/**`, `mcp/paperclip/**`, relevant `ops/coolify/**` | CTO independent reviewer; **never upstream Paperclip Core** |
 | CTO | `01 · Produkt / Panel aplikacji` (review source) | Independent product reviewer by default; inspect other service branches only for assigned reviews | For CTO implementation use scope-specific workspace and COO/other independent reviewer |
 | COO | Project/DAG dispatcher | No default code edits | Choose correct project/workspace, review participants, mandatory watchdog |
 
 **Exact native issue fixes verified:** `KOMAA-1333`, `1336`, `1344`, `1337`, `1338`, `1339` now point to the product owner's `04 · Operations / Release & Reliability` project, project workspace `31b86f9a-0564-4f8b-af9c-7b5f9966471c`, and an isolated issue workspace strategy `git_worktree, baseRef=main, branchTemplate={{issue.identifier}}`. Their previous execution workspace bindings to upstream `paperclipai/paperclip/master` were cleared **without deleting the existing dirty upstream working tree**. `KOMAA-1084` Plasmic MCP was reassigned to Harness in that owner repo project; CTO remains reviewer, unique historic branch commit `ba42253985a28a154ee421d3008a50647abd91bb` retained.
 
+**Remaining control gaps, do not claim fully guaranteed:** The `01 · Produkt / Strona główna` project's workspace strategy still has `baseRef=product/www`, not `main`. The separate `02 · MCP / Qdrant Hybrid` project still references an old local repo without verified canonical remote, and `04 · Operations / Paperclip Ops` still defaults to upstream `paperclipai/paperclip` / `master`. No native project-policy mutation tool was available to globally patch those project defaults. Until those project policies are corrected, COO and receiving agent MUST inspect native issue workspace and explicitly set owner-repo `main` before executing. **This is not a proof of automatic fail-closed scheduler enforcement.**
 
 **Preflight every execution:** Paperclip project ID + workspace ID must resolve to `https://github.com/miloszspyrka-code/zar-i-szlif`; read `git remote get-url origin`, `git branch --show-current`, `git status --porcelain`, `git rev-parse --show-toplevel`; fetch `origin/main`; ensure fresh issue branch and changed-file paths within role-owned service root. On mismatch preserve unmerged files/SHAs, reroute issue to owner project and new isolated workspace; never rewrite or delete other agents' changes. Before merge: scoped tests, independent native CTO approval of exact SHA, required GitHub checks, approved `main` merge. After merge: service-specific Coolify deployment with readback digest/health/tools-list/rollback. Staging PR #74 remains draft until review.
 
