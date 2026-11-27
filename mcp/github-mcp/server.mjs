@@ -380,7 +380,7 @@ export function makeServer(config={}) {
       const known=values.filter(v=>v!=null).map(v=>v.toLowerCase());
       if(new Set(known).size>1)continue;
       let mergeSha=known[0]??null;
-      if(values.some(v=>v==null)){
+      if(!mergeSha){
         // The merged issue event carries GitHub's resulting commit ID even
         // if both PR projections omit it. Check its exact merge timestamp.
         const events=await api('GET',`${root}/issues/${candidate.number}/events?per_page=100`);
